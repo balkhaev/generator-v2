@@ -163,12 +163,15 @@ export default function OperatorConsole() {
     );
   }
 
+  const activeSnapshot = snapshot!;
+  const activeScenarioForm = scenarioForm!;
+  const activeWorkflow = selectedWorkflow!;
   const recentRuns = runs.slice(0, 6);
 
   async function handleCreateScenario(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!scenarioForm.name.trim() || !scenarioForm.prompt.trim()) {
+    if (!activeScenarioForm.name.trim() || !activeScenarioForm.prompt.trim()) {
       toast.error("Scenario name and prompt are required.");
       return;
     }
@@ -177,10 +180,10 @@ export default function OperatorConsole() {
 
     try {
       const result = await createScenario({
-        ...scenarioForm,
-        name: scenarioForm.name.trim(),
-        prompt: scenarioForm.prompt.trim(),
-        notes: scenarioForm.notes.trim(),
+        ...activeScenarioForm,
+        name: activeScenarioForm.name.trim(),
+        prompt: activeScenarioForm.prompt.trim(),
+        notes: activeScenarioForm.notes.trim(),
       });
 
       setSnapshot((current) => {
@@ -199,7 +202,7 @@ export default function OperatorConsole() {
         ...current,
         [result.data.id]: createRunDraft(result.data.id),
       }));
-      setScenarioForm(createScenarioFormState(selectedWorkflow));
+      setScenarioForm(createScenarioFormState(activeWorkflow));
       toast.success(result.source === "server" ? "Scenario saved." : "Scenario saved in provisional mode.");
     } catch (createError) {
       toast.error(createError instanceof Error ? createError.message : "Unable to save scenario.");
@@ -279,7 +282,7 @@ export default function OperatorConsole() {
           <CardFooter className="justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
               <span>Data source</span>
-              <span className="border px-2 py-1">{snapshot.source}</span>
+              <span className="border px-2 py-1">{activeSnapshot.source}</span>
             </div>
             <Button size="sm" variant="outline" onClick={() => void loadSnapshot({ silent: true })}>
               {isRefreshing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
@@ -288,7 +291,7 @@ export default function OperatorConsole() {
           </CardFooter>
         </Card>
 
-        {snapshot.warnings.length > 0 ? (
+        {activeSnapshot.warnings.length > 0 ? (
           <Card size="sm">
             <CardHeader>
               <CardTitle>Provisional integration notes</CardTitle>
@@ -297,7 +300,7 @@ export default function OperatorConsole() {
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-2">
-              {snapshot.warnings.map((warning) => (
+              {activeSnapshot.warnings.map((warning) => (
                 <div key={warning} className="border border-dashed px-3 py-2 text-xs text-muted-foreground">
                   {warning}
                 </div>
@@ -427,7 +430,7 @@ export default function OperatorConsole() {
                 <select
                   id="workflow-key"
                   className={selectClassName}
-                  value={scenarioForm.workflowKey}
+                  value={activeScenarioForm.workflowKey}
                   onChange={(event) => {
                     const workflow = workflows.find((item) => item.key === event.target.value);
 
@@ -444,13 +447,13 @@ export default function OperatorConsole() {
                     </option>
                   ))}
                 </select>
-                <p className="text-muted-foreground">{selectedWorkflow.summary}</p>
+                <p className="text-muted-foreground">{activeWorkflow.summary}</p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="scenario-name">Scenario name</Label>
                 <Input
                   id="scenario-name"
-                  value={scenarioForm.name}
+                  value={activeScenarioForm.name}
                   onChange={(event) => {
                     const value = event.target.value;
 
@@ -471,7 +474,7 @@ export default function OperatorConsole() {
                 <textarea
                   id="scenario-prompt"
                   className={textareaClassName}
-                  value={scenarioForm.prompt}
+                  value={activeScenarioForm.prompt}
                   onChange={(event) => {
                     const value = event.target.value;
 
@@ -484,7 +487,7 @@ export default function OperatorConsole() {
                         : current,
                     );
                   }}
-                  placeholder={selectedWorkflow.promptHint}
+                  placeholder={activeWorkflow.promptHint}
                 />
               </div>
               <div className="grid gap-2">
@@ -492,7 +495,7 @@ export default function OperatorConsole() {
                 <textarea
                   id="scenario-notes"
                   className={textareaClassName}
-                  value={scenarioForm.notes}
+                  value={activeScenarioForm.notes}
                   onChange={(event) => {
                     const value = event.target.value;
 
@@ -509,12 +512,12 @@ export default function OperatorConsole() {
                 />
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
-                {selectedWorkflow.parameters.map((parameter) => (
+                {activeWorkflow.parameters.map((parameter) => (
                   <div key={parameter.key} className="grid gap-2">
                     <Label htmlFor={parameter.key}>{parameter.label}</Label>
                     <Input
                       id={parameter.key}
-                      value={scenarioForm.params[parameter.key] ?? ""}
+                      value={activeScenarioForm.params[parameter.key] ?? ""}
                       onChange={(event) => {
                         const value = event.target.value;
 

@@ -34,12 +34,15 @@ export function createStorageAdapter(config?: Partial<StorageConfig>) {
       return parsed.toString();
     },
     normalizeOutputUrl(outputUrl: string) {
-      const parsed = new URL(outputUrl);
-      if (!supportedImageSchemes.includes(parsed.protocol)) {
-        const { outputBaseUrl } = resolveConfig();
-        return new URL(outputUrl.replace(/^\/+/, ""), `${outputBaseUrl}/`).toString();
+      if (URL.canParse(outputUrl)) {
+        const parsed = new URL(outputUrl);
+        if (supportedImageSchemes.includes(parsed.protocol)) {
+          return parsed.toString();
+        }
       }
-      return parsed.toString();
+
+      const { outputBaseUrl } = resolveConfig();
+      return new URL(outputUrl.replace(/^\/+/, ""), `${outputBaseUrl}/`).toString();
     },
     createInputAssetKey(filename: string) {
       const { inputBaseUrl } = resolveConfig();

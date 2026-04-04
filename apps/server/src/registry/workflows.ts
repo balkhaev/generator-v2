@@ -88,12 +88,20 @@ export const workflowRegistry = {
       parameters: params,
     }),
     extractArtifactUrls: (output) => {
+      const looksLikeArtifactUrl = (value: string) => {
+        return (
+          value.startsWith("http://") ||
+          value.startsWith("https://") ||
+          /(^|\/)[^\s]+\.(png|jpe?g|webp|gif|mp4|mov|webm)(\?.*)?$/i.test(value)
+        );
+      };
+
       const collect = (value: unknown): string[] => {
         if (!value) {
           return [];
         }
         if (typeof value === "string") {
-          return value.startsWith("http") ? [value] : [];
+          return looksLikeArtifactUrl(value) ? [value] : [];
         }
         if (Array.isArray(value)) {
           return value.flatMap(collect);

@@ -1,0 +1,24 @@
+{
+  "name": "@generator/auth",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {},
+  "dependencies": {
+    "@generator/db": "workspace:*",
+    "@generator/env": "workspace:*",
+    "better-auth": "catalog:",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@generator/config": "workspace:*",
+    "typescript": "^5"
+  }
+}

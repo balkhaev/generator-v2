@@ -6,27 +6,28 @@ const runpodRunStatusMap = {
 	COMPLETED: "succeeded",
 	FAILED: "failed",
 } as const;
+const trailingSlashPattern = /\/$/;
 
 export type RunpodRunStatus =
 	(typeof runpodRunStatusMap)[keyof typeof runpodRunStatusMap];
 
-export type RunpodSubmission = {
+export interface RunpodSubmission {
 	jobId: string;
 	status: RunpodRunStatus;
-};
+}
 
-export type RunpodJob = {
+export interface RunpodJob {
 	jobId: string;
 	status: RunpodRunStatus;
 	output: unknown;
 	errorSummary: string | null;
-};
+}
 
-type RunpodConfig = {
+interface RunpodConfig {
 	apiKey: string;
 	endpointId: string;
 	apiBaseUrl: string;
-};
+}
 
 type RunpodFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -81,7 +82,7 @@ export function createRunpodClient(options?: {
 
 	const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 		const config = resolveConfig();
-		const url = `${config.apiBaseUrl.replace(/\/$/, "")}/${config.endpointId}${path}`;
+		const url = `${config.apiBaseUrl.replace(trailingSlashPattern, "")}/${config.endpointId}${path}`;
 		const response = await fetchImpl(url, {
 			...init,
 			headers: {
@@ -120,17 +121,18 @@ export function createRunpodClient(options?: {
 				error?: string;
 				message?: string;
 			}>(`/status/${jobId}`);
+			let errorSummary: string | null = null;
+			if (typeof response.error === "string") {
+				errorSummary = response.error;
+			} else if (typeof response.message === "string") {
+				errorSummary = response.message;
+			}
 
 			return {
 				jobId: response.id,
 				status: normalizeRunpodStatus(response.status),
 				output: response.output ?? null,
-				errorSummary:
-					typeof response.error === "string"
-						? response.error
-						: typeof response.message === "string"
-							? response.message
-							: null,
+				errorSummary,
 			};
 		},
 	};

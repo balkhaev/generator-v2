@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
+import { type RunStatus, transitionRunStatus } from "@/domain/jobs/run-state";
 import {
 	createScenarioDraftSchema,
 	scenarioRunDraftSchema,
+	type JsonValue,
 } from "@/domain/scenarios/scenario-schema";
-import { transitionRunStatus, type RunStatus } from "@/domain/jobs/run-state";
 import {
 	createRunpodDispatchPayload,
 	normalizeRunpodSubmitResponse,
@@ -13,34 +14,39 @@ import {
 	type RunpodDispatchPayload,
 } from "@/providers/runpod/runpod-contract";
 
-type ScenarioRecord = {
+interface ScenarioRecord {
 	id: string;
 	name: string;
 	workflowKey: string;
 	prompt: string;
-	params: Record<string, unknown>;
-};
+	params: Record<string, JsonValue>;
+}
 
-type RunRecord = {
+interface RunRecord {
 	id: string;
 	scenarioId: string;
 	status: RunStatus;
 	inputImageUrl: string;
 	externalJobId: string | null;
 	errorSummary: string | null;
-};
+}
 
-type ArtifactRecord = {
+interface ArtifactRecord {
 	runId: string;
 	kind: string;
 	url: string;
 	fileName?: string;
-};
+}
 
-type RunpodProvider = {
+interface RunpodProvider {
 	submit: (payload: RunpodDispatchPayload) => Promise<unknown>;
 	getResult: (jobId: string) => Promise<unknown>;
-};
+}
+
+interface SyncResponse {
+	run: RunRecord | null;
+	artifacts: ArtifactRecord[];
+}
 
 function createInMemoryScenarioStore() {
 	const scenarios: ScenarioRecord[] = [];
@@ -79,7 +85,9 @@ function createInMemoryScenarioStore() {
 			return run;
 		},
 		replaceArtifacts(runId: string, nextArtifacts: ArtifactRecord[]) {
-			const remaining = artifacts.filter((artifact) => artifact.runId !== runId);
+			const remaining = artifacts.filter(
+				(artifact) => artifact.runId !== runId,
+			);
 			artifacts.length = 0;
 			artifacts.push(...remaining, ...nextArtifacts);
 		},
@@ -115,7 +123,9 @@ function createGenerationTestApp(provider: RunpodProvider) {
 			inputAssetUrl: payload.inputImage.assetUrl,
 			params: scenario.params,
 		});
-		const providerSubmission = normalizeRunpodSubmitResponse(await provider.submit(dispatchPayload));
+		const providerSubmission = normalizeRunpodSubmitResponse(
+			await provider.submit(dispatchPayload),
+		);
 		const run = store.createRun({
 			scenarioId,
 			status: providerSubmission.status,
@@ -130,15 +140,20 @@ function createGenerationTestApp(provider: RunpodProvider) {
 	app.post("/api/runs/:runId/sync", async (c) => {
 		const run = store.findRun(c.req.param("runId"));
 
-		if (!run || !run.externalJobId) {
+		if (!run?.externalJobId) {
 			return c.json({ message: "Run not found" }, 404);
 		}
 
-		const providerResult = normalizeRunpodTerminalResult(await provider.getResult(run.externalJobId));
+		const providerResult = normalizeRunpodTerminalResult(
+			await provider.getResult(run.externalJobId),
+		);
 
 		if (providerResult.status === "succeeded") {
 			store.updateRun(run.id, (existingRun) => {
-				existingRun.status = transitionRunStatus(existingRun.status, "succeeded");
+				existingRun.status = transitionRunStatus(
+					existingRun.status,
+					"succeeded",
+				);
 				existingRun.errorSummary = null;
 			});
 			store.replaceArtifacts(
@@ -170,12 +185,13 @@ function createGenerationTestApp(provider: RunpodProvider) {
 describe("generation verification scaffolding", () => {
 	test("create scenario API persists the expected scenario record", async () => {
 		const provider: RunpodProvider = {
-			submit: async () => ({ id: "job_123", status: "queued" }),
-			getResult: async () => ({
-				id: "job_123",
-				status: "completed",
-				output: { artifacts: [] },
-			}),
+			submit: () => Promise.resolve({ id: "job_123", status: "queued" }),
+			getResult: () =>
+				Promise.resolve({
+					id: "job_123",
+					status: "completed",
+					output: { artifacts: [] },
+				}),
 		};
 		const { app, store } = createGenerationTestApp(provider);
 		const response = await app.request("/api/scenarios", {
@@ -204,15 +220,16 @@ describe("generation verification scaffolding", () => {
 	test("launch run API creates a run, calls the provider, and stores the external job id", async () => {
 		const submittedPayloads: RunpodDispatchPayload[] = [];
 		const provider: RunpodProvider = {
-			submit: async (payload) => {
+			submit: (payload) => {
 				submittedPayloads.push(payload);
-				return { id: "job_launch", status: "queued" };
+				return Promise.resolve({ id: "job_launch", status: "queued" });
 			},
-			getResult: async () => ({
-				id: "job_launch",
-				status: "completed",
-				output: { artifacts: [] },
-			}),
+			getResult: () =>
+				Promise.resolve({
+					id: "job_launch",
+					status: "completed",
+					output: { artifacts: [] },
+				}),
 		};
 		const { app, store } = createGenerationTestApp(provider);
 		const createScenarioResponse = await app.request("/api/scenarios", {
@@ -225,7 +242,7 @@ describe("generation verification scaffolding", () => {
 				params: { seed: 7 },
 			}),
 		});
-		const scenario = await createScenarioResponse.json();
+		const scenario = (await createScenarioResponse.json()) as ScenarioRecord;
 		const runResponse = await app.request(`/api/scenarios/${scenario.id}/runs`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -262,20 +279,21 @@ describe("generation verification scaffolding", () => {
 
 	test("status sync updates the run and artifact records on provider success", async () => {
 		const provider: RunpodProvider = {
-			submit: async () => ({ id: "job_success", status: "running" }),
-			getResult: async () => ({
-				id: "job_success",
-				status: "completed",
-				output: {
-					artifacts: [
-						{
-							kind: "video",
-							url: "https://assets.internal.example/output-a.mp4",
-							fileName: "output-a.mp4",
-						},
-					],
-				},
-			}),
+			submit: () => Promise.resolve({ id: "job_success", status: "running" }),
+			getResult: () =>
+				Promise.resolve({
+					id: "job_success",
+					status: "completed",
+					output: {
+						artifacts: [
+							{
+								kind: "video",
+								url: "https://assets.internal.example/output-a.mp4",
+								fileName: "output-a.mp4",
+							},
+						],
+					},
+				}),
 		};
 		const { app, store } = createGenerationTestApp(provider);
 		const createScenarioResponse = await app.request("/api/scenarios", {
@@ -288,7 +306,7 @@ describe("generation verification scaffolding", () => {
 				params: { seed: 7 },
 			}),
 		});
-		const scenario = await createScenarioResponse.json();
+		const scenario = (await createScenarioResponse.json()) as ScenarioRecord;
 		const runResponse = await app.request(`/api/scenarios/${scenario.id}/runs`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -300,14 +318,14 @@ describe("generation verification scaffolding", () => {
 				},
 			}),
 		});
-		const run = await runResponse.json();
+		const run = (await runResponse.json()) as RunRecord;
 		const syncResponse = await app.request(`/api/runs/${run.id}/sync`, {
 			method: "POST",
 		});
-		const syncedPayload = await syncResponse.json();
+		const syncedPayload = (await syncResponse.json()) as SyncResponse;
 
 		expect(syncResponse.status).toBe(200);
-		expect(syncedPayload.run.status).toBe("succeeded");
+		expect(syncedPayload.run?.status).toBe("succeeded");
 		expect(store.artifacts).toEqual([
 			{
 				runId: run.id,
@@ -320,15 +338,16 @@ describe("generation verification scaffolding", () => {
 
 	test("failed provider responses persist diagnosable error state", async () => {
 		const provider: RunpodProvider = {
-			submit: async () => ({ id: "job_failed", status: "running" }),
-			getResult: async () => ({
-				jobId: "job_failed",
-				state: "failed",
-				error: {
-					message: "GPU worker unavailable",
-					code: "WORKER_UNAVAILABLE",
-				},
-			}),
+			submit: () => Promise.resolve({ id: "job_failed", status: "running" }),
+			getResult: () =>
+				Promise.resolve({
+					jobId: "job_failed",
+					state: "failed",
+					error: {
+						message: "GPU worker unavailable",
+						code: "WORKER_UNAVAILABLE",
+					},
+				}),
 		};
 		const { app } = createGenerationTestApp(provider);
 		const createScenarioResponse = await app.request("/api/scenarios", {
@@ -341,7 +360,7 @@ describe("generation verification scaffolding", () => {
 				params: { seed: 7 },
 			}),
 		});
-		const scenario = await createScenarioResponse.json();
+		const scenario = (await createScenarioResponse.json()) as ScenarioRecord;
 		const runResponse = await app.request(`/api/scenarios/${scenario.id}/runs`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -353,33 +372,34 @@ describe("generation verification scaffolding", () => {
 				},
 			}),
 		});
-		const run = await runResponse.json();
+		const run = (await runResponse.json()) as RunRecord;
 		const syncResponse = await app.request(`/api/runs/${run.id}/sync`, {
 			method: "POST",
 		});
-		const syncedPayload = await syncResponse.json();
+		const syncedPayload = (await syncResponse.json()) as SyncResponse;
 
 		expect(syncResponse.status).toBe(200);
-		expect(syncedPayload.run.status).toBe("failed");
-		expect(syncedPayload.run.errorSummary).toBe("GPU worker unavailable");
+		expect(syncedPayload.run?.status).toBe("failed");
+		expect(syncedPayload.run?.errorSummary).toBe("GPU worker unavailable");
 		expect(syncedPayload.artifacts).toEqual([]);
 	});
 
 	test("rerunning a scenario with a second input image creates a distinct run", async () => {
 		const requestedAssets: string[] = [];
 		const provider: RunpodProvider = {
-			submit: async (payload) => {
+			submit: (payload) => {
 				requestedAssets.push(payload.input.inputAssetUrl);
-				return {
+				return Promise.resolve({
 					id: `job_${requestedAssets.length}`,
 					status: "queued",
-				};
+				});
 			},
-			getResult: async (jobId) => ({
-				id: jobId,
-				status: "completed",
-				output: { artifacts: [] },
-			}),
+			getResult: (jobId) =>
+				Promise.resolve({
+					id: jobId,
+					status: "completed",
+					output: { artifacts: [] },
+				}),
 		};
 		const { app, store } = createGenerationTestApp(provider);
 		const createScenarioResponse = await app.request("/api/scenarios", {
@@ -392,7 +412,7 @@ describe("generation verification scaffolding", () => {
 				params: { seed: 7 },
 			}),
 		});
-		const scenario = await createScenarioResponse.json();
+		const scenario = (await createScenarioResponse.json()) as ScenarioRecord;
 
 		await app.request(`/api/scenarios/${scenario.id}/runs`, {
 			method: "POST",
@@ -423,6 +443,8 @@ describe("generation verification scaffolding", () => {
 		]);
 		expect(store.runs).toHaveLength(2);
 		expect(new Set(store.runs.map((run) => run.id)).size).toBe(2);
-		expect(new Set(store.runs.map((run) => run.scenarioId))).toEqual(new Set([scenario.id]));
+		expect(new Set(store.runs.map((run) => run.scenarioId))).toEqual(
+			new Set([scenario.id]),
+		);
 	});
 });

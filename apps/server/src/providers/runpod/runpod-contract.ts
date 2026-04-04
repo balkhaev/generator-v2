@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { jsonValueSchema } from "@/domain/scenarios/scenario-schema";
+import type { JsonValue } from "@/domain/scenarios/scenario-schema";
 
 export const runpodArtifactSchema = z.object({
 	kind: z.enum(["image", "video", "log", "json"]),
@@ -8,7 +8,12 @@ export const runpodArtifactSchema = z.object({
 	fileName: z.string().trim().min(1).optional(),
 });
 
-const runpodProviderStatusSchema = z.enum(["queued", "running", "completed", "failed"]);
+const runpodProviderStatusSchema = z.enum([
+	"queued",
+	"running",
+	"completed",
+	"failed",
+]);
 
 const runpodSubmitResponseSchema = z.union([
 	z.object({
@@ -46,7 +51,7 @@ export function createRunpodDispatchPayload(input: {
 	workflowKey: string;
 	prompt: string;
 	inputAssetUrl: string;
-	params: Record<string, z.infer<typeof jsonValueSchema>>;
+	params: Record<string, JsonValue>;
 }) {
 	return {
 		input: {

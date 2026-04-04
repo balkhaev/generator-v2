@@ -17,16 +17,16 @@ export interface RunpodSubmission {
 }
 
 export interface RunpodJob {
-	jobId: string;
-	status: RunpodRunStatus;
-	output: unknown;
 	errorSummary: string | null;
+	jobId: string;
+	output: unknown;
+	status: RunpodRunStatus;
 }
 
 interface RunpodConfig {
+	apiBaseUrl: string;
 	apiKey: string;
 	endpointId: string;
-	apiBaseUrl: string;
 }
 
 type RunpodFetch = (input: string, init?: RequestInit) => Promise<Response>;

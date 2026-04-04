@@ -9,27 +9,31 @@ const ltx23I2VParamsSchema = z.object({
 	motionBucket: z.number().int().min(1).max(255).default(127),
 	numFrames: z.number().int().min(1).max(240).default(97),
 });
+const artifactUrlPattern =
+	/(^|\/)[^\s]+\.(png|jpe?g|webp|gif|mp4|mov|webm)(\?.*)?$/i;
 
-export type WorkflowField = {
+export interface WorkflowField {
+	readonly description: string;
 	readonly key: string;
 	readonly label: string;
 	readonly type: "text" | "number";
-	readonly description: string;
-};
+}
 
-export type WorkflowDefinition<TParams extends z.ZodTypeAny = z.ZodTypeAny> = {
-	readonly key: string;
-	readonly name: string;
-	readonly description: string;
-	readonly parameterSchema: TParams;
-	readonly parameterFields: readonly WorkflowField[];
+export interface WorkflowDefinition<
+	TParams extends z.ZodTypeAny = z.ZodTypeAny,
+> {
 	buildRunpodInput: (args: {
 		prompt: string;
 		params: z.infer<TParams>;
 		inputImageUrl: string;
 	}) => Record<string, unknown>;
+	readonly description: string;
 	extractArtifactUrls: (output: unknown) => string[];
-};
+	readonly key: string;
+	readonly name: string;
+	readonly parameterFields: readonly WorkflowField[];
+	readonly parameterSchema: TParams;
+}
 
 export const workflowRegistry = {
 	"ltx-2.3-i2v": {
@@ -93,7 +97,7 @@ export const workflowRegistry = {
 				return (
 					value.startsWith("http://") ||
 					value.startsWith("https://") ||
-					/(^|\/)[^\s]+\.(png|jpe?g|webp|gif|mp4|mov|webm)(\?.*)?$/i.test(value)
+					artifactUrlPattern.test(value)
 				);
 			};
 
@@ -125,13 +129,13 @@ export const workflowRegistry = {
 
 export type WorkflowKey = keyof typeof workflowRegistry;
 export type WorkflowRegistry = typeof workflowRegistry;
-export type WorkflowSummary = {
+export interface WorkflowSummary {
+	defaults: Record<string, unknown>;
+	description: string;
 	key: string;
 	name: string;
-	description: string;
 	parameterFields: readonly WorkflowField[];
-	defaults: Record<string, unknown>;
-};
+}
 
 export function listWorkflows(): WorkflowSummary[] {
 	return Object.values(workflowRegistry).map((workflow) => ({

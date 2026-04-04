@@ -1,7 +1,7 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 import { db } from "@generator/db";
-import { artifact, scenario, scenarioRun } from "@generator/db/schema";
+import { artifact, scenario, scenarioRun } from "@generator/db/schema/generation";
 
 import { type ArtifactRecord, type OperatorRepository, type RunRecord, type ScenarioRecord } from "@/domain/operator";
 

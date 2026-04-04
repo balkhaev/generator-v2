@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 
 import {
   assertRunStatusTransition,
-  createScenarioInputSchema,
   validateScenarioInput,
 } from "@/domain/operator";
 import { getComfyOperatorEnv } from "@generator/env/server";

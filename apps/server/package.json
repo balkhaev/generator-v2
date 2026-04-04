@@ -13,6 +13,7 @@
     "@generator/auth": "workspace:*",
     "@generator/db": "workspace:*",
     "@generator/env": "workspace:*",
+    "drizzle-orm": "^0.45.1",
     "better-auth": "catalog:",
     "dotenv": "catalog:",
     "hono": "^4.8.2",

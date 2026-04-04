@@ -123,7 +123,7 @@ export const workflowRegistry = {
 export type WorkflowKey = keyof typeof workflowRegistry;
 export type WorkflowRegistry = typeof workflowRegistry;
 export type WorkflowSummary = {
-  key: WorkflowKey;
+  key: string;
   name: string;
   description: string;
   parameterFields: readonly WorkflowField[];

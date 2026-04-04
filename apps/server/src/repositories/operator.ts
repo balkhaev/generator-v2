@@ -5,6 +5,8 @@ import { artifact, scenario, scenarioRun } from "@generator/db/schema/generation
 
 import { type ArtifactRecord, type OperatorRepository, type RunRecord, type ScenarioRecord } from "@/domain/operator";
 
+type OperatorDatabase = typeof db;
+
 function mapScenario(record: typeof scenario.$inferSelect): ScenarioRecord {
   return {
     ...record,
@@ -32,7 +34,7 @@ function mapRun(
   };
 }
 
-export function createDrizzleOperatorRepository(database = db): OperatorRepository {
+export function createDrizzleOperatorRepository(database: OperatorDatabase = db): OperatorRepository {
   return {
     async listScenarios() {
       const rows = await database.select().from(scenario).orderBy(desc(scenario.updatedAt));
@@ -44,6 +46,9 @@ export function createDrizzleOperatorRepository(database = db): OperatorReposito
     },
     async createScenario(input) {
       const [row] = await database.insert(scenario).values(input).returning();
+      if (!row) {
+        throw new Error("Failed to create scenario");
+      }
       return mapScenario(row);
     },
     async updateScenario(scenarioId, input) {
@@ -78,6 +83,9 @@ export function createDrizzleOperatorRepository(database = db): OperatorReposito
     },
     async createRun(input) {
       const [row] = await database.insert(scenarioRun).values(input).returning();
+      if (!row) {
+        throw new Error("Failed to create run");
+      }
       return mapRun(row, []);
     },
     async updateRun(runId, input) {

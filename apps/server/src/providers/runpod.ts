@@ -27,7 +27,7 @@ type RunpodConfig = {
   apiBaseUrl: string;
 };
 
-type RunpodFetch = typeof fetch;
+type RunpodFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 export function normalizeRunpodStatus(status: string): RunpodRunStatus {
   const normalized = runpodRunStatusMap[status as keyof typeof runpodRunStatusMap];

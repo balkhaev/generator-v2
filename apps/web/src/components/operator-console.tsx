@@ -11,17 +11,20 @@ import {
 } from "@generator/ui/components/card";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
-import { Loader2, Play, Plus, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Loader2, Play, Plus, RefreshCw, RotateCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import {
+  buildCreateScenarioInput,
   createScenario,
+  createScenarioFormState,
   getOperatorConsoleSnapshot,
   launchScenarioRun,
+  syncScenarioRun,
   type AdminSnapshot,
-  type CreateScenarioInput,
   type LaunchRunInput,
+  type ScenarioFormState,
   type ScenarioRecord,
   type ScenarioRunRecord,
   type WorkflowDefinition,
@@ -39,7 +42,6 @@ const statusClasses: Record<ScenarioRunRecord["status"], string> = {
   failed: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300",
 };
 
-type ScenarioFormState = CreateScenarioInput;
 type RunDraft = LaunchRunInput;
 
 function formatDate(value: string) {
@@ -49,30 +51,25 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function createScenarioFormState(workflow: WorkflowDefinition): ScenarioFormState {
-  return {
-    name: "",
-    workflowKey: workflow.key,
-    prompt: "",
-    notes: "",
-    params: Object.fromEntries(
-      workflow.parameters.map((parameter) => [parameter.key, parameter.defaultValue]),
-    ),
-  };
-}
-
 function createRunDraft(scenarioId: string): RunDraft {
   return {
     scenarioId,
-    inputLabel: "",
     inputImageUrl: "",
   };
+}
+
+function mergeWarnings(currentWarnings: string[], source: "server" | "provisional", warning?: string) {
+  if (source === "server") {
+    return [];
+  }
+
+  return warning ? [warning] : currentWarnings;
 }
 
 function StatusPill({ status }: { status: ScenarioRunRecord["status"] }) {
   return (
     <span
-      className={`inline-flex rounded-none border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.18em] ${statusClasses[status]}`}
+      className={`inline-flex rounded-none border px-2 py-1 font-medium text-[10px] uppercase tracking-[0.18em] ${statusClasses[status]}`}
     >
       {status}
     </span>
@@ -85,6 +82,7 @@ export default function OperatorConsole() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSavingScenario, setIsSavingScenario] = useState(false);
   const [submittingRunId, setSubmittingRunId] = useState<string | null>(null);
+  const [syncingRunId, setSyncingRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scenarioForm, setScenarioForm] = useState<ScenarioFormState | null>(null);
   const [runDrafts, setRunDrafts] = useState<Record<string, RunDraft>>({});
@@ -101,7 +99,7 @@ export default function OperatorConsole() {
     return workflows.find((workflow) => workflow.key === scenarioForm.workflowKey) ?? workflows[0] ?? null;
   }, [scenarioForm, workflows]);
 
-  async function loadSnapshot({ silent = false }: { silent?: boolean } = {}) {
+  const loadSnapshot = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (silent) {
       setIsRefreshing(true);
     } else {
@@ -110,10 +108,11 @@ export default function OperatorConsole() {
 
     try {
       const nextSnapshot = await getOperatorConsoleSnapshot();
+      const initialWorkflow = nextSnapshot.workflows[0] ?? null;
 
       setSnapshot(nextSnapshot);
-      setError(null);
-      setScenarioForm((current) => current ?? createScenarioFormState(nextSnapshot.workflows[0]!));
+      setError(initialWorkflow ? null : "No workflows are available for the operator console yet.");
+      setScenarioForm((current) => current ?? (initialWorkflow ? createScenarioFormState(initialWorkflow) : null));
       setRunDrafts((current) => {
         const nextDrafts = { ...current };
 
@@ -131,11 +130,11 @@ export default function OperatorConsole() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    void loadSnapshot();
-  }, []);
+    loadSnapshot();
+  }, [loadSnapshot]);
 
   useEffect(() => {
     if (!selectedWorkflow) {
@@ -155,7 +154,7 @@ export default function OperatorConsole() {
     });
   }, [selectedWorkflow]);
 
-  if (isLoading || !scenarioForm || !selectedWorkflow) {
+  if (isLoading) {
     return (
       <div className="flex min-h-[32rem] items-center justify-center border border-dashed px-6">
         <Loader2 className="size-5 animate-spin" />
@@ -163,15 +162,30 @@ export default function OperatorConsole() {
     );
   }
 
-  const activeSnapshot = snapshot!;
-  const activeScenarioForm = scenarioForm!;
-  const activeWorkflow = selectedWorkflow!;
+  if (!snapshot || !scenarioForm || !selectedWorkflow) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Operator console unavailable</CardTitle>
+          <CardDescription>Refresh after the workflow registry and API routes are available.</CardDescription>
+        </CardHeader>
+        {error ? (
+          <CardContent>
+            <div className="border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-rose-700 dark:text-rose-300">
+              {error}
+            </div>
+          </CardContent>
+        ) : null}
+      </Card>
+    );
+  }
+
   const recentRuns = runs.slice(0, 6);
 
   async function handleCreateScenario(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!activeScenarioForm.name.trim() || !activeScenarioForm.prompt.trim()) {
+    if (!scenarioForm.name.trim() || !scenarioForm.prompt.trim()) {
       toast.error("Scenario name and prompt are required.");
       return;
     }
@@ -179,12 +193,13 @@ export default function OperatorConsole() {
     setIsSavingScenario(true);
 
     try {
-      const result = await createScenario({
-        ...activeScenarioForm,
-        name: activeScenarioForm.name.trim(),
-        prompt: activeScenarioForm.prompt.trim(),
-        notes: activeScenarioForm.notes.trim(),
-      });
+      const result = await createScenario(
+        buildCreateScenarioInput(selectedWorkflow, {
+          ...scenarioForm,
+          name: scenarioForm.name.trim(),
+          prompt: scenarioForm.prompt.trim(),
+        }),
+      );
 
       setSnapshot((current) => {
         if (!current) {
@@ -194,7 +209,7 @@ export default function OperatorConsole() {
         return {
           ...current,
           source: result.source,
-          warnings: result.warning ? [result.warning] : current.warnings,
+          warnings: mergeWarnings(current.warnings, result.source, result.warning),
           scenarios: [result.data, ...current.scenarios],
         };
       });
@@ -202,7 +217,7 @@ export default function OperatorConsole() {
         ...current,
         [result.data.id]: createRunDraft(result.data.id),
       }));
-      setScenarioForm(createScenarioFormState(activeWorkflow));
+      setScenarioForm(createScenarioFormState(selectedWorkflow));
       toast.success(result.source === "server" ? "Scenario saved." : "Scenario saved in provisional mode.");
     } catch (createError) {
       toast.error(createError instanceof Error ? createError.message : "Unable to save scenario.");
@@ -214,8 +229,8 @@ export default function OperatorConsole() {
   async function handleLaunchRun(scenario: ScenarioRecord) {
     const draft = runDrafts[scenario.id] ?? createRunDraft(scenario.id);
 
-    if (!draft.inputLabel.trim() || !draft.inputImageUrl.trim()) {
-      toast.error("Input label and image URL are required.");
+    if (!draft.inputImageUrl.trim()) {
+      toast.error("Input image URL is required.");
       return;
     }
 
@@ -224,7 +239,6 @@ export default function OperatorConsole() {
     try {
       const result = await launchScenarioRun({
         scenarioId: scenario.id,
-        inputLabel: draft.inputLabel.trim(),
         inputImageUrl: draft.inputImageUrl.trim(),
       });
 
@@ -236,7 +250,7 @@ export default function OperatorConsole() {
         return {
           ...current,
           source: result.source,
-          warnings: result.warning ? [result.warning] : current.warnings,
+          warnings: mergeWarnings(current.warnings, result.source, result.warning),
           runs: [result.data, ...current.runs],
         };
       });
@@ -249,6 +263,32 @@ export default function OperatorConsole() {
       toast.error(runError instanceof Error ? runError.message : "Unable to launch run.");
     } finally {
       setSubmittingRunId(null);
+    }
+  }
+
+  async function handleSyncRun(runId: string) {
+    setSyncingRunId(runId);
+
+    try {
+      const result = await syncScenarioRun(runId);
+
+      setSnapshot((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          source: result.source,
+          warnings: mergeWarnings(current.warnings, result.source, result.warning),
+          runs: current.runs.map((run) => (run.id === runId ? result.data : run)),
+        };
+      });
+      toast.success(result.source === "server" ? "Run status refreshed." : "Run status refreshed from provisional data.");
+    } catch (syncError) {
+      toast.error(syncError instanceof Error ? syncError.message : "Unable to sync run status.");
+    } finally {
+      setSyncingRunId(null);
     }
   }
 
@@ -266,12 +306,12 @@ export default function OperatorConsole() {
             <div>
               <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Workflow registry</p>
               <p className="mt-2 text-3xl font-medium">{workflows.length}</p>
-              <p className="text-muted-foreground">Hardcoded MVP entry ready for the ltx-2.3 i2v path.</p>
+              <p className="text-muted-foreground">The current server payload drives the available workflow cards and defaults.</p>
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Scenario library</p>
               <p className="mt-2 text-3xl font-medium">{scenarios.length}</p>
-              <p className="text-muted-foreground">Reusable prompt + parameter bundles for repeated operator runs.</p>
+              <p className="text-muted-foreground">Reusable prompt and parameter bundles for repeated operator runs.</p>
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Recent runs</p>
@@ -282,25 +322,25 @@ export default function OperatorConsole() {
           <CardFooter className="justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
               <span>Data source</span>
-              <span className="border px-2 py-1">{activeSnapshot.source}</span>
+              <span className="border px-2 py-1">{snapshot.source}</span>
             </div>
-            <Button size="sm" variant="outline" onClick={() => void loadSnapshot({ silent: true })}>
+            <Button size="sm" variant="outline" onClick={() => loadSnapshot({ silent: true })}>
               {isRefreshing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               Refresh
             </Button>
           </CardFooter>
         </Card>
 
-        {activeSnapshot.warnings.length > 0 ? (
+        {snapshot.warnings.length > 0 ? (
           <Card size="sm">
             <CardHeader>
               <CardTitle>Provisional integration notes</CardTitle>
               <CardDescription>
-                The UI is already wired to the intended API surface, with a browser-backed fallback while server routes are still landing.
+                The UI falls back to browser-backed state when the server routes are unavailable.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-2">
-              {activeSnapshot.warnings.map((warning) => (
+              {snapshot.warnings.map((warning) => (
                 <div key={warning} className="border border-dashed px-3 py-2 text-xs text-muted-foreground">
                   {warning}
                 </div>
@@ -326,7 +366,10 @@ export default function OperatorConsole() {
                 const draft = runDrafts[scenario.id] ?? createRunDraft(scenario.id);
 
                 return (
-                  <article key={scenario.id} className="grid gap-4 border px-4 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,22rem)]">
+                  <article
+                    key={scenario.id}
+                    className="grid gap-4 border px-4 py-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,22rem)]"
+                  >
                     <div className="grid gap-3">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
@@ -338,12 +381,11 @@ export default function OperatorConsole() {
                         </p>
                       </div>
                       <p>{scenario.prompt}</p>
-                      {scenario.notes ? <p className="text-muted-foreground">{scenario.notes}</p> : null}
                       <dl className="grid gap-2 sm:grid-cols-3">
                         {Object.entries(scenario.params).map(([key, value]) => (
                           <div key={key} className="border px-3 py-2">
                             <dt className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{key}</dt>
-                            <dd className="mt-1 text-sm font-medium">{value}</dd>
+                            <dd className="mt-1 text-sm font-medium">{String(value)}</dd>
                           </div>
                         ))}
                       </dl>
@@ -356,49 +398,28 @@ export default function OperatorConsole() {
                         </p>
                       </div>
                       <div className="grid gap-2">
-                        <div className="grid gap-2">
-                          <Label htmlFor={`label-${scenario.id}`}>Input label</Label>
-                          <Input
-                            id={`label-${scenario.id}`}
-                            value={draft.inputLabel}
-                            onChange={(event) => {
-                              const value = event.target.value;
+                        <Label htmlFor={`image-${scenario.id}`}>Input image URL</Label>
+                        <Input
+                          id={`image-${scenario.id}`}
+                          value={draft.inputImageUrl}
+                          onChange={(event) => {
+                            const value = event.target.value;
 
-                              setRunDrafts((current) => ({
-                                ...current,
-                                [scenario.id]: {
-                                  ...draft,
-                                  inputLabel: value,
-                                },
-                              }));
-                            }}
-                            placeholder="Front hero image"
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor={`image-${scenario.id}`}>Input image URL</Label>
-                          <Input
-                            id={`image-${scenario.id}`}
-                            value={draft.inputImageUrl}
-                            onChange={(event) => {
-                              const value = event.target.value;
-
-                              setRunDrafts((current) => ({
-                                ...current,
-                                [scenario.id]: {
-                                  ...draft,
-                                  inputImageUrl: value,
-                                },
-                              }));
-                            }}
-                            placeholder="https://assets.example.com/source/front-shot.png"
-                          />
-                        </div>
+                            setRunDrafts((current) => ({
+                              ...current,
+                              [scenario.id]: {
+                                ...draft,
+                                inputImageUrl: value,
+                              },
+                            }));
+                          }}
+                          placeholder="https://assets.example.com/source/front-shot.png"
+                        />
+                        <p className="text-muted-foreground">
+                          The review queue derives the run label directly from the input file name.
+                        </p>
                       </div>
-                      <Button
-                        onClick={() => void handleLaunchRun(scenario)}
-                        disabled={submittingRunId === scenario.id}
-                      >
+                      <Button onClick={() => handleLaunchRun(scenario)} disabled={submittingRunId === scenario.id}>
                         {submittingRunId === scenario.id ? (
                           <Loader2 className="size-3.5 animate-spin" />
                         ) : (
@@ -424,13 +445,13 @@ export default function OperatorConsole() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form className="grid gap-4" onSubmit={(event) => void handleCreateScenario(event)}>
+            <form className="grid gap-4" onSubmit={handleCreateScenario}>
               <div className="grid gap-2">
                 <Label htmlFor="workflow-key">Workflow</Label>
                 <select
                   id="workflow-key"
                   className={selectClassName}
-                  value={activeScenarioForm.workflowKey}
+                  value={scenarioForm.workflowKey}
                   onChange={(event) => {
                     const workflow = workflows.find((item) => item.key === event.target.value);
 
@@ -447,24 +468,17 @@ export default function OperatorConsole() {
                     </option>
                   ))}
                 </select>
-                <p className="text-muted-foreground">{activeWorkflow.summary}</p>
+                <p className="text-muted-foreground">{selectedWorkflow.summary}</p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="scenario-name">Scenario name</Label>
                 <Input
                   id="scenario-name"
-                  value={activeScenarioForm.name}
+                  value={scenarioForm.name}
                   onChange={(event) => {
                     const value = event.target.value;
 
-                    setScenarioForm((current) =>
-                      current
-                        ? {
-                            ...current,
-                            name: value,
-                          }
-                        : current,
-                    );
+                    setScenarioForm((current) => (current ? { ...current, name: value } : current));
                   }}
                   placeholder="Studio hero pan"
                 />
@@ -474,50 +488,22 @@ export default function OperatorConsole() {
                 <textarea
                   id="scenario-prompt"
                   className={textareaClassName}
-                  value={activeScenarioForm.prompt}
+                  value={scenarioForm.prompt}
                   onChange={(event) => {
                     const value = event.target.value;
 
-                    setScenarioForm((current) =>
-                      current
-                        ? {
-                            ...current,
-                            prompt: value,
-                          }
-                        : current,
-                    );
+                    setScenarioForm((current) => (current ? { ...current, prompt: value } : current));
                   }}
-                  placeholder={activeWorkflow.promptHint}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="scenario-notes">Operator notes</Label>
-                <textarea
-                  id="scenario-notes"
-                  className={textareaClassName}
-                  value={activeScenarioForm.notes}
-                  onChange={(event) => {
-                    const value = event.target.value;
-
-                    setScenarioForm((current) =>
-                      current
-                        ? {
-                            ...current,
-                            notes: value,
-                          }
-                        : current,
-                    );
-                  }}
-                  placeholder="Explain what input framing or product category this scenario is tuned for."
+                  placeholder={selectedWorkflow.promptHint}
                 />
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
-                {activeWorkflow.parameters.map((parameter) => (
+                {selectedWorkflow.parameters.map((parameter) => (
                   <div key={parameter.key} className="grid gap-2">
                     <Label htmlFor={parameter.key}>{parameter.label}</Label>
                     <Input
                       id={parameter.key}
-                      value={activeScenarioForm.params[parameter.key] ?? ""}
+                      value={scenarioForm.params[parameter.key] ?? ""}
                       onChange={(event) => {
                         const value = event.target.value;
 
@@ -575,7 +561,7 @@ export default function OperatorConsole() {
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <dt>Provider job</dt>
-                      <dd className="font-mono text-[11px]">{run.providerJobId}</dd>
+                      <dd className="font-mono text-[11px]">{run.providerJobId ?? "pending"}</dd>
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <dt>Input image</dt>
@@ -608,6 +594,21 @@ export default function OperatorConsole() {
                         ))}
                       </div>
                     </div>
+                  ) : null}
+                  {run.status === "queued" || run.status === "running" ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSyncRun(run.id)}
+                      disabled={syncingRunId === run.id}
+                    >
+                      {syncingRunId === run.id ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <RotateCw className="size-3.5" />
+                      )}
+                      Sync status
+                    </Button>
                   ) : null}
                 </article>
               ))

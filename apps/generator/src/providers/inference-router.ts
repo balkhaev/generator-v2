@@ -34,19 +34,25 @@ export function createInferenceRouter(clients: {
 		) {
 			return clients.cerebrium;
 		}
-		return clients.fal ?? clients.cerebrium!;
+		if (clients.fal) {
+			return clients.fal;
+		}
+		if (clients.cerebrium) {
+			return clients.cerebrium;
+		}
+		throw new Error("No inference client configured for this endpoint");
 	}
 
 	return {
-		async submit(payload): Promise<InferenceSubmission> {
+		submit(payload): Promise<InferenceSubmission> {
 			return routeByPayload(payload).submit(payload);
 		},
 
-		async getStatus(jobId, endpointId): Promise<InferenceJob> {
+		getStatus(jobId, endpointId): Promise<InferenceJob> {
 			return routeByEndpoint(endpointId).getStatus(jobId, endpointId);
 		},
 
-		async cancel(jobId, endpointId): Promise<void> {
+		cancel(jobId, endpointId): Promise<void> {
 			return routeByEndpoint(endpointId).cancel(jobId, endpointId);
 		},
 	};

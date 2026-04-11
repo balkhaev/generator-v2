@@ -1,12 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import { getWorkflowDefinition, listWorkflows } from "@generator/workflows";
 
+const workflowKeyProviderPrefixPattern = /^(fal-|cerebrium-)/;
+
 describe("workflow registry", () => {
-	it("lists only fal workflows", () => {
+	it("lists only fal- or cerebrium-prefixed workflows", () => {
 		const workflows = listWorkflows();
 		expect(workflows.length).toBeGreaterThan(0);
 		for (const workflow of workflows) {
-			expect(workflow.key).toMatch(/^fal-/);
+			expect(workflow.key).toMatch(workflowKeyProviderPrefixPattern);
 		}
 	});
 
@@ -48,10 +50,15 @@ describe("workflow registry", () => {
 			})
 		).toMatchObject({
 			__falModel: "fal-ai/z-image/turbo/lora",
+			enable_safety_checker: false,
+			image_size: "portrait_4_3",
+			num_images: 1,
+			num_inference_steps: 8,
+			output_format: "png",
 			prompt: "portrait photo of my_character, cinematic lighting",
 			loras: [
 				{
-					model_name: "https://storage.example.com/my-lora.safetensors",
+					path: "https://storage.example.com/my-lora.safetensors",
 					weight: 0.8,
 				},
 			],

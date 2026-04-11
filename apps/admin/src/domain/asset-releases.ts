@@ -265,18 +265,35 @@ function toSnapshot(details: AssetReleaseDetailsRecord): AssetReleaseSnapshot {
 }
 
 export class AssetReleaseService {
+	private readonly repository: AssetReleaseRepository;
+	private readonly storage: AssetStorage;
+	private readonly syncLauncher: VolumeSyncLauncher;
+	private readonly storageBucket: string;
+	private readonly volumes: Array<{
+		id: string;
+		label?: string;
+		networkVolumeId?: string;
+		region?: string;
+	}>;
+
 	constructor(
-		private readonly repository: AssetReleaseRepository,
-		private readonly storage: AssetStorage,
-		private readonly syncLauncher: VolumeSyncLauncher,
-		private readonly storageBucket: string,
-		private readonly volumes: Array<{
+		repository: AssetReleaseRepository,
+		storage: AssetStorage,
+		syncLauncher: VolumeSyncLauncher,
+		storageBucket: string,
+		volumes: Array<{
 			id: string;
 			label?: string;
 			networkVolumeId?: string;
 			region?: string;
 		}>
-	) {}
+	) {
+		this.repository = repository;
+		this.storage = storage;
+		this.syncLauncher = syncLauncher;
+		this.storageBucket = storageBucket;
+		this.volumes = volumes;
+	}
 
 	async createRelease(input: {
 		files: File[];
@@ -431,11 +448,12 @@ export class AssetReleaseService {
 				const hasAllSucceeded = completedJobs.every(
 					(job) => job.status === "succeeded"
 				);
-				const nextStatus: AssetReleaseStatus = hasFailure
-					? "failed"
-					: hasAllSucceeded
-						? "ready"
-						: "degraded";
+				let nextStatus: AssetReleaseStatus = "degraded";
+				if (hasFailure) {
+					nextStatus = "failed";
+				} else if (hasAllSucceeded) {
+					nextStatus = "ready";
+				}
 
 				if (release.release.status !== nextStatus) {
 					await this.repository.updateAssetRelease(release.release.id, {

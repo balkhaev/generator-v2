@@ -152,7 +152,7 @@ function createExecutionClientStub(
 				providerEndpointId: "endpoint-1",
 				providerJobId: "job-1",
 				status: "succeeded",
-				workflowKey: "ltx-2.3-i2v",
+				workflowKey: "fal-zimage-turbo",
 			});
 		},
 		syncExecution(input) {
@@ -226,7 +226,7 @@ describe("studio backend", () => {
 					});
 				},
 				getExecution() {
-					calls.push("get:ltx-2.3-i2v");
+					calls.push("get:fal-zimage-turbo");
 					return Promise.resolve({
 						artifacts: [{ url: "https://cdn.example.com/output.mp4" }],
 						errorSummary: null,
@@ -235,7 +235,7 @@ describe("studio backend", () => {
 						providerEndpointId: "endpoint-1",
 						providerJobId: "job-1",
 						status: "succeeded",
-						workflowKey: "ltx-2.3-i2v",
+						workflowKey: "fal-zimage-turbo",
 					});
 				},
 				syncExecution(input) {
@@ -269,7 +269,7 @@ describe("studio backend", () => {
 					name: "Studio scenario",
 					params: { steps: 12 },
 					prompt: "Generate a cinematic clip",
-					workflowKey: "ltx-2.3-i2v",
+					workflowKey: "fal-zimage-turbo",
 				}),
 				headers: {
 					"content-type": "application/json",
@@ -308,7 +308,7 @@ describe("studio backend", () => {
 		expect(syncedRun.artifacts[0]?.url).toBe(
 			"https://cdn.example.com/output.mp4"
 		);
-		expect(calls).toEqual(["create:ltx-2.3-i2v", "sync:job-1"]);
+		expect(calls).toEqual(["create:fal-zimage-turbo", "sync:job-1"]);
 	});
 
 	it("reads asset release routes from the local studio read-model", async () => {
@@ -425,7 +425,7 @@ describe("studio backend", () => {
 			name: "Snapshot scenario",
 			params: { steps: 8 },
 			prompt: "Snapshot prompt",
-			workflowKey: "ltx-2.3-i2v",
+			workflowKey: "fal-zimage-turbo",
 		});
 		await repository.createRun({
 			errorSummary: null,
@@ -436,7 +436,7 @@ describe("studio backend", () => {
 			providerJobId: "job-1",
 			scenarioId: "scenario-1",
 			status: "queued",
-			workflowKey: "ltx-2.3-i2v",
+			workflowKey: "fal-zimage-turbo",
 		});
 
 		const app = createApp({
@@ -472,6 +472,8 @@ describe("studio backend", () => {
 		]);
 		expect(snapshot.scenarios[0]?.name).toBe("Snapshot scenario");
 		expect(snapshot.runs[0]?.scenarioName).toBe("Snapshot scenario");
-		expect(snapshot.workflows[0]?.key).toBe("ltx-2.3-i2v");
+		expect(snapshot.workflows.some((w) => w.key === "fal-zimage-turbo")).toBe(
+			true
+		);
 	});
 });

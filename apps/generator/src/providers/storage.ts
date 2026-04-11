@@ -1,10 +1,11 @@
 const supportedInputSchemes = ["http:", "https:"];
 const supportedOutputSchemes = ["http:", "https:", "data:"];
+const leadingSlashesPattern = /^\/+/u;
 
-type StorageConfig = {
+interface StorageConfig {
 	inputBaseUrl: string;
 	outputBaseUrl: string;
-};
+}
 
 export type StorageAdapter = ReturnType<typeof createStorageAdapter>;
 
@@ -47,14 +48,14 @@ export function createStorageAdapter(config?: Partial<StorageConfig>) {
 
 			const { outputBaseUrl } = resolveConfig();
 			return new URL(
-				outputUrl.replace(/^\/+/, ""),
+				outputUrl.replace(leadingSlashesPattern, ""),
 				`${outputBaseUrl}/`
 			).toString();
 		},
 		createInputAssetKey(filename: string) {
 			const { inputBaseUrl } = resolveConfig();
 			return new URL(
-				filename.replace(/^\/+/, ""),
+				filename.replace(leadingSlashesPattern, ""),
 				`${inputBaseUrl}/`
 			).toString();
 		},

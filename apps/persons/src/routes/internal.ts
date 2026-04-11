@@ -4,6 +4,8 @@ import { Hono } from "hono";
 
 import type { PersonsService } from "@/domain/persons";
 
+const bearerPrefixPattern = /^Bearer\s+/i;
+
 export function createInternalRoutes(service: PersonsService) {
 	const app = new Hono();
 
@@ -25,7 +27,9 @@ export function createInternalRoutes(service: PersonsService) {
 	});
 
 	app.post("/lora-trainings", async (c) => {
-		const token = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
+		const token = c.req
+			.header("authorization")
+			?.replace(bearerPrefixPattern, "");
 		if (
 			token !==
 			(process.env.TRAINING_CONTROL_TOKEN ?? "local-training-control-token")

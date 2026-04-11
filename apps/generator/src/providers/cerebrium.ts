@@ -76,29 +76,31 @@ export function createCerebriumClient(options: {
 			return { endpointId, jobId: runId, status: "succeeded" };
 		},
 
-		async getStatus(jobId, endpointId): Promise<InferenceJob> {
+		getStatus(jobId, endpointId): Promise<InferenceJob> {
 			const cached = resultCache.get(jobId);
 			resultCache.delete(jobId);
 
 			if (cached && typeof cached.error === "string") {
-				return {
+				return Promise.resolve({
 					endpointId: endpointId ?? "",
 					errorSummary: cached.error,
 					jobId,
 					output: null,
 					status: "failed",
-				};
+				});
 			}
 
-			return {
+			return Promise.resolve({
 				endpointId: endpointId ?? "",
 				errorSummary: null,
 				jobId,
 				output: cached ?? null,
 				status: cached ? "succeeded" : "failed",
-			};
+			});
 		},
 
-		async cancel(): Promise<void> {},
+		cancel(): Promise<void> {
+			return Promise.resolve();
+		},
 	};
 }

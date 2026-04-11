@@ -52,7 +52,7 @@ export function createAdminTrainingClient(
 	}
 
 	return {
-		async startPersonLoraTraining(
+		startPersonLoraTraining(
 			input: StartPersonLoraTrainingInput,
 			options?: {
 				debugCorrelationId?: string;

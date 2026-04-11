@@ -11,10 +11,16 @@ import {
 type FetchLike = typeof fetch;
 
 export class AssetReleasePresetService {
+	private readonly assetReleaseService: AssetReleaseService;
+	private readonly fetchImpl: FetchLike;
+
 	constructor(
-		private readonly assetReleaseService: AssetReleaseService,
-		private readonly fetchImpl: FetchLike = fetch
-	) {}
+		assetReleaseService: AssetReleaseService,
+		fetchImpl: FetchLike = fetch
+	) {
+		this.assetReleaseService = assetReleaseService;
+		this.fetchImpl = fetchImpl;
+	}
 
 	listPresets() {
 		return listAssetReleasePresets().map(toAssetReleasePresetSummary);

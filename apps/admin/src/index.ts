@@ -21,11 +21,15 @@ const internalTrainingControlService = new PersonLoraTrainingControlService(
 );
 
 const noopStorage: AssetStorage = {
-	async readJson() {
-		return null;
+	readJson() {
+		return Promise.resolve(null);
 	},
-	async writeJson() {},
-	async writeObject() {},
+	async writeJson() {
+		await Promise.resolve();
+	},
+	async writeObject() {
+		await Promise.resolve();
+	},
 };
 
 const assetReleaseRepository = createDrizzleAssetReleaseRepository();

@@ -161,7 +161,7 @@ async function toDataUrl(url: string): Promise<string> {
 	}
 	const buf = await downloadAsBuffer(url);
 	const b64 = Buffer.from(buf).toString("base64");
-	const ext = url.match(/\.(png|jpe?g|webp)/i)?.[1]?.toLowerCase() ?? "jpeg";
+	const ext = url.match(REF_EXT_PATTERN)?.[1]?.toLowerCase() ?? "jpeg";
 	const mime = ext === "png" ? "image/png" : "image/jpeg";
 	return `data:${mime};base64,${b64}`;
 }
@@ -595,17 +595,26 @@ export class CerebriumLoraTrainingRunner {
 				method: this.s3Config ? "s3" : "fal-storage",
 			});
 
-			const datasetUrl = this.s3Config
-				? await uploadZipToS3(
-						zipData,
-						`${outputName}-dataset.zip`,
-						this.s3Config
-					)
-				: await uploadZipToFalStorage(
-						this.falKey!,
-						zipData,
-						`${outputName}-dataset.zip`
+			let datasetUrl: string;
+			if (this.s3Config) {
+				datasetUrl = await uploadZipToS3(
+					zipData,
+					`${outputName}-dataset.zip`,
+					this.s3Config
+				);
+			} else {
+				const falKey = this.falKey;
+				if (!falKey) {
+					throw new Error(
+						"FAL_KEY is required for dataset upload when S3 is not configured"
 					);
+				}
+				datasetUrl = await uploadZipToFalStorage(
+					falKey,
+					zipData,
+					`${outputName}-dataset.zip`
+				);
+			}
 
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
@@ -637,6 +646,7 @@ export class CerebriumLoraTrainingRunner {
 				steps: trainingSteps,
 			});
 
+			const trainingStart = Date.now();
 			const trainingResult = await cerebriumRequest<{
 				lora_url: string;
 			}>(
@@ -655,6 +665,10 @@ export class CerebriumLoraTrainingRunner {
 				},
 				TRAINING_TIMEOUT_MS
 			);
+			this.logger.info("cerebrium-lora.training-completed", {
+				personId: parsed.personId,
+				durationMs: Date.now() - trainingStart,
+			});
 
 			const loraUrl = trainingResult.lora_url;
 			if (!loraUrl) {

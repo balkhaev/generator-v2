@@ -145,7 +145,7 @@ const personLoraTrainingEventSchema = z.object({
 	triggerWord: optionalStringSchema,
 });
 
-export type PersonGenerationRecord = {
+export interface PersonGenerationRecord {
 	createdAt: Date;
 	errorSummary: string | null;
 	id: string;
@@ -160,9 +160,9 @@ export type PersonGenerationRecord = {
 	status: PersonGenerationStatus;
 	title: string;
 	updatedAt: Date;
-};
+}
 
-export type PersonRecord = {
+export interface PersonRecord {
 	createdAt: Date;
 	datasetUrl: string | null;
 	description: string;
@@ -177,9 +177,9 @@ export type PersonRecord = {
 	updatedAt: Date;
 	videoUrl: string | null;
 	voiceWavUrl: string | null;
-};
+}
 
-export type PersonsRepository = {
+export interface PersonsRepository {
 	createGeneration(
 		input: Omit<PersonGenerationRecord, "createdAt" | "updatedAt">
 	): Promise<PersonGenerationRecord>;
@@ -194,16 +194,10 @@ export type PersonsRepository = {
 	getGenerationByOperatorRunId(
 		operatorRunId: string
 	): Promise<PersonGenerationRecord | null>;
-	listQueuedGenerations(limit: number): Promise<PersonGenerationRecord[]>;
 	getPersonById(personId: string): Promise<PersonRecord | null>;
 	getPersonBySlug(slug: string): Promise<PersonRecord | null>;
 	listPersons(): Promise<PersonRecord[]>;
-	updatePerson(
-		personId: string,
-		input: Partial<
-			Omit<PersonRecord, "createdAt" | "updatedAt" | "generations">
-		>
-	): Promise<PersonRecord | null>;
+	listQueuedGenerations(limit: number): Promise<PersonGenerationRecord[]>;
 	updateGeneration(
 		generationId: string,
 		input: Partial<
@@ -213,9 +207,15 @@ export type PersonsRepository = {
 			>
 		>
 	): Promise<PersonGenerationRecord | null>;
-};
+	updatePerson(
+		personId: string,
+		input: Partial<
+			Omit<PersonRecord, "createdAt" | "updatedAt" | "generations">
+		>
+	): Promise<PersonRecord | null>;
+}
 
-export type OperatorServerClient = {
+export interface OperatorServerClient {
 	createExecution(
 		input: CreateGeneratorExecutionInput,
 		options?: {
@@ -237,13 +237,13 @@ export type OperatorServerClient = {
 			debugCorrelationId?: string;
 		}
 	): Promise<GeneratorExecutionRecord>;
-};
+}
 
-export type OperatorServerScenarioRecord = {
+export interface OperatorServerScenarioRecord {
 	id: string;
 	name: string;
 	prompt: string;
-};
+}
 
 function slugifySegment(value: string) {
 	return value
@@ -254,14 +254,17 @@ function slugifySegment(value: string) {
 		.replace(/-{2,}/g, "-");
 }
 
+const imageMediaUrlPattern = /\.(png|jpe?g|webp|gif)(\?.*)?$/;
+const audioMediaUrlPattern = /\.(wav|mp3|ogg|m4a)(\?.*)?$/;
+
 function inferMediaTypeFromUrl(url: string): PersonGenerationMediaType {
 	const normalizedUrl = url.toLowerCase();
 
-	if (/\.(png|jpe?g|webp|gif)(\?.*)?$/.test(normalizedUrl)) {
+	if (imageMediaUrlPattern.test(normalizedUrl)) {
 		return "image";
 	}
 
-	if (/\.(wav|mp3|ogg|m4a)(\?.*)?$/.test(normalizedUrl)) {
+	if (audioMediaUrlPattern.test(normalizedUrl)) {
 		return "audio";
 	}
 
@@ -281,15 +284,22 @@ function createPendingGenerationDataUrl(label: string) {
 }
 
 export class PersonsService {
+	private readonly repository: PersonsRepository;
+	private readonly operatorServerClient?: OperatorServerClient;
+	private readonly callbackConfig?: { token: string; url: string };
+	private readonly adminTrainingClient?: AdminTrainingClient;
+
 	constructor(
-		private readonly repository: PersonsRepository,
-		private readonly operatorServerClient?: OperatorServerClient,
-		private readonly callbackConfig?: {
-			token: string;
-			url: string;
-		},
-		private readonly adminTrainingClient?: AdminTrainingClient
-	) {}
+		repository: PersonsRepository,
+		operatorServerClient?: OperatorServerClient,
+		callbackConfig?: { token: string; url: string },
+		adminTrainingClient?: AdminTrainingClient
+	) {
+		this.repository = repository;
+		this.operatorServerClient = operatorServerClient;
+		this.callbackConfig = callbackConfig;
+		this.adminTrainingClient = adminTrainingClient;
+	}
 
 	listPersons() {
 		return this.repository.listPersons();
@@ -303,7 +313,7 @@ export class PersonsService {
 		return this.repository.findPersonByOperatorRunId(operatorRunId);
 	}
 
-	async createPerson(input: z.input<typeof createPersonInputSchema>) {
+	createPerson(input: z.input<typeof createPersonInputSchema>) {
 		const parsed = createPersonInputSchema.parse(input);
 
 		if (!parsed.referencePhotoUrl) {
@@ -442,7 +452,7 @@ export class PersonsService {
 	private async createPersonRecord(input: {
 		datasetUrl: string | null;
 		description: string;
-		generations: Array<Omit<PersonGenerationRecord, "createdAt" | "updatedAt">>;
+		generations: Omit<PersonGenerationRecord, "createdAt" | "updatedAt">[];
 		loraUrl: string | null;
 		metadata: Record<string, unknown>;
 		name: string;
@@ -755,6 +765,7 @@ export class PersonsService {
 		}
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: training callback state machine
 	async applyLoraTrainingEvent(input: {
 		context: Record<string, unknown>;
 		event: unknown;
@@ -905,6 +916,7 @@ export class PersonsService {
 		});
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: execution callback branches
 	async applyExecutionCallback(input: {
 		context: Record<string, unknown>;
 		execution: GeneratorExecutionRecord;
@@ -995,6 +1007,7 @@ export class PersonsService {
 		return this.repository.getPersonById(personId);
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: reconciliation loop
 	async reconcileQueuedGenerations(limit = 10) {
 		if (!this.operatorServerClient) {
 			return { updatedCount: 0 };

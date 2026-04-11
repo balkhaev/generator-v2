@@ -19,7 +19,11 @@ export function createAssetStorage() {
 }
 
 class BunS3AssetStorage implements AssetStorage {
-	constructor(private readonly client: Bun.S3Client) {}
+	private readonly client: Bun.S3Client;
+
+	constructor(client: Bun.S3Client) {
+		this.client = client;
+	}
 
 	async readJson<T>(key: string): Promise<T | null> {
 		const file = this.client.file(key);

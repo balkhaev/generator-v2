@@ -30,20 +30,22 @@ function createMemoryRepository(): PersonsRepository {
 	}
 
 	return {
-		async listPersons() {
-			return [...persons.values()]
-				.map((person) => hydratePerson(person.id))
-				.filter((person): person is PersonRecord => person !== null)
-				.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+		listPersons() {
+			return Promise.resolve(
+				[...persons.values()]
+					.map((person) => hydratePerson(person.id))
+					.filter((person): person is PersonRecord => person !== null)
+					.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+			);
 		},
-		async getPersonById(personId) {
-			return hydratePerson(personId);
+		getPersonById(personId) {
+			return Promise.resolve(hydratePerson(personId));
 		},
-		async getPersonBySlug(slug) {
+		getPersonBySlug(slug) {
 			const person = [...persons.values()].find((entry) => entry.slug === slug);
-			return person ? hydratePerson(person.id) : null;
+			return Promise.resolve(person ? hydratePerson(person.id) : null);
 		},
-		async createPerson(input) {
+		createPerson(input) {
 			const now = new Date();
 			const person: PersonRecord = {
 				...input.person,
@@ -62,12 +64,16 @@ function createMemoryRepository(): PersonsRepository {
 				});
 			}
 
-			return hydratePerson(person.id)!;
+			const created = hydratePerson(person.id);
+			if (!created) {
+				throw new Error("Failed to hydrate created person");
+			}
+			return Promise.resolve(created);
 		},
-		async updatePerson(personId, input) {
+		updatePerson(personId, input) {
 			const current = persons.get(personId);
 			if (!current) {
-				return null;
+				return Promise.resolve(null);
 			}
 
 			const updated: PersonRecord = {
@@ -77,37 +83,39 @@ function createMemoryRepository(): PersonsRepository {
 				generations: current.generations,
 			};
 			persons.set(personId, updated);
-			return hydratePerson(personId);
+			return Promise.resolve(hydratePerson(personId));
 		},
-		async deletePerson(personId) {
+		deletePerson(personId) {
 			for (const generation of generations.values()) {
 				if (generation.personId === personId) {
 					generations.delete(generation.id);
 				}
 			}
 
-			return persons.delete(personId);
+			return Promise.resolve(persons.delete(personId));
 		},
-		async findPersonByOperatorRunId(operatorRunId) {
+		findPersonByOperatorRunId(operatorRunId) {
 			const generation = [...generations.values()].find(
 				(entry) => entry.operatorRunId === operatorRunId
 			);
 
-			return generation ? hydratePerson(generation.personId) : null;
+			return Promise.resolve(
+				generation ? hydratePerson(generation.personId) : null
+			);
 		},
-		async createGeneration(input) {
+		createGeneration(input) {
 			const generation: PersonGenerationRecord = {
 				...input,
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			};
 			generations.set(generation.id, generation);
-			return generation;
+			return Promise.resolve(generation);
 		},
-		async updateGeneration(generationId, input) {
+		updateGeneration(generationId, input) {
 			const current = generations.get(generationId);
 			if (!current) {
-				return null;
+				return Promise.resolve(null);
 			}
 
 			const updated: PersonGenerationRecord = {
@@ -116,20 +124,22 @@ function createMemoryRepository(): PersonsRepository {
 				updatedAt: new Date(),
 			};
 			generations.set(generationId, updated);
-			return updated;
+			return Promise.resolve(updated);
 		},
-		async getGenerationByOperatorRunId(operatorRunId) {
-			return (
+		getGenerationByOperatorRunId(operatorRunId) {
+			return Promise.resolve(
 				[...generations.values()].find(
 					(generation) => generation.operatorRunId === operatorRunId
 				) ?? null
 			);
 		},
-		async listQueuedGenerations(limit) {
-			return [...generations.values()]
-				.filter((generation) => generation.status === "queued")
-				.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-				.slice(0, limit);
+		listQueuedGenerations(limit) {
+			return Promise.resolve(
+				[...generations.values()]
+					.filter((generation) => generation.status === "queued")
+					.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+					.slice(0, limit)
+			);
 		},
 	};
 }
@@ -212,7 +222,7 @@ function createAdminTrainingClient(): AdminTrainingClient {
 describe("persons api", () => {
 	it("creates persons with a mandatory reference photo and imports server runs", async () => {
 		const app = createApp({
-			corsOrigin: "http://localhost:3004",
+			corsOrigins: ["http://localhost:3004"],
 			repository: createMemoryRepository(),
 			operatorServerClient: createOperatorClient(),
 		});
@@ -265,7 +275,7 @@ describe("persons api", () => {
 
 	it("creates a person from a prompt by generating the reference avatar first", async () => {
 		const app = createApp({
-			corsOrigin: "http://localhost:3004",
+			corsOrigins: ["http://localhost:3004"],
 			repository: createMemoryRepository(),
 			operatorServerClient: createOperatorClient(),
 		});
@@ -304,7 +314,7 @@ describe("persons api", () => {
 	it("queues lora training for an existing person", async () => {
 		const app = createApp({
 			adminTrainingClient: createAdminTrainingClient(),
-			corsOrigin: "http://localhost:3004",
+			corsOrigins: ["http://localhost:3004"],
 			repository: createMemoryRepository(),
 			operatorServerClient: createOperatorClient(),
 		});

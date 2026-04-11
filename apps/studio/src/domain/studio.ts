@@ -233,22 +233,21 @@ export class StudioService {
 	private readonly executionClient: StudioExecutionClient;
 	private readonly logger: StudioLogger;
 	private readonly repository: StudioRepository;
+	private readonly callbackConfig?: { token: string; url: string };
 
 	constructor(
 		repository: StudioRepository,
 		executionClient: StudioExecutionClient,
 		logger: StudioLogger = console,
-		private readonly callbackConfig?: {
-			token: string;
-			url: string;
-		}
+		callbackConfig?: { token: string; url: string }
 	) {
 		this.repository = repository;
 		this.executionClient = executionClient;
 		this.logger = logger;
+		this.callbackConfig = callbackConfig;
 	}
 
-	private async resolveLatestExecution(
+	private resolveLatestExecution(
 		run: Pick<
 			StudioRunEntity,
 			"generatorRunId" | "providerEndpointId" | "providerJobId" | "workflowKey"
@@ -256,7 +255,7 @@ export class StudioService {
 		options?: {
 			debugCorrelationId?: string;
 		}
-	) {
+	): ReturnType<StudioExecutionClient["getExecution"]> {
 		if (run.providerJobId) {
 			return this.executionClient.syncExecution(
 				{

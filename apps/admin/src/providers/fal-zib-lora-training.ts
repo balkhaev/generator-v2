@@ -13,6 +13,7 @@ const DEFAULT_DATASET_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 2000;
 const REFERENCE_COUNT = 19;
+const referenceImageUrlExtensionPattern = /\.(png|jpe?g|webp)/i;
 
 const REFERENCE_VARIANT_SUFFIXES = [
 	"same subject, front-facing editorial portrait, soft daylight, neutral backdrop",
@@ -405,7 +406,7 @@ async function uploadZipToS3(
 		execSync(cmd, { timeout: 300_000 });
 		return `${s3Config.publicUrl}/${key}`;
 	} finally {
-		unlink(tmpPath).catch(() => {});
+		unlink(tmpPath).catch(() => undefined);
 	}
 }
 
@@ -531,7 +532,9 @@ export class FalZibLoraTrainingRunner {
 
 			const refPhoto = await downloadAsBuffer(parsed.referencePhotoUrl);
 			const refExt =
-				parsed.referencePhotoUrl.match(/\.(png|jpe?g|webp)/i)?.[0] ?? ".jpg";
+				parsed.referencePhotoUrl.match(
+					referenceImageUrlExtensionPattern
+				)?.[0] ?? ".jpg";
 			const generatedImages = await Promise.all(
 				referenceImageUrls.map(async (url, index) => ({
 					name: `${String(index + 1).padStart(3, "0")}.jpg`,

@@ -64,7 +64,7 @@ function getNextSyncDelay(
 	return DEFAULT_QUEUED_SYNC_DELAY_MS;
 }
 
-export type ExecutionEntity = {
+export interface ExecutionEntity {
 	artifacts: Array<{ url: string | null }>;
 	callback: {
 		context?: Record<string, unknown>;
@@ -76,15 +76,15 @@ export type ExecutionEntity = {
 	id: string;
 	inputImageUrl: string | null;
 	params: Record<string, unknown>;
+	prompt: string;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
-	prompt: string;
 	status: GeneratorExecutionRecord["status"];
 	updatedAt: Date;
 	workflowKey: string;
-};
+}
 
-export type ExecutionRepository = {
+export interface ExecutionRepository {
 	createExecution(
 		input: Omit<ExecutionEntity, "createdAt" | "updatedAt">
 	): Promise<ExecutionEntity>;
@@ -93,7 +93,7 @@ export type ExecutionRepository = {
 		executionId: string,
 		input: Partial<Omit<ExecutionEntity, "createdAt" | "updatedAt" | "id">>
 	): Promise<ExecutionEntity | null>;
-};
+}
 
 function toExecutionRecord(entity: ExecutionEntity): GeneratorExecutionRecord {
 	return {
@@ -130,13 +130,25 @@ function normalizeDirectExecution(input: {
 }
 
 export class ExecutionService {
+	private readonly repository: ExecutionRepository;
+	private readonly queue: GeneratorExecutionQueue;
+	private readonly inferenceClient: InferenceClient;
+	private readonly storageAdapter: StorageAdapter;
+	private readonly logger: ExecutionLogger;
+
 	constructor(
-		private readonly repository: ExecutionRepository,
-		private readonly queue: GeneratorExecutionQueue,
-		private readonly inferenceClient: InferenceClient,
-		private readonly storageAdapter: StorageAdapter,
-		private readonly logger: ExecutionLogger = console
-	) {}
+		repository: ExecutionRepository,
+		queue: GeneratorExecutionQueue,
+		inferenceClient: InferenceClient,
+		storageAdapter: StorageAdapter,
+		logger: ExecutionLogger = console
+	) {
+		this.repository = repository;
+		this.queue = queue;
+		this.inferenceClient = inferenceClient;
+		this.storageAdapter = storageAdapter;
+		this.logger = logger;
+	}
 
 	private buildSubmissionPayload(
 		execution: ExecutionEntity,
@@ -353,6 +365,7 @@ export class ExecutionService {
 		});
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: sync worker state machine
 	async processExecutionSyncJob(input: { executionId: string }) {
 		const execution = await this.repository.getExecutionById(input.executionId);
 		if (!execution?.providerJobId) {

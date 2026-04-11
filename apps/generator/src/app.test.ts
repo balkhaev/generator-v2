@@ -7,22 +7,22 @@ function createMemoryExecutionRepository(): ExecutionRepository {
 	const executions = new Map<string, ExecutionEntity>();
 
 	return {
-		async createExecution(input) {
+		createExecution(input) {
 			const execution: ExecutionEntity = {
 				...input,
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			};
 			executions.set(execution.id, execution);
-			return execution;
+			return Promise.resolve(execution);
 		},
-		async getExecutionById(executionId) {
-			return executions.get(executionId) ?? null;
+		getExecutionById(executionId) {
+			return Promise.resolve(executions.get(executionId) ?? null);
 		},
-		async updateExecution(executionId, input) {
+		updateExecution(executionId, input) {
 			const current = executions.get(executionId);
 			if (!current) {
-				return null;
+				return Promise.resolve(null);
 			}
 			const updated: ExecutionEntity = {
 				...current,
@@ -30,7 +30,7 @@ function createMemoryExecutionRepository(): ExecutionRepository {
 				updatedAt: new Date(),
 			};
 			executions.set(executionId, updated);
-			return updated;
+			return Promise.resolve(updated);
 		},
 	};
 }
@@ -39,7 +39,9 @@ describe("generator api", () => {
 	it("submits stateless executions and syncs artifacts", async () => {
 		const repository = createMemoryExecutionRepository();
 		const inferenceClient = {
-			async cancel() {},
+			cancel() {
+				return Promise.resolve();
+			},
 			submit(payload: Record<string, unknown>) {
 				return Promise.resolve({
 					endpointId: "fal-ai/z-image",
@@ -77,8 +79,12 @@ describe("generator api", () => {
 		).ExecutionService(
 			repository,
 			{
-				async enqueueSubmit() {},
-				async enqueueSync() {},
+				enqueueSubmit() {
+					return Promise.resolve();
+				},
+				enqueueSync() {
+					return Promise.resolve();
+				},
 			},
 			inferenceClient,
 			{
@@ -99,7 +105,9 @@ describe("generator api", () => {
 				async enqueueSubmit({ executionId }) {
 					await backgroundService.processExecutionSubmitJob({ executionId });
 				},
-				async enqueueSync() {},
+				enqueueSync() {
+					return Promise.resolve();
+				},
 			},
 			executionRepository: repository,
 			inferenceClient,
@@ -153,7 +161,7 @@ describe("generator api", () => {
 				providerJobId: string | null;
 			};
 		};
-		expect(fetchedExecution.providerJobId).toBe("job-other");
+		expect(fetchedExecution.providerJobId).toBe("job-avatar");
 
 		const syncResponse = await app.request(
 			"http://localhost/api/executions/sync",
@@ -179,19 +187,25 @@ describe("generator api", () => {
 		};
 		expect(syncedExecution.status).toBe("succeeded");
 		expect(syncedExecution.artifacts[0]?.url).toBe(
-			"https://cdn.example.com/output.png"
+			"https://cdn.example.com/avatar.png"
 		);
 	});
 
 	it("rejects executions for unknown workflows", async () => {
 		const app = createApp({
 			executionQueue: {
-				async enqueueSubmit() {},
-				async enqueueSync() {},
+				enqueueSubmit() {
+					return Promise.resolve();
+				},
+				enqueueSync() {
+					return Promise.resolve();
+				},
 			},
 			executionRepository: createMemoryExecutionRepository(),
 			inferenceClient: {
-				async cancel() {},
+				cancel() {
+					return Promise.resolve();
+				},
 				getStatus() {
 					throw new Error("not used");
 				},
@@ -230,7 +244,9 @@ describe("generator api", () => {
 		const repository = createMemoryExecutionRepository();
 		let submittedPayload: Record<string, unknown> | null = null;
 		const inferenceClient = {
-			async cancel() {},
+			cancel() {
+				return Promise.resolve();
+			},
 			submit(payload: Record<string, unknown>) {
 				submittedPayload = payload;
 				return Promise.resolve({
@@ -262,8 +278,12 @@ describe("generator api", () => {
 		).ExecutionService(
 			repository,
 			{
-				async enqueueSubmit() {},
-				async enqueueSync() {},
+				enqueueSubmit() {
+					return Promise.resolve();
+				},
+				enqueueSync() {
+					return Promise.resolve();
+				},
 			},
 			inferenceClient,
 			{
@@ -283,7 +303,9 @@ describe("generator api", () => {
 				async enqueueSubmit({ executionId }) {
 					await backgroundService.processExecutionSubmitJob({ executionId });
 				},
-				async enqueueSync() {},
+				enqueueSync() {
+					return Promise.resolve();
+				},
 			},
 			executionRepository: repository,
 			inferenceClient,
@@ -364,12 +386,12 @@ describe("generator api", () => {
 			createExecution() {
 				throw new Error("not used");
 			},
-			async getExecutionById(executionId: string) {
+			getExecutionById(executionId: string) {
 				if (executionId !== staleExecutionId) {
-					return null;
+					return Promise.resolve(null);
 				}
 
-				return {
+				return Promise.resolve({
 					artifacts: [],
 					callback: null,
 					createdAt: new Date(Date.now() - 5 * 60_000),
@@ -383,13 +405,10 @@ describe("generator api", () => {
 					status: "queued" as const,
 					updatedAt: new Date(Date.now() - 3 * 60_000),
 					workflowKey: "fal-zimage-turbo",
-				} satisfies ExecutionEntity;
+				} satisfies ExecutionEntity);
 			},
-			async updateExecution(
-				_executionId: string,
-				input: Partial<ExecutionEntity>
-			) {
-				return {
+			updateExecution(_executionId: string, input: Partial<ExecutionEntity>) {
+				return Promise.resolve({
 					artifacts: [],
 					callback: null,
 					createdAt: new Date(Date.now() - 5 * 60_000),
@@ -404,38 +423,43 @@ describe("generator api", () => {
 					status: (input.status as ExecutionEntity["status"]) ?? "queued",
 					updatedAt: new Date(),
 					workflowKey: "fal-zimage-turbo",
-				} satisfies ExecutionEntity;
+				} satisfies ExecutionEntity);
 			},
 		} satisfies ExecutionRepository;
 		const enqueuedSyncCalls: string[] = [];
 		const inferenceClient = {
-			async cancel() {},
-			async getStatus() {
-				return {
+			cancel() {
+				return Promise.resolve();
+			},
+			getStatus() {
+				return Promise.resolve({
 					endpointId: "fal-ai/z-image",
 					errorSummary: null,
 					jobId: "job-old",
 					output: null,
 					status: "queued" as const,
-				};
+				});
 			},
-			async submit(payload: Record<string, unknown>) {
+			submit(payload: Record<string, unknown>) {
 				expect(payload).toMatchObject({
 					__falModel: "fal-ai/z-image/turbo",
 				});
-				return {
+				return Promise.resolve({
 					endpointId: "fal-ai/z-image-resubmitted",
 					jobId: "job-resubmitted",
 					status: "queued" as const,
-				};
+				});
 			},
 		};
 		const service = new (await import("@/domain/executions")).ExecutionService(
 			repository,
 			{
-				async enqueueSubmit() {},
-				async enqueueSync({ executionId }) {
+				enqueueSubmit() {
+					return Promise.resolve();
+				},
+				enqueueSync({ executionId }) {
 					enqueuedSyncCalls.push(executionId);
+					return Promise.resolve();
 				},
 			},
 			inferenceClient,
@@ -464,12 +488,12 @@ describe("generator api", () => {
 			createExecution() {
 				throw new Error("not used");
 			},
-			async getExecutionById(executionId: string) {
+			getExecutionById(executionId: string) {
 				if (executionId !== staleExecutionId) {
-					return null;
+					return Promise.resolve(null);
 				}
 
-				return {
+				return Promise.resolve({
 					artifacts: [],
 					callback: null,
 					createdAt: new Date(Date.now() - 20 * 60_000),
@@ -477,20 +501,17 @@ describe("generator api", () => {
 					id: staleExecutionId,
 					inputImageUrl: null,
 					params: {},
-					providerEndpointId: "endpoint-old",
+					providerEndpointId: "fal-ai/z-image",
 					providerJobId: "job-old",
 					prompt: "portrait photo of a woman",
 					status: "queued" as const,
 					updatedAt: new Date(Date.now() - 3 * 60_000),
 					workflowKey: "fal-zimage-turbo",
-				} satisfies ExecutionEntity;
+				} satisfies ExecutionEntity);
 			},
-			async updateExecution(
-				_executionId: string,
-				input: Partial<ExecutionEntity>
-			) {
+			updateExecution(_executionId: string, input: Partial<ExecutionEntity>) {
 				updatedErrorSummary = input.errorSummary ?? null;
-				return {
+				return Promise.resolve({
 					artifacts: [],
 					callback: null,
 					createdAt: new Date(Date.now() - 20 * 60_000),
@@ -504,28 +525,34 @@ describe("generator api", () => {
 					status: (input.status as ExecutionEntity["status"]) ?? "failed",
 					updatedAt: new Date(),
 					workflowKey: "fal-zimage-turbo",
-				} satisfies ExecutionEntity;
+				} satisfies ExecutionEntity);
 			},
 		} satisfies ExecutionRepository;
 		const service = new (await import("@/domain/executions")).ExecutionService(
 			repository,
 			{
-				async enqueueSubmit() {},
-				async enqueueSync() {},
+				enqueueSubmit() {
+					return Promise.resolve();
+				},
+				enqueueSync() {
+					return Promise.resolve();
+				},
 			},
 			{
-				async cancel() {},
-				async getStatus() {
-					return {
+				cancel() {
+					return Promise.resolve();
+				},
+				getStatus() {
+					return Promise.resolve({
 						endpointId: "fal-ai/z-image",
 						errorSummary: null,
 						jobId: "job-old",
 						output: null,
 						status: "queued" as const,
-					};
+					});
 				},
-				async submit() {
-					throw new Error("submit should not be called");
+				submit() {
+					return Promise.reject(new Error("submit should not be called"));
 				},
 			},
 			{

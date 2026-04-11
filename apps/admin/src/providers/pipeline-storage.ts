@@ -1,5 +1,8 @@
 import { getS3StorageEnv } from "@generator/env/server";
 
+const trailingSlashesPattern = /\/+$/u;
+const leadingSlashesPattern = /^\/+/u;
+
 type PipelineStorageObject = ArrayBuffer | Blob | Uint8Array | string;
 
 function resolvePublicBaseUrl(config: ReturnType<typeof getS3StorageEnv>) {
@@ -11,7 +14,7 @@ function resolvePublicBaseUrl(config: ReturnType<typeof getS3StorageEnv>) {
 		return explicitBaseUrl;
 	}
 
-	return `${config.S3_ENDPOINT.replace(/\/+$/u, "")}/${config.S3_BUCKET}`;
+	return `${config.S3_ENDPOINT.replace(trailingSlashesPattern, "")}/${config.S3_BUCKET}`;
 }
 
 export function createPipelineStorage() {
@@ -27,7 +30,10 @@ export function createPipelineStorage() {
 
 	return {
 		buildPublicUrl(key: string) {
-			return new URL(key.replace(/^\/+/u, ""), `${publicBaseUrl}/`).toString();
+			return new URL(
+				key.replace(leadingSlashesPattern, ""),
+				`${publicBaseUrl}/`
+			).toString();
 		},
 		getBucket() {
 			return config.S3_BUCKET;

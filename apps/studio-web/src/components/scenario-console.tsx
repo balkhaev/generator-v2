@@ -951,6 +951,7 @@ export default function ScenarioConsole({
 		);
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: launch tab layout
 	function renderLaunchTab() {
 		if (!selectedScenario) {
 			return (
@@ -1007,6 +1008,7 @@ export default function ScenarioConsole({
 					/>
 
 					{hasValidPreview ? (
+						// biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone for file input
 						<div
 							className="group relative overflow-hidden rounded-xl border border-foreground/8"
 							onDragOver={(event) => {
@@ -1065,6 +1067,7 @@ export default function ScenarioConsole({
 							</div>
 						</div>
 					) : (
+						// biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone for file input
 						<div
 							className="grid gap-3 rounded-xl border border-foreground/10 border-dashed px-3 py-3 transition hover:border-foreground/20 hover:bg-muted/5"
 							onDragOver={(event) => {

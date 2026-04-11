@@ -4,12 +4,12 @@ import {
 	queueNames,
 } from "@generator/queue";
 
-export type GeneratorExecutionQueue = {
+export interface GeneratorExecutionQueue {
 	enqueueSubmit(input: { executionId: string }): Promise<void>;
 	enqueueSync(input: { executionId: string; delayMs?: number }): Promise<void>;
-};
+}
 
-type CreateGeneratorExecutionQueueOptions = {
+interface CreateGeneratorExecutionQueueOptions {
 	concurrency?: number;
 	handler: (job: {
 		data: { executionId: string };
@@ -18,13 +18,13 @@ type CreateGeneratorExecutionQueueOptions = {
 	logger?: Pick<Console, "error" | "info">;
 	onJobExhausted?: (executionId: string, error: Error) => Promise<void>;
 	redisUrl: string;
-};
+}
 
 const DEFAULT_SYNC_DELAY_MS = 5000;
 
-export type GeneratorExecutionWorkerRuntime = {
+export interface GeneratorExecutionWorkerRuntime {
 	close: () => Promise<void>;
-};
+}
 
 export function createGeneratorExecutionQueueClient(
 	redisUrl: string

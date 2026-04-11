@@ -105,7 +105,7 @@ export function createDrizzlePersonsRepository(
 				.orderBy(desc(personGeneration.createdAt));
 			return mapPerson(personRow, generationRows.map(mapGeneration));
 		},
-		async createPerson(input) {
+		createPerson(input) {
 			return database.transaction(async (transaction) => {
 				const [personRow] = await transaction
 					.insert(person)

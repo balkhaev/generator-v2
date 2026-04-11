@@ -18,20 +18,20 @@ import { createIntegrationRoutes } from "@/routes/integrations";
 import { createInternalRoutes } from "@/routes/internal";
 import { createPersonRoutes } from "@/routes/persons";
 
-type AppOptions = {
+interface AppOptions {
+	adminTrainingClient?: AdminTrainingClient;
 	authHandler?: (request: Request) => Response | Promise<Response>;
 	callbackConfig?: {
 		token: string;
 		url: string;
 	};
-	adminTrainingClient?: AdminTrainingClient;
 	corsOrigins: string[];
 	getSession?: (
 		request: Request
 	) => Promise<{ session: unknown; user: unknown } | null>;
 	operatorServerClient?: OperatorServerClient;
 	repository: PersonsRepository;
-};
+}
 
 function isPublicApiPath(path: string) {
 	return (

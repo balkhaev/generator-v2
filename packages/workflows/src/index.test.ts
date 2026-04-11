@@ -2,12 +2,14 @@ import { describe, expect, it } from "bun:test";
 
 import { getWorkflowDefinition, listWorkflows } from "./index";
 
+const workflowKeyProviderPrefixPattern = /^(fal-|cerebrium-)/;
+
 describe("fal workflow registry", () => {
-	it("exposes only fal-based workflows", () => {
+	it("exposes only fal- or cerebrium-prefixed workflows", () => {
 		const workflows = listWorkflows();
 		expect(workflows.length).toBeGreaterThan(0);
 		for (const workflow of workflows) {
-			expect(workflow.key).toMatch(/^fal-/);
+			expect(workflow.key).toMatch(workflowKeyProviderPrefixPattern);
 		}
 	});
 

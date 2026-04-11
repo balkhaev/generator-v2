@@ -296,11 +296,14 @@ async function createTrainingZip(imageUrls: string[]): Promise<string> {
 function crc32(data: Uint8Array): number {
 	let crc = 0xff_ff_ff_ff;
 	for (const byte of data) {
+		// biome-ignore lint/suspicious/noBitwiseOperators: CRC32
 		crc ^= byte;
 		for (let j = 0; j < 8; j++) {
+			// biome-ignore lint/suspicious/noBitwiseOperators: CRC32
 			crc = crc & 1 ? (crc >>> 1) ^ 0xed_b8_83_20 : crc >>> 1;
 		}
 	}
+	// biome-ignore lint/suspicious/noBitwiseOperators: CRC32
 	return (crc ^ 0xff_ff_ff_ff) >>> 0;
 }
 

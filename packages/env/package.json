@@ -13,6 +13,9 @@
     "dotenv": "catalog:",
     "zod": "catalog:"
   },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
   "devDependencies": {
     "@generator/config": "workspace:*",
     "@types/bun": "catalog:",

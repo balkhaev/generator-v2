@@ -1,0 +1,22 @@
+{
+  "name": "@generator/auth-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./dev-auto-login": "./src/dev-auto-login.tsx"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@generator/env": "workspace:*",
+    "better-auth": "catalog:"
+  },
+  "devDependencies": {
+    "@generator/config": "workspace:*",
+    "@types/react": "catalog:",
+    "typescript": "^5"
+  }
+}

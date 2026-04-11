@@ -1,0 +1,41 @@
+import { authClient } from "@generator/auth-client";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+
+import PersonsWorkspace from "@/components/persons-workspace";
+import { getPersonsDashboard } from "@/lib/persons-api";
+
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+	const requestHeaders = await headers();
+
+	try {
+		const session = await authClient.getSession({
+			fetchOptions: {
+				headers: requestHeaders,
+				throw: true,
+			},
+		});
+
+		if (!session?.user) {
+			redirect("/login");
+		}
+	} catch (error) {
+		if (
+			error &&
+			typeof error === "object" &&
+			"digest" in error &&
+			typeof error.digest === "string" &&
+			error.digest.startsWith("NEXT_REDIRECT")
+		) {
+			throw error;
+		}
+
+		redirect("/login");
+	}
+
+	const snapshot = await getPersonsDashboard();
+
+	return <PersonsWorkspace initialSnapshot={snapshot} />;
+}

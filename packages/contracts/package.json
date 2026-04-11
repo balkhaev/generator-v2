@@ -1,0 +1,19 @@
+{
+  "name": "@generator/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./admin": "./src/admin.ts",
+    "./generator": "./src/generator.ts",
+    "./studio": "./src/studio.ts",
+    "./persons": "./src/persons.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@generator/config": "workspace:*",
+    "typescript": "^5"
+  }
+}

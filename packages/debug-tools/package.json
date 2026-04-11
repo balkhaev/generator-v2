@@ -1,0 +1,21 @@
+{
+  "name": "@generator/debug-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "bun src/collect-debug-bundle.ts",
+    "check-types": "tsc --noEmit",
+    "mcp": "bun src/mcp-server.ts"
+  },
+  "dependencies": {
+    "@generator/contracts": "workspace:*",
+    "@generator/env": "workspace:*",
+    "dotenv": "catalog:"
+  },
+  "devDependencies": {
+    "@generator/config": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "^5"
+  }
+}

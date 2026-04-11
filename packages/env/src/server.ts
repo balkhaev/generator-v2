@@ -2,20 +2,56 @@ import "dotenv/config";
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
+const s3EndpointHasHttpSchemePattern = /^https?:\/\//iu;
+
+/** Accepts Hetzner-style `S3_ACCESS_KEY` / `S3_SECRET_KEY` and bare host endpoints. */
+export function normalizeS3RuntimeEnv(
+	runtimeEnv: Record<string, string | undefined>
+): Record<string, string | undefined> {
+	const out: Record<string, string | undefined> = { ...runtimeEnv };
+
+	const rawEndpoint = out.S3_ENDPOINT?.trim();
+	if (rawEndpoint) {
+		out.S3_ENDPOINT = s3EndpointHasHttpSchemePattern.test(rawEndpoint)
+			? rawEndpoint
+			: `https://${rawEndpoint}`;
+	}
+
+	const accessKeyId = out.S3_ACCESS_KEY_ID?.trim() || out.S3_ACCESS_KEY?.trim();
+	if (accessKeyId) {
+		out.S3_ACCESS_KEY_ID = accessKeyId;
+	}
+
+	const secretAccessKey =
+		out.S3_SECRET_ACCESS_KEY?.trim() || out.S3_SECRET_KEY?.trim();
+	if (secretAccessKey) {
+		out.S3_SECRET_ACCESS_KEY = secretAccessKey;
+	}
+
+	return out;
+}
+
 const serverSchema = {
 	DATABASE_URL: z.string().min(1),
-	BETTER_AUTH_SECRET: z.string().min(32),
-	BETTER_AUTH_URL: z.url(),
-	CORS_ORIGIN: z.url(),
+	BETTER_AUTH_SECRET: z.string().min(32).optional(),
+	BETTER_AUTH_URL: z.url().optional(),
+	CORS_ORIGIN: z.url().optional(),
+	CORS_ORIGINS: z.string().min(1).optional(),
+	GENERATOR_CALLBACK_TOKEN: z.string().min(1).optional(),
+	GENERATOR_API_URL: z.url().optional(),
+	STUDIO_API_URL: z.url().optional(),
 	NODE_ENV: z
 		.enum(["development", "production", "test"])
 		.default("development"),
-	COMFY_OPERATOR_ENABLED: z.enum(["true", "false"]).optional(),
-	RUNPOD_API_KEY: z.string().min(1).optional(),
-	RUNPOD_ENDPOINT_ID: z.string().min(1).optional(),
-	RUNPOD_API_BASE_URL: z.url().optional(),
-	COMFY_INPUT_BASE_URL: z.url().optional(),
-	COMFY_OUTPUT_BASE_URL: z.url().optional(),
+	S3_BUCKET: z.string().min(1).optional(),
+	S3_REGION: z.string().min(1).optional(),
+	S3_ENDPOINT: z.url().optional(),
+	S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+	S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+	FAL_KEY: z.string().min(1).optional(),
+	CEREBRIUM_API_KEY: z.string().min(1).optional(),
+	CEREBRIUM_PROJECT_ID: z.string().min(1).optional(),
+	CEREBRIUM_REGION: z.string().min(1).optional(),
 };
 
 function createServerEnv(
@@ -23,7 +59,7 @@ function createServerEnv(
 ) {
 	return createEnv({
 		server: serverSchema,
-		runtimeEnv,
+		runtimeEnv: normalizeS3RuntimeEnv(runtimeEnv),
 		emptyStringAsUndefined: true,
 	});
 }
@@ -43,19 +79,76 @@ export const env = new Proxy({} as ServerEnv, {
 	},
 });
 
-const operatorEnvSchema = z.object({
-	COMFY_OPERATOR_ENABLED: z.enum(["true", "false"]).default("true"),
-	RUNPOD_API_KEY: z.string().min(1, "RUNPOD_API_KEY is required"),
-	RUNPOD_ENDPOINT_ID: z.string().min(1, "RUNPOD_ENDPOINT_ID is required"),
-	RUNPOD_API_BASE_URL: z.url().default("https://api.runpod.ai/v2"),
-	COMFY_INPUT_BASE_URL: z.url().default("https://assets.example.com/input"),
-	COMFY_OUTPUT_BASE_URL: z.url().default("https://assets.example.com/output"),
+function getRequiredEnvValue(value: string | undefined, name: string) {
+	if (!value) {
+		throw new Error(`${name} is required`);
+	}
+
+	return value;
+}
+
+function parseCorsOrigins(rawOrigins: string | undefined) {
+	if (!rawOrigins) {
+		return [];
+	}
+
+	return rawOrigins
+		.split(",")
+		.map((origin) => origin.trim())
+		.filter((origin) => origin.length > 0);
+}
+
+export function getCorsOrigins() {
+	const origins = [
+		...parseCorsOrigins(env.CORS_ORIGINS),
+		...(env.CORS_ORIGIN ? [env.CORS_ORIGIN] : []),
+	];
+
+	return [...new Set(origins)];
+}
+
+export function getRequiredCorsOrigins() {
+	const origins = getCorsOrigins();
+
+	if (origins.length === 0) {
+		throw new Error("CORS_ORIGIN or CORS_ORIGINS is required");
+	}
+
+	return origins;
+}
+
+export function getAuthConfig() {
+	return {
+		baseUrl: getRequiredEnvValue(env.BETTER_AUTH_URL, "BETTER_AUTH_URL"),
+		secret: getRequiredEnvValue(env.BETTER_AUTH_SECRET, "BETTER_AUTH_SECRET"),
+		trustedOrigins: getRequiredCorsOrigins(),
+	};
+}
+
+export function getGeneratorApiUrl() {
+	return getRequiredEnvValue(env.GENERATOR_API_URL, "GENERATOR_API_URL");
+}
+
+export function getGeneratorCallbackToken() {
+	return env.GENERATOR_CALLBACK_TOKEN ?? "local-generator-callback-token";
+}
+
+export function getStudioApiUrl() {
+	return getRequiredEnvValue(env.STUDIO_API_URL, "STUDIO_API_URL");
+}
+
+const s3StorageEnvSchema = z.object({
+	S3_BUCKET: z.string().min(1, "S3_BUCKET is required"),
+	S3_REGION: z.string().min(1).default("hel1"),
+	S3_ENDPOINT: z.url("S3_ENDPOINT is required"),
+	S3_ACCESS_KEY_ID: z.string().min(1, "S3_ACCESS_KEY_ID is required"),
+	S3_SECRET_ACCESS_KEY: z.string().min(1, "S3_SECRET_ACCESS_KEY is required"),
 });
 
-export type ComfyOperatorEnv = z.infer<typeof operatorEnvSchema>;
+export type S3StorageEnv = z.infer<typeof s3StorageEnvSchema>;
 
-export function getComfyOperatorEnv(
+export function getS3StorageEnv(
 	runtimeEnv: Record<string, string | undefined> = process.env
 ) {
-	return operatorEnvSchema.parse(runtimeEnv);
+	return s3StorageEnvSchema.parse(normalizeS3RuntimeEnv(runtimeEnv));
 }

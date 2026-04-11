@@ -1,0 +1,7 @@
+{
+  "extends": "@generator/config/tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "strictNullChecks": true
+  }
+}

@@ -8,6 +8,10 @@ dist
 build
 *.tsbuildinfo
 
+# Next.js / Turbopack (dev кэш: *.meta, *.sst, images и т.д. в .next/)
+.next/
+out/
+
 # Environment variables
 .env
 .env*.local
@@ -49,3 +53,16 @@ coverage
 .cache
 tmp
 temp
+
+# Local agent / debug outputs (debug-tools bundles, E2E scratch copies)
+.artifacts/
+
+# OMX / local editor state (not shared project config)
+.omx/
+
+# Playwright MCP / CLI caches and reports
+.playwright-cli/
+.playwright-mcp/
+test-results/
+playwright-report/
+blob-report/

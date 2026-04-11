@@ -1,0 +1,161 @@
+import { Hono } from "hono";
+
+import type { PersonsService } from "@/domain/persons";
+import { toErrorResponse } from "@/routes/utils";
+
+export function createPersonRoutes(service: PersonsService) {
+	const app = new Hono<{
+		Variables: {
+			debugCorrelationId: string;
+		};
+	}>();
+
+	app.get("/", async (c) => {
+		return c.json({ persons: await service.listPersons() });
+	});
+
+	app.post("/", async (c) => {
+		try {
+			const payload = await c.req.json();
+			const person = await service.createPerson(payload);
+			return c.json({ person }, 201);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.post("/from-prompt", async (c) => {
+		try {
+			const payload = await c.req.json();
+			const person = await service.createPersonFromPrompt(payload);
+			return c.json({ person }, 201);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.get("/:personId", async (c) => {
+		const person = await service.getPersonById(c.req.param("personId"));
+		if (!person) {
+			return c.json({ error: "Person not found" }, 404);
+		}
+
+		return c.json({ person });
+	});
+
+	app.get("/lookup/run/:operatorRunId", async (c) => {
+		const person = await service.findPersonByOperatorRunId(
+			c.req.param("operatorRunId")
+		);
+		if (!person) {
+			return c.json({ error: "Person not found" }, 404);
+		}
+
+		return c.json({ person });
+	});
+
+	app.patch("/:personId", async (c) => {
+		try {
+			const payload = await c.req.json();
+			const person = await service.updatePerson(
+				c.req.param("personId"),
+				payload
+			);
+			if (!person) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+
+			return c.json({ person });
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.delete("/:personId", async (c) => {
+		const deleted = await service.deletePerson(c.req.param("personId"));
+		return deleted
+			? c.body(null, 204)
+			: c.json({ error: "Person not found" }, 404);
+	});
+
+	app.post("/:personId/generations", async (c) => {
+		try {
+			const generation = await service.createGeneration(
+				c.req.param("personId"),
+				await c.req.json()
+			);
+			if (!generation) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+
+			return c.json({ generation }, 201);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.post("/:personId/generations/import", async (c) => {
+		try {
+			const generation = await service.importGenerationFromServer(
+				c.req.param("personId"),
+				await c.req.json()
+			);
+			if (!generation) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+
+			return c.json({ generation }, 201);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.post("/:personId/train-lora", async (c) => {
+		try {
+			const person = await service.startLoraTraining(
+				c.req.param("personId"),
+				await c.req.json(),
+				{
+					debugCorrelationId: c.get("debugCorrelationId"),
+				}
+			);
+			if (!person) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+
+			return c.json({ person }, 202);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.post("/:personId/generate-with-lora", async (c) => {
+		try {
+			const body = await c.req.json<{ prompt?: string }>();
+			const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+			if (!prompt) {
+				return c.json({ error: "prompt is required" }, 400);
+			}
+			const person = await service.generateWithLora(
+				c.req.param("personId"),
+				prompt
+			);
+			if (!person) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+
+			return c.json({ person }, 202);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	return app;
+}

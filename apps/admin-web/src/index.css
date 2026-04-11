@@ -1,0 +1,67 @@
+@import "@generator/ui/globals.css";
+
+@theme inline {
+	--font-sans: var(--font-space-grotesk);
+	--font-mono: var(--font-ibm-plex-mono);
+}
+
+:root {
+	--admin-base: color-mix(
+		in oklch,
+		var(--background) 88%,
+		oklch(0.84 0.03 225)
+	);
+	--admin-glow: color-mix(in oklch, var(--foreground) 8%, oklch(0.72 0.08 230));
+	--admin-panel: color-mix(in oklch, var(--card) 94%, oklch(0.95 0.02 225));
+	--admin-line: color-mix(in oklch, var(--border) 72%, oklch(0.74 0.03 228));
+}
+
+.dark {
+	--admin-base: color-mix(
+		in oklch,
+		var(--background) 90%,
+		oklch(0.24 0.03 225)
+	);
+	--admin-glow: color-mix(
+		in oklch,
+		var(--foreground) 10%,
+		oklch(0.62 0.08 230)
+	);
+	--admin-panel: color-mix(in oklch, var(--card) 95%, oklch(0.23 0.02 225));
+	--admin-line: color-mix(in oklch, var(--border) 76%, oklch(0.42 0.03 228));
+}
+
+body {
+	background:
+		radial-gradient(
+			circle at top left,
+			color-mix(in srgb, var(--admin-glow) 20%, transparent) 0%,
+			transparent 28%
+		),
+		linear-gradient(180deg, var(--admin-base) 0%, var(--background) 100%);
+}
+
+body::before {
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+	content: "";
+	background-image:
+		linear-gradient(
+			to right,
+			color-mix(in srgb, var(--admin-line) 20%, transparent) 1px,
+			transparent 1px
+		),
+		linear-gradient(
+			to bottom,
+			color-mix(in srgb, var(--admin-line) 20%, transparent) 1px,
+			transparent 1px
+		);
+	background-size: 72px 72px;
+	mask-image: linear-gradient(180deg, black 0%, transparent 88%);
+}
+
+::selection {
+	background: color-mix(in srgb, var(--admin-glow) 30%, transparent);
+}

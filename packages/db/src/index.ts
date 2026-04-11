@@ -1,10 +1,113 @@
 import { env } from "@generator/env/server";
 import { drizzle } from "drizzle-orm/node-postgres";
 
-import * as schema from "./schema";
+import {
+	assetRelease,
+	assetReleaseGroupEnum,
+	assetReleaseItem,
+	assetReleaseItemRelations,
+	assetReleaseRelations,
+	assetReleaseStatusEnum,
+	volumeDistributionJob,
+	volumeDistributionJobRelations,
+	volumeDistributionStatusEnum,
+} from "./schema/assets";
+import {
+	account,
+	accountRelations,
+	session,
+	sessionRelations,
+	user,
+	userRelations,
+	verification,
+} from "./schema/auth";
+import {
+	artifact,
+	artifactRelations,
+	scenario,
+	scenarioRelations,
+	scenarioRun,
+	scenarioRunRelations,
+	scenarioRunStatusEnum,
+} from "./schema/generation";
+import {
+	generatorExecution,
+	generatorExecutionStatusEnum,
+} from "./schema/generator";
+import {
+	person,
+	personGeneration,
+	personGenerationMediaTypeEnum,
+	personGenerationRelations,
+	personGenerationStatusEnum,
+	personRelations,
+} from "./schema/persons";
+import {
+	studioArtifact,
+	studioArtifactRelations,
+	studioRun,
+	studioRunRelations,
+	studioRunStatusEnum,
+	studioScenario,
+	studioScenarioRelations,
+} from "./schema/studio";
 
-export function createDb() {
-  return drizzle(env.DATABASE_URL, { schema });
+const schema = {
+	account,
+	accountRelations,
+	artifact,
+	artifactRelations,
+	assetRelease,
+	assetReleaseGroupEnum,
+	assetReleaseItem,
+	assetReleaseItemRelations,
+	assetReleaseRelations,
+	assetReleaseStatusEnum,
+	generatorExecution,
+	generatorExecutionStatusEnum,
+	person,
+	personGeneration,
+	personGenerationMediaTypeEnum,
+	personGenerationRelations,
+	personGenerationStatusEnum,
+	personRelations,
+	scenario,
+	scenarioRelations,
+	scenarioRun,
+	scenarioRunRelations,
+	scenarioRunStatusEnum,
+	session,
+	sessionRelations,
+	studioArtifact,
+	studioArtifactRelations,
+	studioRun,
+	studioRunRelations,
+	studioRunStatusEnum,
+	studioScenario,
+	studioScenarioRelations,
+	user,
+	userRelations,
+	verification,
+	volumeDistributionJob,
+	volumeDistributionJobRelations,
+	volumeDistributionStatusEnum,
+};
+
+export function createDb(connectionString: string) {
+	return drizzle(connectionString, { schema });
 }
 
-export const db = createDb();
+type Database = ReturnType<typeof createDb>;
+
+let cachedDb: Database | null = null;
+
+function getDb() {
+	cachedDb ??= createDb(env.DATABASE_URL);
+	return cachedDb;
+}
+
+export const db = new Proxy({} as Database, {
+	get(_, property) {
+		return getDb()[property as keyof Database];
+	},
+});

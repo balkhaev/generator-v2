@@ -29,7 +29,7 @@ bun install
 This project uses PostgreSQL with Drizzle ORM.
 
 1. Make sure you have a PostgreSQL database set up.
-2. Update your `apps/server/.env` file with your PostgreSQL connection details.
+2. Update your `apps/admin/.env` and `apps/generator/.env` files with your PostgreSQL connection details.
 
 3. Apply the schema to your database:
 
@@ -43,8 +43,8 @@ Then, run the development server:
 bun run dev
 ```
 
-Open [http://localhost:3001](http://localhost:3001) in your browser to see the web application.
-The API is running at [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3001](http://localhost:3001) for the admin web app and [http://localhost:3002](http://localhost:3002) for the studio web app.
+The admin gateway runs at [http://localhost:3000](http://localhost:3000), the studio backend runs at [http://localhost:3006](http://localhost:3006), and the generator API runs at [http://localhost:3005](http://localhost:3005).
 
 ## UI Customization
 
@@ -52,7 +52,7 @@ React web apps in this stack share shadcn/ui primitives through `packages/ui`.
 
 - Change design tokens and global styles in `packages/ui/src/styles/globals.css`
 - Update shared primitives in `packages/ui/src/components/*`
-- Adjust shadcn aliases or style config in `packages/ui/components.json` and `apps/web/components.json`
+- Adjust shadcn aliases or style config in `packages/ui/components.json` and `apps/admin-web/components.json`
 
 ### Add more shared components
 
@@ -70,7 +70,15 @@ import { Button } from "@generator/ui/components/button";
 
 ### Add app-specific blocks
 
-If you want to add app-specific blocks instead of shared primitives, run the shadcn CLI from `apps/web`.
+If you want to add app-specific blocks instead of shared primitives, run the shadcn CLI from `apps/admin-web`.
+
+## Architecture
+
+Architecture rules for package boundaries and cross-app sharing live in
+`docs/architecture-rules.md`.
+
+Target service topology and data ownership live in
+`docs/target-architecture.md`.
 
 ## Git Hooks and Formatting
 
@@ -81,8 +89,11 @@ If you want to add app-specific blocks instead of shared primitives, run the sha
 ```
 generator/
 ├── apps/
-│   ├── web/         # Frontend application (Next.js)
-│   └── server/      # Backend API (Hono)
+│   ├── admin-web/   # Admin frontend (Next.js)
+│   ├── admin/       # Admin gateway + Better Auth (Hono)
+│   ├── generator/   # Generation API (Hono)
+│   ├── studio/      # Studio backend + Better Auth (Hono)
+│   └── studio-web/  # Studio frontend (Next.js)
 ├── packages/
 │   ├── ui/          # Shared shadcn/ui components and styles
 │   ├── auth/        # Authentication configuration & logic
@@ -93,8 +104,11 @@ generator/
 
 - `bun run dev`: Start all applications in development mode
 - `bun run build`: Build all applications
-- `bun run dev:web`: Start only the web application
-- `bun run dev:server`: Start only the server
+- `bun run dev:admin-web`: Start only the admin web application
+- `bun run dev:admin`: Start only the admin gateway
+- `bun run dev:generator`: Start only the generator API
+- `bun run dev:studio`: Start only the studio backend
+- `bun run dev:studio-web`: Start only the studio web application
 - `bun run check-types`: Check TypeScript types across all apps
 - `bun run db:push`: Push schema changes to database
 - `bun run db:generate`: Generate database client/types

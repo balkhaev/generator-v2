@@ -150,6 +150,21 @@ def _image_to_data_url(image, fmt: str = "jpeg") -> str:
     return f"data:{mime};base64,{b64}"
 
 
+def _resolve_lora(lora_url: str) -> str:
+    """Download a LoRA .safetensors from an HTTP URL and return a local path."""
+    if not lora_url.startswith("http"):
+        return lora_url
+    import hashlib, urllib.request
+    url_hash = hashlib.sha256(lora_url.encode()).hexdigest()[:16]
+    local_dir = "/persistent-storage/lora-cache"
+    os.makedirs(local_dir, exist_ok=True)
+    filename = lora_url.rsplit("/", 1)[-1] if "/" in lora_url else f"{url_hash}.safetensors"
+    local_path = os.path.join(local_dir, f"{url_hash}_{filename}")
+    if not os.path.exists(local_path):
+        urllib.request.urlretrieve(lora_url, local_path)
+    return local_path
+
+
 def _decode_image(image_data: str):
     """Decode a base64 data-url or raw base64 string into a PIL Image."""
     from PIL import Image
@@ -179,7 +194,8 @@ def generate(
     pipeline = _get_pipeline(model_id)
 
     if lora_url:
-        pipeline.load_lora_weights(lora_url)
+        lora_path = _resolve_lora(lora_url)
+        pipeline.load_lora_weights(lora_path)
         pipeline.fuse_lora(lora_scale=lora_scale)
 
     generator = None

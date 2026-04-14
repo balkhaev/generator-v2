@@ -1,10 +1,14 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 
-const REQUEST_TIMEOUT_MS = 120_000;
-const TRAINING_TIMEOUT_MS = 90 * 60 * 1000;
-const DEFAULT_TRAINING_STEPS = 2000;
-const REFERENCE_COUNT = 19;
+const REQUEST_TIMEOUT_MS = 15 * 60 * 1000;
+const TRAINING_POLL_INTERVAL_MS = 30_000;
+const TRAINING_MAX_POLL_DURATION_MS = 4 * 60 * 60 * 1000;
+const DEFAULT_TRAINING_STEPS = 500;
+const REFERENCE_COUNT = Number.parseInt(
+	process.env.PERSON_LORA_REFERENCE_COUNT ?? "19",
+	10
+);
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 2000;
 const REF_EXT_PATTERN = /\.(png|jpe?g|webp)/i;
@@ -131,6 +135,95 @@ async function cerebriumRequest<T>(
 	} finally {
 		clearTimeout(timeout);
 	}
+}
+
+async function pollTrainingStatus(
+	apiKey: string,
+	statusUrl: string,
+	jobId: string,
+	intervalMs: number,
+	maxDurationMs: number,
+	logger: Pick<Console, "info" | "error">
+): Promise<{ lora_url: string; steps: number; trigger_word: string }> {
+	const deadline = Date.now() + maxDurationMs;
+
+	while (Date.now() < deadline) {
+		await sleep(intervalMs);
+		try {
+			const result = await cerebriumRequest<{
+				status: string;
+				lora_url?: string;
+				steps?: number;
+				trigger_word?: string;
+				error?: string;
+			}>(apiKey, statusUrl, { job_id: jobId }, REQUEST_TIMEOUT_MS);
+
+			if (result.status === "completed" && result.lora_url) {
+				return {
+					lora_url: result.lora_url,
+					steps: result.steps ?? 0,
+					trigger_word: result.trigger_word ?? "",
+				};
+			}
+
+			if (result.status === "failed") {
+				throw new Error(
+					`Cerebrium training failed: ${result.error ?? "unknown error"}`
+				);
+			}
+
+			logger.info("cerebrium-lora.poll-status", {
+				jobId,
+				status: result.status,
+				elapsed: Date.now() + maxDurationMs - deadline,
+			});
+		} catch (error) {
+			if (
+				error instanceof Error &&
+				error.message.includes("Cerebrium training failed")
+			) {
+				throw error;
+			}
+			logger.error("cerebrium-lora.poll-error", {
+				jobId,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	throw new Error(
+		`Cerebrium training polling timed out after ${maxDurationMs / 60_000} minutes`
+	);
+}
+
+async function _cerebriumAsyncRequest(
+	apiKey: string,
+	url: string,
+	body: Record<string, unknown>
+): Promise<{ run_id: string }> {
+	const asyncUrl = `${url}?async=true`;
+	const response = await fetch(asyncUrl, {
+		method: "POST",
+		headers: {
+			authorization: `Bearer ${apiKey}`,
+			"content-type": "application/json",
+		},
+		body: JSON.stringify(body),
+	});
+	const responseBody = (await response.json().catch(() => null)) as Record<
+		string,
+		unknown
+	> | null;
+	if (!response.ok || responseBody === null) {
+		const detail =
+			responseBody && typeof responseBody.detail === "string"
+				? responseBody.detail
+				: JSON.stringify(responseBody);
+		throw new Error(
+			`Cerebrium async request failed [${response.status}]: ${detail}`
+		);
+	}
+	return { run_id: (responseBody.run_id as string) ?? "" };
 }
 
 function downloadAsBuffer(url: string): Promise<Uint8Array> {
@@ -498,7 +591,7 @@ export class CerebriumLoraTrainingRunner {
 		);
 		const url = result.images?.[0]?.url;
 		if (!url) {
-			throw new Error("Cerebrium flux-inference img2img returned no images");
+			throw new Error("Cerebrium img2img returned no images");
 		}
 		return url;
 	}
@@ -641,30 +734,50 @@ export class CerebriumLoraTrainingRunner {
 				REQUEST_TIMEOUT_MS
 			);
 
+			const trainingJobId = `${sanitizeSegment(parsed.personSlug)}-${Date.now()}`;
+
 			this.logger.info("cerebrium-lora.starting-training", {
 				personId: parsed.personId,
 				steps: trainingSteps,
+				jobId: trainingJobId,
 			});
 
 			const trainingStart = Date.now();
-			const trainingResult = await cerebriumRequest<{
-				lora_url: string;
-			}>(
+
+			await cerebriumRequest(
 				this.apiKey,
 				`${this.baseUrl}/lora-training/train`,
 				{
 					model_id: "Tongyi-MAI/Z-Image",
 					dataset_url: datasetUrl,
+					job_id: trainingJobId,
 					steps: trainingSteps,
 					trigger_word: triggerWord,
 					learning_rate: 1e-4,
 					default_caption: captionContent,
-					resolution: 1024,
+					resolution: 512,
 					lora_rank: 16,
 					guidance_scale: 5.0,
+					train_batch_size: 1,
+					gradient_accumulation_steps: 1,
 				},
-				TRAINING_TIMEOUT_MS
+				30 * 60 * 1000
 			);
+
+			this.logger.info("cerebrium-lora.training-submitted", {
+				personId: parsed.personId,
+				jobId: trainingJobId,
+			});
+
+			const trainingResult = await pollTrainingStatus(
+				this.apiKey,
+				`${this.baseUrl}/lora-training/get_training_status`,
+				trainingJobId,
+				TRAINING_POLL_INTERVAL_MS,
+				TRAINING_MAX_POLL_DURATION_MS,
+				this.logger
+			);
+
 			this.logger.info("cerebrium-lora.training-completed", {
 				personId: parsed.personId,
 				durationMs: Date.now() - trainingStart,

@@ -142,8 +142,52 @@ def _ensure_training_script() -> str:
     return script_path
 
 
+import json as _json
+import threading
+
+RESULTS_DIR = "/persistent-storage/training-results"
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+
+def _save_result(job_id: str, status: str, data: dict):
+    result_path = os.path.join(RESULTS_DIR, f"{job_id}.json")
+    with open(result_path, "w") as f:
+        _json.dump({"status": status, **data}, f)
+
+
+def get_training_status(job_id: str):
+    result_path = os.path.join(RESULTS_DIR, f"{job_id}.json")
+    if not os.path.exists(result_path):
+        return {"status": "running"}
+    with open(result_path) as f:
+        return _json.load(f)
+
+
+def _training_thread(job_id: str, cmd: list, work_dir: str, output_dir: str,
+                     trigger_word: str, steps: int):
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        print(result.stdout[-3000:] if len(result.stdout) > 3000 else result.stdout)
+
+        if result.returncode != 0:
+            print(result.stderr[-3000:] if len(result.stderr) > 3000 else result.stderr)
+            error_msg = f"Training failed (exit {result.returncode}): {result.stderr[-2000:]}"
+            _save_result(job_id, "failed", {"error": error_msg})
+            return
+
+        weights_path = _find_safetensors(output_dir)
+        lora_url = _upload_weights(weights_path, trigger_word)
+        shutil.rmtree(work_dir, ignore_errors=True)
+        _save_result(job_id, "completed", {
+            "lora_url": lora_url, "steps": steps, "trigger_word": trigger_word,
+        })
+    except Exception as exc:
+        _save_result(job_id, "failed", {"error": str(exc)})
+
+
 def train(
     dataset_url: str,
+    job_id: str = "",
     steps: Union[int, float] = 2000,
     trigger_word: str = "subject",
     learning_rate: Union[int, float] = 1e-4,
@@ -163,10 +207,15 @@ def train(
     lora_rank = int(lora_rank)
     guidance_scale = float(guidance_scale)
 
+    if not job_id:
+        import uuid
+        job_id = uuid.uuid4().hex
+
     model_id = model_id or os.getenv(
         "BASE_MODEL_ID", "Tongyi-MAI/Z-Image-Turbo"
     )
 
+    os.makedirs("/persistent-storage/tmp", exist_ok=True)
     work_dir = tempfile.mkdtemp(prefix="lora-train-")
     dataset_dir = os.path.join(work_dir, "dataset")
     output_dir = os.path.join(work_dir, "output")
@@ -211,19 +260,12 @@ def train(
     if hf_token:
         os.environ["HF_TOKEN"] = hf_token
 
-    print(f"Launching training: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    print(result.stdout)
+    print(f"Launching training in background thread: {' '.join(cmd)}")
 
-    if result.returncode != 0:
-        print(result.stderr)
-        raise RuntimeError(
-            f"Training failed (exit {result.returncode}): {result.stderr[-2000:]}"
-        )
+    thread = threading.Thread(
+        target=_training_thread,
+        args=(job_id, cmd, work_dir, output_dir, trigger_word, steps),
+    )
+    thread.start()
 
-    weights_path = _find_safetensors(output_dir)
-    lora_url = _upload_weights(weights_path, trigger_word)
-
-    shutil.rmtree(work_dir, ignore_errors=True)
-
-    return {"lora_url": lora_url, "steps": steps, "trigger_word": trigger_word}
+    return {"job_id": job_id, "status": "started", "steps": steps}

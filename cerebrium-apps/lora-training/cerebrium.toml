@@ -16,11 +16,11 @@ HF_HOME = "/persistent-storage/.cache/huggingface"
 
 [cerebrium.scaling]
 min_replicas = 0
-max_replicas = 3
-cooldown = 300
+max_replicas = 1
+cooldown = 3600
 
 [cerebrium.runtime]
-response_grace_period = 5400
+response_grace_period = 7200
 
 [cerebrium.dependencies.apt]
 git = "latest"

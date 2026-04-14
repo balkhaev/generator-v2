@@ -4,19 +4,19 @@ Python-приложения для деплоя на [Cerebrium](https://cerebri
 
 ## Приложения
 
-### `flux-inference/`
-Инференс Flux.1-dev (text-to-image) с поддержкой LoRA weights.
+### `inference/`
+Универсальный inference-сервис (text-to-image, img2img) с поддержкой Z-Image, ZIB-DPO, Flux моделей и LoRA weights.
 
-- **GPU**: A10 (24GB VRAM)
-- **Функция**: `generate(prompt, width, height, lora_url?, ...)`
+- **GPU**: L40 (48GB VRAM)
+- **Функции**: `generate(...)`, `img2img(...)`, `prepare_for_training()`, `storage_info()`, `clear_cache()`
 - **Ответ**: `{ images: [{ url: "..." }] }`
 
 ### `lora-training/`
-Обучение LoRA адаптеров на Flux.1-dev.
+Обучение LoRA адаптеров на Z-Image base.
 
-- **GPU**: A100 80GB
+- **GPU**: L40 (48GB VRAM)
 - **Функция**: `train(dataset_url, steps, trigger_word, ...)`
-- **Ответ**: `{ lora_url: "...", steps, trigger_word }`
+- **Статус**: `get_training_status(job_id)`
 
 ## Деплой
 
@@ -25,7 +25,7 @@ pip install cerebrium
 cerebrium login
 
 # Деплой инференса
-cd flux-inference
+cd inference
 cerebrium deploy
 
 # Деплой обучения
@@ -33,28 +33,23 @@ cd ../lora-training
 cerebrium deploy
 ```
 
-## Необходимые секреты на Cerebrium
-
-В Dashboard → Secrets или через CLI:
-
-- `CEREBRIUM_PUBLIC_STORAGE_URL` — публичный URL для persistent storage
-  (например `https://your-cdn.com/storage`)
-- `FLUX_MODEL_ID` — (опционально) кастомный путь к модели
-  (по умолчанию `black-forest-labs/FLUX.1-dev`)
-
 ## Как работает интеграция
 
 ```
 [TypeScript services]          [Cerebrium GPU]
       |                              |
-      |-- POST /flux-inference/generate -->  Flux inference
-      |<-- { images: [...] } ---------|
+      |-- POST /inference/generate ----->  Image generation
+      |<-- { images: [...] } ----------|
       |                              |
-      |-- POST /lora-training/train -->  LoRA training
-      |<-- { lora_url: "..." } ------|
+      |-- POST /inference/img2img ------>  Img2img for dataset
+      |<-- { images: [...] } ----------|
+      |                              |
+      |-- POST /lora-training/train ---->  LoRA training
+      |-- POST /lora-training/get_training_status -> Poll
+      |<-- { status, lora_url } -------|
 ```
 
-1. Generator service (TypeScript) отправляет HTTP-запросы к Cerebrium
-2. Cerebrium автоматически поднимает GPU-контейнер (cold start ~2-4с)
+1. Generator/Admin services (TypeScript) отправляют HTTP-запросы к Cerebrium
+2. Cerebrium автоматически поднимает GPU-контейнер
 3. Функция выполняется и возвращает результат
 4. Контейнер автоматически выключается после `cooldown` периода

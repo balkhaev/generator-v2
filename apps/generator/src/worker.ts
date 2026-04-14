@@ -57,9 +57,31 @@ const worker = createGeneratorExecutionWorker({
 	redisUrl,
 });
 
-const shutdown = async () => {
-	await worker.close();
-	process.exit(0);
-};
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+await new Promise<void>((resolve) => {
+	let isShuttingDown = false;
+
+	const shutdown = async () => {
+		if (isShuttingDown) {
+			return;
+		}
+
+		isShuttingDown = true;
+		await worker.close();
+		resolve();
+	};
+
+	process.on("SIGTERM", () => {
+		shutdown().catch((error) => {
+			console.error("generator.worker.shutdown.error", {
+				message: error instanceof Error ? error.message : "unknown",
+			});
+		});
+	});
+	process.on("SIGINT", () => {
+		shutdown().catch((error) => {
+			console.error("generator.worker.shutdown.error", {
+				message: error instanceof Error ? error.message : "unknown",
+			});
+		});
+	});
+});

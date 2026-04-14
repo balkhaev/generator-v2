@@ -8,7 +8,7 @@ import { createDrizzleStudioRepository } from "@/repositories/studio";
 const RECONCILE_INTERVAL_MS = Number(
 	process.env.RECONCILE_INTERVAL_MS ?? "5000"
 );
-const RECONCILE_WATCH = process.env.RECONCILE_WATCH === "true";
+const RECONCILE_WATCH = process.env.RECONCILE_WATCH !== "false";
 
 const service = new StudioService(
 	createDrizzleStudioRepository(),
@@ -16,7 +16,12 @@ const service = new StudioService(
 	console
 );
 
-const shutdown = () => process.exit(0);
+let isShuttingDown = false;
+
+const shutdown = () => {
+	isShuttingDown = true;
+};
+
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
@@ -28,7 +33,7 @@ do {
 			message: error instanceof Error ? error.message : "unknown",
 		});
 	}
-	if (RECONCILE_WATCH) {
+	if (RECONCILE_WATCH && !isShuttingDown) {
 		await sleep(RECONCILE_INTERVAL_MS);
 	}
-} while (RECONCILE_WATCH);
+} while (RECONCILE_WATCH && !isShuttingDown);

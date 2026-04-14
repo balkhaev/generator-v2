@@ -8,7 +8,7 @@ import { createDrizzlePersonsRepository } from "@/repositories/persons";
 const RECONCILE_INTERVAL_MS = Number(
 	process.env.RECONCILE_INTERVAL_MS ?? "5000"
 );
-const RECONCILE_WATCH = process.env.RECONCILE_WATCH === "true";
+const RECONCILE_WATCH = process.env.RECONCILE_WATCH !== "false";
 
 const repository = createDrizzlePersonsRepository();
 const operatorServerClient = env.PERSONS_OPERATOR_URL
@@ -23,9 +23,24 @@ if (!operatorServerClient) {
 
 const service = new PersonsService(repository, operatorServerClient);
 
+let isShuttingDown = false;
+
+const shutdown = () => {
+	isShuttingDown = true;
+};
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
 do {
-	await service.reconcileQueuedGenerations();
-	if (RECONCILE_WATCH) {
+	try {
+		await service.reconcileQueuedGenerations();
+	} catch (error) {
+		console.error("persons.reconcile.error", {
+			message: error instanceof Error ? error.message : "unknown",
+		});
+	}
+	if (RECONCILE_WATCH && !isShuttingDown) {
 		await sleep(RECONCILE_INTERVAL_MS);
 	}
-} while (RECONCILE_WATCH);
+} while (RECONCILE_WATCH && !isShuttingDown);

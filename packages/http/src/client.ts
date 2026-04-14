@@ -24,7 +24,10 @@ export async function requestJson<T>(
 	input: string,
 	init?: RequestInit
 ): Promise<T> {
-	const response = await fetch(input, init);
+	const response = await fetch(input, {
+		...init,
+		credentials: init?.credentials ?? "include",
+	});
 
 	if (!response.ok) {
 		throw new Error(await getErrorMessage(response));

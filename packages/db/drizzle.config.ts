@@ -1,9 +1,11 @@
 import dotenv from "dotenv";
 import { defineConfig } from "drizzle-kit";
 
-dotenv.config({
-	path: "../../apps/generator/.env",
-});
+if (!process.env.DATABASE_URL) {
+	dotenv.config({
+		path: "../../apps/generator/.env",
+	});
+}
 
 export default defineConfig({
 	schema: "./src/schema",

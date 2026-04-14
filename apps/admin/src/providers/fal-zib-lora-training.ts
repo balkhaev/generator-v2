@@ -5,7 +5,7 @@ const FAL_QUEUE_BASE = "https://queue.fal.run";
 const FAL_STORAGE_INITIATE =
 	"https://rest.alpha.fal.ai/storage/upload/initiate";
 const REQUEST_TIMEOUT_MS = 120_000;
-const DEFAULT_TRAINING_STEPS = 2000;
+const DEFAULT_TRAINING_STEPS = 1000;
 const DEFAULT_TRAINING_POLL_MS = 30_000;
 const DEFAULT_TRAINING_TIMEOUT_MS = 90 * 60 * 1000;
 const DEFAULT_DATASET_POLL_MS = 5000;
@@ -599,16 +599,13 @@ export class FalZibLoraTrainingRunner {
 			const trainingSteps = Number(
 				process.env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS
 			);
-			const trainingSubmit = await falSubmit(
-				this.apiKey,
-				"fal-ai/z-image-trainer",
-				{
-					image_data_url: datasetUrl,
-					steps: trainingSteps,
-					default_caption: captionContent,
-					learning_rate: 0.0005,
-				}
-			);
+			const trainingModel = "fal-ai/z-image-trainer";
+			const trainingSubmit = await falSubmit(this.apiKey, trainingModel, {
+				image_data_url: datasetUrl,
+				steps: trainingSteps,
+				default_caption: captionContent,
+				learning_rate: 0.0001,
+			});
 
 			this.logger.info("fal-zib-lora.training-started", {
 				personId: parsed.personId,
@@ -618,7 +615,7 @@ export class FalZibLoraTrainingRunner {
 			const trainingResult = await falPollUntilDone(
 				this.apiKey,
 				trainingSubmit,
-				"fal-ai/z-image-trainer",
+				trainingModel,
 				DEFAULT_TRAINING_TIMEOUT_MS,
 				DEFAULT_TRAINING_POLL_MS
 			);

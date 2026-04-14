@@ -18,7 +18,10 @@ async function getErrorMessage(response) {
 	return `${response.status} ${response.statusText}`.trim();
 }
 export async function requestJson(input, init) {
-	const response = await fetch(input, init);
+	const response = await fetch(input, {
+		...init,
+		credentials: init?.credentials ?? "include",
+	});
 	if (!response.ok) {
 		throw new Error(await getErrorMessage(response));
 	}

@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import PersonsWorkspace from "@/components/persons-workspace";
-import { getPersonsDashboard } from "@/lib/persons-api";
+import { getPersonsDashboardForRequest } from "@/lib/persons-api-server";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +35,7 @@ export default async function Home() {
 		redirect("/login");
 	}
 
-	const snapshot = await getPersonsDashboard();
+	const snapshot = await getPersonsDashboardForRequest(requestHeaders);
 
 	return <PersonsWorkspace initialSnapshot={snapshot} />;
 }

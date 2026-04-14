@@ -2,9 +2,9 @@ import type {
 	AssetReleaseGroup,
 	AssetReleasePreset as AssetReleasePresetSummary,
 } from "@generator/contracts/admin";
-import flux2DevWorkflow from "../../../workflows/f2d.json";
-import lustifyApexAvatarWorkflow from "../../../workflows/lustify-apex-avatar.json";
-import redzitAvatarWorkflow from "../../../workflows/redzit15-avatar.json";
+import flux2DevWorkflow from "../workflows/f2d.json";
+import lustifyApexAvatarWorkflow from "../workflows/lustify-apex-avatar.json";
+import redzitAvatarWorkflow from "../workflows/redzit15-avatar.json";
 
 type PresetAssetSource =
 	| {

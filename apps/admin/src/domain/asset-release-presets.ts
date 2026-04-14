@@ -1,12 +1,12 @@
-import type {
-	AssetReleaseService,
-	AssetReleaseSnapshot,
-} from "@/domain/asset-releases";
 import {
 	getAssetReleasePreset,
 	listAssetReleasePresets,
 	toAssetReleasePresetSummary,
-} from "@/registry/asset-release-presets";
+} from "@generator/asset-release-presets";
+import type {
+	AssetReleaseService,
+	AssetReleaseSnapshot,
+} from "@/domain/asset-releases";
 
 type FetchLike = typeof fetch;
 

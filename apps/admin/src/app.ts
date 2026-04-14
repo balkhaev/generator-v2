@@ -3,7 +3,10 @@ import {
 	createAuthHandler,
 	createSessionMiddleware,
 } from "@generator/auth/middleware";
-import type { AdminDashboardSnapshot } from "@generator/contracts/admin";
+import type {
+	AdminDashboardSnapshot,
+	AdminSetupStatus,
+} from "@generator/contracts/admin";
 import {
 	DEBUG_CORRELATION_HEADER,
 	normalizeBaseUrl,
@@ -42,6 +45,7 @@ interface AppOptions {
 	) => Promise<{ session: unknown; user: unknown } | null>;
 	internalTrainingControlService?: PersonLoraTrainingControl;
 	loadDashboardSnapshot: () => Promise<AdminDashboardSnapshot>;
+	loadSetupStatus: () => Promise<AdminSetupStatus>;
 	loggerImpl?: Pick<Console, "info" | "error">;
 	studioBaseUrl: string;
 }
@@ -49,6 +53,7 @@ interface AppOptions {
 function isPublicApiPath(path: string) {
 	return (
 		path === "/api/health" ||
+		path === "/api/setup/status" ||
 		path.startsWith("/api/auth/") ||
 		path.startsWith("/api/internal/")
 	);
@@ -153,6 +158,9 @@ export function createApp(options: AppOptions) {
 			gateway: true,
 			ok: true,
 		})
+	);
+	app.get("/api/setup/status", async (c) =>
+		c.json(await options.loadSetupStatus())
 	);
 	app.get("/api/dashboard", async (c) =>
 		c.json(await options.loadDashboardSnapshot())

@@ -1,25 +1,29 @@
-"use client";
+import { authClient } from "@generator/auth-client";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 
-import { DevAutoLogin } from "@generator/auth-client/dev-auto-login";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import LoginScreen from "@/components/login-screen";
+import { getAdminSetupStatus } from "@/lib/admin-setup";
 
-import SignInForm from "@/components/sign-in-form";
-import SignUpForm from "@/components/sign-up-form";
+export default async function LoginPage() {
+	const requestHeaders = await headers();
 
-export default function LoginPage() {
-	const [showSignIn, setShowSignIn] = useState(true);
-	const router = useRouter();
+	try {
+		const session = await authClient.getSession({
+			fetchOptions: {
+				headers: requestHeaders,
+				throw: true,
+			},
+		});
 
-	return (
-		<DevAutoLogin onSuccess={() => router.push("/")}>
-			<main className="flex min-h-svh items-center justify-center p-4">
-				{showSignIn ? (
-					<SignInForm onSwitchToSignUp={() => setShowSignIn(false)} />
-				) : (
-					<SignUpForm onSwitchToSignIn={() => setShowSignIn(true)} />
-				)}
-			</main>
-		</DevAutoLogin>
-	);
+		if (session?.user) {
+			redirect("/");
+		}
+	} catch {
+		// Ignore auth lookup failures here and fall back to the login shell.
+	}
+
+	const setupStatus = await getAdminSetupStatus(requestHeaders);
+
+	return <LoginScreen setupRequired={setupStatus.setupRequired} />;
 }

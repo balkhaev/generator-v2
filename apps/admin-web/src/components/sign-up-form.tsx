@@ -11,8 +11,10 @@ import Loader from "./loader";
 
 export default function SignUpForm({
 	onSwitchToSignIn,
+	setupRequired = false,
 }: {
-	onSwitchToSignIn: () => void;
+	onSwitchToSignIn?: () => void;
+	setupRequired?: boolean;
 }) {
 	const router = useRouter();
 	const { isPending } = authClient.useSession();
@@ -59,8 +61,16 @@ export default function SignUpForm({
 	return (
 		<AuthFrame
 			label="Admin access"
-			subtitle="Create an account for infra, queue, and asset release access."
-			title="Create Generator Admin account"
+			subtitle={
+				setupRequired
+					? "Create the first admin account to unlock the control room."
+					: "Create an account for infra, queue, and asset release access."
+			}
+			title={
+				setupRequired
+					? "Set up Generator Admin"
+					: "Create Generator Admin account"
+			}
 		>
 			<form
 				className="grid gap-4"
@@ -150,9 +160,11 @@ export default function SignUpForm({
 				</form.Subscribe>
 			</form>
 
-			<Button onClick={onSwitchToSignIn} variant="outline">
-				Already have an account? Sign in
-			</Button>
+			{setupRequired || !onSwitchToSignIn ? null : (
+				<Button onClick={onSwitchToSignIn} variant="outline">
+					Already have an account? Sign in
+				</Button>
+			)}
 		</AuthFrame>
 	);
 }

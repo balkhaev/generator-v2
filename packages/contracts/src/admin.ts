@@ -117,3 +117,7 @@ export interface AdminDashboardSnapshot {
 	scenarios: DashboardScenarioSummary[];
 	snapshotAt: string;
 }
+
+export interface AdminSetupStatus {
+	setupRequired: boolean;
+}

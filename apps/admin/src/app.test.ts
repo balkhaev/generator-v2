@@ -31,6 +31,9 @@ describe("admin gateway", () => {
 			loadDashboardSnapshot() {
 				return Promise.resolve(createEmptyDashboardSnapshot());
 			},
+			loadSetupStatus() {
+				return Promise.resolve({ setupRequired: true });
+			},
 			studioBaseUrl: "http://studio.internal",
 		});
 
@@ -66,6 +69,9 @@ describe("admin gateway", () => {
 			loadDashboardSnapshot() {
 				return Promise.resolve(createEmptyDashboardSnapshot());
 			},
+			loadSetupStatus() {
+				return Promise.resolve({ setupRequired: false });
+			},
 			studioBaseUrl: "http://studio.internal",
 		});
 
@@ -100,6 +106,9 @@ describe("admin gateway", () => {
 			loadDashboardSnapshot() {
 				return Promise.resolve(createEmptyDashboardSnapshot());
 			},
+			loadSetupStatus() {
+				return Promise.resolve({ setupRequired: false });
+			},
 			studioBaseUrl: "http://studio.internal",
 		});
 
@@ -124,6 +133,33 @@ describe("admin gateway", () => {
 		expect(await response.json()).toEqual({
 			accepted: true,
 			jobId: "training-job-1",
+		});
+	});
+
+	it("exposes setup status without requiring a session", async () => {
+		const app = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3001"],
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve(null);
+			},
+			loadDashboardSnapshot() {
+				return Promise.resolve(createEmptyDashboardSnapshot());
+			},
+			loadSetupStatus() {
+				return Promise.resolve({ setupRequired: true });
+			},
+			studioBaseUrl: "http://studio.internal",
+		});
+
+		const response = await app.request("http://localhost/api/setup/status");
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({
+			setupRequired: true,
 		});
 	});
 });

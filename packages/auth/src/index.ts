@@ -8,8 +8,10 @@ import {
 import { env, getAuthConfig } from "@generator/env/server";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError } from "better-auth/api";
 
 const isDev = env.NODE_ENV !== "production";
+const db = createDb(env.DATABASE_URL);
 
 const DEV_USER = {
 	email: "dev@local.dev",
@@ -18,7 +20,6 @@ const DEV_USER = {
 } as const;
 
 export function createAuth() {
-	const db = createDb(env.DATABASE_URL);
 	const authConfig = getAuthConfig();
 
 	return betterAuth({
@@ -44,11 +45,42 @@ export function createAuth() {
 				httpOnly: true,
 			},
 		},
+		databaseHooks: {
+			user: {
+				create: {
+					before: async (userData) => {
+						if (isDev && userData.email === DEV_USER.email) {
+							return { data: userData };
+						}
+
+						if (!(await isInitialAdminSetupRequired())) {
+							throw new APIError("BAD_REQUEST", {
+								message:
+									"Initial admin account has already been created. Sign in instead.",
+							});
+						}
+
+						return { data: userData };
+					},
+				},
+			},
+		},
 		plugins: [],
 	});
 }
 
 export const auth = createAuth();
+
+export async function isInitialAdminSetupRequired() {
+	const existingUsers = await db
+		.select({
+			id: user.id,
+		})
+		.from(user)
+		.limit(1);
+
+	return existingUsers.length === 0;
+}
 
 export async function ensureDevUser() {
 	if (!isDev) {

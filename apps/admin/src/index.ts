@@ -1,4 +1,8 @@
-import { auth, ensureDevUser } from "@generator/auth";
+import {
+	auth,
+	ensureDevUser,
+	isInitialAdminSetupRequired,
+} from "@generator/auth";
 import {
 	getGeneratorApiUrl,
 	getRequiredCorsOrigins,
@@ -53,6 +57,9 @@ const app = createApp({
 	internalTrainingControlService,
 	getSession: (request) => auth.api.getSession({ headers: request.headers }),
 	loadDashboardSnapshot: () => getAdminDashboardSnapshot(studioBaseUrl),
+	loadSetupStatus: async () => ({
+		setupRequired: await isInitialAdminSetupRequired(),
+	}),
 	loggerImpl: console,
 	studioBaseUrl,
 });

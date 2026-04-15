@@ -1,6 +1,7 @@
 export const TRAILING_SLASH_PATTERN = /\/$/;
 export const DEBUG_CORRELATION_HEADER = "x-debug-correlation-id";
 export const GENERATOR_CALLBACK_TOKEN_HEADER = "x-generator-callback-token";
+export const GENERATOR_INTERNAL_TOKEN_HEADER = "x-generator-internal-token";
 
 type HeaderReader = Pick<Headers, "get"> | null | undefined;
 

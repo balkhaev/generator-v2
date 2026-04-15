@@ -14,6 +14,7 @@ type PublicPathCheck = (path: string) => boolean;
 
 interface SessionMiddlewareOptions {
 	getSession: (request: Request) => Promise<SessionPayload | null>;
+	isAuthorizedRequest?: (request: Request) => boolean | Promise<boolean>;
 	isPublicPath?: PublicPathCheck;
 }
 
@@ -21,10 +22,6 @@ export function createSessionMiddleware(
 	options: SessionMiddlewareOptions
 ): MiddlewareHandler {
 	return async (c: Context, next) => {
-		const session = await options.getSession(c.req.raw);
-		c.set("session", session?.session ?? null);
-		c.set("user", session?.user ?? null);
-
 		if (c.req.method === "OPTIONS") {
 			await next();
 			return;
@@ -34,6 +31,17 @@ export function createSessionMiddleware(
 			await next();
 			return;
 		}
+
+		if (await options.isAuthorizedRequest?.(c.req.raw)) {
+			c.set("session", null);
+			c.set("user", null);
+			await next();
+			return;
+		}
+
+		const session = await options.getSession(c.req.raw);
+		c.set("session", session?.session ?? null);
+		c.set("user", session?.user ?? null);
 
 		if (!session?.user) {
 			return c.body(null, 401);

@@ -984,7 +984,11 @@ export class PersonsService {
 				if (shouldAutoTrain && this.adminTrainingClient) {
 					const freshPerson = await this.repository.getPersonById(personId);
 					if (freshPerson) {
-						await this.startLoraTraining(personId, {});
+						await this.startLoraTraining(personId, {
+							outputName: undefined,
+							referencePrompt: undefined,
+							triggerWord: undefined,
+						});
 					}
 				}
 			}

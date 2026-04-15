@@ -2,6 +2,7 @@ import type { AuthVariables } from "@generator/auth/middleware";
 import { createSessionMiddleware } from "@generator/auth/middleware";
 import {
 	DEBUG_CORRELATION_HEADER,
+	GENERATOR_INTERNAL_TOKEN_HEADER,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
 import { Hono } from "hono";
@@ -50,6 +51,7 @@ interface AppOptions {
 }
 
 export function createApp(options: AppOptions) {
+	const internalToken = process.env.GENERATOR_INTERNAL_TOKEN?.trim();
 	const storageAdapter = options.storageAdapter ?? createStorageAdapter();
 	const falKey = process.env.FAL_KEY;
 	const cerebriumApiKey = process.env.CEREBRIUM_API_KEY;
@@ -119,6 +121,12 @@ export function createApp(options: AppOptions) {
 			"/api/*",
 			createSessionMiddleware({
 				getSession: options.getSession,
+				isAuthorizedRequest: (request) =>
+					Boolean(
+						internalToken &&
+							request.headers.get(GENERATOR_INTERNAL_TOKEN_HEADER) ===
+								internalToken
+					),
 				isPublicPath: (path) => path === "/api/health",
 			})
 		);

@@ -13,6 +13,10 @@ const optionalUrlSchema = z.preprocess((value) => {
 const envSchema = z.object({
 	DATABASE_URL: z.string().min(1),
 	CORS_ORIGIN: z.url(),
+	GENERATOR_INTERNAL_TOKEN: z
+		.string()
+		.min(1)
+		.default("local-generator-internal-token"),
 	GENERATOR_CALLBACK_TOKEN: z
 		.string()
 		.min(1)

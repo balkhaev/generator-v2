@@ -8,6 +8,7 @@ import type {
 } from "@generator/contracts/generator";
 import {
 	DEBUG_CORRELATION_HEADER,
+	GENERATOR_INTERNAL_TOKEN_HEADER,
 	normalizeBaseUrl,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
@@ -15,6 +16,11 @@ import type {
 	OperatorServerClient,
 	OperatorServerScenarioRecord,
 } from "@/domain/persons";
+
+type FetchLike = (
+	input: string | URL | Request,
+	init?: RequestInit
+) => Promise<Response>;
 
 const healthSchema = {
 	parse(value: unknown): GeneratorHealthResponse {
@@ -130,15 +136,23 @@ function mapScenarioPayload(value: unknown): OperatorServerScenarioRecord {
 
 export function createOperatorServerClient(
 	baseUrl: string,
-	fetchImpl: typeof fetch = fetch
+	options: {
+		fetchImpl?: FetchLike;
+		internalToken?: string;
+	} = {}
 ): OperatorServerClient {
 	const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+	const fetchImpl = options.fetchImpl ?? fetch;
+	const internalToken = options.internalToken?.trim();
 
 	async function request(path: string, init?: RequestInit) {
 		const response = await fetchImpl(`${normalizedBaseUrl}${path}`, {
 			...init,
 			headers: {
 				accept: "application/json",
+				...(internalToken
+					? { [GENERATOR_INTERNAL_TOKEN_HEADER]: internalToken }
+					: {}),
 				...(init?.headers ?? {}),
 			},
 		});

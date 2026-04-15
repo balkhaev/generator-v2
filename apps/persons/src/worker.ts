@@ -12,7 +12,9 @@ const RECONCILE_WATCH = process.env.RECONCILE_WATCH !== "false";
 
 const repository = createDrizzlePersonsRepository();
 const operatorServerClient = env.PERSONS_OPERATOR_URL
-	? createOperatorServerClient(env.PERSONS_OPERATOR_URL)
+	? createOperatorServerClient(env.PERSONS_OPERATOR_URL, {
+			internalToken: env.GENERATOR_INTERNAL_TOKEN,
+		})
 	: undefined;
 
 if (!operatorServerClient) {

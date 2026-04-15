@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { GENERATOR_INTERNAL_TOKEN_HEADER } from "@generator/http/shared";
 
 import { createApp } from "@/app";
 import type { ExecutionEntity, ExecutionRepository } from "@/domain/executions";
@@ -36,6 +37,74 @@ function createMemoryExecutionRepository(): ExecutionRepository {
 }
 
 describe("generator api", () => {
+	it("accepts internal-token-authenticated execution requests", async () => {
+		const previousInternalToken = process.env.GENERATOR_INTERNAL_TOKEN;
+		process.env.GENERATOR_INTERNAL_TOKEN = "internal-token-1";
+
+		try {
+			const app = createApp({
+				executionQueue: {
+					enqueueSubmit() {
+						return Promise.resolve();
+					},
+					enqueueSync() {
+						return Promise.resolve();
+					},
+				},
+				executionRepository: createMemoryExecutionRepository(),
+				getSession() {
+					return Promise.resolve(null);
+				},
+				inferenceClient: {
+					cancel() {
+						return Promise.resolve();
+					},
+					getStatus() {
+						throw new Error("not used");
+					},
+					submit() {
+						return Promise.resolve({
+							endpointId: "fal-ai/z-image",
+							jobId: "job-internal",
+							status: "queued" as const,
+						});
+					},
+				},
+				storageAdapter: {
+					createInputAssetKey(filename) {
+						return filename;
+					},
+					normalizeInputImageUrl(inputImageUrl) {
+						return inputImageUrl;
+					},
+					normalizeOutputUrl(outputUrl) {
+						return outputUrl;
+					},
+				},
+			});
+
+			const response = await app.request("http://localhost/api/executions", {
+				body: JSON.stringify({
+					prompt: "test prompt",
+					workflowKey: "fal-zimage-turbo",
+				}),
+				headers: {
+					"content-type": "application/json",
+					[GENERATOR_INTERNAL_TOKEN_HEADER]: "internal-token-1",
+				},
+				method: "POST",
+			});
+
+			expect(response.status).toBe(201);
+		} finally {
+			if (previousInternalToken === undefined) {
+				process.env.GENERATOR_INTERNAL_TOKEN = undefined;
+			} else {
+				process.env.GENERATOR_INTERNAL_TOKEN = previousInternalToken;
+			}
+		}
+	});
+
 	it("submits stateless executions and syncs artifacts", async () => {
 		const repository = createMemoryExecutionRepository();
 		const inferenceClient = {

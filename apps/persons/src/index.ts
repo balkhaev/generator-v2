@@ -11,7 +11,9 @@ const adminTrainingClient = env.PERSONS_ADMIN_URL
 	? createAdminTrainingClient(env.PERSONS_ADMIN_URL, env.TRAINING_CONTROL_TOKEN)
 	: undefined;
 const operatorServerClient = env.PERSONS_OPERATOR_URL
-	? createOperatorServerClient(env.PERSONS_OPERATOR_URL)
+	? createOperatorServerClient(env.PERSONS_OPERATOR_URL, {
+			internalToken: env.GENERATOR_INTERNAL_TOKEN,
+		})
 	: undefined;
 
 const corsOrigins = getCorsOrigins();

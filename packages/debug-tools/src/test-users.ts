@@ -180,7 +180,7 @@ function assertAllowedTestUserEmail(email: string) {
 }
 
 async function defaultHashPassword(password: string) {
-	const authModule = await import("../../auth/src/index");
+	const authModule = await import("@generator/auth");
 	const authContext = await authModule.auth.$context;
 	return authContext.password.hash(password);
 }
@@ -216,7 +216,7 @@ async function loadStoredUser(
 }
 
 async function getAuthAdapter() {
-	const authModule = await import("../../auth/src/index");
+	const authModule = await import("@generator/auth");
 	const authContext = await authModule.auth.$context;
 	return authContext.internalAdapter as unknown as InternalAdapterLike;
 }

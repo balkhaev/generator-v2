@@ -285,6 +285,7 @@
       "name": "@generator/debug-tools",
       "version": "0.0.0",
       "dependencies": {
+        "@generator/auth": "workspace:*",
         "@generator/contracts": "workspace:*",
         "@generator/env": "workspace:*",
         "dotenv": "catalog:",
@@ -1062,6 +1063,8 @@
     "accepts": ["accepts@2.0.0", "", { "dependencies": { "mime-types": "^3.0.0", "negotiator": "^1.0.0" } }, "sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng=="],
 
     "admin": ["admin@workspace:apps/admin"],
+
+    "admin": ["admin@file:apps/admin", { "dependencies": { "@generator/asset-release-presets": "workspace:*", "@generator/auth": "workspace:*", "@generator/contracts": "workspace:*", "@generator/db": "workspace:*", "@generator/env": "workspace:*", "@generator/generator-client-server": "workspace:*", "@generator/http": "workspace:*", "@generator/queue": "workspace:*", "@generator/workflows": "workspace:*", "drizzle-orm": "^0.45.1", "hono": "^4.8.2", "zod": "catalog:" }, "devDependencies": { "@generator/config": "workspace:*", "@types/bun": "catalog:", "tsdown": "^0.16.5", "typescript": "^5" } }],
 
     "admin-web": ["admin-web@workspace:apps/admin-web"],
 

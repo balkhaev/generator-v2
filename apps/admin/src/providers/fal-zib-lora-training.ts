@@ -95,6 +95,38 @@ async function retry<T>(operation: () => Promise<T>): Promise<T> {
 	throw lastError ?? new Error("Operation failed");
 }
 
+async function ensureSuccessfulResponse(
+	response: Response,
+	label: string
+): Promise<void> {
+	if (response.ok) {
+		return;
+	}
+
+	let detail = "";
+
+	try {
+		const contentType = response.headers.get("content-type") ?? "";
+		if (contentType.includes("application/json")) {
+			const body = (await response.json()) as Record<string, unknown>;
+			detail =
+				(typeof body.error === "string" && body.error) ||
+				(typeof body.message === "string" && body.message) ||
+				JSON.stringify(body);
+		} else {
+			detail = (await response.text()).trim();
+		}
+	} catch {
+		detail = "";
+	}
+
+	const statusSuffix = response.statusText ? ` ${response.statusText}` : "";
+	const detailSuffix = detail ? `: ${detail}` : "";
+	throw new Error(
+		`${label} failed (${response.status}${statusSuffix})${detailSuffix}`
+	);
+}
+
 async function falRequest<T>(
 	apiKey: string,
 	url: string,
@@ -458,17 +490,21 @@ export class FalZibLoraTrainingRunner {
 		};
 	}) {
 		await retry(async () => {
-			await fetch(`${this.personsApiBaseUrl}/api/internal/lora-trainings`, {
-				body: JSON.stringify({
-					context: { personId: input.personId },
-					event: input.event,
-				}),
-				headers: {
-					authorization: `Bearer ${this.trainingControlToken}`,
-					"content-type": "application/json",
-				},
-				method: "POST",
-			});
+			const response = await fetch(
+				`${this.personsApiBaseUrl}/api/internal/lora-trainings`,
+				{
+					body: JSON.stringify({
+						context: { personId: input.personId },
+						event: input.event,
+					}),
+					headers: {
+						authorization: `Bearer ${this.trainingControlToken}`,
+						"content-type": "application/json",
+					},
+					method: "POST",
+				}
+			);
+			await ensureSuccessfulResponse(response, "Training callback");
 		});
 	}
 

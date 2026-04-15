@@ -6,6 +6,9 @@
   "exports": {
     "./shared": {
       "default": "./src/shared.ts"
+    },
+    "./test-users": {
+      "default": "./src/test-users.ts"
     }
   },
   "scripts": {

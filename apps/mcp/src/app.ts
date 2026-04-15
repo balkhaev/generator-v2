@@ -5,6 +5,7 @@ import {
 	getWorkspaceRoot,
 	type ServiceName,
 } from "@generator/debug-tools/shared";
+import { getTestUser, upsertTestUser } from "@generator/debug-tools/test-users";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
 
@@ -132,6 +133,44 @@ const toolDefinitions = [
 		},
 		name: "generator_execution_sync",
 	},
+	{
+		description:
+			"Create or update a credential-based test user that can sign into the apps.",
+		inputSchema: {
+			properties: {
+				email: {
+					type: "string",
+				},
+				emailVerified: {
+					type: "boolean",
+				},
+				name: {
+					type: "string",
+				},
+				password: {
+					type: "string",
+				},
+			},
+			required: ["email", "password"],
+			type: "object",
+		},
+		name: "test_user_upsert",
+	},
+	{
+		description: "Fetch information about a previously created test user.",
+		inputSchema: {
+			properties: {
+				email: {
+					type: "string",
+				},
+				userId: {
+					type: "string",
+				},
+			},
+			type: "object",
+		},
+		name: "test_user_get",
+	},
 ] as const;
 
 function createToolResult(payload: unknown, isError = false) {
@@ -191,6 +230,10 @@ function parseHeaders(value: unknown) {
 	}
 
 	return headers;
+}
+
+function parseOptionalBoolean(value: unknown) {
+	return typeof value === "boolean" ? value : undefined;
 }
 
 function postJson(path: string, payload: unknown) {
@@ -280,6 +323,28 @@ async function handleToolCall(message: JsonRpcRequest) {
 				id,
 				createToolResult(
 					await postJson("/api/executions/sync", argumentsPayload)
+				)
+			);
+		case "test_user_upsert":
+			return createOkResponse(
+				id,
+				createToolResult(
+					await upsertTestUser({
+						email: parseOptionalString(argumentsPayload.email) ?? "",
+						emailVerified: parseOptionalBoolean(argumentsPayload.emailVerified),
+						name: parseOptionalString(argumentsPayload.name),
+						password: parseOptionalString(argumentsPayload.password) ?? "",
+					})
+				)
+			);
+		case "test_user_get":
+			return createOkResponse(
+				id,
+				createToolResult(
+					await getTestUser({
+						email: parseOptionalString(argumentsPayload.email),
+						userId: parseOptionalString(argumentsPayload.userId),
+					})
 				)
 			);
 		default:

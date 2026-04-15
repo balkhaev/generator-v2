@@ -95,6 +95,20 @@
         "typescript": "^5",
       },
     },
+    "apps/mcp": {
+      "name": "mcp",
+      "dependencies": {
+        "@generator/debug-tools": "workspace:*",
+        "hono": "^4.8.2",
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@generator/config": "workspace:*",
+        "@types/bun": "catalog:",
+        "tsdown": "^0.16.5",
+        "typescript": "^5",
+      },
+    },
     "apps/persons": {
       "name": "persons",
       "dependencies": {
@@ -1044,6 +1058,8 @@
 
     "accepts": ["accepts@2.0.0", "", { "dependencies": { "mime-types": "^3.0.0", "negotiator": "^1.0.0" } }, "sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng=="],
 
+    "admin": ["admin@file:apps/admin", { "dependencies": { "@generator/asset-release-presets": "workspace:*", "@generator/auth": "workspace:*", "@generator/contracts": "workspace:*", "@generator/db": "workspace:*", "@generator/env": "workspace:*", "@generator/generator-client-server": "workspace:*", "@generator/http": "workspace:*", "@generator/queue": "workspace:*", "@generator/workflows": "workspace:*", "drizzle-orm": "^0.45.1", "hono": "^4.8.2", "zod": "catalog:" }, "devDependencies": { "@generator/config": "workspace:*", "@types/bun": "catalog:", "tsdown": "^0.16.5", "typescript": "^5" } }],
+
     "admin": ["admin@workspace:apps/admin"],
 
     "admin-web": ["admin-web@workspace:apps/admin-web"],
@@ -1467,6 +1483,8 @@
     "magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
 
     "math-intrinsics": ["math-intrinsics@1.1.0", "", {}, "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g=="],
+
+    "mcp": ["mcp@workspace:apps/mcp"],
 
     "media-typer": ["media-typer@1.1.0", "", {}, "sha512-aisnrDP4GNe06UcKFnV5bfMNPBUw4jsLGaWwWfnH3v02GnBuXX2MCVn5RbrWo0j3pczUilYblq7fQ7Nw2t5XKw=="],
 

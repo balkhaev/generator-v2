@@ -35,6 +35,7 @@ const serverSchema = {
 	DATABASE_URL: z.string().min(1),
 	BETTER_AUTH_SECRET: z.string().min(32).optional(),
 	BETTER_AUTH_URL: z.url().optional(),
+	BETTER_AUTH_COOKIE_DOMAIN: z.string().min(1).optional(),
 	CORS_ORIGIN: z.url().optional(),
 	CORS_ORIGINS: z.string().min(1).optional(),
 	GENERATOR_CALLBACK_TOKEN: z.string().min(1).optional(),
@@ -118,8 +119,11 @@ export function getRequiredCorsOrigins() {
 }
 
 export function getAuthConfig() {
+	const cookieDomain = env.BETTER_AUTH_COOKIE_DOMAIN?.trim();
+
 	return {
 		baseUrl: getRequiredEnvValue(env.BETTER_AUTH_URL, "BETTER_AUTH_URL"),
+		cookieDomain: cookieDomain && cookieDomain.length > 0 ? cookieDomain : null,
 		secret: getRequiredEnvValue(env.BETTER_AUTH_SECRET, "BETTER_AUTH_SECRET"),
 		trustedOrigins: getRequiredCorsOrigins(),
 	};

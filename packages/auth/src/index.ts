@@ -10,6 +10,8 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 
+import { deriveCrossSubdomainCookieDomain } from "./cookie-domain";
+
 const isDev = env.NODE_ENV !== "production";
 const db = createDb(env.DATABASE_URL);
 
@@ -21,6 +23,9 @@ const DEV_USER = {
 
 export function createAuth() {
 	const authConfig = getAuthConfig();
+	const crossSubdomainCookieDomain =
+		authConfig.cookieDomain ??
+		deriveCrossSubdomainCookieDomain(authConfig.baseUrl);
 
 	return betterAuth({
 		database: drizzleAdapter(db, {
@@ -39,6 +44,14 @@ export function createAuth() {
 		secret: authConfig.secret,
 		baseURL: authConfig.baseUrl,
 		advanced: {
+			...(crossSubdomainCookieDomain
+				? {
+						crossSubDomainCookies: {
+							domain: crossSubdomainCookieDomain,
+							enabled: true,
+						},
+					}
+				: {}),
 			defaultCookieAttributes: {
 				sameSite: isDev ? "lax" : "none",
 				secure: !isDev,

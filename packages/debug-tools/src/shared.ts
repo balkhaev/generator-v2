@@ -15,7 +15,6 @@ const defaultServiceDefinitions = {
 			process.env.ADMIN_DEBUG_BASE_URL ??
 			process.env.ADMIN_API_URL ??
 			"http://localhost:3000",
-		healthUrl: "http://localhost:3000/api/health",
 		label: "admin gateway",
 	},
 	generator: {
@@ -23,7 +22,6 @@ const defaultServiceDefinitions = {
 			process.env.GENERATOR_DEBUG_BASE_URL ??
 			process.env.GENERATOR_API_URL ??
 			"http://localhost:3005",
-		healthUrl: "http://localhost:3005/api/health",
 		label: "generator api",
 	},
 	studio: {
@@ -31,7 +29,6 @@ const defaultServiceDefinitions = {
 			process.env.STUDIO_DEBUG_BASE_URL ??
 			process.env.STUDIO_API_URL ??
 			"http://localhost:3006",
-		healthUrl: "http://localhost:3006/api/health",
 		label: "studio api",
 	},
 	persons: {
@@ -39,7 +36,6 @@ const defaultServiceDefinitions = {
 			process.env.PERSONS_DEBUG_BASE_URL ??
 			process.env.PERSONS_API_URL ??
 			"http://localhost:3003",
-		healthUrl: "http://localhost:3003/api/health",
 		label: "persons api",
 	},
 } as const;
@@ -155,7 +151,11 @@ export async function collectServiceHealth(
 			continue;
 		}
 
-		const snapshot = await fetchJsonOrText(service.healthUrl);
+		const healthUrl = new URL(
+			"/api/health",
+			`${service.baseUrl.replace(trailingSlashPattern, "")}/`
+		).toString();
+		const snapshot = await fetchJsonOrText(healthUrl);
 		snapshots.push({
 			...snapshot,
 			label: service.label,

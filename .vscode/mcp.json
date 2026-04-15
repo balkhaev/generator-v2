@@ -1,0 +1,23 @@
+{
+  "servers": {
+    "generator-debug": {
+      "type": "http",
+      "url": "https://mcp.gen.balkhaev.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GENERATOR_DEBUG_MCP_TOKEN}"
+      }
+    },
+    "shadcn": {
+      "command": "npx",
+      "args": ["-y", "shadcn@latest", "mcp"]
+    },
+    "next-devtools": {
+      "command": "npx",
+      "args": ["-y", "next-devtools-mcp@latest"]
+    },
+    "better-auth": {
+      "type": "http",
+      "url": "https://mcp.inkeep.com/better-auth/mcp"
+    }
+  }
+}

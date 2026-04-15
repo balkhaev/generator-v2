@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "generator-debug": {
+      "type": "http",
+      "url": "https://mcp.gen.balkhaev.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GENERATOR_DEBUG_MCP_TOKEN}"
+      }
+    }
+  }
+}

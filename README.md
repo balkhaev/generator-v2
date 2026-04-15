@@ -46,6 +46,28 @@ bun run dev
 Open [http://localhost:3001](http://localhost:3001) for the admin web app and [http://localhost:3002](http://localhost:3002) for the studio web app.
 The admin gateway runs at [http://localhost:3000](http://localhost:3000), the studio backend runs at [http://localhost:3006](http://localhost:3006), and the generator API runs at [http://localhost:3005](http://localhost:3005).
 
+## MCP
+
+The repo now includes project-level MCP configuration so coding agents can attach to the deployed debug server without extra local setup.
+
+- `.mcp.json` exposes the shared `generator-debug` MCP server for agents that read root MCP config.
+- `.vscode/mcp.json` exposes the same server for VS Code-compatible agent tooling.
+- Set `GENERATOR_DEBUG_MCP_TOKEN` in your local environment before starting your agent/editor.
+
+Current endpoint:
+
+```text
+https://mcp.gen.balkhaev.com/mcp
+```
+
+Example:
+
+```bash
+export GENERATOR_DEBUG_MCP_TOKEN="your-token-here"
+```
+
+If the MCP auth token is rotated, update the local environment variable value instead of committing secrets into the repo.
+
 ## UI Customization
 
 React web apps in this stack share shadcn/ui primitives through `packages/ui`.

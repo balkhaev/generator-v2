@@ -39,9 +39,10 @@ describe("mcp app", () => {
 				tools: Array<{ name: string }>;
 			};
 		};
-		expect(payload.result.tools.map((tool) => tool.name)).toContain(
-			"service_request"
-		);
+		const toolNames = payload.result.tools.map((tool) => tool.name);
+		expect(toolNames).toContain("service_request");
+		expect(toolNames).toContain("test_user_upsert");
+		expect(toolNames).toContain("test_user_get");
 	});
 
 	it("returns public health without auth", async () => {

@@ -3,6 +3,7 @@ import {
 	createAuthHandler,
 	createSessionMiddleware,
 } from "@generator/auth/middleware";
+import { createPublicPathMatcher } from "@generator/auth/public-paths";
 import type {
 	AdminDashboardSnapshot,
 	AdminSetupStatus,
@@ -50,14 +51,10 @@ interface AppOptions {
 	studioBaseUrl: string;
 }
 
-function isPublicApiPath(path: string) {
-	return (
-		path === "/api/health" ||
-		path === "/api/setup/status" ||
-		path.startsWith("/api/auth/") ||
-		path.startsWith("/api/internal/")
-	);
-}
+const isPublicApiPath = createPublicPathMatcher({
+	exact: ["/api/health", "/api/setup/status"],
+	prefixes: ["/api/auth/", "/api/internal/"],
+});
 
 async function proxyGeneratorRequest(
 	c: Context<{ Variables: AppVariables }>,

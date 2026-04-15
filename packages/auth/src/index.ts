@@ -84,6 +84,14 @@ export function createAuth() {
 
 export const auth = createAuth();
 
+export function handleAuthRequest(request: Request) {
+	return auth.handler(request);
+}
+
+export function getRequestSession(request: Request) {
+	return auth.api.getSession({ headers: request.headers });
+}
+
 export async function isInitialAdminSetupRequired() {
 	const existingUsers = await db
 		.select({

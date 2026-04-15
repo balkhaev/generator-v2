@@ -3,6 +3,7 @@ import {
 	createAuthHandler,
 	createSessionMiddleware,
 } from "@generator/auth/middleware";
+import { createPublicPathMatcher } from "@generator/auth/public-paths";
 import {
 	DEBUG_CORRELATION_HEADER,
 	resolveDebugCorrelationId,
@@ -33,13 +34,10 @@ interface AppOptions {
 	repository: PersonsRepository;
 }
 
-function isPublicApiPath(path: string) {
-	return (
-		path === "/api/health" ||
-		path.startsWith("/api/auth/") ||
-		path.startsWith("/api/internal/")
-	);
-}
+const isPublicApiPath = createPublicPathMatcher({
+	exact: ["/api/health"],
+	prefixes: ["/api/auth/", "/api/internal/"],
+});
 
 export function createApp(options: AppOptions) {
 	const service = new PersonsService(

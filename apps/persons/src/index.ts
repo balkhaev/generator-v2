@@ -1,4 +1,8 @@
-import { auth, ensureDevUser } from "@generator/auth";
+import {
+	ensureDevUser,
+	getRequestSession,
+	handleAuthRequest,
+} from "@generator/auth";
 import { getCorsOrigins } from "@generator/env/server";
 import { createApp } from "@/app";
 import { createAdminTrainingClient } from "@/clients/admin-training";
@@ -20,13 +24,13 @@ const corsOrigins = getCorsOrigins();
 
 const app = createApp({
 	adminTrainingClient,
-	authHandler: (request) => auth.handler(request),
+	authHandler: handleAuthRequest,
 	callbackConfig: {
 		token: env.GENERATOR_CALLBACK_TOKEN,
 		url: `${env.PERSONS_BASE_URL ?? `http://localhost:${env.PORT}`}/api/internal/generator-executions`,
 	},
 	corsOrigins: corsOrigins.length > 0 ? corsOrigins : [env.CORS_ORIGIN],
-	getSession: (request) => auth.api.getSession({ headers: request.headers }),
+	getSession: getRequestSession,
 	operatorServerClient,
 	repository,
 });

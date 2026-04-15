@@ -7,6 +7,7 @@ import {
 	createAuthHandler,
 	createSessionMiddleware,
 } from "@generator/auth/middleware";
+import { createPublicPathMatcher } from "@generator/auth/public-paths";
 import type {
 	AssetReleasePreset,
 	AssetReleaseSnapshot,
@@ -97,14 +98,10 @@ interface StudioSnapshotResponse {
 
 const fileExtensionPattern = /\.[a-z0-9]+$/i;
 
-function isPublicApiPath(path: string) {
-	return (
-		path === "/api/health" ||
-		path === "/api/studio-snapshot" ||
-		path.startsWith("/api/auth/") ||
-		path.startsWith("/api/internal/")
-	);
-}
+const isPublicApiPath = createPublicPathMatcher({
+	exact: ["/api/health", "/api/studio-snapshot"],
+	prefixes: ["/api/auth/", "/api/internal/"],
+});
 
 async function proxyGeneratorRequest(
 	c: Context<{ Variables: AppVariables }>,

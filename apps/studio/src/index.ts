@@ -1,4 +1,8 @@
-import { auth, ensureDevUser } from "@generator/auth";
+import {
+	ensureDevUser,
+	getRequestSession,
+	handleAuthRequest,
+} from "@generator/auth";
 import {
 	getGeneratorApiUrl,
 	getGeneratorCallbackToken,
@@ -12,7 +16,7 @@ const generatorBaseUrl = getGeneratorApiUrl();
 const repository = createDrizzleStudioRepository();
 
 const app = createApp({
-	authHandler: (request) => auth.handler(request),
+	authHandler: handleAuthRequest,
 	callbackConfig: {
 		token: getGeneratorCallbackToken(),
 		url: `${process.env.STUDIO_API_URL ?? `http://localhost:${process.env.PORT ?? 3006}`}/api/internal/generator-executions`,
@@ -20,7 +24,7 @@ const app = createApp({
 	corsOrigins: getRequiredCorsOrigins(),
 	generatorBaseUrl,
 	executionClient: createGeneratorExecutionClient(generatorBaseUrl),
-	getSession: (request) => auth.api.getSession({ headers: request.headers }),
+	getSession: getRequestSession,
 	loggerImpl: console,
 	repository,
 });

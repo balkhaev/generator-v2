@@ -1,6 +1,7 @@
 import {
-	auth,
 	ensureDevUser,
+	getRequestSession,
+	handleAuthRequest,
 	isInitialAdminSetupRequired,
 } from "@generator/auth";
 import {
@@ -51,11 +52,11 @@ const assetReleasePresetService = new AssetReleasePresetService(
 const app = createApp({
 	assetReleasePresetService,
 	assetReleaseService,
-	authHandler: (request) => auth.handler(request),
+	authHandler: handleAuthRequest,
 	corsOrigins: getRequiredCorsOrigins(),
 	generatorBaseUrl,
 	internalTrainingControlService,
-	getSession: (request) => auth.api.getSession({ headers: request.headers }),
+	getSession: getRequestSession,
 	loadDashboardSnapshot: () => getAdminDashboardSnapshot(studioBaseUrl),
 	loadSetupStatus: async () => ({
 		setupRequired: await isInitialAdminSetupRequired(),

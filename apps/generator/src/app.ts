@@ -1,5 +1,6 @@
 import type { AuthVariables } from "@generator/auth/middleware";
 import { createSessionMiddleware } from "@generator/auth/middleware";
+import { createPublicPathMatcher } from "@generator/auth/public-paths";
 import {
 	DEBUG_CORRELATION_HEADER,
 	GENERATOR_INTERNAL_TOKEN_HEADER,
@@ -49,6 +50,10 @@ interface AppOptions {
 	redisUrl?: string;
 	storageAdapter?: StorageAdapter;
 }
+
+const isPublicApiPath = createPublicPathMatcher({
+	exact: ["/api/health"],
+});
 
 export function createApp(options: AppOptions) {
 	const internalToken = process.env.GENERATOR_INTERNAL_TOKEN?.trim();
@@ -127,7 +132,7 @@ export function createApp(options: AppOptions) {
 							request.headers.get(GENERATOR_INTERNAL_TOKEN_HEADER) ===
 								internalToken
 					),
-				isPublicPath: (path) => path === "/api/health",
+				isPublicPath: isPublicApiPath,
 			})
 		);
 	}

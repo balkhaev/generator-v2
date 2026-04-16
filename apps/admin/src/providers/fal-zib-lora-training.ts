@@ -13,6 +13,7 @@ const DEFAULT_DATASET_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 2000;
 const REFERENCE_COUNT = 19;
+const FLUX_REFERENCE_EDIT_MODEL = "fal-ai/flux-2/edit";
 const referenceImageUrlExtensionPattern = /\.(png|jpe?g|webp)/i;
 const fileExtensionPattern = /\.[^.]+$/u;
 const imageContentTypeToExtensionMap = new Map<string, string>([
@@ -217,21 +218,23 @@ async function falPollUntilDone(
 
 async function generateReferenceImageFal(
 	apiKey: string,
+	imageUrl: string,
 	prompt: string
 ): Promise<string> {
-	const submit = await falSubmit(apiKey, "fal-ai/flux/dev", {
-		prompt,
+	const submit = await falSubmit(apiKey, FLUX_REFERENCE_EDIT_MODEL, {
+		enable_prompt_expansion: false,
+		guidance_scale: 2.5,
 		image_size: "portrait_4_3",
-		num_inference_steps: 28,
-		guidance_scale: 3.5,
+		image_urls: [imageUrl],
 		num_images: 1,
-		enable_safety_checker: false,
+		num_inference_steps: 28,
 		output_format: "jpeg",
+		prompt,
 	});
 	const result = await falPollUntilDone(
 		apiKey,
 		submit,
-		"fal-ai/flux/dev",
+		FLUX_REFERENCE_EDIT_MODEL,
 		DEFAULT_DATASET_TIMEOUT_MS,
 		DEFAULT_DATASET_POLL_MS
 	);
@@ -584,7 +587,11 @@ export class FalZibLoraTrainingRunner {
 				REFERENCE_COUNT
 			)) {
 				const prompt = `${baseReferencePrompt}, ${suffix}`;
-				const url = await generateReferenceImageFal(this.apiKey, prompt);
+				const url = await generateReferenceImageFal(
+					this.apiKey,
+					parsed.referencePhotoUrl,
+					prompt
+				);
 				referenceImageUrls.push(url);
 				this.logger.info("fal-zib-lora.reference-generated", {
 					personId: parsed.personId,

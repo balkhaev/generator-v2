@@ -6,9 +6,6 @@
   "exports": {
     "./shared": {
       "default": "./src/shared.ts"
-    },
-    "./test-users": {
-      "default": "./src/test-users.ts"
     }
   },
   "scripts": {
@@ -17,7 +14,6 @@
     "mcp": "bun src/mcp-server.ts"
   },
   "dependencies": {
-    "@generator/auth": "workspace:*",
     "@generator/contracts": "workspace:*",
     "@generator/env": "workspace:*",
     "dotenv": "catalog:"

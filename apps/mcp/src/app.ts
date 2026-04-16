@@ -5,9 +5,10 @@ import {
 	getWorkspaceRoot,
 	type ServiceName,
 } from "@generator/debug-tools/shared";
-import { getTestUser, upsertTestUser } from "@generator/debug-tools/test-users";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
+
+import { getTestUser, upsertTestUser } from "@/test-users";
 
 interface JsonRpcRequest {
 	id?: number | string | null;

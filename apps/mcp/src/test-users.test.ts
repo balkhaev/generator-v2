@@ -4,7 +4,7 @@ import {
 	getTestUser,
 	isAllowedTestUserEmail,
 	upsertTestUser,
-} from "./test-users";
+} from "@/test-users";
 
 function createMemoryStore() {
 	const users = new Map<
@@ -15,6 +15,7 @@ function createMemoryStore() {
 			emailVerified: boolean;
 			hasCredentialAccount: boolean;
 			id: string;
+			image: string | null;
 			name: string;
 			passwordHash: string;
 			sessionCount: number;
@@ -42,27 +43,29 @@ function createMemoryStore() {
 			passwordHash: string;
 		}) => {
 			const now = new Date();
-			const id = crypto.randomUUID();
-			const user = {
+			const createdUser = {
 				createdAt: now,
 				email: input.email,
 				emailVerified: input.emailVerified,
 				hasCredentialAccount: true,
-				id,
+				id: crypto.randomUUID(),
+				image: null,
 				name: input.name,
 				passwordHash: input.passwordHash,
 				sessionCount: 0,
 				updatedAt: now,
 			};
-			users.set(id, user);
+			users.set(createdUser.id, createdUser);
+
 			return Promise.resolve({
-				hasCredentialAccount: user.hasCredentialAccount,
-				sessionCount: user.sessionCount,
-				user,
+				hasCredentialAccount: createdUser.hasCredentialAccount,
+				sessionCount: createdUser.sessionCount,
+				user: createdUser,
 			});
 		},
 		getByEmail: (email: string) => {
 			const user = findBy((entry) => entry.email === email);
+
 			return Promise.resolve(
 				user
 					? {
@@ -75,6 +78,7 @@ function createMemoryStore() {
 		},
 		getById: (userId: string) => {
 			const user = users.get(userId);
+
 			return Promise.resolve(
 				user
 					? {
@@ -99,23 +103,22 @@ function createMemoryStore() {
 			const updatedUser = {
 				...currentUser,
 				emailVerified: input.emailVerified,
-				hasCredentialAccount: true,
 				name: input.name,
 				passwordHash: input.passwordHash,
 				updatedAt: new Date(),
 			};
 			users.set(input.userId, updatedUser);
+
 			return Promise.resolve({
 				hasCredentialAccount: updatedUser.hasCredentialAccount,
 				sessionCount: updatedUser.sessionCount,
 				user: updatedUser,
 			});
 		},
-		users,
 	};
 }
 
-describe("test user helpers", () => {
+describe("mcp test user helpers", () => {
 	it("accepts only explicit test user emails", () => {
 		expect(isAllowedTestUserEmail("codex-e2e@example.com")).toBe(true);
 		expect(isAllowedTestUserEmail("qa.user@example.test")).toBe(true);

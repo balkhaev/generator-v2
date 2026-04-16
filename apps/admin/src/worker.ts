@@ -1,24 +1,23 @@
-import { normalizeS3RuntimeEnv } from "@generator/env/server";
+import { env, normalizeS3RuntimeEnv } from "@generator/env/server";
 
 import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
 import { createPersonLoraTrainingWorker } from "@/queue/person-lora-training";
 
 const trailingSlashesPattern = /\/+$/u;
 
-const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
-const personsApiUrl = process.env.PERSONS_API_URL;
+const redisUrl = env.REDIS_URL;
+const personsApiUrl = env.PERSONS_API_URL;
 if (!personsApiUrl) {
 	throw new Error("PERSONS_API_URL is required for the admin training worker");
 }
 
-const falKey = process.env.FAL_KEY;
+const falKey = env.FAL_KEY;
 
 if (!falKey) {
 	throw new Error("FAL_KEY is required for the admin training worker");
 }
 
-const trainingControlToken =
-	process.env.TRAINING_CONTROL_TOKEN ?? "local-training-control-token";
+const trainingControlToken = env.TRAINING_CONTROL_TOKEN;
 
 const s3Env = normalizeS3RuntimeEnv(process.env);
 const s3Bucket = s3Env.S3_BUCKET?.trim();

@@ -1,15 +1,19 @@
 export type WorkflowParameterType = "text" | "number";
+export type WorkflowParameterKind = "lora-url";
+export type WorkflowBaseModel = "z-image" | "flux" | "sdxl" | "other";
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 export type ScenarioParamValue = string | number | boolean | null;
 
 export interface WorkflowField {
 	description: string;
 	key: string;
+	kind?: WorkflowParameterKind;
 	label: string;
 	type: WorkflowParameterType;
 }
 
 export interface WorkflowSummary {
+	baseModel?: WorkflowBaseModel;
 	defaults: Record<string, unknown>;
 	description: string;
 	key: string;

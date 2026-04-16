@@ -8,32 +8,28 @@ import type {
 	AdminDashboardSnapshot,
 	AdminSetupStatus,
 } from "@generator/contracts/admin";
+import { type FetchLike, proxyHttpRequest } from "@generator/http/proxy";
 import {
 	DEBUG_CORRELATION_HEADER,
-	normalizeBaseUrl,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
-import type { Context } from "hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
 import type { AssetReleasePresetService } from "@/domain/asset-release-presets";
 import type { AssetReleaseService } from "@/domain/asset-releases";
+import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
 import type { S3Config } from "@/providers/lora-training-assets";
 import { createAssetReleasePresetRoutes } from "@/routes/asset-release-presets";
 import { createAssetReleaseRoutes } from "@/routes/asset-releases";
 import { createInternalRoutes } from "@/routes/internal";
+import { createAdminLoraRoutes } from "@/routes/loras";
 
 interface AppVariables extends AuthVariables {
 	debugCorrelationId: string;
 }
-
-type FetchLike = (
-	input: string | URL | Request,
-	init?: RequestInit
-) => Promise<Response>;
 
 interface AppOptions {
 	assetReleasePresetService?: AssetReleasePresetService;
@@ -49,6 +45,7 @@ interface AppOptions {
 	loadDashboardSnapshot: () => Promise<AdminDashboardSnapshot>;
 	loadSetupStatus: () => Promise<AdminSetupStatus>;
 	loggerImpl?: Pick<Console, "info" | "error">;
+	loraRegistryService?: LoraRegistryService;
 	s3Config?: S3Config;
 	studioBaseUrl: string;
 }
@@ -57,62 +54,6 @@ const isPublicApiPath = createPublicPathMatcher({
 	exact: ["/api/health", "/api/setup/status"],
 	prefixes: ["/api/auth/", "/api/internal/"],
 });
-
-async function proxyGeneratorRequest(
-	c: Context<{ Variables: AppVariables }>,
-	fetchImpl: FetchLike,
-	generatorBaseUrl: string
-) {
-	const requestUrl = new URL(c.req.url);
-	const targetUrl = new URL(
-		`${c.req.path}${requestUrl.search}`,
-		`${normalizeBaseUrl(generatorBaseUrl)}/`
-	);
-	const headers = new Headers();
-	const contentType = c.req.header("content-type");
-	const accept = c.req.header("accept");
-	const authorization = c.req.header("authorization");
-	const debugCorrelationId = c.get("debugCorrelationId");
-
-	if (contentType) {
-		headers.set("content-type", contentType);
-	}
-
-	if (accept) {
-		headers.set("accept", accept);
-	}
-
-	if (authorization) {
-		headers.set("authorization", authorization);
-	}
-
-	headers.set(DEBUG_CORRELATION_HEADER, debugCorrelationId);
-
-	const init: RequestInit = {
-		headers,
-		method: c.req.method,
-	};
-
-	if (!(c.req.method === "GET" || c.req.method === "HEAD")) {
-		init.body = await c.req.raw.clone().arrayBuffer();
-	}
-
-	const response = await fetchImpl(targetUrl, init);
-	const responseHeaders = new Headers();
-	const responseContentType = response.headers.get("content-type");
-	const responseDebugCorrelationId =
-		response.headers.get(DEBUG_CORRELATION_HEADER) ?? debugCorrelationId;
-
-	if (responseContentType) {
-		responseHeaders.set("content-type", responseContentType);
-	}
-	responseHeaders.set(DEBUG_CORRELATION_HEADER, responseDebugCorrelationId);
-
-	return new Response(response.body, {
-		headers: responseHeaders,
-		status: response.status,
-	});
-}
 
 export function createApp(options: AppOptions) {
 	const app = new Hono<{ Variables: AppVariables }>();
@@ -184,26 +125,35 @@ export function createApp(options: AppOptions) {
 			"/api/internal",
 			createInternalRoutes(
 				options.internalTrainingControlService,
-				options.s3Config
+				options.s3Config,
+				options.loraRegistryService
 			)
 		);
 	}
 
-	for (const route of ["/api/workflows", "/api/workflows/*"]) {
-		app.all(route, (c) =>
-			proxyGeneratorRequest(c, fetchImpl, options.studioBaseUrl)
+	if (options.loraRegistryService) {
+		app.route(
+			"/api/admin/loras",
+			createAdminLoraRoutes(options.loraRegistryService)
 		);
 	}
 
-	for (const route of ["/api/scenarios", "/api/scenarios/*"]) {
+	const studioProxyRoutes = [
+		"/api/workflows",
+		"/api/workflows/*",
+		"/api/scenarios",
+		"/api/scenarios/*",
+		"/api/runs",
+		"/api/runs/*",
+	];
+	for (const route of studioProxyRoutes) {
 		app.all(route, (c) =>
-			proxyGeneratorRequest(c, fetchImpl, options.studioBaseUrl)
-		);
-	}
-
-	for (const route of ["/api/runs", "/api/runs/*"]) {
-		app.all(route, (c) =>
-			proxyGeneratorRequest(c, fetchImpl, options.studioBaseUrl)
+			proxyHttpRequest({
+				debugCorrelationId: c.get("debugCorrelationId"),
+				fetchImpl,
+				request: c.req.raw,
+				targetBaseUrl: options.studioBaseUrl,
+			})
 		);
 	}
 

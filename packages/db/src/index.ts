@@ -22,18 +22,10 @@ import {
 	verification,
 } from "./schema/auth";
 import {
-	artifact,
-	artifactRelations,
-	scenario,
-	scenarioRelations,
-	scenarioRun,
-	scenarioRunRelations,
-	scenarioRunStatusEnum,
-} from "./schema/generation";
-import {
 	generatorExecution,
 	generatorExecutionStatusEnum,
 } from "./schema/generator";
+import { lora, loraBaseModelEnum, loraStatusEnum } from "./schema/loras";
 import {
 	person,
 	personGeneration,
@@ -55,8 +47,6 @@ import {
 const schema = {
 	account,
 	accountRelations,
-	artifact,
-	artifactRelations,
 	assetRelease,
 	assetReleaseGroupEnum,
 	assetReleaseItem,
@@ -65,17 +55,15 @@ const schema = {
 	assetReleaseStatusEnum,
 	generatorExecution,
 	generatorExecutionStatusEnum,
+	lora,
+	loraBaseModelEnum,
+	loraStatusEnum,
 	person,
 	personGeneration,
 	personGenerationMediaTypeEnum,
 	personGenerationRelations,
 	personGenerationStatusEnum,
 	personRelations,
-	scenario,
-	scenarioRelations,
-	scenarioRun,
-	scenarioRunRelations,
-	scenarioRunStatusEnum,
 	session,
 	sessionRelations,
 	studioArtifact,
@@ -102,7 +90,12 @@ type Database = ReturnType<typeof createDb>;
 let cachedDb: Database | null = null;
 
 function getDb() {
-	cachedDb ??= createDb(env.DATABASE_URL);
+	if (!cachedDb) {
+		if (!env.DATABASE_URL) {
+			throw new Error("DATABASE_URL is required to use the shared db client");
+		}
+		cachedDb = createDb(env.DATABASE_URL);
+	}
 	return cachedDb;
 }
 

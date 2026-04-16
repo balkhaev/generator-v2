@@ -1,5 +1,6 @@
 "use client";
 
+import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import { env } from "@generator/env/web";
 import { requestJson } from "@generator/http/client";
 import { normalizeBaseUrl } from "@generator/http/shared";
@@ -80,6 +81,27 @@ const personsApiBaseUrl = normalizeBaseUrl(
 	env.NEXT_PUBLIC_PERSONS_API_URL ?? "http://localhost:3003"
 );
 
+const studioApiBaseUrl = normalizeBaseUrl(env.NEXT_PUBLIC_SERVER_URL);
+
+async function fetchStudioLoras(
+	baseModel?: string
+): Promise<LoraRegistryEntry[]> {
+	const params = new URLSearchParams();
+	if (baseModel) {
+		params.set("baseModel", baseModel);
+	}
+	const query = params.toString();
+	try {
+		const payload = await requestJson<{ loras: LoraRegistryEntry[] }>(
+			`${studioApiBaseUrl}/api/loras${query ? `?${query}` : ""}`,
+			{ cache: "no-store", credentials: "include" }
+		);
+		return payload.loras;
+	} catch {
+		return [];
+	}
+}
+
 async function findPersonSlugByOperatorRunId(operatorRunId: string) {
 	const payload = await requestJson<{ person: { slug: string } }>(
 		`${personsApiBaseUrl}/api/persons/lookup/run/${operatorRunId}`,
@@ -109,6 +131,8 @@ const presetStatusTone: Record<PresetReadiness["status"], string> = {
 	ready: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
 };
 const adminWebUrl = env.NEXT_PUBLIC_ADMIN_URL ?? "http://localhost:3001";
+const trailingSlashesPattern = /\/+$/u;
+const adminLorasHref = `${adminWebUrl.replace(trailingSlashesPattern, "")}/loras`;
 
 function readConsoleTabParam(tab: string | null): ConsoleTab {
 	if (tab === "compose" || tab === "runs") {
@@ -384,6 +408,7 @@ export default function ScenarioConsole({
 		null
 	);
 	const [snapshot, setSnapshot] = useState<AdminSnapshot>(initialSnapshot);
+	const [availableLoras, setAvailableLoras] = useState<LoraRegistryEntry[]>([]);
 	const [linkedPerson, setLinkedPerson] = useState<LinkedPersonState>(null);
 	const [submittingRunId, setSubmittingRunId] = useState<string | null>(null);
 	const [syncingRunId, setSyncingRunId] = useState<string | null>(null);
@@ -442,6 +467,18 @@ export default function ScenarioConsole({
 			preset.workflowKeys.includes(selectedWorkflow.key)
 		);
 	}, [presetReadiness, selectedWorkflow]);
+
+	useEffect(() => {
+		let cancelled = false;
+		fetchStudioLoras(selectedWorkflow?.baseModel).then((items) => {
+			if (!cancelled) {
+				setAvailableLoras(items);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [selectedWorkflow?.baseModel]);
 
 	useEffect(() => {
 		setSnapshot(initialSnapshot);
@@ -906,36 +943,74 @@ export default function ScenarioConsole({
 
 				{selectedWorkflow.parameters.length > 0 ? (
 					<div className="grid gap-2 sm:grid-cols-2">
-						{selectedWorkflow.parameters.map((parameter) => (
-							<div className="grid gap-1" key={parameter.key}>
-								<Label className="text-xs" htmlFor={parameter.key}>
-									{parameter.label}
-								</Label>
-								<Input
-									id={parameter.key}
-									onChange={(event) => {
-										const value = event.target.value;
-
-										setScenarioForm((current) =>
-											current
-												? {
-														...current,
-														params: {
-															...current.params,
-															[parameter.key]: value,
-														},
-													}
-												: current
-										);
-									}}
-									placeholder={parameter.defaultValue || parameter.label}
-									value={scenarioForm.params[parameter.key] ?? ""}
-								/>
-								<p className="line-clamp-1 text-[11px] text-muted-foreground">
-									{parameter.helperText}
-								</p>
-							</div>
-						))}
+						{selectedWorkflow.parameters.map((parameter) => {
+							const currentValue = scenarioForm.params[parameter.key] ?? "";
+							const handleChange = (value: string) => {
+								setScenarioForm((current) =>
+									current
+										? {
+												...current,
+												params: {
+													...current.params,
+													[parameter.key]: value,
+												},
+											}
+										: current
+								);
+							};
+							if (parameter.kind === "lora-url") {
+								const matchedEntry = availableLoras.find(
+									(entry) => entry.s3Url === currentValue
+								);
+								return (
+									<div className="grid gap-1" key={parameter.key}>
+										<Label className="text-xs" htmlFor={parameter.key}>
+											{parameter.label}
+										</Label>
+										<select
+											className={selectClassName}
+											id={parameter.key}
+											onChange={(event) => handleChange(event.target.value)}
+											value={matchedEntry ? matchedEntry.s3Url : currentValue}
+										>
+											<option value="">None</option>
+											{availableLoras.map((entry) => (
+												<option key={entry.id} value={entry.s3Url}>
+													{entry.name}
+												</option>
+											))}
+										</select>
+										<p className="line-clamp-1 text-[11px] text-muted-foreground">
+											{parameter.helperText} · Managed in{" "}
+											<a
+												className="underline"
+												href={adminLorasHref}
+												rel="noreferrer noopener"
+												target="_blank"
+											>
+												admin · LoRAs
+											</a>
+										</p>
+									</div>
+								);
+							}
+							return (
+								<div className="grid gap-1" key={parameter.key}>
+									<Label className="text-xs" htmlFor={parameter.key}>
+										{parameter.label}
+									</Label>
+									<Input
+										id={parameter.key}
+										onChange={(event) => handleChange(event.target.value)}
+										placeholder={parameter.defaultValue || parameter.label}
+										value={currentValue}
+									/>
+									<p className="line-clamp-1 text-[11px] text-muted-foreground">
+										{parameter.helperText}
+									</p>
+								</div>
+							);
+						})}
 					</div>
 				) : null}
 

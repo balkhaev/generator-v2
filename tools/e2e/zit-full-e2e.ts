@@ -7,7 +7,7 @@
  *   5. Generate images with face LoRA + external NSFW LoRA via z-image/turbo/lora
  *
  * Usage:
- *   FAL_KEY=xxx bun run apps/generator/src/testing/zit-full-e2e.ts
+ *   FAL_KEY=xxx bun run tools/e2e/zit-full-e2e.ts
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";

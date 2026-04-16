@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import { GENERATOR_CALLBACK_TOKEN_HEADER } from "@generator/http/shared";
 
 import { createApp } from "@/app";
+import type { AdminLoraClient } from "@/clients/admin-loras";
 import type { AdminTrainingClient } from "@/clients/admin-training";
 import type {
 	OperatorServerClient,
@@ -202,23 +204,6 @@ function createOperatorClient(): OperatorServerClient {
 				workflows: 1,
 			});
 		},
-		getRun(runId) {
-			return Promise.resolve({
-				id: runId,
-				inputImageUrl: "https://assets.example.com/reference.png",
-				scenarioId: "scenario-1",
-				status: "succeeded",
-				workflowKey: "fal-flux-dev",
-				artifacts: [{ url: "https://cdn.example.com/output.png" }],
-			});
-		},
-		getScenario(scenarioId) {
-			return Promise.resolve({
-				id: scenarioId,
-				name: "Operator import",
-				prompt: "Turn the reference image into a hero motion shot.",
-			});
-		},
 		syncExecution(input) {
 			return Promise.resolve({
 				errorSummary: null,
@@ -245,6 +230,43 @@ function createAdminTrainingClient(): AdminTrainingClient {
 		cacheExternalLora(sourceUrl: string) {
 			return Promise.resolve(sourceUrl);
 		},
+	};
+}
+
+function createAdminLoraClient(entries: LoraRegistryEntry[]): AdminLoraClient {
+	return {
+		listLoras(options = {}) {
+			return Promise.resolve(
+				entries.filter((entry) => {
+					if (options.baseModel && entry.baseModel !== options.baseModel) {
+						return false;
+					}
+					return entry.status === "active";
+				})
+			);
+		},
+	};
+}
+
+function createRegistryEntry(
+	overrides: Partial<LoraRegistryEntry> = {}
+): LoraRegistryEntry {
+	const now = new Date().toISOString();
+	return {
+		id: "lora-1",
+		slug: "demo",
+		name: "Demo LoRA",
+		description: "",
+		baseModel: "z-image",
+		sourceUrl: "https://example.com/demo.safetensors",
+		s3Key: "loras/demo.safetensors",
+		s3Url: "https://cdn.example.com/loras/demo.safetensors",
+		sizeBytes: 1024,
+		defaultWeight: 1,
+		status: "active",
+		createdAt: now,
+		updatedAt: now,
+		...overrides,
 	};
 }
 
@@ -661,5 +683,69 @@ describe("persons api", () => {
 		expect(training.referenceImageUrls).not.toContain(
 			datasetGeneration.sourceUrl
 		);
+	});
+
+	it("exposes /api/loras backed by the admin registry client", async () => {
+		const entries: LoraRegistryEntry[] = [
+			createRegistryEntry({
+				id: "lora-z",
+				slug: "z-one",
+				name: "Z One",
+				baseModel: "z-image",
+			}),
+			createRegistryEntry({
+				id: "lora-f",
+				slug: "flux-one",
+				name: "Flux One",
+				baseModel: "flux",
+			}),
+			createRegistryEntry({
+				id: "lora-archived",
+				slug: "archived",
+				name: "Archived",
+				baseModel: "z-image",
+				status: "archived",
+			}),
+		];
+
+		const app = createApp({
+			adminLoraClient: createAdminLoraClient(entries),
+			corsOrigins: ["http://localhost:3004"],
+			repository: createMemoryRepository(),
+		});
+
+		const allResponse = await app.request("http://localhost/api/loras");
+		expect(allResponse.status).toBe(200);
+		const { loras } = (await allResponse.json()) as {
+			loras: LoraRegistryEntry[];
+		};
+		expect(loras.map((entry) => entry.id)).toEqual(["lora-z", "lora-f"]);
+
+		const zResponse = await app.request(
+			"http://localhost/api/loras?baseModel=z-image"
+		);
+		expect(zResponse.status).toBe(200);
+		const { loras: zLoras } = (await zResponse.json()) as {
+			loras: LoraRegistryEntry[];
+		};
+		expect(zLoras).toHaveLength(1);
+		expect(zLoras[0]?.id).toBe("lora-z");
+	});
+
+	it("returns 502 when admin registry client fails", async () => {
+		const app = createApp({
+			adminLoraClient: {
+				listLoras() {
+					return Promise.reject(new Error("upstream boom"));
+				},
+			},
+			corsOrigins: ["http://localhost:3004"],
+			repository: createMemoryRepository(),
+		});
+
+		const response = await app.request("http://localhost/api/loras");
+		expect(response.status).toBe(502);
+		const payload = (await response.json()) as { error: string };
+		expect(payload.error).toBe("upstream boom");
 	});
 });

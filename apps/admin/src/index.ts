@@ -5,6 +5,7 @@ import {
 	isInitialAdminSetupRequired,
 } from "@generator/auth";
 import {
+	env,
 	getGeneratorApiUrl,
 	getRequiredCorsOrigins,
 	getStudioApiUrl,
@@ -15,13 +16,15 @@ import { getAdminDashboardSnapshot } from "@/dashboard";
 import { AssetReleasePresetService } from "@/domain/asset-release-presets";
 import type { AssetStorage } from "@/domain/asset-releases";
 import { AssetReleaseService } from "@/domain/asset-releases";
+import { LoraRegistryService } from "@/domain/loras";
 import { PersonLoraTrainingControlService } from "@/domain/person-lora-training-control";
 import { createPersonLoraTrainingQueueClient } from "@/queue/person-lora-training";
 import { createDrizzleAssetReleaseRepository } from "@/repositories/asset-releases";
+import { createDrizzleLoraRepository } from "@/repositories/loras";
 
 const generatorBaseUrl = getGeneratorApiUrl();
-const personsApiBaseUrl = process.env.PERSONS_API_URL;
-const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+const personsApiBaseUrl = env.PERSONS_API_URL;
+const redisUrl = env.REDIS_URL;
 const studioBaseUrl = getStudioApiUrl();
 const internalTrainingControlService = new PersonLoraTrainingControlService(
 	createPersonLoraTrainingQueueClient(redisUrl)
@@ -71,6 +74,11 @@ const s3Config =
 			}
 		: undefined;
 
+const loraRegistryService = new LoraRegistryService({
+	repository: createDrizzleLoraRepository(),
+	s3Config,
+});
+
 const app = createApp({
 	assetReleasePresetService,
 	assetReleaseService,
@@ -85,6 +93,7 @@ const app = createApp({
 		setupRequired: await isInitialAdminSetupRequired(),
 	}),
 	loggerImpl: console,
+	loraRegistryService,
 	s3Config,
 	studioBaseUrl,
 });

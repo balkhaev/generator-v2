@@ -2,7 +2,7 @@
  * Re-run Step 5 (NSFW dual LoRA) + Step 4b (i2i workflow comparison).
  *
  * Usage:
- *   FAL_KEY=xxx bun run apps/generator/src/testing/zit-step5-rerun.ts
+ *   FAL_KEY=xxx bun run tools/e2e/zit-step5-rerun.ts
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";

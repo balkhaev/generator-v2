@@ -1,4 +1,5 @@
 import type {
+	WorkflowBaseModel,
 	WorkflowField,
 	WorkflowSummary,
 } from "@generator/contracts/generator";
@@ -145,6 +146,7 @@ const artifactDataUrlPattern = /^data:(image|video)\/[a-z0-9.+-]+;base64,/i;
 export interface WorkflowDefinition<
 	TParams extends z.ZodTypeAny = z.ZodTypeAny,
 > {
+	baseModel?: WorkflowBaseModel;
 	buildProviderInput: (args: {
 		inputImageUrl?: string;
 		prompt: string;
@@ -213,6 +215,7 @@ function collectArtifactUrls(output: unknown): string[] {
 
 export const workflowRegistry = {
 	"fal-flux-schnell": {
+		baseModel: "flux",
 		key: "fal-flux-schnell",
 		name: "Flux Schnell",
 		description:
@@ -261,6 +264,7 @@ export const workflowRegistry = {
 		extractArtifactUrls: collectFalImageUrls,
 	},
 	"fal-flux-dev": {
+		baseModel: "flux",
 		key: "fal-flux-dev",
 		name: "Flux Dev",
 		description:
@@ -316,6 +320,7 @@ export const workflowRegistry = {
 		extractArtifactUrls: collectFalImageUrls,
 	},
 	"fal-zimage-turbo": {
+		baseModel: "z-image",
 		key: "fal-zimage-turbo",
 		name: "Z-Image Turbo",
 		description:
@@ -364,6 +369,7 @@ export const workflowRegistry = {
 		extractArtifactUrls: collectFalImageUrls,
 	},
 	"fal-zimage-turbo-lora": {
+		baseModel: "z-image",
 		key: "fal-zimage-turbo-lora",
 		name: "Z-Image Turbo + LoRA",
 		description:
@@ -386,6 +392,7 @@ export const workflowRegistry = {
 			{
 				description: "LoRA weights URL.",
 				key: "loraUrl",
+				kind: "lora-url",
 				label: "LoRA URL",
 				type: "text",
 			},
@@ -398,6 +405,7 @@ export const workflowRegistry = {
 			{
 				description: "Optional additional LoRA weights URL.",
 				key: "extraLoraUrl",
+				kind: "lora-url",
 				label: "Extra LoRA URL",
 				type: "text",
 			},
@@ -439,6 +447,7 @@ export const workflowRegistry = {
 		extractArtifactUrls: collectFalImageUrls,
 	},
 	"fal-zimage-turbo-image-to-image-lora": {
+		baseModel: "z-image",
 		key: "fal-zimage-turbo-image-to-image-lora",
 		name: "Z-Image Turbo Image-to-Image + LoRA",
 		description:
@@ -467,6 +476,7 @@ export const workflowRegistry = {
 			{
 				description: "LoRA weights URL.",
 				key: "loraUrl",
+				kind: "lora-url",
 				label: "LoRA URL",
 				type: "text",
 			},
@@ -479,6 +489,7 @@ export const workflowRegistry = {
 			{
 				description: "Optional additional LoRA weights URL.",
 				key: "extraLoraUrl",
+				kind: "lora-url",
 				label: "Extra LoRA URL",
 				type: "text",
 			},
@@ -522,6 +533,7 @@ export const workflowRegistry = {
 		extractArtifactUrls: collectFalImageUrls,
 	},
 	"fal-flux2-dev-edit": {
+		baseModel: "flux",
 		key: "fal-flux2-dev-edit",
 		name: "Flux 2 Dev Edit",
 		description:
@@ -578,6 +590,7 @@ export const workflowRegistry = {
 		extractArtifactUrls: collectFalImageUrls,
 	},
 	"fal-flux-lora": {
+		baseModel: "flux",
 		key: "fal-flux-lora",
 		name: "Flux Dev LoRA (Fal)",
 		description:
@@ -613,6 +626,7 @@ export const workflowRegistry = {
 			{
 				description: "Public URL pointing to the trained LoRA weights.",
 				key: "loraUrl",
+				kind: "lora-url",
 				label: "LoRA URL",
 				type: "text",
 			},
@@ -653,6 +667,7 @@ export function listWorkflows(): WorkflowSummary[] {
 	return Object.values(workflowRegistry).map((workflow) => {
 		const result = workflow.parameterSchema.safeParse({});
 		return {
+			baseModel: workflow.baseModel,
 			defaults: (result.success ? result.data : {}) as Record<string, unknown>,
 			description: workflow.description,
 			key: workflow.key,

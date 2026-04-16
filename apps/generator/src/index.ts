@@ -1,12 +1,13 @@
 import { ensureDevUser, getRequestSession } from "@generator/auth";
+import { env } from "@generator/env/server";
 import { createApp } from "@/app";
 
-const skipAuth = process.env.SKIP_AUTH === "true";
+const skipAuth = env.SKIP_AUTH;
 
 const app = createApp({
 	getSession: skipAuth ? undefined : getRequestSession,
 	loggerImpl: console,
-	redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
+	redisUrl: env.REDIS_URL,
 });
 
 if (!skipAuth) {

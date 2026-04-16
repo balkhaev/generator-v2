@@ -4,6 +4,8 @@ import type {
 } from "@generator/contracts/admin";
 import type {
 	WorkflowSummary as ServerWorkflowSummary,
+	WorkflowBaseModel,
+	WorkflowParameterKind,
 	WorkflowParameterType,
 } from "@generator/contracts/generator";
 import type {
@@ -28,11 +30,13 @@ export interface WorkflowParameter {
 	defaultValue: string;
 	helperText: string;
 	key: string;
+	kind?: WorkflowParameterKind;
 	label: string;
 	type: WorkflowParameterType;
 }
 
 export interface WorkflowDefinition {
+	baseModel?: WorkflowBaseModel;
 	key: string;
 	name: string;
 	parameters: WorkflowParameter[];
@@ -146,12 +150,14 @@ function normalizeWorkflowDefinition(
 	workflow: ServerWorkflowSummary
 ): WorkflowDefinition {
 	return {
+		baseModel: workflow.baseModel,
 		key: workflow.key,
 		name: workflow.name,
 		parameters: (workflow.parameterFields ?? []).map((parameter) => ({
 			defaultValue: stringifyParamValue(workflow.defaults?.[parameter.key]),
 			helperText: parameter.description,
 			key: parameter.key,
+			...(parameter.kind ? { kind: parameter.kind } : {}),
 			label: parameter.label,
 			type: parameter.type,
 		})),

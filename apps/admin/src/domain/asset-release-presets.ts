@@ -3,6 +3,8 @@ import {
 	listAssetReleasePresets,
 	toAssetReleasePresetSummary,
 } from "@generator/asset-release-presets";
+import { env } from "@generator/env/server";
+
 import type {
 	AssetReleaseService,
 	AssetReleaseSnapshot,
@@ -65,9 +67,9 @@ export class AssetReleasePresetService {
 		});
 		if (
 			asset.source.url.startsWith("https://civitai.com/") &&
-			process.env.CIVITAI_API_KEY
+			env.CIVITAI_API_KEY
 		) {
-			headers.set("authorization", `Bearer ${process.env.CIVITAI_API_KEY}`);
+			headers.set("authorization", `Bearer ${env.CIVITAI_API_KEY}`);
 		}
 
 		const response = await this.fetchImpl(asset.source.url, { headers });

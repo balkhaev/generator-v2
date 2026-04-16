@@ -13,17 +13,17 @@ import type {
 	AssetReleaseSnapshot,
 } from "@generator/contracts/admin";
 import type { WorkflowSummary as ServerWorkflowSummary } from "@generator/contracts/generator";
+import { proxyHttpRequest } from "@generator/http/proxy";
 import {
 	DEBUG_CORRELATION_HEADER,
-	normalizeBaseUrl,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
 import { listWorkflows } from "@generator/workflows";
-import type { Context } from "hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
+import type { AdminLoraClient } from "@/clients/admin-loras";
 import { AssetReleaseReadService } from "@/domain/asset-releases-read";
 import type { StudioExecutionClient, StudioRepository } from "@/domain/studio";
 import { StudioService } from "@/domain/studio";
@@ -31,6 +31,7 @@ import { createDrizzleAssetReleaseReadRepository } from "@/repositories/asset-re
 import { createAssetReleasePresetRoutes } from "@/routes/asset-release-presets";
 import { createInputAssetRoutes } from "@/routes/input-assets";
 import { createInternalRoutes } from "@/routes/internal";
+import { createLoraRoutes } from "@/routes/loras";
 import { createRunRoutes } from "@/routes/runs";
 import { createScenarioRoutes } from "@/routes/scenarios";
 
@@ -39,6 +40,7 @@ interface AppVariables extends AuthVariables {
 }
 
 interface AppOptions {
+	adminLoraClient?: AdminLoraClient;
 	assetReleaseReadService?: AssetReleaseReadService;
 	authHandler: (request: Request) => Response | Promise<Response>;
 	callbackConfig?: {
@@ -60,12 +62,14 @@ interface AppOptions {
 }
 
 interface WorkflowDefinition {
+	baseModel?: string;
 	key: string;
 	name: string;
 	parameters: Array<{
 		defaultValue: string;
 		helperText: string;
 		key: string;
+		kind?: string;
 		label: string;
 		type: string;
 	}>;
@@ -103,65 +107,6 @@ const isPublicApiPath = createPublicPathMatcher({
 	prefixes: ["/api/auth/", "/api/internal/"],
 });
 
-async function proxyGeneratorRequest(
-	c: Context<{ Variables: AppVariables }>,
-	fetchImpl: (
-		input: string | URL | Request,
-		init?: RequestInit
-	) => Promise<Response>,
-	generatorBaseUrl: string
-) {
-	const requestUrl = new URL(c.req.url);
-	const targetUrl = new URL(
-		`${c.req.path}${requestUrl.search}`,
-		`${normalizeBaseUrl(generatorBaseUrl)}/`
-	);
-	const headers = new Headers();
-	const contentType = c.req.header("content-type");
-	const accept = c.req.header("accept");
-	const authorization = c.req.header("authorization");
-	const debugCorrelationId = c.get("debugCorrelationId");
-
-	if (contentType) {
-		headers.set("content-type", contentType);
-	}
-
-	if (accept) {
-		headers.set("accept", accept);
-	}
-
-	if (authorization) {
-		headers.set("authorization", authorization);
-	}
-
-	headers.set(DEBUG_CORRELATION_HEADER, debugCorrelationId);
-
-	const init: RequestInit = {
-		headers,
-		method: c.req.method,
-	};
-
-	if (!(c.req.method === "GET" || c.req.method === "HEAD")) {
-		init.body = await c.req.raw.clone().arrayBuffer();
-	}
-
-	const response = await fetchImpl(targetUrl, init);
-	const responseHeaders = new Headers();
-	const responseContentType = response.headers.get("content-type");
-	const responseDebugCorrelationId =
-		response.headers.get(DEBUG_CORRELATION_HEADER) ?? debugCorrelationId;
-
-	if (responseContentType) {
-		responseHeaders.set("content-type", responseContentType);
-	}
-	responseHeaders.set(DEBUG_CORRELATION_HEADER, responseDebugCorrelationId);
-
-	return new Response(response.body, {
-		headers: responseHeaders,
-		status: response.status,
-	});
-}
-
 function formatInputLabel(inputImageUrl: string) {
 	try {
 		const url = new URL(inputImageUrl);
@@ -193,12 +138,14 @@ function normalizeWorkflowDefinition(
 	workflow: ServerWorkflowSummary
 ): WorkflowDefinition {
 	return {
+		baseModel: workflow.baseModel,
 		key: workflow.key,
 		name: workflow.name,
 		parameters: (workflow.parameterFields ?? []).map((parameter) => ({
 			defaultValue: stringifyParamValue(workflow.defaults?.[parameter.key]),
 			helperText: parameter.description,
 			key: parameter.key,
+			...(parameter.kind ? { kind: parameter.kind } : {}),
 			label: parameter.label,
 			type: parameter.type,
 		})),
@@ -324,12 +271,20 @@ export function createApp(options: AppOptions) {
 	);
 	for (const route of ["/api/executions", "/api/executions/*"]) {
 		app.all(route, (c) =>
-			proxyGeneratorRequest(c, fetchImpl, options.generatorBaseUrl)
+			proxyHttpRequest({
+				debugCorrelationId: c.get("debugCorrelationId"),
+				fetchImpl,
+				request: c.req.raw,
+				targetBaseUrl: options.generatorBaseUrl,
+			})
 		);
 	}
 	app.route("/api/scenarios", createScenarioRoutes(service));
 	app.route("/api/runs", createRunRoutes(service));
 	app.route("/api/internal", createInternalRoutes(service));
+	if (options.adminLoraClient) {
+		app.route("/api/loras", createLoraRoutes(options.adminLoraClient));
+	}
 	app.route(
 		"/api/input-assets",
 		createInputAssetRoutes({ logger: options.loggerImpl })

@@ -1,4 +1,4 @@
-import { getS3StorageEnv } from "@generator/env/server";
+import { getPublicAssetBaseUrl, getS3StorageEnv } from "@generator/env/server";
 
 const trailingSlashesPattern = /\/+$/u;
 const leadingSlashesPattern = /^\/+/u;
@@ -6,10 +6,7 @@ const leadingSlashesPattern = /^\/+/u;
 type PipelineStorageObject = ArrayBuffer | Blob | Uint8Array | string;
 
 function resolvePublicBaseUrl(config: ReturnType<typeof getS3StorageEnv>) {
-	const explicitBaseUrl =
-		process.env.ASSET_PUBLIC_BASE_URL?.trim() ||
-		process.env.COMFY_INPUT_BASE_URL?.trim() ||
-		process.env.S3_PUBLIC_BASE_URL?.trim();
+	const explicitBaseUrl = getPublicAssetBaseUrl();
 	if (explicitBaseUrl) {
 		return explicitBaseUrl;
 	}

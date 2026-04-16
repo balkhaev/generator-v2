@@ -1,27 +1,31 @@
+import { env } from "@generator/env/server";
 import { Hono } from "hono";
 
+import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
 import {
 	cacheExternalLoraToS3,
 	type S3Config,
 } from "@/providers/lora-training-assets";
+import { resolveLoraListQuery } from "@/routes/loras";
 
 const bearerPrefixPattern = /^Bearer\s+/iu;
 
 export function createInternalRoutes(
 	service: PersonLoraTrainingControl,
-	s3Config?: S3Config
+	s3Config?: S3Config,
+	loraRegistry?: LoraRegistryService
 ) {
 	const app = new Hono();
+
+	const isAuthorized = (token: string | undefined) =>
+		token === env.TRAINING_CONTROL_TOKEN;
 
 	app.post("/person-lora-trainings", async (c) => {
 		const token = c.req
 			.header("authorization")
 			?.replace(bearerPrefixPattern, "");
-		if (
-			token !==
-			(process.env.TRAINING_CONTROL_TOKEN ?? "local-training-control-token")
-		) {
+		if (!isAuthorized(token)) {
 			return c.json({ error: "Unauthorized" }, 401);
 		}
 
@@ -41,14 +45,28 @@ export function createInternalRoutes(
 		}
 	});
 
+	app.get("/loras", async (c) => {
+		const token = c.req
+			.header("authorization")
+			?.replace(bearerPrefixPattern, "");
+		if (!isAuthorized(token)) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+
+		if (!loraRegistry) {
+			return c.json({ loras: [] });
+		}
+
+		const query = resolveLoraListQuery(c);
+		const loras = await loraRegistry.list(query);
+		return c.json({ loras });
+	});
+
 	app.post("/cache-lora", async (c) => {
 		const token = c.req
 			.header("authorization")
 			?.replace(bearerPrefixPattern, "");
-		if (
-			token !==
-			(process.env.TRAINING_CONTROL_TOKEN ?? "local-training-control-token")
-		) {
+		if (!isAuthorized(token)) {
 			return c.json({ error: "Unauthorized" }, 401);
 		}
 

@@ -1,3 +1,5 @@
+import { env } from "@generator/env/server";
+
 import { ExecutionService } from "@/domain/executions";
 import { createFalClient } from "@/providers/fal";
 import { createInferenceRouter } from "@/providers/inference-router";
@@ -8,8 +10,8 @@ import {
 } from "@/queue/executions";
 import { createDrizzleExecutionRepository } from "@/repositories/executions";
 
-const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
-const falKey = process.env.FAL_KEY;
+const redisUrl = env.REDIS_URL;
+const falKey = env.FAL_KEY;
 
 if (!falKey) {
 	throw new Error("FAL_KEY is required for the generator worker");

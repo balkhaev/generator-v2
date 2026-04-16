@@ -1,13 +1,8 @@
-import type {
-	CreateGeneratorExecutionInput,
-	GeneratorExecutionRecord,
-	GeneratorHealthResponse as OperatorServerHealth,
-	GeneratorRunRecord as OperatorServerRunRecord,
-	SyncGeneratorExecutionInput,
-} from "@generator/contracts/generator";
+import type { GeneratorExecutionRecord } from "@generator/contracts/generator";
+import { env } from "@generator/env/server";
+import type { GeneratorExecutionClient } from "@generator/generator-client-server";
 import { z } from "zod";
 import type { AdminTrainingClient } from "@/clients/admin-training";
-import { env } from "@/env";
 
 const optionalStringSchema = z.preprocess((value) => {
 	if (typeof value !== "string") {
@@ -250,35 +245,13 @@ export interface PersonsRepository {
 	): Promise<PersonRecord | null>;
 }
 
-export interface OperatorServerClient {
-	createExecution(
-		input: CreateGeneratorExecutionInput,
-		options?: {
-			debugCorrelationId?: string;
-		}
-	): Promise<GeneratorExecutionRecord>;
-	getExecution(
-		executionId: string,
-		options?: {
-			debugCorrelationId?: string;
-		}
-	): Promise<GeneratorExecutionRecord>;
-	getHealth(): Promise<OperatorServerHealth>;
-	getRun(runId: string): Promise<OperatorServerRunRecord>;
-	getScenario(scenarioId: string): Promise<OperatorServerScenarioRecord>;
-	syncExecution(
-		input: SyncGeneratorExecutionInput,
-		options?: {
-			debugCorrelationId?: string;
-		}
-	): Promise<GeneratorExecutionRecord>;
-}
-
-export interface OperatorServerScenarioRecord {
-	id: string;
-	name: string;
-	prompt: string;
-}
+/**
+ * Канонический клиент `generator-api`, используемый persons-сервисом.
+ * На текущем этапе persons обращается только к executions + health,
+ * поэтому алиасим общий `GeneratorExecutionClient` из
+ * `@generator/generator-client-server` без дополнительных методов.
+ */
+export type OperatorServerClient = GeneratorExecutionClient;
 
 const FEMALE_HINT_PATTERN =
 	/\b(woman|girl|female|женщина|девушка|девочка|she|her)\b/i;

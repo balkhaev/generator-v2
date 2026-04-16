@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./client": "./src/client.ts",
+    "./proxy": "./src/proxy.ts",
     "./server": "./src/server.ts",
     "./shared": "./src/shared.ts"
   },

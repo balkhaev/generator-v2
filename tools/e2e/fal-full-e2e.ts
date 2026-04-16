@@ -2,7 +2,7 @@
  * Full fal.ai E2E test: generate reference images → train LoRA → generate with LoRA.
  *
  * Usage:
- *   FAL_KEY=xxx bun run apps/generator/src/testing/fal-full-e2e.ts
+ *   FAL_KEY=xxx bun run tools/e2e/fal-full-e2e.ts
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";

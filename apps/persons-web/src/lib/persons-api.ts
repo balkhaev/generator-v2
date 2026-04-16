@@ -1,4 +1,8 @@
 import type {
+	LoraBaseModel,
+	LoraRegistryEntry,
+} from "@generator/contracts/loras";
+import type {
 	CreatePersonInput,
 	ImportGenerationInput,
 	PersonGenerationRecord,
@@ -8,6 +12,7 @@ import { env } from "@generator/env/web";
 import { requestJson } from "@generator/http/client";
 import { normalizeBaseUrl } from "@generator/http/shared";
 
+export type { LoraRegistryEntry } from "@generator/contracts/loras";
 export type {
 	CreatePersonInput,
 	ImportGenerationInput,
@@ -101,6 +106,25 @@ export async function trainPersonLora(personId: string) {
 		}
 	);
 	return payload.person;
+}
+
+export async function fetchLoras(
+	baseModel?: LoraBaseModel
+): Promise<LoraRegistryEntry[]> {
+	const params = new URLSearchParams();
+	if (baseModel) {
+		params.set("baseModel", baseModel);
+	}
+	const query = params.toString();
+	try {
+		const payload = await requestJson<{ loras: LoraRegistryEntry[] }>(
+			`${API_BASE_URL}/api/loras${query ? `?${query}` : ""}`,
+			{ cache: "no-store" }
+		);
+		return payload.loras;
+	} catch {
+		return [];
+	}
 }
 
 export async function generateWithLora(

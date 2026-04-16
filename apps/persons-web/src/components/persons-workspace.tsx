@@ -6,7 +6,6 @@ import type {
 } from "@generator/contracts/persons";
 import { env } from "@generator/env/web";
 import { Button } from "@generator/ui/components/button";
-import { Checkbox } from "@generator/ui/components/checkbox";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
@@ -48,8 +47,10 @@ import {
 	type CreatePersonInput,
 	createPerson,
 	deleteGeneration,
+	fetchLoras,
 	generateWithLora,
 	getPersonsDashboard,
+	type LoraRegistryEntry,
 	type PersonGenerationRecord,
 	type PersonRecord,
 	trainPersonLora,
@@ -58,9 +59,12 @@ import {
 const textareaClassName =
 	"flex min-h-20 w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
 
-const ZIT_MYSTIC_XXX_LORA_URL =
-	"https://civitai.com/api/download/models/2855359";
+const selectClassName =
+	"flex h-9 w-full rounded-lg border border-input bg-transparent px-3 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
+
 const DATASET_TARGET_COUNT = 20;
+const trailingSlashesPattern = /\/+$/u;
+const adminLorasHref = `${env.NEXT_PUBLIC_SERVER_URL?.replace(trailingSlashesPattern, "") ?? ""}/loras`;
 
 interface LightboxState {
 	images: string[];
@@ -843,9 +847,20 @@ function LoraActions({
 	) => void;
 }) {
 	const [loraPrompt, setLoraPrompt] = useState("");
-	const [extraLoraUrl, setExtraLoraUrl] = useState("");
-	const [extraLoraWeight, setExtraLoraWeight] = useState("0.05");
-	const [useZitMysticXxx, setUseZitMysticXxx] = useState(false);
+	const [extraLoraId, setExtraLoraId] = useState("");
+	const [extraLoraWeight, setExtraLoraWeight] = useState("");
+	const [availableLoras, setAvailableLoras] = useState<LoraRegistryEntry[]>([]);
+	useEffect(() => {
+		let cancelled = false;
+		fetchLoras("z-image").then((items) => {
+			if (!cancelled) {
+				setAvailableLoras(items);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 	const training = getTrainingMeta(person);
 	const hasLora = Boolean(person.loraUrl);
 	const effectiveStatus = getEffectiveTrainingStatus(training, hasLora);
@@ -915,76 +930,73 @@ function LoraActions({
 						value={loraPrompt}
 					/>
 					<div className="grid gap-2 rounded-lg border border-border/60 bg-muted/20 p-3">
-						<div className="flex items-start gap-2">
-							<Checkbox
-								checked={useZitMysticXxx}
-								id="useZitMysticXxx"
-								onCheckedChange={(checked) =>
-									setUseZitMysticXxx(checked === true)
-								}
-							/>
-							<div className="grid gap-1">
-								<Label className="text-xs" htmlFor="useZitMysticXxx">
-									Use ZIT Mystic XXX
-								</Label>
-								<p className="text-[11px] text-muted-foreground/70">
-									Adds the{" "}
-									<a
-										className="underline"
-										href="https://civitai.red/models/2206377/zit-mystic-xxx"
-										rel="noreferrer noopener"
-										target="_blank"
-									>
-										ZIT Mystic XXX
-									</a>{" "}
-									style LoRA on top of the person LoRA.
-								</p>
-							</div>
-						</div>
-						{useZitMysticXxx ? (
-							<p className="break-all rounded-md bg-background/80 px-2 py-1 font-mono text-[11px] text-muted-foreground">
-								{ZIT_MYSTIC_XXX_LORA_URL}
+						<div className="grid gap-1.5">
+							<Label className="text-xs" htmlFor="extraLoraId">
+								Extra LoRA
+							</Label>
+							<select
+								className={selectClassName}
+								id="extraLoraId"
+								onChange={(event) => {
+									const nextId = event.target.value;
+									setExtraLoraId(nextId);
+									const entry = availableLoras.find(
+										(item) => item.id === nextId
+									);
+									if (entry) {
+										setExtraLoraWeight(String(entry.defaultWeight));
+									}
+								}}
+								value={extraLoraId}
+							>
+								<option value="">None</option>
+								{availableLoras.map((entry) => (
+									<option key={entry.id} value={entry.id}>
+										{entry.name}
+									</option>
+								))}
+							</select>
+							<p className="text-[11px] text-muted-foreground/70">
+								Managed in{" "}
+								<a
+									className="underline"
+									href={adminLorasHref}
+									rel="noreferrer noopener"
+									target="_blank"
+								>
+									admin · LoRAs
+								</a>
+								.
 							</p>
+						</div>
+						{extraLoraId ? (
+							<div className="grid gap-1.5">
+								<Label className="text-xs" htmlFor="extraLoraWeight">
+									Extra LoRA weight
+								</Label>
+								<Input
+									id="extraLoraWeight"
+									onChange={(event) => setExtraLoraWeight(event.target.value)}
+									placeholder="0.05"
+									value={extraLoraWeight}
+								/>
+							</div>
 						) : null}
-					</div>
-					<div className="grid gap-1.5">
-						<Label className="text-xs" htmlFor="extraLoraUrl">
-							Custom extra LoRA URL
-						</Label>
-						<Input
-							disabled={useZitMysticXxx}
-							id="extraLoraUrl"
-							onChange={(event) => setExtraLoraUrl(event.target.value)}
-							placeholder="https://.../zit-mystic.safetensors"
-							value={extraLoraUrl}
-						/>
-						<p className="text-[11px] text-muted-foreground/70">
-							Leave empty unless you need a different additive LoRA.
-						</p>
-					</div>
-					<div className="grid gap-1.5">
-						<Label className="text-xs" htmlFor="extraLoraWeight">
-							Optional extra LoRA weight
-						</Label>
-						<Input
-							id="extraLoraWeight"
-							onChange={(event) => setExtraLoraWeight(event.target.value)}
-							placeholder="0.05"
-							value={extraLoraWeight}
-						/>
 					</div>
 					<Button
 						disabled={!loraPrompt.trim()}
 						onClick={() => {
+							const selectedEntry = availableLoras.find(
+								(item) => item.id === extraLoraId
+							);
 							const parsedExtraLoraWeight = Number.parseFloat(extraLoraWeight);
-							const resolvedExtraLoraUrl = useZitMysticXxx
-								? ZIT_MYSTIC_XXX_LORA_URL
-								: extraLoraUrl.trim() || undefined;
+							const resolvedExtraLoraUrl = selectedEntry?.s3Url;
+							const fallbackWeight = selectedEntry?.defaultWeight ?? 0.05;
 							onGenerateWithLora(loraPrompt.trim(), {
 								extraLoraUrl: resolvedExtraLoraUrl,
 								extraLoraWeight: Number.isFinite(parsedExtraLoraWeight)
 									? parsedExtraLoraWeight
-									: 0.05,
+									: fallbackWeight,
 							});
 							setLoraPrompt("");
 						}}

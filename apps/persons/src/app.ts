@@ -12,14 +12,17 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
+import type { AdminLoraClient } from "@/clients/admin-loras";
 import type { AdminTrainingClient } from "@/clients/admin-training";
 import type { OperatorServerClient, PersonsRepository } from "@/domain/persons";
 import { PersonsService } from "@/domain/persons";
 import { createIntegrationRoutes } from "@/routes/integrations";
 import { createInternalRoutes } from "@/routes/internal";
+import { createLoraRoutes } from "@/routes/loras";
 import { createPersonRoutes } from "@/routes/persons";
 
 interface AppOptions {
+	adminLoraClient?: AdminLoraClient;
 	adminTrainingClient?: AdminTrainingClient;
 	authHandler?: (request: Request) => Response | Promise<Response>;
 	callbackConfig?: {
@@ -99,6 +102,9 @@ export function createApp(options: AppOptions) {
 	app.route("/api/persons", createPersonRoutes(service));
 	app.route("/api/integrations", createIntegrationRoutes(service));
 	app.route("/api/internal", createInternalRoutes(service));
+	if (options.adminLoraClient) {
+		app.route("/api/loras", createLoraRoutes(options.adminLoraClient));
+	}
 
 	app.onError((error, c) => {
 		c.header(DEBUG_CORRELATION_HEADER, c.get("debugCorrelationId"));

@@ -13,7 +13,6 @@ RUN bun x turbo@2.8.12 prune "${APP_NAME}" --docker --out-dir /tmp/pruned
 
 FROM base AS deps
 COPY --from=pruner /tmp/pruned/json/ .
-RUN bun -e 'const file = Bun.file("package.json"); const pkg = JSON.parse(await file.text()); if (pkg.dependencies?.admin) { delete pkg.dependencies.admin; await Bun.write("package.json", `${JSON.stringify(pkg, null, 2)}\n`); } if (await Bun.file("bun.lock").exists()) { await Bun.write("bun.lock", ""); }'
 RUN rm -f bun.lock && bun install
 
 FROM deps AS builder

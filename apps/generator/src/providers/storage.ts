@@ -1,6 +1,11 @@
+import { env } from "@generator/env/server";
+
 const supportedInputSchemes = ["http:", "https:"];
 const supportedOutputSchemes = ["http:", "https:", "data:"];
 const leadingSlashesPattern = /^\/+/u;
+
+const DEFAULT_INPUT_BASE_URL = "https://assets.example.com/input";
+const DEFAULT_OUTPUT_BASE_URL = "https://assets.example.com/output";
 
 interface StorageConfig {
 	inputBaseUrl: string;
@@ -21,12 +26,12 @@ export function createStorageAdapter(config?: Partial<StorageConfig>) {
 		return {
 			inputBaseUrl:
 				config?.inputBaseUrl ??
-				process.env.COMFY_INPUT_BASE_URL ??
-				"https://assets.example.com/input",
+				env.COMFY_INPUT_BASE_URL ??
+				DEFAULT_INPUT_BASE_URL,
 			outputBaseUrl:
 				config?.outputBaseUrl ??
-				process.env.COMFY_OUTPUT_BASE_URL ??
-				"https://assets.example.com/output",
+				env.COMFY_OUTPUT_BASE_URL ??
+				DEFAULT_OUTPUT_BASE_URL,
 		};
 	};
 

@@ -1,18 +1,16 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { createOperatorServerClient } from "@/clients/operator-server";
+import { env } from "@generator/env/server";
+import { createGeneratorExecutionClient } from "@generator/generator-client-server";
 import { PersonsService } from "@/domain/persons";
-import { env } from "@/env";
 import { createDrizzlePersonsRepository } from "@/repositories/persons";
 
-const RECONCILE_INTERVAL_MS = Number(
-	process.env.RECONCILE_INTERVAL_MS ?? "5000"
-);
-const RECONCILE_WATCH = process.env.RECONCILE_WATCH !== "false";
+const RECONCILE_INTERVAL_MS = env.RECONCILE_INTERVAL_MS;
+const RECONCILE_WATCH = env.RECONCILE_WATCH;
 
 const repository = createDrizzlePersonsRepository();
 const operatorServerClient = env.PERSONS_OPERATOR_URL
-	? createOperatorServerClient(env.PERSONS_OPERATOR_URL, {
+	? createGeneratorExecutionClient(env.PERSONS_OPERATOR_URL, {
 			internalToken: env.GENERATOR_INTERNAL_TOKEN,
 		})
 	: undefined;

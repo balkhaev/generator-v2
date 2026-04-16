@@ -11,7 +11,7 @@
  *   PERSONS_API_URL=https://persons-api.gen.balkhaev.com \
  *   PERSONS_EMAIL=you@example.com \
  *   PERSONS_PASSWORD=secret \
- *   bun run apps/generator/src/testing/prod-persons-e2e.ts
+ *   bun run tools/e2e/prod-persons-e2e.ts
  */
 
 import { mkdir, writeFile } from "node:fs/promises";

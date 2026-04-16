@@ -55,6 +55,10 @@ const isPublicApiPath = createPublicPathMatcher({
 });
 
 export function createApp(options: AppOptions) {
+	// Читаем переменные напрямую из process.env: тесты мутируют их в рантайме,
+	// а централизованный `env` из @generator/env/server валидируется при импорте
+	// и кэшируется при первом доступе. Централизация сохраняется на уровне
+	// входных точек (index.ts/worker.ts); здесь нужен доступ без валидации.
 	const internalToken = process.env.GENERATOR_INTERNAL_TOKEN?.trim();
 	const storageAdapter = options.storageAdapter ?? createStorageAdapter();
 	const falKey = process.env.FAL_KEY;
@@ -68,12 +72,11 @@ export function createApp(options: AppOptions) {
 					fal: falClient,
 				})
 			: createStubInferenceClient());
+	const redisUrl =
+		options.redisUrl ?? process.env.REDIS_URL ?? "redis://localhost:6379";
 	const executionService = new ExecutionService(
 		options.executionRepository ?? createDrizzleExecutionRepository(),
-		options.executionQueue ??
-			createGeneratorExecutionQueueClient(
-				options.redisUrl ?? process.env.REDIS_URL ?? "redis://localhost:6379"
-			),
+		options.executionQueue ?? createGeneratorExecutionQueueClient(redisUrl),
 		inferenceClient,
 		storageAdapter,
 		options.loggerImpl

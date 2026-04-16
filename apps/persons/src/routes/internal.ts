@@ -1,4 +1,5 @@
 import type { GeneratorExecutionRecord } from "@generator/contracts/generator";
+import { env } from "@generator/env/server";
 import { GENERATOR_CALLBACK_TOKEN_HEADER } from "@generator/http/shared";
 import { Hono } from "hono";
 
@@ -11,10 +12,7 @@ export function createInternalRoutes(service: PersonsService) {
 
 	app.post("/generator-executions", async (c) => {
 		const token = c.req.header(GENERATOR_CALLBACK_TOKEN_HEADER);
-		if (
-			token !==
-			(process.env.GENERATOR_CALLBACK_TOKEN ?? "local-generator-callback-token")
-		) {
+		if (token !== env.GENERATOR_CALLBACK_TOKEN) {
 			return c.json({ error: "Unauthorized callback" }, 401);
 		}
 
@@ -30,10 +28,7 @@ export function createInternalRoutes(service: PersonsService) {
 		const token = c.req
 			.header("authorization")
 			?.replace(bearerPrefixPattern, "");
-		if (
-			token !==
-			(process.env.TRAINING_CONTROL_TOKEN ?? "local-training-control-token")
-		) {
+		if (token !== env.TRAINING_CONTROL_TOKEN) {
 			return c.json({ error: "Unauthorized callback" }, 401);
 		}
 

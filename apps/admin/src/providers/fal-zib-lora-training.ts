@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { env } from "@generator/env/server";
 import { z } from "zod";
 import {
 	buildZipFromBuffers,
@@ -524,24 +525,20 @@ export class FalZibLoraTrainingRunner {
 					status: "training",
 					trainingRunId: parsed.trainingRunId,
 					trainingStartedAt: new Date().toISOString(),
-					trainingSteps: Number(
-						process.env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS
-					),
+					trainingSteps:
+						env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS,
 					triggerWord,
 					uploadMethod: "s3",
 				},
 			});
 
+			const trainingSteps =
+				env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS;
+
 			this.logger.info("fal-zib-lora.starting-training", {
 				personId: parsed.personId,
-				steps: Number(
-					process.env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS
-				),
+				steps: trainingSteps,
 			});
-
-			const trainingSteps = Number(
-				process.env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS
-			);
 			const trainingModel = "fal-ai/z-image-trainer";
 			const trainingStartedAt = new Date().toISOString();
 			const trainingStartedMs = Date.now();

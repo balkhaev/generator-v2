@@ -1,14 +1,12 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { getGeneratorApiUrl } from "@generator/env/server";
+import { env, getGeneratorApiUrl } from "@generator/env/server";
 import { createGeneratorExecutionClient } from "@generator/generator-client-server";
 
 import { StudioService } from "@/domain/studio";
 import { createDrizzleStudioRepository } from "@/repositories/studio";
 
-const RECONCILE_INTERVAL_MS = Number(
-	process.env.RECONCILE_INTERVAL_MS ?? "5000"
-);
-const RECONCILE_WATCH = process.env.RECONCILE_WATCH !== "false";
+const RECONCILE_INTERVAL_MS = env.RECONCILE_INTERVAL_MS;
+const RECONCILE_WATCH = env.RECONCILE_WATCH;
 
 const service = new StudioService(
 	createDrizzleStudioRepository(),

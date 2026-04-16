@@ -1,13 +1,13 @@
 import { createDb } from "@generator/db";
 import { and, desc, eq } from "@generator/db/operators";
 import { person, personGeneration } from "@generator/db/schema/persons";
+import { env } from "@generator/env/server";
 
 import type {
 	PersonGenerationRecord,
 	PersonRecord,
 	PersonsRepository,
 } from "@/domain/persons";
-import { env } from "@/env";
 
 type PersonsDatabase = ReturnType<typeof createDb>;
 

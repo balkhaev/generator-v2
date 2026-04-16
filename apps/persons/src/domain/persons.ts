@@ -757,7 +757,14 @@ export class PersonsService {
 				? training.triggerWord
 				: person.slug.replace(/-/g, "_");
 
-		const prompt = `portrait photo of ${triggerWord}, ${userPrompt}`;
+		const identityDescription = person.description.trim();
+		const prompt = [
+			`a photo of ${triggerWord}`,
+			identityDescription ? identityDescription : null,
+			userPrompt,
+		]
+			.filter((part): part is string => Boolean(part))
+			.join(", ");
 		const workflowKey = env.PERSONS_DEFAULT_LORA_WORKFLOW;
 
 		const isCerebriumWorkflow = workflowKey.startsWith("cerebrium-");

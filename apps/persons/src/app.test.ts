@@ -362,6 +362,67 @@ describe("persons api", () => {
 		});
 	});
 
+	it("anchors lora generation prompts with the person identity description", async () => {
+		const capturedExecutionInputs: Parameters<
+			OperatorServerClient["createExecution"]
+		>[0][] = [];
+		const app = createApp({
+			corsOrigins: ["http://localhost:3004"],
+			repository: createMemoryRepository(),
+			operatorServerClient: {
+				...createOperatorClient(),
+				createExecution(input) {
+					capturedExecutionInputs.push(input);
+					return Promise.resolve({
+						artifacts: [],
+						errorSummary: null,
+						id: "execution-lora",
+						inputImageUrl: input.inputImageUrl ?? "",
+						providerEndpointId: null,
+						providerJobId: "provider-lora",
+						status: "queued",
+						workflowKey: input.workflowKey,
+					});
+				},
+			},
+		});
+		const createResponse = await app.request("http://localhost/api/persons", {
+			body: JSON.stringify({
+				description:
+					"Red-haired woman with green eyes, light freckles, realistic skin.",
+				loraUrl: "https://assets.example.com/person.safetensors",
+				name: "Generated Subject",
+				referencePhotoUrl: "https://assets.example.com/reference.png",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { person } = (await createResponse.json()) as {
+			person: PersonRecord;
+		};
+
+		const response = await app.request(
+			`http://localhost/api/persons/${person.id}/generate-with-lora`,
+			{
+				body: JSON.stringify({ prompt: "jumping in a window" }),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+
+		expect(response.status).toBe(202);
+		const capturedExecutionInput = capturedExecutionInputs[0];
+		if (!capturedExecutionInput) {
+			throw new Error("Expected generator execution input to be captured");
+		}
+		expect(capturedExecutionInput.workflowKey).toBe("fal-zimage-turbo-lora");
+		expect(capturedExecutionInput.prompt).toContain(
+			"a photo of generated_subject"
+		);
+		expect(capturedExecutionInput.prompt).toContain("Red-haired woman");
+		expect(capturedExecutionInput.prompt).toContain("jumping in a window");
+	});
+
 	it("replaces dataset photos on subsequent training callbacks", async () => {
 		const app = createApp({
 			corsOrigins: ["http://localhost:3004"],

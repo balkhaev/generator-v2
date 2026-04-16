@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
-import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
+import {
+	FalZibLoraTrainingRunner,
+	inferImageFileExtension,
+} from "@/providers/fal-zib-lora-training";
 
 describe("FalZibLoraTrainingRunner", () => {
 	const originalFetch = globalThis.fetch;
@@ -12,6 +15,21 @@ describe("FalZibLoraTrainingRunner", () => {
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
 		mock.restore();
+	});
+
+	it("prefers content-type over url suffix when naming image files", () => {
+		expect(
+			inferImageFileExtension({
+				contentType: "image/png",
+				url: "https://cdn.example.com/reference.jpg",
+			})
+		).toBe(".png");
+		expect(
+			inferImageFileExtension({
+				contentType: null,
+				url: "https://cdn.example.com/reference.jpeg?download=1",
+			})
+		).toBe(".jpg");
 	});
 
 	it("fails when the persons training callback returns a non-2xx response", async () => {

@@ -14,6 +14,13 @@ const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 2000;
 const REFERENCE_COUNT = 19;
 const referenceImageUrlExtensionPattern = /\.(png|jpe?g|webp)/i;
+const fileExtensionPattern = /\.[^.]+$/u;
+const imageContentTypeToExtensionMap = new Map<string, string>([
+	["image/jpeg", ".jpg"],
+	["image/jpg", ".jpg"],
+	["image/png", ".png"],
+	["image/webp", ".webp"],
+]);
 
 const REFERENCE_VARIANT_SUFFIXES = [
 	"same subject, front-facing editorial portrait, soft daylight, neutral backdrop",
@@ -236,13 +243,50 @@ async function generateReferenceImageFal(
 	return url;
 }
 
-function downloadAsBuffer(url: string): Promise<Uint8Array> {
+export function inferImageFileExtension(input: {
+	contentType?: string | null;
+	fallback?: string;
+	url: string;
+}) {
+	const normalizedContentType = input.contentType
+		?.split(";")[0]
+		?.trim()
+		.toLowerCase();
+	const extensionFromContentType = normalizedContentType
+		? imageContentTypeToExtensionMap.get(normalizedContentType)
+		: undefined;
+	if (extensionFromContentType) {
+		return extensionFromContentType;
+	}
+
+	const extensionFromUrl = input.url.match(
+		referenceImageUrlExtensionPattern
+	)?.[0];
+	if (extensionFromUrl) {
+		return extensionFromUrl.toLowerCase() === ".jpeg"
+			? ".jpg"
+			: extensionFromUrl.toLowerCase();
+	}
+
+	return input.fallback ?? ".jpg";
+}
+
+function downloadImageAsset(url: string): Promise<{
+	data: Uint8Array;
+	extension: string;
+}> {
 	return retry(async () => {
 		const response = await fetch(url);
 		if (!response.ok) {
 			throw new Error(`Failed to download: ${response.status}`);
 		}
-		return new Uint8Array(await response.arrayBuffer());
+		return {
+			data: new Uint8Array(await response.arrayBuffer()),
+			extension: inferImageFileExtension({
+				contentType: response.headers.get("content-type"),
+				url,
+			}),
+		};
 	});
 }
 
@@ -566,21 +610,20 @@ export class FalZibLoraTrainingRunner {
 				imageCount: referenceImageUrls.length + 1,
 			});
 
-			const refPhoto = await downloadAsBuffer(parsed.referencePhotoUrl);
-			const refExt =
-				parsed.referencePhotoUrl.match(
-					referenceImageUrlExtensionPattern
-				)?.[0] ?? ".jpg";
+			const refPhoto = await downloadImageAsset(parsed.referencePhotoUrl);
 			const generatedImages = await Promise.all(
-				referenceImageUrls.map(async (url, index) => ({
-					name: `${String(index + 1).padStart(3, "0")}.jpg`,
-					data: await downloadAsBuffer(url),
-				}))
+				referenceImageUrls.map(async (url, index) => {
+					const image = await downloadImageAsset(url);
+					return {
+						name: `${String(index + 1).padStart(3, "0")}${image.extension}`,
+						data: image.data,
+					};
+				})
 			);
 
 			const captionContent = `a photo of ${triggerWord}, portrait`;
 			const zipFiles: Array<{ name: string; data: Uint8Array }> = [
-				{ name: `000${refExt}`, data: refPhoto },
+				{ name: `000${refPhoto.extension}`, data: refPhoto.data },
 				{
 					name: "000.txt",
 					data: new TextEncoder().encode(captionContent),
@@ -590,7 +633,7 @@ export class FalZibLoraTrainingRunner {
 			for (const img of generatedImages) {
 				zipFiles.push(img);
 				zipFiles.push({
-					name: img.name.replace(".jpg", ".txt"),
+					name: img.name.replace(fileExtensionPattern, ".txt"),
 					data: new TextEncoder().encode(captionContent),
 				});
 			}

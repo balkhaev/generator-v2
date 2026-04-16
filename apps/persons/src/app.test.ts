@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { GENERATOR_CALLBACK_TOKEN_HEADER } from "@generator/http/shared";
 
 import { createApp } from "@/app";
 import type { AdminTrainingClient } from "@/clients/admin-training";
@@ -93,6 +94,15 @@ function createMemoryRepository(): PersonsRepository {
 			}
 
 			return Promise.resolve(persons.delete(personId));
+		},
+		deleteGeneration(personId, generationId) {
+			const generation = generations.get(generationId);
+			if (!generation || generation.personId !== personId) {
+				return Promise.resolve(null);
+			}
+
+			generations.delete(generationId);
+			return Promise.resolve(generation);
 		},
 		deleteDatasetGenerations(personId, keepSourceUrls) {
 			const keepSet = new Set(keepSourceUrls);
@@ -362,7 +372,7 @@ describe("persons api", () => {
 		});
 	});
 
-	it("anchors lora generation prompts with the person identity description", async () => {
+	it("generates with lora through reference-conditioned zimage i2i", async () => {
 		const capturedExecutionInputs: Parameters<
 			OperatorServerClient["createExecution"]
 		>[0][] = [];
@@ -411,16 +421,73 @@ describe("persons api", () => {
 		);
 
 		expect(response.status).toBe(202);
+		const { person: queuedPerson } = (await response.json()) as {
+			person: PersonRecord;
+		};
+		const queuedGeneration = queuedPerson.generations[0];
+		if (!queuedGeneration) {
+			throw new Error("Expected queued generation");
+		}
+		expect(queuedGeneration.metadata.progressPct).toBe(5);
 		const capturedExecutionInput = capturedExecutionInputs[0];
 		if (!capturedExecutionInput) {
 			throw new Error("Expected generator execution input to be captured");
 		}
-		expect(capturedExecutionInput.workflowKey).toBe("fal-zimage-turbo-lora");
-		expect(capturedExecutionInput.prompt).toContain(
-			"a photo of generated_subject"
+		const executionInput = capturedExecutionInput as {
+			inputImageUrl?: string;
+			params: Record<string, unknown>;
+			prompt: string;
+			workflowKey: string;
+		};
+		expect(executionInput).toMatchObject({
+			inputImageUrl: "https://assets.example.com/reference.png",
+			workflowKey: "fal-zimage-turbo-image-to-image-lora",
+			params: {
+				imageSize: "portrait_4_3",
+				loraUrl: "https://assets.example.com/person.safetensors",
+				loraWeight: 1,
+				numInferenceSteps: 8,
+				strength: 0.95,
+			},
+		});
+		expect(executionInput.prompt).toContain("a photo of generated_subject");
+		expect(executionInput.prompt).toContain("jumping in a window");
+
+		const callbackResponse = await app.request(
+			"http://localhost/api/internal/generator-executions",
+			{
+				body: JSON.stringify({
+					context: {
+						generationId: queuedGeneration.id,
+						personId: person.id,
+					},
+					execution: {
+						artifacts: [],
+						errorSummary: null,
+						id: "execution-lora",
+						inputImageUrl: "https://assets.example.com/reference.png",
+						progressPct: 42,
+						providerEndpointId: "fal-ai/z-image",
+						providerJobId: "provider-lora",
+						status: "running",
+						workflowKey: "fal-zimage-turbo-image-to-image-lora",
+					},
+				}),
+				headers: {
+					"content-type": "application/json",
+					[GENERATOR_CALLBACK_TOKEN_HEADER]: "local-generator-callback-token",
+				},
+				method: "POST",
+			}
 		);
-		expect(capturedExecutionInput.prompt).toContain("Red-haired woman");
-		expect(capturedExecutionInput.prompt).toContain("jumping in a window");
+		expect(callbackResponse.status).toBe(200);
+		const { person: runningPerson } = (await callbackResponse.json()) as {
+			person: PersonRecord;
+		};
+		expect(runningPerson.generations[0]?.metadata.progressPct).toBe(42);
+		expect(runningPerson.generations[0]?.metadata.generatorStatus).toBe(
+			"running"
+		);
 	});
 
 	it("replaces dataset photos on subsequent training callbacks", async () => {
@@ -492,5 +559,104 @@ describe("persons api", () => {
 			"https://assets.example.com/dataset-3.png",
 			"https://assets.example.com/reference.png",
 		]);
+	});
+
+	it("deletes generations and removes deleted dataset photos from training metadata", async () => {
+		const app = createApp({
+			corsOrigins: ["http://localhost:3004"],
+			repository: createMemoryRepository(),
+			operatorServerClient: createOperatorClient(),
+		});
+		const createResponse = await app.request("http://localhost/api/persons", {
+			body: JSON.stringify({
+				name: "Delete Media",
+				referencePhotoUrl: "https://assets.example.com/reference.png",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { person } = (await createResponse.json()) as {
+			person: PersonRecord;
+		};
+
+		const importResponse = await app.request(
+			`http://localhost/api/persons/${person.id}/generations/import`,
+			{
+				body: JSON.stringify({
+					providerJobId: "run-delete-1",
+					workflowKey: "fal-flux-dev",
+				}),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+		const { generation } = (await importResponse.json()) as {
+			generation: PersonGenerationRecord;
+		};
+
+		const deleteGenerationResponse = await app.request(
+			`http://localhost/api/persons/${person.id}/generations/${generation.id}`,
+			{ method: "DELETE" }
+		);
+		expect(deleteGenerationResponse.status).toBe(200);
+		const { person: afterGenerationDelete } =
+			(await deleteGenerationResponse.json()) as {
+				person: PersonRecord;
+			};
+		expect(afterGenerationDelete.generations).toHaveLength(0);
+
+		await app.request("http://localhost/api/internal/lora-trainings", {
+			body: JSON.stringify({
+				context: { personId: person.id },
+				event: {
+					referenceImageUrls: [
+						"https://assets.example.com/reference.png",
+						"https://assets.example.com/dataset-delete.png",
+					],
+					status: "generating",
+				},
+			}),
+			headers: {
+				authorization: "Bearer local-training-control-token",
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		const personWithDatasetResponse = await app.request(
+			`http://localhost/api/persons/${person.id}`
+		);
+		const { person: personWithDataset } =
+			(await personWithDatasetResponse.json()) as {
+				person: PersonRecord;
+			};
+		const datasetGeneration = personWithDataset.generations.find(
+			(item) =>
+				item.sourceUrl === "https://assets.example.com/dataset-delete.png"
+		);
+		if (!datasetGeneration) {
+			throw new Error("Expected dataset generation");
+		}
+
+		const deleteDatasetResponse = await app.request(
+			`http://localhost/api/persons/${person.id}/generations/${datasetGeneration.id}`,
+			{ method: "DELETE" }
+		);
+		expect(deleteDatasetResponse.status).toBe(200);
+		const { person: afterDatasetDelete } =
+			(await deleteDatasetResponse.json()) as {
+				person: PersonRecord;
+			};
+		expect(
+			afterDatasetDelete.generations.some(
+				(item) => item.sourceUrl === datasetGeneration.sourceUrl
+			)
+		).toBe(false);
+		const training = afterDatasetDelete.metadata.training as {
+			referenceImageUrls?: string[];
+		};
+		expect(training.referenceImageUrls).not.toContain(
+			datasetGeneration.sourceUrl
+		);
 	});
 });

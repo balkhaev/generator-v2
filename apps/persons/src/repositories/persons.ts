@@ -1,6 +1,6 @@
 import { createDb } from "@generator/db";
+import { and, desc, eq } from "@generator/db/operators";
 import { person, personGeneration } from "@generator/db/schema/persons";
-import { desc, eq } from "drizzle-orm";
 
 import type {
 	PersonGenerationRecord,
@@ -66,7 +66,7 @@ export function createDrizzlePersonsRepository(
 			const generationRows = await database
 				.select()
 				.from(personGeneration)
-				.orderBy(desc(personGeneration.createdAt));
+				.orderBy(desc(personGeneration.createdAt), desc(personGeneration.id));
 			const groupedGenerations = groupGenerationsByPerson(generationRows);
 
 			return personRows.map((personRow) =>
@@ -86,7 +86,7 @@ export function createDrizzlePersonsRepository(
 				.select()
 				.from(personGeneration)
 				.where(eq(personGeneration.personId, personId))
-				.orderBy(desc(personGeneration.createdAt));
+				.orderBy(desc(personGeneration.createdAt), desc(personGeneration.id));
 			return mapPerson(personRow, generationRows.map(mapGeneration));
 		},
 		async getPersonBySlug(slug) {
@@ -102,7 +102,7 @@ export function createDrizzlePersonsRepository(
 				.select()
 				.from(personGeneration)
 				.where(eq(personGeneration.personId, personRow.id))
-				.orderBy(desc(personGeneration.createdAt));
+				.orderBy(desc(personGeneration.createdAt), desc(personGeneration.id));
 			return mapPerson(personRow, generationRows.map(mapGeneration));
 		},
 		createPerson(input) {
@@ -129,7 +129,7 @@ export function createDrizzlePersonsRepository(
 					.select()
 					.from(personGeneration)
 					.where(eq(personGeneration.personId, personRow.id))
-					.orderBy(desc(personGeneration.createdAt));
+					.orderBy(desc(personGeneration.createdAt), desc(personGeneration.id));
 
 				return mapPerson(personRow, generationRows.map(mapGeneration));
 			});
@@ -148,7 +148,7 @@ export function createDrizzlePersonsRepository(
 				.select()
 				.from(personGeneration)
 				.where(eq(personGeneration.personId, personId))
-				.orderBy(desc(personGeneration.createdAt));
+				.orderBy(desc(personGeneration.createdAt), desc(personGeneration.id));
 			return mapPerson(personRow, generationRows.map(mapGeneration));
 		},
 		async deletePerson(personId) {
@@ -157,6 +157,18 @@ export function createDrizzlePersonsRepository(
 				.where(eq(person.id, personId))
 				.returning({ id: person.id });
 			return deletedRows.length > 0;
+		},
+		async deleteGeneration(personId, generationId) {
+			const [generationRow] = await database
+				.delete(personGeneration)
+				.where(
+					and(
+						eq(personGeneration.id, generationId),
+						eq(personGeneration.personId, personId)
+					)
+				)
+				.returning();
+			return generationRow ? mapGeneration(generationRow) : null;
 		},
 		async deleteDatasetGenerations(personId, keepSourceUrls) {
 			const datasetGenerations = await database

@@ -81,6 +81,18 @@ export function createPersonRoutes(service: PersonsService) {
 			: c.json({ error: "Person not found" }, 404);
 	});
 
+	app.delete("/:personId/generations/:generationId", async (c) => {
+		const person = await service.deleteGeneration(
+			c.req.param("personId"),
+			c.req.param("generationId")
+		);
+		if (!person) {
+			return c.json({ error: "Generation not found" }, 404);
+		}
+
+		return c.json({ person });
+	});
+
 	app.post("/:personId/generations", async (c) => {
 		try {
 			const generation = await service.createGeneration(

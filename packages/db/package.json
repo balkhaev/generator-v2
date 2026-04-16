@@ -11,6 +11,9 @@
     "./schema/*": {
       "default": "./src/schema/*.ts"
     },
+    "./operators": {
+      "default": "./src/operators.ts"
+    },
     "./*": {
       "default": "./src/*.ts"
     }

@@ -84,6 +84,7 @@ export interface GeneratorExecutionRecord {
 	errorSummary: string | null;
 	id: string;
 	inputImageUrl: string;
+	progressPct?: number | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
 	status: RunStatus;

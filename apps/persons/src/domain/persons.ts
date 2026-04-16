@@ -218,6 +218,10 @@ export interface PersonsRepository {
 		personId: string,
 		keepSourceUrls: string[]
 	): Promise<number>;
+	deleteGeneration(
+		personId: string,
+		generationId: string
+	): Promise<PersonGenerationRecord | null>;
 	deletePerson(personId: string): Promise<boolean>;
 	findPersonByOperatorRunId(
 		operatorRunId: string
@@ -330,6 +334,54 @@ function readMetadataString(
 	return typeof value === "string" ? value : null;
 }
 
+function clampProgressPct(value: number) {
+	return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function getExecutionProgressPct(execution: GeneratorExecutionRecord) {
+	if (typeof execution.progressPct === "number") {
+		return clampProgressPct(execution.progressPct);
+	}
+
+	switch (execution.status) {
+		case "queued":
+			return 5;
+		case "running":
+			return 65;
+		case "succeeded":
+		case "failed":
+			return 100;
+		default:
+			return 0;
+	}
+}
+
+function getGenerationProgressMetadata(input: {
+	execution?: GeneratorExecutionRecord;
+	metadata: Record<string, unknown>;
+}) {
+	const progressPct = input.execution
+		? getExecutionProgressPct(input.execution)
+		: 2;
+
+	return {
+		...input.metadata,
+		generatorStatus: input.execution?.status ?? "queued",
+		progressPct,
+	};
+}
+
+function hasProgressMetadataChanged(
+	metadata: Record<string, unknown>,
+	execution: GeneratorExecutionRecord
+) {
+	return (
+		readMetadataNumber(metadata, "progressPct") !==
+			getExecutionProgressPct(execution) ||
+		readMetadataString(metadata, "generatorStatus") !== execution.status
+	);
+}
+
 export class PersonsService {
 	private readonly repository: PersonsRepository;
 	private readonly operatorServerClient?: OperatorServerClient;
@@ -434,10 +486,12 @@ export class PersonsService {
 					errorSummary: null,
 					id: crypto.randomUUID(),
 					mediaType: "image",
-					metadata: {
-						generatedFromPrompt: true,
-						workflowKey: avatarWorkflow,
-					},
+					metadata: getGenerationProgressMetadata({
+						metadata: {
+							generatedFromPrompt: true,
+							workflowKey: avatarWorkflow,
+						},
+					}),
 					operatorRunId: null,
 					operatorScenarioId: null,
 					personId: "",
@@ -482,11 +536,14 @@ export class PersonsService {
 			params: defaultParams,
 		});
 		await this.repository.updateGeneration(queuedGeneration.id, {
-			metadata: {
-				...queuedGeneration.metadata,
-				generatorExecutionId: execution.id,
-				generatorWorkflowKey: execution.workflowKey,
-			},
+			metadata: getGenerationProgressMetadata({
+				execution,
+				metadata: {
+					...queuedGeneration.metadata,
+					generatorExecutionId: execution.id,
+					generatorWorkflowKey: execution.workflowKey,
+				},
+			}),
 			operatorRunId: execution.providerJobId,
 			status: execution.status === "failed" ? "failed" : "queued",
 		});
@@ -574,6 +631,63 @@ export class PersonsService {
 
 	deletePerson(personId: string) {
 		return this.repository.deletePerson(personId);
+	}
+
+	async deleteGeneration(personId: string, generationId: string) {
+		const person = await this.repository.getPersonById(personId);
+
+		if (!person) {
+			return null;
+		}
+
+		const generation = person.generations.find(
+			(item) => item.id === generationId
+		);
+		if (!generation) {
+			return null;
+		}
+
+		const deletedGeneration = await this.repository.deleteGeneration(
+			personId,
+			generationId
+		);
+		if (!deletedGeneration) {
+			return null;
+		}
+
+		if (deletedGeneration.metadata.isDatasetPhoto !== true) {
+			return this.repository.getPersonById(personId);
+		}
+
+		const training =
+			person.metadata.training &&
+			typeof person.metadata.training === "object" &&
+			!Array.isArray(person.metadata.training)
+				? (person.metadata.training as Record<string, unknown>)
+				: null;
+		if (!training) {
+			return this.repository.getPersonById(personId);
+		}
+
+		const nextReferenceImageUrls = Array.isArray(training.referenceImageUrls)
+			? training.referenceImageUrls.filter(
+					(value): value is string =>
+						typeof value === "string" && value !== deletedGeneration.sourceUrl
+				)
+			: [];
+
+		await this.repository.updatePerson(personId, {
+			metadata: {
+				...person.metadata,
+				training: {
+					...training,
+					referenceImageCount: nextReferenceImageUrls.length,
+					referenceImageUrls: nextReferenceImageUrls,
+				},
+			},
+		});
+
+		return this.repository.getPersonById(personId);
 	}
 
 	async createGeneration(
@@ -766,30 +880,19 @@ export class PersonsService {
 			.filter((part): part is string => Boolean(part))
 			.join(", ");
 		const workflowKey = env.PERSONS_DEFAULT_LORA_WORKFLOW;
-
-		const isCerebriumWorkflow = workflowKey.startsWith("cerebrium-");
-		const loraParams = isCerebriumWorkflow
-			? {
-					loraUrl: person.loraUrl,
-					loraScale: 0.8,
-					width: 768,
-					height: 1024,
-					numInferenceSteps: 8,
-					guidanceScale: 1.0,
-					numImages: 1,
-					outputFormat: "jpeg",
-				}
-			: {
-					extraLoraUrl: options?.extraLoraUrl,
-					extraLoraWeight: options?.extraLoraWeight ?? 0.05,
-					loraUrl: person.loraUrl,
-					loraWeight: 1.0,
-					imageSize: "portrait_4_3",
-					numInferenceSteps: 12,
-					numImages: 1,
-					enableSafetyChecker: false,
-					outputFormat: "png",
-				};
+		const isImageToImageWorkflow = workflowKey.includes("image-to-image");
+		const loraParams = {
+			enableSafetyChecker: false,
+			extraLoraUrl: options?.extraLoraUrl,
+			extraLoraWeight: options?.extraLoraWeight ?? 0.05,
+			imageSize: "portrait_4_3",
+			loraUrl: person.loraUrl,
+			loraWeight: 1.0,
+			numImages: 1,
+			numInferenceSteps: isImageToImageWorkflow ? 8 : 12,
+			outputFormat: "png",
+			...(isImageToImageWorkflow ? { strength: 0.95 } : {}),
+		};
 
 		const generationId = crypto.randomUUID();
 		await this.repository.createGeneration({
@@ -804,7 +907,9 @@ export class PersonsService {
 			operatorRunId: null,
 			operatorScenarioId: null,
 			errorSummary: null,
-			metadata: { workflowKey, generatedWithLora: true },
+			metadata: getGenerationProgressMetadata({
+				metadata: { workflowKey, generatedWithLora: true },
+			}),
 		});
 
 		const execution = await this.operatorServerClient.createExecution({
@@ -815,24 +920,30 @@ export class PersonsService {
 						url: this.callbackConfig.url,
 					}
 				: undefined,
+			inputImageUrl: isImageToImageWorkflow
+				? person.referencePhotoUrl
+				: undefined,
 			workflowKey,
 			prompt,
 			params: loraParams,
 		});
 
 		await this.repository.updateGeneration(generationId, {
-			metadata: {
-				workflowKey,
-				generatedWithLora: true,
-				...(options?.extraLoraUrl
-					? {
-							extraLoraUrl: options.extraLoraUrl,
-							extraLoraWeight: options.extraLoraWeight ?? 0.05,
-						}
-					: {}),
-				generatorExecutionId: execution.id,
-				generatorWorkflowKey: execution.workflowKey,
-			},
+			metadata: getGenerationProgressMetadata({
+				execution,
+				metadata: {
+					workflowKey,
+					generatedWithLora: true,
+					...(options?.extraLoraUrl
+						? {
+								extraLoraUrl: options.extraLoraUrl,
+								extraLoraWeight: options.extraLoraWeight ?? 0.05,
+							}
+						: {}),
+					generatorExecutionId: execution.id,
+					generatorWorkflowKey: execution.workflowKey,
+				},
+			}),
 			operatorRunId: execution.providerJobId,
 			status: execution.status === "failed" ? "failed" : "queued",
 		});
@@ -1204,12 +1315,30 @@ export class PersonsService {
 			return null;
 		}
 
+		const nextMetadata = getGenerationProgressMetadata({
+			execution: input.execution,
+			metadata: {
+				...currentGeneration.metadata,
+				generatorExecutionId:
+					readMetadataString(
+						currentGeneration.metadata,
+						"generatorExecutionId"
+					) ?? input.execution.id,
+				generatorWorkflowKey: input.execution.workflowKey,
+			},
+		});
+		const operatorRunId =
+			input.execution.providerJobId ?? currentGeneration.operatorRunId;
+
 		if (
-			input.execution.providerJobId &&
-			input.execution.providerJobId !== currentGeneration.operatorRunId
+			(input.execution.status === "queued" ||
+				input.execution.status === "running") &&
+			(operatorRunId !== currentGeneration.operatorRunId ||
+				hasProgressMetadataChanged(currentGeneration.metadata, input.execution))
 		) {
 			await this.repository.updateGeneration(generationId, {
-				operatorRunId: input.execution.providerJobId,
+				metadata: nextMetadata,
+				operatorRunId,
 			});
 		}
 
@@ -1231,7 +1360,8 @@ export class PersonsService {
 
 			await this.repository.updateGeneration(generationId, {
 				errorSummary: null,
-				operatorRunId: input.execution.providerJobId,
+				metadata: nextMetadata,
+				operatorRunId,
 				previewUrl: primaryArtifactUrl,
 				sourceUrl: primaryArtifactUrl,
 				status: "ready",
@@ -1261,6 +1391,8 @@ export class PersonsService {
 					(isLoraGeneration
 						? "LoRA generation failed"
 						: "Avatar generation failed"),
+				metadata: nextMetadata,
+				operatorRunId,
 				status: "failed",
 				title: isLoraGeneration
 					? "LoRA generation failed"
@@ -1290,12 +1422,25 @@ export class PersonsService {
 			}
 			const execution =
 				await this.operatorServerClient.getExecution(executionId);
+			const nextMetadata = getGenerationProgressMetadata({
+				execution,
+				metadata: {
+					...generation.metadata,
+					generatorExecutionId: execution.id,
+					generatorWorkflowKey: execution.workflowKey,
+				},
+			});
+			const operatorRunId = execution.providerJobId ?? generation.operatorRunId;
+			const shouldUpdateProgress =
+				operatorRunId !== generation.operatorRunId ||
+				hasProgressMetadataChanged(generation.metadata, execution);
 			if (
-				execution.providerJobId &&
-				execution.providerJobId !== generation.operatorRunId
+				(execution.status === "queued" || execution.status === "running") &&
+				shouldUpdateProgress
 			) {
 				await this.repository.updateGeneration(generation.id, {
-					operatorRunId: execution.providerJobId,
+					metadata: nextMetadata,
+					operatorRunId,
 				});
 				updatedCount += 1;
 			}
@@ -1313,7 +1458,8 @@ export class PersonsService {
 				}
 				await this.repository.updateGeneration(generation.id, {
 					errorSummary: null,
-					operatorRunId: execution.providerJobId,
+					metadata: nextMetadata,
+					operatorRunId,
 					previewUrl: primaryArtifactUrl,
 					sourceUrl: primaryArtifactUrl,
 					status: "ready",
@@ -1330,6 +1476,8 @@ export class PersonsService {
 						(isLoraGeneration
 							? "LoRA generation failed"
 							: "Avatar generation failed"),
+					metadata: nextMetadata,
+					operatorRunId,
 					status: "failed",
 					title: isLoraGeneration
 						? "LoRA generation failed"

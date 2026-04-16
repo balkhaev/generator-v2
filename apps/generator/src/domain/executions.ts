@@ -64,6 +64,20 @@ function getNextSyncDelay(
 	return DEFAULT_QUEUED_SYNC_DELAY_MS;
 }
 
+function getExecutionProgressPct(status: GeneratorExecutionRecord["status"]) {
+	switch (status) {
+		case "queued":
+			return 5;
+		case "running":
+			return 65;
+		case "succeeded":
+		case "failed":
+			return 100;
+		default:
+			return 0;
+	}
+}
+
 export interface ExecutionEntity {
 	artifacts: Array<{ url: string | null }>;
 	callback: {
@@ -103,6 +117,7 @@ function toExecutionRecord(entity: ExecutionEntity): GeneratorExecutionRecord {
 		inputImageUrl: entity.inputImageUrl ?? "",
 		providerEndpointId: entity.providerEndpointId,
 		providerJobId: entity.providerJobId,
+		progressPct: getExecutionProgressPct(entity.status),
 		status: entity.status,
 		workflowKey: entity.workflowKey,
 	};
@@ -124,6 +139,7 @@ function normalizeDirectExecution(input: {
 		inputImageUrl: input.inputImageUrl ?? "",
 		providerEndpointId: input.providerEndpointId ?? null,
 		providerJobId: input.providerJobId ?? null,
+		progressPct: getExecutionProgressPct(input.status),
 		status: input.status,
 		workflowKey: input.workflowKey,
 	};

@@ -70,6 +70,16 @@ export async function importGeneration(
 	return payload.generation;
 }
 
+export async function deleteGeneration(personId: string, generationId: string) {
+	const payload = await requestJson<{ person: PersonRecord }>(
+		`${API_BASE_URL}/api/persons/${personId}/generations/${generationId}`,
+		{
+			method: "DELETE",
+		}
+	);
+	return payload.person;
+}
+
 export async function findPersonByOperatorRunId(operatorRunId: string) {
 	const payload = await requestJson<{ person: PersonRecord }>(
 		`${API_BASE_URL}/api/persons/lookup/run/${operatorRunId}`,

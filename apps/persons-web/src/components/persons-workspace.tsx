@@ -32,6 +32,7 @@ import {
 	ImageIcon,
 	Loader2,
 	Sparkles,
+	Trash2,
 	Upload,
 	UsersRound,
 	X,
@@ -46,6 +47,7 @@ import { toast } from "sonner";
 import {
 	type CreatePersonInput,
 	createPerson,
+	deleteGeneration,
 	generateWithLora,
 	getPersonsDashboard,
 	type PersonGenerationRecord,
@@ -209,6 +211,23 @@ function createEmptyFormState(): CreatePersonInput {
 	};
 }
 
+function getGenerationProgressPct(generation: PersonGenerationRecord) {
+	const metadataProgressPct = generation.metadata.progressPct;
+	if (typeof metadataProgressPct === "number") {
+		return clampProgressPct(metadataProgressPct);
+	}
+
+	switch (generation.status) {
+		case "queued":
+			return 2;
+		case "ready":
+		case "failed":
+			return 100;
+		default:
+			return 0;
+	}
+}
+
 function GenerationPreview({
 	generation,
 	onImageClick,
@@ -217,11 +236,22 @@ function GenerationPreview({
 	onImageClick?: () => void;
 }) {
 	if (generation.status === "queued") {
+		const progressPct = getGenerationProgressPct(generation);
+
 		return (
-			<div className="flex aspect-[4/3] items-center justify-center rounded-lg bg-muted/10 dark:bg-muted/5">
-				<div className="grid place-items-center gap-2">
+			<div className="flex aspect-[4/3] items-center justify-center rounded-lg bg-muted/10 px-5 dark:bg-muted/5">
+				<div className="grid w-full max-w-44 place-items-center gap-2.5">
 					<Loader2 className="size-6 animate-spin text-muted-foreground/50" />
-					<span className="text-muted-foreground/50 text-xs">Generating…</span>
+					<div className="flex w-full items-center justify-between gap-3 text-muted-foreground/60 text-xs">
+						<span>Generating</span>
+						<span className="font-medium tabular-nums">{progressPct}%</span>
+					</div>
+					<div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/30 dark:bg-muted/15">
+						<div
+							className="h-full rounded-full bg-sky-500/70 transition-[width] duration-500"
+							style={{ width: `${progressPct}%` }}
+						/>
+					</div>
 				</div>
 			</div>
 		);
@@ -430,10 +460,14 @@ function buildStudioGenerationHref(
 
 function GenerationCard({
 	generation,
+	isDeleting,
+	onDelete,
 	studioUrl,
 	onImageClick,
 }: {
 	generation: PersonGenerationRecord;
+	isDeleting: boolean;
+	onDelete: () => void;
 	studioUrl: string;
 	onImageClick?: () => void;
 }) {
@@ -445,15 +479,30 @@ function GenerationCard({
 			<div className="grid gap-1.5 px-3 pb-3">
 				<div className="flex items-center justify-between gap-2">
 					<h3 className="truncate font-medium text-sm">{generation.title}</h3>
-					<span
-						className={cn(
-							"inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px]",
-							generationTone[generation.status]
-						)}
-					>
-						<GenerationStatusIcon status={generation.status} />
-						{generation.status}
-					</span>
+					<div className="flex shrink-0 items-center gap-1.5">
+						<span
+							className={cn(
+								"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px]",
+								generationTone[generation.status]
+							)}
+						>
+							<GenerationStatusIcon status={generation.status} />
+							{generation.status}
+						</span>
+						<button
+							aria-label={`Delete ${generation.title}`}
+							className="inline-flex size-6 items-center justify-center rounded-full text-muted-foreground/50 transition hover:bg-rose-500/10 hover:text-rose-600 disabled:pointer-events-none disabled:opacity-50 dark:hover:text-rose-400"
+							disabled={isDeleting}
+							onClick={onDelete}
+							type="button"
+						>
+							{isDeleting ? (
+								<Loader2 className="size-3 animate-spin" />
+							) : (
+								<Trash2 className="size-3" />
+							)}
+						</button>
+					</div>
 				</div>
 				{generation.prompt ? (
 					<p className="line-clamp-2 text-muted-foreground/70 text-xs leading-relaxed">
@@ -944,16 +993,25 @@ function LoraActions({
 	);
 }
 
+interface DatasetImageItem {
+	generationId: string | null;
+	url: string;
+}
+
 function DatasetGallery({
 	isGenerating,
-	urls,
+	items,
+	onDelete,
 	onImageClick,
+	pendingDeleteId,
 }: {
 	isGenerating: boolean;
-	urls: string[];
+	items: DatasetImageItem[];
+	onDelete: (generationId: string) => void;
 	onImageClick: (index: number) => void;
+	pendingDeleteId: string | null;
 }) {
-	if (urls.length === 0 && !isGenerating) {
+	if (items.length === 0 && !isGenerating) {
 		return (
 			<EmptyState
 				hint="Dataset photos will appear here after LoRA training starts."
@@ -967,28 +1025,48 @@ function DatasetGallery({
 				<div className="flex items-center gap-2 text-muted-foreground text-xs">
 					<Loader2 className="size-3.5 animate-spin" />
 					<span>
-						Generating dataset… {urls.length} / {DATASET_TARGET_COUNT}
+						Generating dataset… {items.length} / {DATASET_TARGET_COUNT}
 					</span>
 				</div>
 			) : null}
-			{urls.length > 0 ? (
+			{items.length > 0 ? (
 				<div className="grid grid-cols-4 gap-2 sm:grid-cols-5 xl:grid-cols-6">
-					{urls.map((url, i) => (
-						<button
-							aria-label={`View reference ${i + 1}`}
-							className="relative aspect-[3/4] overflow-hidden rounded-lg transition hover:ring-2 hover:ring-ring/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							key={url}
-							onClick={() => onImageClick(i)}
-							type="button"
-						>
-							<Image
-								alt={`Reference ${i + 1}`}
-								className="object-cover"
-								fill
-								sizes="(max-width: 768px) 25vw, 120px"
-								src={url}
-							/>
-						</button>
+					{items.map((item, i) => (
+						<div className="group relative" key={item.url}>
+							<button
+								aria-label={`View reference ${i + 1}`}
+								className="relative aspect-[3/4] w-full overflow-hidden rounded-lg transition hover:ring-2 hover:ring-ring/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								onClick={() => onImageClick(i)}
+								type="button"
+							>
+								<Image
+									alt={`Reference ${i + 1}`}
+									className="object-cover"
+									fill
+									sizes="(max-width: 768px) 25vw, 120px"
+									src={item.url}
+								/>
+							</button>
+							{item.generationId ? (
+								<button
+									aria-label={`Delete reference ${i + 1}`}
+									className="absolute top-1.5 right-1.5 inline-flex size-7 items-center justify-center rounded-full bg-background/85 text-muted-foreground opacity-0 shadow-sm ring-1 ring-border/50 transition hover:bg-rose-500/10 hover:text-rose-600 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-70 group-hover:opacity-100 dark:hover:text-rose-400"
+									disabled={pendingDeleteId === item.generationId}
+									onClick={() => {
+										if (item.generationId) {
+											onDelete(item.generationId);
+										}
+									}}
+									type="button"
+								>
+									{pendingDeleteId === item.generationId ? (
+										<Loader2 className="size-3.5 animate-spin" />
+									) : (
+										<Trash2 className="size-3.5" />
+									)}
+								</button>
+							) : null}
+						</div>
 					))}
 				</div>
 			) : null}
@@ -998,14 +1076,35 @@ function DatasetGallery({
 
 type DetailTab = "generations" | "dataset";
 
+function parseTimestamp(value: string) {
+	const timestamp = Date.parse(value);
+	return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function compareGenerationNewestFirst(
+	a: PersonGenerationRecord,
+	b: PersonGenerationRecord
+) {
+	const createdDiff = parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt);
+	if (createdDiff !== 0) {
+		return createdDiff;
+	}
+
+	return b.id.localeCompare(a.id);
+}
+
 function PersonDetailView({
+	deletingGenerationId,
 	person,
 	studioUrl,
+	onDeleteGeneration,
 	onTrainLora,
 	onGenerateWithLora,
 }: {
+	deletingGenerationId: string | null;
 	person: PersonRecord;
 	studioUrl: string;
+	onDeleteGeneration: (generationId: string) => void;
 	onTrainLora: () => void;
 	onGenerateWithLora: (prompt: string) => void;
 }) {
@@ -1013,16 +1112,27 @@ function PersonDetailView({
 	const [lightbox, setLightbox] = useState<LightboxState | null>(null);
 	const trainingMeta = getTrainingMeta(person);
 	const isGeneratingDataset = trainingMeta?.status === "generating";
-	const generations = person.generations.filter(
-		(g) => g.metadata.isDatasetPhoto !== true
-	);
+	const generations = person.generations
+		.filter((g) => g.metadata.isDatasetPhoto !== true)
+		.sort(compareGenerationNewestFirst);
 	const datasetPhotos = person.generations.filter(
 		(g) => g.metadata.isDatasetPhoto === true
 	);
-	const datasetUrls =
-		datasetPhotos.length > 0
-			? datasetPhotos.map((g) => g.sourceUrl)
-			: (trainingMeta?.referenceImageUrls ?? []);
+	const datasetPhotoItems = datasetPhotos.map((g) => ({
+		generationId: g.id,
+		url: g.sourceUrl,
+	}));
+	const datasetItems: DatasetImageItem[] =
+		trainingMeta?.referenceImageUrls &&
+		trainingMeta.referenceImageUrls.length > 0
+			? trainingMeta.referenceImageUrls.map((url) => ({
+					generationId:
+						datasetPhotos.find((generation) => generation.sourceUrl === url)
+							?.id ?? null,
+					url,
+				}))
+			: datasetPhotoItems;
+	const datasetUrls = datasetItems.map((item) => item.url);
 
 	const imageGenerations = generations.filter(
 		(g) => g.mediaType === "image" && g.status === "ready"
@@ -1183,20 +1293,21 @@ function PersonDetailView({
 				</div>
 
 				{activeTab === "generations" && generations.length > 0 ? (
-					<div className="columns-1 gap-3 sm:columns-2 xl:columns-3">
+					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
 						{generations.map((generation) => (
-							<div className="mb-3 break-inside-avoid" key={generation.id}>
-								<GenerationCard
-									generation={generation}
-									onImageClick={
-										generation.mediaType === "image" &&
-										generation.status === "ready"
-											? () => openGenerationLightbox(generation.id)
-											: undefined
-									}
-									studioUrl={studioUrl}
-								/>
-							</div>
+							<GenerationCard
+								generation={generation}
+								isDeleting={deletingGenerationId === generation.id}
+								key={generation.id}
+								onDelete={() => onDeleteGeneration(generation.id)}
+								onImageClick={
+									generation.mediaType === "image" &&
+									generation.status === "ready"
+										? () => openGenerationLightbox(generation.id)
+										: undefined
+								}
+								studioUrl={studioUrl}
+							/>
 						))}
 					</div>
 				) : null}
@@ -1211,8 +1322,10 @@ function PersonDetailView({
 				{activeTab === "dataset" ? (
 					<DatasetGallery
 						isGenerating={isGeneratingDataset}
+						items={datasetItems}
+						onDelete={onDeleteGeneration}
 						onImageClick={openDatasetLightbox}
-						urls={datasetUrls}
+						pendingDeleteId={deletingGenerationId}
 					/>
 				) : null}
 			</div>
@@ -1400,6 +1513,9 @@ export default function PersonsWorkspace({
 	const [formState, setFormState] = useState<CreatePersonInput>(
 		createEmptyFormState()
 	);
+	const [deletingGenerationId, setDeletingGenerationId] = useState<
+		string | null
+	>(null);
 	const [isCreating, startCreateTransition] = useTransition();
 	const router = useRouter();
 
@@ -1535,6 +1651,27 @@ export default function PersonsWorkspace({
 		}
 	}
 
+	async function handleDeleteGeneration(generationId: string) {
+		if (!(selectedPerson && !deletingGenerationId)) {
+			return;
+		}
+
+		setDeletingGenerationId(generationId);
+		try {
+			const updated = await deleteGeneration(selectedPerson.id, generationId);
+			setPersons((current) =>
+				current.map((p) => (p.id === updated.id ? updated : p))
+			);
+			toast.success("Generation deleted");
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Failed to delete generation"
+			);
+		} finally {
+			setDeletingGenerationId(null);
+		}
+	}
+
 	function getPersonHref(slug: string) {
 		return getPersonHrefBySlug(slug);
 	}
@@ -1574,6 +1711,8 @@ export default function PersonsWorkspace({
 		>
 			{selectedPerson ? (
 				<PersonDetailView
+					deletingGenerationId={deletingGenerationId}
+					onDeleteGeneration={handleDeleteGeneration}
 					onGenerateWithLora={handleGenerateWithLora}
 					onTrainLora={handleTrainLora}
 					person={selectedPerson}

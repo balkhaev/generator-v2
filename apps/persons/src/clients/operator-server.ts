@@ -56,6 +56,10 @@ function readString(value: unknown, fallback = "") {
 	return typeof value === "string" ? value : fallback;
 }
 
+function readNullableNumber(value: unknown) {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function mapRunPayload(value: unknown): GeneratorRunRecord {
 	if (!(value && typeof value === "object")) {
 		throw new Error("Unexpected operator run payload");
@@ -278,6 +282,9 @@ function mapExecutionPayload(value: unknown): GeneratorExecutionRecord {
 		),
 		providerJobId: assertNullableString(
 			(execution as { providerJobId?: unknown }).providerJobId
+		),
+		progressPct: readNullableNumber(
+			(execution as { progressPct?: unknown }).progressPct
 		),
 		status: assertString(
 			(execution as { status?: unknown }).status,

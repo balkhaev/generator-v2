@@ -859,42 +859,48 @@ function LoraActions({
 			effectiveStatus === "generating" ||
 			effectiveStatus === "training" ||
 			effectiveStatus === "publishing");
+	const hasTrainingError = Boolean(training?.errorSummary);
+	const showTrainingSection = !hasLora || isTraining || hasTrainingError;
 
 	return (
 		<div className="grid gap-3">
-			<SectionLabel>LoRA training</SectionLabel>
+			{showTrainingSection ? (
+				<>
+					<SectionLabel>LoRA training</SectionLabel>
 
-			{effectiveStatus ? (
-				<LoraTrainingStatusPanel
-					effectiveStatus={effectiveStatus}
-					isTraining={isTraining}
-					phaseLabel={phaseLabel}
-					progressPct={progressPct}
-					referenceImageCount={referenceImageCount}
-					referenceImageTarget={referenceImageTarget}
-					training={training}
-				/>
+					{effectiveStatus ? (
+						<LoraTrainingStatusPanel
+							effectiveStatus={effectiveStatus}
+							isTraining={isTraining}
+							phaseLabel={phaseLabel}
+							progressPct={progressPct}
+							referenceImageCount={referenceImageCount}
+							referenceImageTarget={referenceImageTarget}
+							training={training}
+						/>
+					) : null}
+
+					{training?.errorSummary ? (
+						<p className="rounded-lg bg-rose-500/10 px-3 py-2 text-rose-700 text-xs dark:text-rose-300">
+							{training.errorSummary}
+						</p>
+					) : null}
+
+					<Button
+						disabled={isTraining}
+						onClick={onTrainLora}
+						size="sm"
+						variant="outline"
+					>
+						{isTraining ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<Sparkles className="size-3.5" />
+						)}
+						{isTraining ? "Training..." : "Train LoRA"}
+					</Button>
+				</>
 			) : null}
-
-			{training?.errorSummary ? (
-				<p className="rounded-lg bg-rose-500/10 px-3 py-2 text-rose-700 text-xs dark:text-rose-300">
-					{training.errorSummary}
-				</p>
-			) : null}
-
-			<Button
-				disabled={isTraining}
-				onClick={onTrainLora}
-				size="sm"
-				variant="outline"
-			>
-				{isTraining ? (
-					<Loader2 className="size-3.5 animate-spin" />
-				) : (
-					<Sparkles className="size-3.5" />
-				)}
-				{isTraining ? "Training..." : "Train LoRA"}
-			</Button>
 
 			{hasLora ? (
 				<div className="grid gap-2">
@@ -987,6 +993,15 @@ function LoraActions({
 						<Sparkles className="size-3.5" />
 						Generate with LoRA
 					</Button>
+					{isTraining || hasTrainingError ? null : (
+						<button
+							className="justify-self-start text-[11px] text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+							onClick={onTrainLora}
+							type="button"
+						>
+							Retrain LoRA
+						</button>
+					)}
 				</div>
 			) : null}
 		</div>

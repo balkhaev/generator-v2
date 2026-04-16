@@ -2,6 +2,7 @@
 
 import { env } from "@generator/env/web";
 import { Button } from "@generator/ui/components/button";
+import { Checkbox } from "@generator/ui/components/checkbox";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
@@ -51,6 +52,9 @@ import {
 
 const textareaClassName =
 	"flex min-h-20 w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
+
+const ZIT_MYSTIC_XXX_LORA_URL =
+	"https://civitai.com/api/download/models/2855359";
 
 interface LightboxState {
 	images: string[];
@@ -561,6 +565,7 @@ function LoraActions({
 	const [loraPrompt, setLoraPrompt] = useState("");
 	const [extraLoraUrl, setExtraLoraUrl] = useState("");
 	const [extraLoraWeight, setExtraLoraWeight] = useState("0.05");
+	const [useZitMysticXxx, setUseZitMysticXxx] = useState(false);
 	const training = getTrainingMeta(person);
 	const hasLora = Boolean(person.loraUrl);
 	const effectiveStatus =
@@ -628,27 +633,52 @@ function LoraActions({
 						placeholder="portrait photo, studio lighting..."
 						value={loraPrompt}
 					/>
+					<div className="grid gap-2 rounded-lg border border-border/60 bg-muted/20 p-3">
+						<div className="flex items-start gap-2">
+							<Checkbox
+								checked={useZitMysticXxx}
+								id="useZitMysticXxx"
+								onCheckedChange={(checked) =>
+									setUseZitMysticXxx(checked === true)
+								}
+							/>
+							<div className="grid gap-1">
+								<Label className="text-xs" htmlFor="useZitMysticXxx">
+									Use ZIT Mystic XXX
+								</Label>
+								<p className="text-[11px] text-muted-foreground/70">
+									Adds the{" "}
+									<a
+										className="underline"
+										href="https://civitai.red/models/2206377/zit-mystic-xxx"
+										rel="noreferrer noopener"
+										target="_blank"
+									>
+										ZIT Mystic XXX
+									</a>{" "}
+									style LoRA on top of the person LoRA.
+								</p>
+							</div>
+						</div>
+						{useZitMysticXxx ? (
+							<p className="break-all rounded-md bg-background/80 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+								{ZIT_MYSTIC_XXX_LORA_URL}
+							</p>
+						) : null}
+					</div>
 					<div className="grid gap-1.5">
 						<Label className="text-xs" htmlFor="extraLoraUrl">
-							Optional extra LoRA URL
+							Custom extra LoRA URL
 						</Label>
 						<Input
+							disabled={useZitMysticXxx}
 							id="extraLoraUrl"
 							onChange={(event) => setExtraLoraUrl(event.target.value)}
 							placeholder="https://.../zit-mystic.safetensors"
 							value={extraLoraUrl}
 						/>
 						<p className="text-[11px] text-muted-foreground/70">
-							Use for additive LoRAs such as{" "}
-							<a
-								className="underline"
-								href="https://civitai.red/models/2206377/zit-mystic-xxx"
-								rel="noreferrer noopener"
-								target="_blank"
-							>
-								ZIT Mystic XXX
-							</a>
-							.
+							Leave empty unless you need a different additive LoRA.
 						</p>
 					</div>
 					<div className="grid gap-1.5">
@@ -666,8 +696,11 @@ function LoraActions({
 						disabled={!loraPrompt.trim()}
 						onClick={() => {
 							const parsedExtraLoraWeight = Number.parseFloat(extraLoraWeight);
+							const resolvedExtraLoraUrl = useZitMysticXxx
+								? ZIT_MYSTIC_XXX_LORA_URL
+								: extraLoraUrl.trim() || undefined;
 							onGenerateWithLora(loraPrompt.trim(), {
-								extraLoraUrl: extraLoraUrl.trim() || undefined,
+								extraLoraUrl: resolvedExtraLoraUrl,
 								extraLoraWeight: Number.isFinite(parsedExtraLoraWeight)
 									? parsedExtraLoraWeight
 									: 0.05,

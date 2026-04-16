@@ -41,3 +41,19 @@ export function formatDateTime(value: string): string {
 		timeStyle: "short",
 	}).format(new Date(value));
 }
+
+export function formatBytes(value: number | null | undefined): string {
+	if (!(typeof value === "number" && Number.isFinite(value)) || value <= 0) {
+		return "—";
+	}
+	if (value < 1024) {
+		return `${value} B`;
+	}
+	if (value < 1024 * 1024) {
+		return `${(value / 1024).toFixed(1)} KB`;
+	}
+	if (value < 1024 * 1024 * 1024) {
+		return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+	}
+	return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}

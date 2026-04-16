@@ -2,6 +2,7 @@
 
 import { Toaster } from "@generator/ui/components/sonner";
 
+import QueryProvider from "./query-provider";
 import { ThemeProvider } from "./theme-provider";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
@@ -12,8 +13,10 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 			disableTransitionOnChange
 			enableSystem
 		>
-			{children}
-			<Toaster richColors />
+			<QueryProvider>
+				{children}
+				<Toaster richColors />
+			</QueryProvider>
 		</ThemeProvider>
 	);
 }

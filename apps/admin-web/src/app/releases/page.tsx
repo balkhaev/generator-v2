@@ -1,22 +1,21 @@
 import { WorkspacePane } from "@generator/ui/components/workspace-shell";
 
 import AdminShell from "@/components/admin-shell";
-import LorasContent, { LorasInspector } from "@/components/loras-content";
+import ReleasesContent from "@/components/releases-content";
 import { requireSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
-export default async function LorasPage() {
+export default async function ReleasesPage() {
 	await requireSession();
 
 	return (
 		<AdminShell
-			inspector={<LorasInspector />}
-			subtitle="Shared LoRA registry used by Studio and Persons."
-			title="LoRAs"
+			subtitle="Upload, provision, and monitor S3 fan-out for runtime assets."
+			title="Releases"
 		>
 			<WorkspacePane className="h-full overflow-hidden">
-				<LorasContent />
+				<ReleasesContent />
 			</WorkspacePane>
 		</AdminShell>
 	);

@@ -4,6 +4,7 @@ import { createApp } from "@/app";
 
 function createEmptyDashboardSnapshot() {
 	return {
+		loraTrainings: [],
 		notices: [],
 		recentRuns: [],
 		runStatus: {

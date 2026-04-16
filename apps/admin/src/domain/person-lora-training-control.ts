@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { PersonLoraTrainingQueue } from "@/queue/person-lora-training";
 
 export const enqueuePersonLoraTrainingSchema = z.object({
+	debugCorrelationId: z.string().trim().min(1).optional(),
 	description: z.string().trim().optional(),
 	outputName: z.string().trim().min(1).optional(),
 	personId: z.string().trim().min(1),

@@ -129,8 +129,14 @@ describe("FalZibLoraTrainingRunner", () => {
 			})
 		).rejects.toThrow();
 
-		expect(capturedUrl).toBe("https://queue.fal.run/fal-ai/flux-2/edit");
-		expect(capturedBody?.image_urls).toEqual([
+		if (capturedUrl === null || capturedBody === null) {
+			throw new Error("Expected Fal request payload to be captured");
+		}
+
+		expect(String(capturedUrl)).toBe(
+			"https://queue.fal.run/fal-ai/flux-2/edit"
+		);
+		expect((capturedBody as { image_urls?: string[] }).image_urls).toEqual([
 			"https://cdn.example.com/reference.jpg",
 		]);
 	});

@@ -1,5 +1,9 @@
 "use client";
 
+import type {
+	PersonLoraTrainingMeta,
+	PersonLoraTrainingStatus,
+} from "@generator/contracts/persons";
 import { env } from "@generator/env/web";
 import { Button } from "@generator/ui/components/button";
 import { Checkbox } from "@generator/ui/components/checkbox";
@@ -55,6 +59,7 @@ const textareaClassName =
 
 const ZIT_MYSTIC_XXX_LORA_URL =
 	"https://civitai.com/api/download/models/2855359";
+const DATASET_TARGET_COUNT = 20;
 
 interface LightboxState {
 	images: string[];
@@ -523,22 +528,15 @@ function GenerationCard({
 	);
 }
 
-interface TrainingMeta {
-	errorSummary?: string;
-	referenceImageUrls?: string[];
-	status?: string;
-	triggerWord?: string;
-}
-
-function getTrainingMeta(person: PersonRecord): TrainingMeta | null {
+function getTrainingMeta(person: PersonRecord): PersonLoraTrainingMeta | null {
 	const training = person.metadata?.training;
 	if (training && typeof training === "object" && !Array.isArray(training)) {
-		return training as TrainingMeta;
+		return training as PersonLoraTrainingMeta;
 	}
 	return null;
 }
 
-const trainingStatusTone: Record<string, string> = {
+const trainingStatusTone: Record<PersonLoraTrainingStatus | "ready", string> = {
 	queued: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
 	generating: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
 	training: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
@@ -546,6 +544,288 @@ const trainingStatusTone: Record<string, string> = {
 	ready: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
 	failed: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
 };
+
+function clampProgressPct(value: number) {
+	return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function getEffectiveTrainingStatus(
+	training: PersonLoraTrainingMeta | null,
+	hasLora: boolean
+): PersonLoraTrainingStatus | "ready" | undefined {
+	if (hasLora && training?.status !== "failed") {
+		return "ready";
+	}
+	return training?.status;
+}
+
+function getTrainingProgressPct(
+	training: PersonLoraTrainingMeta | null,
+	hasLora: boolean
+) {
+	if (hasLora && training?.status !== "failed") {
+		return 100;
+	}
+	if (typeof training?.progressPct === "number") {
+		return clampProgressPct(training.progressPct);
+	}
+
+	switch (training?.status) {
+		case "queued":
+			return 2;
+		case "generating":
+			return 32;
+		case "training":
+			return 76;
+		case "publishing":
+			return 92;
+		case "ready":
+			return 100;
+		case "failed":
+			return 100;
+		default:
+			return 0;
+	}
+}
+
+function getTrainingPhaseLabel(
+	training: PersonLoraTrainingMeta | null,
+	hasLora: boolean
+) {
+	if (hasLora && training?.status !== "failed") {
+		return "Weights ready";
+	}
+
+	switch (training?.phase) {
+		case "generating-references":
+			return "Generating reference set";
+		case "uploading-dataset":
+			return "Packing and uploading dataset";
+		case "starting-training":
+			return "Submitting trainer job";
+		case "polling-training":
+			return "Training LoRA weights";
+		case "ready":
+			return "Weights ready";
+		case "failed":
+			return "Training failed";
+		default:
+			switch (training?.status) {
+				case "queued":
+					return "Waiting for worker";
+				case "generating":
+					return "Preparing dataset";
+				case "training":
+					return "Training LoRA weights";
+				case "publishing":
+					return "Publishing weights";
+				case "ready":
+					return "Weights ready";
+				case "failed":
+					return "Training failed";
+				default:
+					return "Idle";
+			}
+	}
+}
+
+function getTrainingReferenceImageCount(
+	training: PersonLoraTrainingMeta | null
+) {
+	if (typeof training?.referenceImageCount === "number") {
+		return training.referenceImageCount;
+	}
+	return training?.referenceImageUrls?.length ?? 0;
+}
+
+function getTrainingReferenceImageTarget(
+	training: PersonLoraTrainingMeta | null
+) {
+	if (typeof training?.referenceImageTargetCount === "number") {
+		return training.referenceImageTargetCount;
+	}
+	return DATASET_TARGET_COUNT;
+}
+
+function formatDurationMs(value: number | null | undefined) {
+	if (!(typeof value === "number" && Number.isFinite(value) && value >= 0)) {
+		return null;
+	}
+	if (value < 1000) {
+		return `${value} ms`;
+	}
+
+	const seconds = Math.round(value / 1000);
+	if (seconds < 60) {
+		return `${seconds}s`;
+	}
+
+	const minutes = Math.floor(seconds / 60);
+	const remainder = seconds % 60;
+	return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
+}
+
+function getLoraStatusIcon(
+	effectiveStatus: PersonLoraTrainingStatus | "ready" | undefined,
+	isTraining: boolean
+) {
+	if (isTraining) {
+		return <Loader2 className="size-3 animate-spin" />;
+	}
+	if (effectiveStatus === "ready") {
+		return <CheckCircle2 className="size-3" />;
+	}
+	return null;
+}
+
+function getLoraProgressBarClass(
+	effectiveStatus: PersonLoraTrainingStatus | "ready" | undefined
+) {
+	if (effectiveStatus === "failed") {
+		return "bg-rose-500/80";
+	}
+	if (effectiveStatus === "ready") {
+		return "bg-emerald-500/80";
+	}
+	return "bg-[linear-gradient(90deg,rgba(14,165,233,0.65),rgba(139,92,246,0.8),rgba(245,158,11,0.8))]";
+}
+
+function getLoraStageClassName(stage: { active: boolean; done: boolean }) {
+	if (stage.done) {
+		return "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300";
+	}
+	if (stage.active) {
+		return "border-violet-500/30 bg-violet-500/8 text-violet-700 dark:text-violet-300";
+	}
+	return "border-border/50 bg-background/40 text-muted-foreground";
+}
+
+function LoraTrainingStatusPanel({
+	effectiveStatus,
+	isTraining,
+	phaseLabel,
+	progressPct,
+	referenceImageCount,
+	referenceImageTarget,
+	training,
+}: {
+	effectiveStatus: PersonLoraTrainingStatus | "ready";
+	isTraining: boolean;
+	phaseLabel: string;
+	progressPct: number;
+	referenceImageCount: number;
+	referenceImageTarget: number;
+	training: PersonLoraTrainingMeta | null;
+}) {
+	const stageItems = [
+		{
+			active: effectiveStatus === "queued",
+			done: true,
+			label: "Queued",
+		},
+		{
+			active: effectiveStatus === "generating",
+			done:
+				effectiveStatus === "training" ||
+				effectiveStatus === "publishing" ||
+				effectiveStatus === "ready" ||
+				effectiveStatus === "failed",
+			label: "Dataset",
+		},
+		{
+			active:
+				effectiveStatus === "training" || effectiveStatus === "publishing",
+			done: effectiveStatus === "ready" || effectiveStatus === "failed",
+			label: "Training",
+		},
+		{
+			active: effectiveStatus === "ready",
+			done: effectiveStatus === "ready",
+			label: "Ready",
+		},
+	];
+	const elapsed = formatDurationMs(training?.trainingElapsedMs);
+
+	return (
+		<div className="grid gap-3 rounded-xl border border-border/50 bg-muted/10 p-3 dark:bg-muted/5">
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<div className="flex flex-wrap items-center gap-2">
+					<span
+						className={cn(
+							"inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs",
+							trainingStatusTone[effectiveStatus] ??
+								"bg-muted/10 text-muted-foreground"
+						)}
+					>
+						{getLoraStatusIcon(effectiveStatus, isTraining)}
+						{effectiveStatus}
+					</span>
+					{training?.triggerWord ? (
+						<span className="text-muted-foreground text-xs">
+							trigger: {training.triggerWord}
+						</span>
+					) : null}
+				</div>
+				<span className="font-medium text-xs">{progressPct}%</span>
+			</div>
+
+			<div className="grid gap-2">
+				<div className="flex items-center justify-between gap-2 text-[11px]">
+					<span className="text-muted-foreground">{phaseLabel}</span>
+					{training?.provider ? (
+						<span className="text-muted-foreground">{training.provider}</span>
+					) : null}
+				</div>
+				<div className="h-2 overflow-hidden rounded-full bg-muted/30 dark:bg-muted/15">
+					<div
+						className={cn(
+							"h-full rounded-full transition-[width] duration-500",
+							getLoraProgressBarClass(effectiveStatus)
+						)}
+						style={{ width: `${progressPct}%` }}
+					/>
+				</div>
+			</div>
+
+			<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+				{stageItems.map((stage) => (
+					<div
+						className={cn(
+							"rounded-lg border px-2.5 py-2 text-[11px] transition-colors",
+							getLoraStageClassName(stage)
+						)}
+						key={stage.label}
+					>
+						{stage.label}
+					</div>
+				))}
+			</div>
+
+			<div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+				{referenceImageCount > 0 ? (
+					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+						refs {referenceImageCount}/{referenceImageTarget}
+					</span>
+				) : null}
+				{training?.trainingSteps ? (
+					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+						steps {training.trainingSteps}
+					</span>
+				) : null}
+				{training?.providerStatus ? (
+					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+						provider {training.providerStatus}
+					</span>
+				) : null}
+				{elapsed ? (
+					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+						elapsed {elapsed}
+					</span>
+				) : null}
+			</div>
+		</div>
+	);
+}
 
 function LoraActions({
 	person,
@@ -568,8 +848,11 @@ function LoraActions({
 	const [useZitMysticXxx, setUseZitMysticXxx] = useState(false);
 	const training = getTrainingMeta(person);
 	const hasLora = Boolean(person.loraUrl);
-	const effectiveStatus =
-		hasLora && training?.status !== "failed" ? "ready" : training?.status;
+	const effectiveStatus = getEffectiveTrainingStatus(training, hasLora);
+	const progressPct = getTrainingProgressPct(training, hasLora);
+	const phaseLabel = getTrainingPhaseLabel(training, hasLora);
+	const referenceImageCount = getTrainingReferenceImageCount(training);
+	const referenceImageTarget = getTrainingReferenceImageTarget(training);
 	const isTraining =
 		!hasLora &&
 		(effectiveStatus === "queued" ||
@@ -582,23 +865,15 @@ function LoraActions({
 			<SectionLabel>LoRA training</SectionLabel>
 
 			{effectiveStatus ? (
-				<div className="flex items-center gap-2">
-					<span
-						className={cn(
-							"inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs",
-							trainingStatusTone[effectiveStatus] ??
-								"bg-muted/10 text-muted-foreground"
-						)}
-					>
-						{isTraining ? <Loader2 className="size-3 animate-spin" /> : null}
-						{effectiveStatus}
-					</span>
-					{training?.triggerWord ? (
-						<span className="text-muted-foreground text-xs">
-							trigger: {training.triggerWord}
-						</span>
-					) : null}
-				</div>
+				<LoraTrainingStatusPanel
+					effectiveStatus={effectiveStatus}
+					isTraining={isTraining}
+					phaseLabel={phaseLabel}
+					progressPct={progressPct}
+					referenceImageCount={referenceImageCount}
+					referenceImageTarget={referenceImageTarget}
+					training={training}
+				/>
 			) : null}
 
 			{training?.errorSummary ? (
@@ -717,8 +992,6 @@ function LoraActions({
 		</div>
 	);
 }
-
-const DATASET_TARGET_COUNT = 20;
 
 function DatasetGallery({
 	isGenerating,

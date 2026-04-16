@@ -18,6 +18,18 @@ export const dynamic = "force-dynamic";
 
 type Snapshot = Awaited<ReturnType<typeof getAdminDashboardSnapshot>>;
 
+function getActiveLoraTrainingCount(snapshot: Snapshot) {
+	return snapshot.loraTrainings.filter((item) => {
+		const status = item.training?.status;
+		return (
+			status === "queued" ||
+			status === "generating" ||
+			status === "training" ||
+			status === "publishing"
+		);
+	}).length;
+}
+
 function ControlRoomContext({
 	personsUrl,
 	snapshot,
@@ -27,6 +39,8 @@ function ControlRoomContext({
 	snapshot: Snapshot;
 	studioUrl: string;
 }) {
+	const activeLoraTrainings = getActiveLoraTrainingCount(snapshot);
+
 	return (
 		<div className="grid h-full min-h-0 gap-4 xl:grid-rows-[auto_minmax(0,1fr)]">
 			<WorkspacePane>
@@ -93,6 +107,18 @@ function ControlRoomContext({
 							</a>
 						))}
 					</div>
+
+					<div className="grid gap-1">
+						<p className="text-muted-foreground text-xs">LoRA training</p>
+						<div className="rounded-lg bg-muted/20 px-3 py-2.5 text-sm dark:bg-muted/10">
+							<div className="flex items-center justify-between gap-2">
+								<span>Active runs</span>
+								<span className="text-muted-foreground text-xs">
+									{activeLoraTrainings}
+								</span>
+							</div>
+						</div>
+					</div>
 				</div>
 			</WorkspacePane>
 		</div>
@@ -119,6 +145,7 @@ export default async function Home() {
 		}
 
 		const snapshot = await getAdminDashboardSnapshot(requestHeaders);
+		const activeLoraTrainings = getActiveLoraTrainingCount(snapshot);
 
 		return (
 			<WorkspaceShell
@@ -140,7 +167,7 @@ export default async function Home() {
 					<WorkspaceStatus
 						tone={snapshot.runStatus.failed > 0 ? "warning" : "success"}
 					>
-						{snapshot.runStatus.failed} failed
+						{snapshot.runStatus.failed} failed · {activeLoraTrainings} training
 					</WorkspaceStatus>
 				}
 				subtitle={`Signed in as ${session.user.name}. Updated ${formatRelativeTime(snapshot.snapshotAt)}.`}

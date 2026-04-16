@@ -5,6 +5,7 @@ import {
 } from "@generator/http/shared";
 
 export interface StartPersonLoraTrainingInput {
+	debugCorrelationId?: string;
 	description?: string;
 	outputName?: string;
 	personId: string;

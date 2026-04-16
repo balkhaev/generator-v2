@@ -36,6 +36,7 @@ const REFERENCE_VARIANT_SUFFIXES = [
 ] as const;
 
 export const startCerebriumLoraTrainingSchema = z.object({
+	debugCorrelationId: z.string().trim().min(1).optional(),
 	description: z.string().trim().optional(),
 	outputName: z.string().trim().min(1).optional(),
 	personId: z.string().trim().min(1),
@@ -76,6 +77,14 @@ function buildReferencePrompt(input: {
 			? `portrait photo of ${input.personName}, ${input.description}`
 			: `portrait photo of ${input.personName}, preserve the same identity and facial features`)
 	);
+}
+
+function clampProgressPct(value: number) {
+	return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function buildGeneratingProgress(completedImages: number) {
+	return clampProgressPct(10 + (completedImages / (REFERENCE_COUNT + 1)) * 45);
 }
 
 async function retry<T>(operation: () => Promise<T>): Promise<T> {
@@ -144,9 +153,13 @@ async function pollTrainingStatus(
 	jobId: string,
 	intervalMs: number,
 	maxDurationMs: number,
-	logger: Pick<Console, "info" | "error">
+	logger: Pick<Console, "info" | "error">,
+	options?: {
+		onStatus?: (input: { elapsedMs: number; status: string }) => Promise<void>;
+	}
 ): Promise<{ lora_url: string; steps: number; trigger_word: string }> {
 	const deadline = Date.now() + maxDurationMs;
+	const startedAt = Date.now();
 
 	while (Date.now() < deadline) {
 		await sleep(intervalMs);
@@ -178,6 +191,10 @@ async function pollTrainingStatus(
 				status: result.status,
 				elapsed: Date.now() + maxDurationMs - deadline,
 			});
+			await options?.onStatus?.({
+				elapsedMs: Date.now() - startedAt,
+				status: result.status,
+			});
 		} catch (error) {
 			if (
 				error instanceof Error &&
@@ -195,36 +212,6 @@ async function pollTrainingStatus(
 	throw new Error(
 		`Cerebrium training polling timed out after ${maxDurationMs / 60_000} minutes`
 	);
-}
-
-async function _cerebriumAsyncRequest(
-	apiKey: string,
-	url: string,
-	body: Record<string, unknown>
-): Promise<{ run_id: string }> {
-	const asyncUrl = `${url}?async=true`;
-	const response = await fetch(asyncUrl, {
-		method: "POST",
-		headers: {
-			authorization: `Bearer ${apiKey}`,
-			"content-type": "application/json",
-		},
-		body: JSON.stringify(body),
-	});
-	const responseBody = (await response.json().catch(() => null)) as Record<
-		string,
-		unknown
-	> | null;
-	if (!response.ok || responseBody === null) {
-		const detail =
-			responseBody && typeof responseBody.detail === "string"
-				? responseBody.detail
-				: JSON.stringify(responseBody);
-		throw new Error(
-			`Cerebrium async request failed [${response.status}]: ${detail}`
-		);
-	}
-	return { run_id: (responseBody.run_id as string) ?? "" };
 }
 
 function downloadAsBuffer(url: string): Promise<Uint8Array> {
@@ -546,13 +533,31 @@ export class CerebriumLoraTrainingRunner {
 		personId: string;
 		event: {
 			assetReleaseId?: string | null;
+			completedAt?: string | null;
 			datasetUrl?: string | null;
+			datasetZipSizeBytes?: number | null;
+			debug?: Record<string, unknown>;
+			debugCorrelationId?: string | null;
 			errorSummary?: string | null;
+			failedAt?: string | null;
+			lastEventAt?: string | null;
 			loraUrl?: string | null;
+			phase?: string | null;
+			progressPct?: number | null;
+			provider?: string | null;
+			providerJobId?: string | null;
+			providerRequestId?: string | null;
+			providerStatus?: string | null;
+			referenceImageCount?: number | null;
+			referenceImageTargetCount?: number | null;
 			referenceImageUrls?: string[];
 			status: TrainingEventStatus;
+			trainingElapsedMs?: number | null;
 			trainingRunId?: string | null;
+			trainingStartedAt?: string | null;
+			trainingSteps?: number | null;
 			triggerWord?: string | null;
+			uploadMethod?: string | null;
 		};
 	}) {
 		await retry(async () => {
@@ -598,11 +603,13 @@ export class CerebriumLoraTrainingRunner {
 		return url;
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: sequential training workflow orchestration
 	async run(input: StartInput) {
 		const parsed = startCerebriumLoraTrainingSchema.parse(input);
 		const triggerWord =
 			parsed.triggerWord ??
 			sanitizeSegment(parsed.personSlug).replace(/-/gu, "_");
+		const startedAt = new Date().toISOString();
 
 		try {
 			const outputName =
@@ -622,6 +629,22 @@ export class CerebriumLoraTrainingRunner {
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
+					debug: {
+						baseReferencePrompt,
+						projectId: this.projectId,
+						region: this.region,
+						referenceModel:
+							"GuangyuanSD/Z-Image-Distilled:RedZFUN-v6-ZIB-Distilled-AGILE-8steps-BF16-ComfyUI.safetensors",
+						sourceReferencePhotoUrl: parsed.referencePhotoUrl,
+						trainingModel: "Tongyi-MAI/Z-Image",
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: startedAt,
+					phase: "generating-references",
+					progressPct: buildGeneratingProgress(1),
+					provider: "cerebrium",
+					referenceImageCount: 1,
+					referenceImageTargetCount: REFERENCE_COUNT + 1,
 					status: "generating",
 					trainingRunId: parsed.trainingRunId,
 					triggerWord,
@@ -645,6 +668,26 @@ export class CerebriumLoraTrainingRunner {
 					personId: parsed.personId,
 					index: referenceImageUrls.length,
 					total: REFERENCE_COUNT,
+				});
+
+				await this.sendTrainingEvent({
+					personId: parsed.personId,
+					event: {
+						debugCorrelationId: parsed.debugCorrelationId,
+						lastEventAt: new Date().toISOString(),
+						phase: "generating-references",
+						progressPct: buildGeneratingProgress(referenceImageUrls.length + 1),
+						provider: "cerebrium",
+						referenceImageCount: referenceImageUrls.length + 1,
+						referenceImageTargetCount: REFERENCE_COUNT + 1,
+						referenceImageUrls: [
+							parsed.referencePhotoUrl,
+							...referenceImageUrls,
+						],
+						status: "generating",
+						trainingRunId: parsed.trainingRunId,
+						triggerWord,
+					},
 				});
 			}
 
@@ -681,6 +724,24 @@ export class CerebriumLoraTrainingRunner {
 			}
 
 			const zipData = buildZipFromBuffers(zipFiles);
+
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debugCorrelationId: parsed.debugCorrelationId,
+					datasetZipSizeBytes: zipData.length,
+					lastEventAt: new Date().toISOString(),
+					phase: "uploading-dataset",
+					progressPct: 62,
+					provider: "cerebrium",
+					referenceImageCount: referenceImageUrls.length + 1,
+					referenceImageTargetCount: REFERENCE_COUNT + 1,
+					status: "generating",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+					uploadMethod: this.s3Config ? "s3" : "fal-storage",
+				},
+			});
 
 			if (!(this.s3Config || this.falKey)) {
 				throw new Error(
@@ -719,10 +780,27 @@ export class CerebriumLoraTrainingRunner {
 				personId: parsed.personId,
 				event: {
 					datasetUrl,
+					datasetZipSizeBytes: zipData.length,
+					debug: {
+						defaultCaption: captionContent,
+						outputName,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					phase: "starting-training",
+					progressPct: 70,
+					provider: "cerebrium",
+					referenceImageCount: referenceImageUrls.length + 1,
+					referenceImageTargetCount: REFERENCE_COUNT + 1,
 					referenceImageUrls: [parsed.referencePhotoUrl, ...referenceImageUrls],
 					status: "training",
 					trainingRunId: parsed.trainingRunId,
+					trainingStartedAt: new Date().toISOString(),
+					trainingSteps: Number(
+						process.env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS
+					),
 					triggerWord,
+					uploadMethod: this.s3Config ? "s3" : "fal-storage",
 				},
 			});
 
@@ -750,8 +828,8 @@ export class CerebriumLoraTrainingRunner {
 			});
 
 			const trainingStart = Date.now();
-
-			await cerebriumRequest(
+			const trainingStartedAt = new Date().toISOString();
+			const trainingSubmit = await cerebriumRequest(
 				this.apiKey,
 				`${this.baseUrl}/lora-training/train`,
 				{
@@ -776,13 +854,60 @@ export class CerebriumLoraTrainingRunner {
 				jobId: trainingJobId,
 			});
 
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debug: {
+						cerebriumRunId: trainingSubmit.run_id,
+						trainingStatusUrl: `${this.baseUrl}/lora-training/get_training_status`,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					phase: "polling-training",
+					progressPct: 76,
+					provider: "cerebrium",
+					providerJobId: trainingJobId,
+					providerRequestId: trainingSubmit.run_id,
+					providerStatus: "submitted",
+					status: "training",
+					trainingElapsedMs: 0,
+					trainingRunId: parsed.trainingRunId,
+					trainingStartedAt,
+					trainingSteps,
+					triggerWord,
+				},
+			});
+
 			const trainingResult = await pollTrainingStatus(
 				this.apiKey,
 				`${this.baseUrl}/lora-training/get_training_status`,
 				trainingJobId,
 				TRAINING_POLL_INTERVAL_MS,
 				TRAINING_MAX_POLL_DURATION_MS,
-				this.logger
+				this.logger,
+				{
+					onStatus: async (status) => {
+						await this.sendTrainingEvent({
+							personId: parsed.personId,
+							event: {
+								debugCorrelationId: parsed.debugCorrelationId,
+								lastEventAt: new Date().toISOString(),
+								phase: "polling-training",
+								progressPct: 76,
+								provider: "cerebrium",
+								providerJobId: trainingJobId,
+								providerRequestId: trainingSubmit.run_id,
+								providerStatus: status.status,
+								status: "training",
+								trainingElapsedMs: status.elapsedMs,
+								trainingRunId: parsed.trainingRunId,
+								trainingStartedAt,
+								trainingSteps,
+								triggerWord,
+							},
+						});
+					},
+				}
 			);
 
 			this.logger.info("cerebrium-lora.training-completed", {
@@ -805,12 +930,30 @@ export class CerebriumLoraTrainingRunner {
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
+					completedAt: new Date().toISOString(),
 					datasetUrl,
+					debug: {
+						trainingResult,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
 					loraUrl,
+					phase: "ready",
+					progressPct: 100,
+					provider: "cerebrium",
+					providerJobId: trainingJobId,
+					providerRequestId: trainingSubmit.run_id,
+					providerStatus: "completed",
+					referenceImageCount: referenceImageUrls.length + 1,
+					referenceImageTargetCount: REFERENCE_COUNT + 1,
 					referenceImageUrls: [parsed.referencePhotoUrl, ...referenceImageUrls],
 					status: "ready",
+					trainingElapsedMs: Date.now() - trainingStart,
 					trainingRunId: parsed.trainingRunId,
+					trainingStartedAt,
+					trainingSteps,
 					triggerWord,
+					uploadMethod: this.s3Config ? "s3" : "fal-storage",
 				},
 			});
 		} catch (error) {
@@ -825,7 +968,12 @@ export class CerebriumLoraTrainingRunner {
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
+					debugCorrelationId: parsed.debugCorrelationId,
 					errorSummary,
+					failedAt: new Date().toISOString(),
+					lastEventAt: new Date().toISOString(),
+					phase: "failed",
+					provider: "cerebrium",
 					status: "failed",
 					trainingRunId: parsed.trainingRunId,
 					triggerWord,

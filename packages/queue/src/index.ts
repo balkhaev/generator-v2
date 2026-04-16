@@ -37,7 +37,7 @@ export function createQueueClient<T>(
 
 	return {
 		async add(jobName: string, data: T, jobOptions?: JobsOptions) {
-			await queue.add(jobName, data, jobOptions);
+			await queue.add(jobName as never, data as never, jobOptions);
 		},
 		async close() {
 			await queue.close();

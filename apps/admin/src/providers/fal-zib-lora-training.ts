@@ -46,6 +46,7 @@ const REFERENCE_VARIANT_SUFFIXES = [
 ] as const;
 
 export const startFalZibLoraTrainingSchema = z.object({
+	debugCorrelationId: z.string().trim().min(1).optional(),
 	description: z.string().trim().optional(),
 	outputName: z.string().trim().min(1).optional(),
 	personId: z.string().trim().min(1),
@@ -86,6 +87,14 @@ function buildReferencePrompt(input: {
 			? `portrait photo of ${input.personName}, ${input.description}`
 			: `portrait photo of ${input.personName}, preserve the same identity and facial features`)
 	);
+}
+
+function clampProgressPct(value: number) {
+	return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function buildGeneratingProgress(completedImages: number) {
+	return clampProgressPct(10 + (completedImages / (REFERENCE_COUNT + 1)) * 45);
 }
 
 async function retry<T>(operation: () => Promise<T>): Promise<T> {
@@ -191,7 +200,10 @@ async function falPollUntilDone(
 	submit: FalSubmitResult,
 	model: string,
 	timeoutMs: number,
-	pollMs: number
+	pollMs: number,
+	options?: {
+		onStatus?: (input: { elapsedMs: number; status: string }) => Promise<void>;
+	}
 ): Promise<Record<string, unknown>> {
 	const statusUrl =
 		submit.status_url ??
@@ -201,6 +213,7 @@ async function falPollUntilDone(
 		`${FAL_QUEUE_BASE}/${model}/requests/${submit.request_id}`;
 
 	const deadline = Date.now() + timeoutMs;
+	const startedAt = Date.now();
 	while (Date.now() < deadline) {
 		const status = await falRequest<{ status: string; error?: string }>(
 			apiKey,
@@ -212,6 +225,10 @@ async function falPollUntilDone(
 		if (status.status === "COMPLETED") {
 			return falRequest<Record<string, unknown>>(apiKey, responseUrl);
 		}
+		await options?.onStatus?.({
+			elapsedMs: Date.now() - startedAt,
+			status: status.status,
+		});
 		await sleep(pollMs);
 	}
 	throw new Error(`fal job timed out after ${timeoutMs}ms`);
@@ -529,13 +546,31 @@ export class FalZibLoraTrainingRunner {
 		personId: string;
 		event: {
 			assetReleaseId?: string | null;
+			completedAt?: string | null;
 			datasetUrl?: string | null;
+			datasetZipSizeBytes?: number | null;
+			debug?: Record<string, unknown>;
+			debugCorrelationId?: string | null;
 			errorSummary?: string | null;
+			failedAt?: string | null;
+			lastEventAt?: string | null;
 			loraUrl?: string | null;
+			phase?: string | null;
+			progressPct?: number | null;
+			provider?: string | null;
+			providerJobId?: string | null;
+			providerRequestId?: string | null;
+			providerStatus?: string | null;
+			referenceImageCount?: number | null;
+			referenceImageTargetCount?: number | null;
 			referenceImageUrls?: string[];
 			status: TrainingEventStatus;
+			trainingElapsedMs?: number | null;
 			trainingRunId?: string | null;
+			trainingStartedAt?: string | null;
+			trainingSteps?: number | null;
 			triggerWord?: string | null;
+			uploadMethod?: string | null;
 		};
 	}) {
 		await retry(async () => {
@@ -562,6 +597,7 @@ export class FalZibLoraTrainingRunner {
 		const triggerWord =
 			parsed.triggerWord ??
 			sanitizeSegment(parsed.personSlug).replace(/-/gu, "_");
+		const startedAt = new Date().toISOString();
 
 		try {
 			const outputName =
@@ -581,6 +617,19 @@ export class FalZibLoraTrainingRunner {
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
+					debug: {
+						baseReferencePrompt,
+						referenceModel: FLUX_REFERENCE_EDIT_MODEL,
+						sourceReferencePhotoUrl: parsed.referencePhotoUrl,
+						trainingModel: "fal-ai/z-image-trainer",
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: startedAt,
+					phase: "generating-references",
+					progressPct: buildGeneratingProgress(1),
+					provider: "fal",
+					referenceImageCount: 1,
+					referenceImageTargetCount: REFERENCE_COUNT + 1,
 					status: "generating",
 					trainingRunId: parsed.trainingRunId,
 					triggerWord,
@@ -608,6 +657,13 @@ export class FalZibLoraTrainingRunner {
 				await this.sendTrainingEvent({
 					personId: parsed.personId,
 					event: {
+						debugCorrelationId: parsed.debugCorrelationId,
+						lastEventAt: new Date().toISOString(),
+						phase: "generating-references",
+						progressPct: buildGeneratingProgress(referenceImageUrls.length + 1),
+						provider: "fal",
+						referenceImageCount: referenceImageUrls.length + 1,
+						referenceImageTargetCount: REFERENCE_COUNT + 1,
 						referenceImageUrls: [
 							parsed.referencePhotoUrl,
 							...referenceImageUrls,
@@ -654,6 +710,24 @@ export class FalZibLoraTrainingRunner {
 
 			const zipData = buildZipFromBuffers(zipFiles);
 
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debugCorrelationId: parsed.debugCorrelationId,
+					datasetZipSizeBytes: zipData.length,
+					lastEventAt: new Date().toISOString(),
+					phase: "uploading-dataset",
+					progressPct: 62,
+					provider: "fal",
+					referenceImageCount: referenceImageUrls.length + 1,
+					referenceImageTargetCount: REFERENCE_COUNT + 1,
+					status: "generating",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+					uploadMethod: this.s3Config ? "s3" : "fal-storage",
+				},
+			});
+
 			this.logger.info("fal-zib-lora.uploading-dataset", {
 				personId: parsed.personId,
 				zipSizeBytes: zipData.length,
@@ -676,10 +750,27 @@ export class FalZibLoraTrainingRunner {
 				personId: parsed.personId,
 				event: {
 					datasetUrl,
+					datasetZipSizeBytes: zipData.length,
+					debug: {
+						defaultCaption: captionContent,
+						outputName,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					phase: "starting-training",
+					progressPct: 70,
+					provider: "fal",
+					referenceImageCount: referenceImageUrls.length + 1,
+					referenceImageTargetCount: REFERENCE_COUNT + 1,
 					referenceImageUrls: [parsed.referencePhotoUrl, ...referenceImageUrls],
 					status: "training",
 					trainingRunId: parsed.trainingRunId,
+					trainingStartedAt: new Date().toISOString(),
+					trainingSteps: Number(
+						process.env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS
+					),
 					triggerWord,
+					uploadMethod: this.s3Config ? "s3" : "fal-storage",
 				},
 			});
 
@@ -694,6 +785,8 @@ export class FalZibLoraTrainingRunner {
 				process.env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS
 			);
 			const trainingModel = "fal-ai/z-image-trainer";
+			const trainingStartedAt = new Date().toISOString();
+			const trainingStartedMs = Date.now();
 			const trainingSubmit = await falSubmit(this.apiKey, trainingModel, {
 				image_data_url: datasetUrl,
 				steps: trainingSteps,
@@ -706,12 +799,63 @@ export class FalZibLoraTrainingRunner {
 				requestId: trainingSubmit.request_id,
 			});
 
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debug: {
+						falStatusUrl:
+							trainingSubmit.status_url ??
+							`${FAL_QUEUE_BASE}/${trainingModel}/requests/${trainingSubmit.request_id}/status`,
+						falResponseUrl:
+							trainingSubmit.response_url ??
+							`${FAL_QUEUE_BASE}/${trainingModel}/requests/${trainingSubmit.request_id}`,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					phase: "polling-training",
+					progressPct: 76,
+					provider: "fal",
+					providerJobId: trainingSubmit.request_id,
+					providerRequestId: trainingSubmit.request_id,
+					providerStatus: "IN_PROGRESS",
+					status: "training",
+					trainingElapsedMs: 0,
+					trainingRunId: parsed.trainingRunId,
+					trainingStartedAt,
+					trainingSteps,
+					triggerWord,
+				},
+			});
+
 			const trainingResult = await falPollUntilDone(
 				this.apiKey,
 				trainingSubmit,
 				trainingModel,
 				DEFAULT_TRAINING_TIMEOUT_MS,
-				DEFAULT_TRAINING_POLL_MS
+				DEFAULT_TRAINING_POLL_MS,
+				{
+					onStatus: async (status) => {
+						await this.sendTrainingEvent({
+							personId: parsed.personId,
+							event: {
+								debugCorrelationId: parsed.debugCorrelationId,
+								lastEventAt: new Date().toISOString(),
+								phase: "polling-training",
+								progressPct: 76,
+								provider: "fal",
+								providerJobId: trainingSubmit.request_id,
+								providerRequestId: trainingSubmit.request_id,
+								providerStatus: status.status,
+								status: "training",
+								trainingElapsedMs: status.elapsedMs,
+								trainingRunId: parsed.trainingRunId,
+								trainingStartedAt,
+								trainingSteps,
+								triggerWord,
+							},
+						});
+					},
+				}
 			);
 
 			const diffusersLoraFile = trainingResult.diffusers_lora_file as
@@ -732,12 +876,30 @@ export class FalZibLoraTrainingRunner {
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
+					completedAt: new Date().toISOString(),
 					datasetUrl,
+					debug: {
+						trainingResult,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
 					loraUrl,
+					phase: "ready",
+					progressPct: 100,
+					provider: "fal",
+					providerJobId: trainingSubmit.request_id,
+					providerRequestId: trainingSubmit.request_id,
+					providerStatus: "COMPLETED",
+					referenceImageCount: referenceImageUrls.length + 1,
+					referenceImageTargetCount: REFERENCE_COUNT + 1,
 					referenceImageUrls: [parsed.referencePhotoUrl, ...referenceImageUrls],
 					status: "ready",
+					trainingElapsedMs: Date.now() - trainingStartedMs,
 					trainingRunId: parsed.trainingRunId,
+					trainingStartedAt,
+					trainingSteps,
 					triggerWord,
+					uploadMethod: this.s3Config ? "s3" : "fal-storage",
 				},
 			});
 		} catch (error) {
@@ -750,7 +912,12 @@ export class FalZibLoraTrainingRunner {
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
+					debugCorrelationId: parsed.debugCorrelationId,
 					errorSummary,
+					failedAt: new Date().toISOString(),
+					lastEventAt: new Date().toISOString(),
+					phase: "failed",
+					provider: "fal",
 					status: "failed",
 					trainingRunId: parsed.trainingRunId,
 					triggerWord,

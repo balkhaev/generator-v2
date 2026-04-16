@@ -6,12 +6,14 @@ import { normalizeBaseUrl } from "@generator/http/shared";
 
 export type {
 	AdminDashboardSnapshot,
+	DashboardLoraTrainingSnapshot,
 	DashboardRecentRun,
 	DashboardScenarioSummary,
 } from "@generator/contracts/admin";
 
 function createEmptySnapshot(notice: string): AdminDashboardSnapshot {
 	return {
+		loraTrainings: [],
 		notices: [notice],
 		recentRuns: [],
 		runStatus: {

@@ -1,4 +1,5 @@
 import type { RunStatus } from "./generator";
+import type { PersonLoraTrainingMeta } from "./persons";
 
 export type AssetReleaseGroup =
 	| "checkpoints"
@@ -110,7 +111,19 @@ export interface DashboardScenarioSummary {
 	workflowKey: string;
 }
 
+export interface DashboardLoraTrainingSnapshot {
+	datasetUrl: string | null;
+	loraUrl: string | null;
+	personId: string;
+	personName: string;
+	personSlug: string;
+	referencePhotoUrl: string;
+	training: PersonLoraTrainingMeta | null;
+	updatedAt: string;
+}
+
 export interface AdminDashboardSnapshot {
+	loraTrainings: DashboardLoraTrainingSnapshot[];
 	notices: string[];
 	recentRuns: DashboardRecentRun[];
 	runStatus: DashboardRunStatusSummary;

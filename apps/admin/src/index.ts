@@ -19,6 +19,7 @@ import { createPersonLoraTrainingQueueClient } from "@/queue/person-lora-trainin
 import { createDrizzleAssetReleaseRepository } from "@/repositories/asset-releases";
 
 const generatorBaseUrl = getGeneratorApiUrl();
+const personsApiBaseUrl = process.env.PERSONS_API_URL;
 const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 const studioBaseUrl = getStudioApiUrl();
 const internalTrainingControlService = new PersonLoraTrainingControlService(
@@ -57,7 +58,8 @@ const app = createApp({
 	generatorBaseUrl,
 	internalTrainingControlService,
 	getSession: getRequestSession,
-	loadDashboardSnapshot: () => getAdminDashboardSnapshot(studioBaseUrl),
+	loadDashboardSnapshot: () =>
+		getAdminDashboardSnapshot(studioBaseUrl, personsApiBaseUrl),
 	loadSetupStatus: async () => ({
 		setupRequired: await isInitialAdminSetupRequired(),
 	}),

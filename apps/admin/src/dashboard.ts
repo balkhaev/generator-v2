@@ -1,11 +1,21 @@
 import type {
 	AdminDashboardSnapshot,
+	DashboardLoraTrainingSnapshot,
 	DashboardRecentRun,
 	DashboardRunStatusSummary,
 	DashboardScenarioSummary,
 } from "@generator/contracts/admin";
+import type {
+	PersonLoraTrainingMeta,
+	PersonLoraTrainingStatus,
+	PersonRecord,
+} from "@generator/contracts/persons";
 
 type RunStatus = DashboardRecentRun["status"];
+
+interface PersonsSnapshotResponse {
+	persons: PersonRecord[];
+}
 
 interface ServerArtifactRecord {
 	url?: string | null;
@@ -37,6 +47,12 @@ interface ServerRunRecord {
 	workflowKey: string;
 }
 
+const ACTIVE_TRAINING_STATUSES = new Set<PersonLoraTrainingStatus>([
+	"queued",
+	"generating",
+	"training",
+	"publishing",
+]);
 const RECENT_RUN_LIMIT = 8;
 const FILE_EXTENSION_PATTERN = /\.[a-z0-9]+$/i;
 const TRAILING_SLASH_PATTERN = /\/$/;
@@ -64,9 +80,56 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 	return (await response.json()) as T;
 }
 
-export async function getAdminDashboardSnapshot(
-	studioBaseUrl: string
-): Promise<AdminDashboardSnapshot> {
+function getTrainingMeta(person: PersonRecord): PersonLoraTrainingMeta | null {
+	const training = person.metadata?.training;
+	if (training && typeof training === "object" && !Array.isArray(training)) {
+		return training as PersonLoraTrainingMeta;
+	}
+	return null;
+}
+
+function getTrainingSortTimestamp(
+	person: PersonRecord,
+	training: PersonLoraTrainingMeta | null
+) {
+	return (
+		training?.lastEventAt ??
+		training?.updatedAt ??
+		training?.completedAt ??
+		training?.failedAt ??
+		training?.requestedAt ??
+		person.updatedAt
+	);
+}
+
+function getTrainingPriority(training: PersonLoraTrainingMeta | null) {
+	const status = training?.status;
+	if (status && ACTIVE_TRAINING_STATUSES.has(status)) {
+		return 0;
+	}
+	if (status === "failed") {
+		return 1;
+	}
+	if (status === "ready") {
+		return 2;
+	}
+	return 3;
+}
+
+function compareLoraTrainingSnapshots(
+	left: DashboardLoraTrainingSnapshot,
+	right: DashboardLoraTrainingSnapshot
+) {
+	const priorityDelta =
+		getTrainingPriority(left.training) - getTrainingPriority(right.training);
+	if (priorityDelta !== 0) {
+		return priorityDelta;
+	}
+
+	return right.updatedAt.localeCompare(left.updatedAt);
+}
+
+async function loadStudioDashboard(studioBaseUrl: string) {
 	try {
 		const normalizedBaseUrl = studioBaseUrl.replace(TRAILING_SLASH_PATTERN, "");
 		const snapshot = await fetchJson<StudioSnapshotResponse>(
@@ -109,7 +172,7 @@ export async function getAdminDashboardSnapshot(
 			.slice(0, 8);
 
 		return {
-			notices: [],
+			notices: [] as string[],
 			recentRuns: sortedRuns.slice(0, RECENT_RUN_LIMIT).map(
 				(run) =>
 					({
@@ -131,15 +194,90 @@ export async function getAdminDashboardSnapshot(
 			),
 			runStatus,
 			scenarios,
-			snapshotAt: new Date().toISOString(),
 		};
 	} catch {
 		return {
 			notices: ["Unable to load the latest studio runs from the API."],
-			recentRuns: [],
-			runStatus: { failed: 0, queued: 0, running: 0, succeeded: 0 },
-			scenarios: [],
-			snapshotAt: new Date().toISOString(),
+			recentRuns: [] as DashboardRecentRun[],
+			runStatus: {
+				failed: 0,
+				queued: 0,
+				running: 0,
+				succeeded: 0,
+			},
+			scenarios: [] as DashboardScenarioSummary[],
 		};
 	}
+}
+
+async function loadLoraDashboard(personsApiBaseUrl: string | undefined) {
+	if (!personsApiBaseUrl) {
+		return {
+			loraTrainings: [] as DashboardLoraTrainingSnapshot[],
+			notices: [
+				"PERSONS_API_URL is not configured, so LoRA training debug data is unavailable.",
+			],
+		};
+	}
+
+	try {
+		const normalizedBaseUrl = personsApiBaseUrl.replace(
+			TRAILING_SLASH_PATTERN,
+			""
+		);
+		const snapshot = await fetchJson<PersonsSnapshotResponse>(
+			`${normalizedBaseUrl}/api/persons`
+		);
+		const loraTrainings = snapshot.persons
+			.map((person) => {
+				const training = getTrainingMeta(person);
+				if (!(training || person.loraUrl)) {
+					return null;
+				}
+
+				return {
+					datasetUrl: training?.datasetUrl ?? person.datasetUrl,
+					loraUrl: training?.loraUrl ?? person.loraUrl,
+					personId: person.id,
+					personName: person.name,
+					personSlug: person.slug,
+					referencePhotoUrl: person.referencePhotoUrl,
+					training,
+					updatedAt: getTrainingSortTimestamp(person, training),
+				} satisfies DashboardLoraTrainingSnapshot;
+			})
+			.filter((entry): entry is DashboardLoraTrainingSnapshot => entry !== null)
+			.sort(compareLoraTrainingSnapshots);
+
+		return {
+			loraTrainings,
+			notices: [] as string[],
+		};
+	} catch {
+		return {
+			loraTrainings: [] as DashboardLoraTrainingSnapshot[],
+			notices: [
+				"Unable to load LoRA training debug data from the persons API.",
+			],
+		};
+	}
+}
+
+export async function getAdminDashboardSnapshot(
+	studioBaseUrl: string,
+	personsApiBaseUrl?: string
+): Promise<AdminDashboardSnapshot> {
+	const [studioDashboard, loraDashboard] = await Promise.all([
+		loadStudioDashboard(studioBaseUrl),
+		loadLoraDashboard(personsApiBaseUrl),
+	]);
+
+	return {
+		loraTrainings: loraDashboard.loraTrainings,
+		notices: [...studioDashboard.notices, ...loraDashboard.notices],
+		recentRuns: studioDashboard.recentRuns,
+		runStatus: studioDashboard.runStatus,
+		scenarios: studioDashboard.scenarios,
+		snapshotAt: new Date().toISOString(),
+	};
 }

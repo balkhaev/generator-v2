@@ -27,6 +27,14 @@ const optionalUrlSchema = z.preprocess((value) => {
 	return trimmedValue.length > 0 ? trimmedValue : undefined;
 }, z.url().optional());
 
+const optionalNumberSchema = z.preprocess((value) => {
+	if (value === null || value === undefined) {
+		return undefined;
+	}
+
+	return value;
+}, z.number().finite().optional());
+
 export const personGenerationMediaTypeSchema = z.enum([
 	"image",
 	"video",
@@ -137,13 +145,31 @@ const personLoraTrainingStatusSchema = z.enum([
 
 const personLoraTrainingEventSchema = z.object({
 	assetReleaseId: optionalStringSchema,
+	completedAt: optionalStringSchema,
 	datasetUrl: optionalUrlSchema,
+	datasetZipSizeBytes: optionalNumberSchema,
+	debug: z.record(z.string(), z.unknown()).optional(),
+	debugCorrelationId: optionalStringSchema,
 	errorSummary: optionalStringSchema,
+	failedAt: optionalStringSchema,
+	lastEventAt: optionalStringSchema,
 	loraUrl: optionalUrlSchema,
+	phase: optionalStringSchema,
+	progressPct: optionalNumberSchema,
+	provider: optionalStringSchema,
+	providerJobId: optionalStringSchema,
+	providerRequestId: optionalStringSchema,
+	providerStatus: optionalStringSchema,
+	referenceImageCount: optionalNumberSchema,
+	referenceImageTargetCount: optionalNumberSchema,
 	referenceImageUrls: z.array(z.url()).optional(),
 	status: personLoraTrainingStatusSchema,
+	trainingElapsedMs: optionalNumberSchema,
 	trainingRunId: optionalStringSchema,
+	trainingStartedAt: optionalStringSchema,
+	trainingSteps: optionalNumberSchema,
 	triggerWord: optionalStringSchema,
+	uploadMethod: optionalStringSchema,
 });
 
 export interface PersonGenerationRecord {
@@ -286,6 +312,22 @@ function createPendingGenerationDataUrl(label: string) {
 	const encoded = encodeURIComponent(label.slice(0, 48));
 	const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 1024"><rect width="768" height="1024" fill="#1b1816"/><text x="384" y="490" font-size="48" text-anchor="middle" fill="#f4ead8" font-family="Arial, sans-serif">⏳</text><text x="384" y="550" font-size="28" text-anchor="middle" fill="#cdbd9e" font-family="Arial, sans-serif">${encoded}</text></svg>`;
 	return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function readMetadataNumber(
+	record: Record<string, unknown>,
+	key: string
+): number | null {
+	const value = record[key];
+	return typeof value === "number" ? value : null;
+}
+
+function readMetadataString(
+	record: Record<string, unknown>,
+	key: string
+): string | null {
+	const value = record[key];
+	return typeof value === "string" ? value : null;
 }
 
 export class PersonsService {
@@ -606,24 +648,55 @@ export class PersonsService {
 		const outputName =
 			parsed.outputName ??
 			`${person.slug}-sdxl-lora-${new Date().toISOString().slice(0, 10)}`;
+		const requestedAt = new Date().toISOString();
 		const trainingMetadata = {
-			...(person.metadata.training &&
-			typeof person.metadata.training === "object" &&
-			!Array.isArray(person.metadata.training)
-				? person.metadata.training
-				: {}),
 			assetReleaseId: null,
+			completedAt: null,
 			datasetUrl: person.datasetUrl,
+			datasetZipSizeBytes: null,
+			debug: {
+				sourceReferencePhotoUrl: person.referencePhotoUrl,
+			},
+			debugCorrelationId: options?.debugCorrelationId ?? null,
 			errorSummary: null,
+			failedAt: null,
+			history: [
+				{
+					at: requestedAt,
+					errorSummary: null,
+					phase: "queued",
+					progressPct: 2,
+					providerJobId: null,
+					providerRequestId: null,
+					providerStatus: null,
+					referenceImageCount: 0,
+					status: "queued",
+				},
+			],
+			lastEventAt: requestedAt,
 			loraUrl: person.loraUrl,
 			outputName,
+			phase: "queued",
+			progressPct: 2,
+			provider: null,
+			providerJobId: null,
+			providerRequestId: null,
+			providerStatus: null,
+			referenceImageCount: 0,
+			referenceImageTargetCount: null,
 			referenceImageUrls: [],
 			referencePrompt: parsed.referencePrompt ?? null,
-			requestedAt: new Date().toISOString(),
+			requestedAt,
+			startedAt: requestedAt,
 			status: "queued",
+			trainingElapsedMs: null,
 			trainingRunId,
+			trainingStartedAt: null,
+			trainingSteps: null,
 			triggerWord,
-		};
+			updatedAt: requestedAt,
+			uploadMethod: null,
+		} satisfies Record<string, unknown>;
 
 		const updatedPerson = await this.repository.updatePerson(personId, {
 			metadata: {
@@ -634,6 +707,7 @@ export class PersonsService {
 
 		await this.adminTrainingClient.startPersonLoraTraining(
 			{
+				debugCorrelationId: options?.debugCorrelationId,
 				description: person.description,
 				outputName,
 				personId: person.id,
@@ -814,6 +888,7 @@ export class PersonsService {
 				? person.metadata.training
 				: {}
 		) as Record<string, unknown>;
+		const now = new Date().toISOString();
 		const currentTrainingRunId =
 			typeof currentTraining.trainingRunId === "string"
 				? currentTraining.trainingRunId
@@ -829,41 +904,178 @@ export class PersonsService {
 		) {
 			return person;
 		}
+		const nextReferenceImageUrls =
+			parsedEvent.referenceImageUrls ??
+			(Array.isArray(currentTraining.referenceImageUrls)
+				? currentTraining.referenceImageUrls.filter(
+						(value): value is string => typeof value === "string"
+					)
+				: []);
+		const currentDebug =
+			currentTraining.debug &&
+			typeof currentTraining.debug === "object" &&
+			!Array.isArray(currentTraining.debug)
+				? (currentTraining.debug as Record<string, unknown>)
+				: {};
+		const nextDebug =
+			parsedEvent.debug &&
+			typeof parsedEvent.debug === "object" &&
+			!Array.isArray(parsedEvent.debug)
+				? {
+						...currentDebug,
+						...parsedEvent.debug,
+					}
+				: currentDebug;
+		const currentProgressPct = readMetadataNumber(
+			currentTraining,
+			"progressPct"
+		);
+		const nextProgressPct =
+			typeof parsedEvent.progressPct === "number"
+				? parsedEvent.progressPct
+				: currentProgressPct;
+		const nextPhase =
+			parsedEvent.phase ?? readMetadataString(currentTraining, "phase");
+		const nextProviderJobId =
+			parsedEvent.providerJobId ??
+			readMetadataString(currentTraining, "providerJobId");
+		const nextProviderRequestId =
+			parsedEvent.providerRequestId ??
+			readMetadataString(currentTraining, "providerRequestId");
+		const nextProviderStatus =
+			parsedEvent.providerStatus ??
+			readMetadataString(currentTraining, "providerStatus");
+		const nextReferenceImageCount =
+			typeof parsedEvent.referenceImageCount === "number"
+				? parsedEvent.referenceImageCount
+				: nextReferenceImageUrls.length;
+		const currentHistory = Array.isArray(currentTraining.history)
+			? currentTraining.history.filter(
+					(entry): entry is Record<string, unknown> =>
+						typeof entry === "object" && entry !== null && !Array.isArray(entry)
+				)
+			: [];
+		const historyEntry = {
+			at: parsedEvent.lastEventAt ?? now,
+			errorSummary: parsedEvent.errorSummary ?? null,
+			phase: nextPhase,
+			progressPct: nextProgressPct,
+			providerJobId: nextProviderJobId,
+			providerRequestId: nextProviderRequestId,
+			providerStatus: nextProviderStatus,
+			referenceImageCount: nextReferenceImageCount,
+			status: parsedEvent.status,
+		};
+		const nextHistory = [...currentHistory, historyEntry].slice(-30);
+		const completedAt =
+			parsedEvent.completedAt ??
+			(parsedEvent.status === "ready"
+				? now
+				: readMetadataString(currentTraining, "completedAt"));
+		const currentDatasetUrl = readMetadataString(currentTraining, "datasetUrl");
+		const currentDatasetZipSizeBytes = readMetadataNumber(
+			currentTraining,
+			"datasetZipSizeBytes"
+		);
+		const currentDebugCorrelationId = readMetadataString(
+			currentTraining,
+			"debugCorrelationId"
+		);
+		const failedAt =
+			parsedEvent.failedAt ??
+			(parsedEvent.status === "failed"
+				? now
+				: readMetadataString(currentTraining, "failedAt"));
+		const currentLoraUrl = readMetadataString(currentTraining, "loraUrl");
+		const currentProvider = readMetadataString(currentTraining, "provider");
+		const currentReferenceImageTargetCount = readMetadataNumber(
+			currentTraining,
+			"referenceImageTargetCount"
+		);
+		const referenceImageTargetCount =
+			typeof parsedEvent.referenceImageTargetCount === "number"
+				? parsedEvent.referenceImageTargetCount
+				: (currentReferenceImageTargetCount ??
+					(nextReferenceImageUrls.length > 0
+						? nextReferenceImageUrls.length
+						: null));
+		const startedAtValue =
+			readMetadataString(currentTraining, "startedAt") ?? now;
+		const currentTrainingElapsedMs = readMetadataNumber(
+			currentTraining,
+			"trainingElapsedMs"
+		);
+		const trainingElapsedMs =
+			typeof parsedEvent.trainingElapsedMs === "number"
+				? parsedEvent.trainingElapsedMs
+				: currentTrainingElapsedMs;
+		const currentTrainingStartedAt = readMetadataString(
+			currentTraining,
+			"trainingStartedAt"
+		);
+		const trainingStartedAt =
+			parsedEvent.trainingStartedAt ??
+			(parsedEvent.status === "training"
+				? (currentTrainingStartedAt ?? now)
+				: currentTrainingStartedAt);
+		const currentTrainingSteps = readMetadataNumber(
+			currentTraining,
+			"trainingSteps"
+		);
+		const trainingSteps =
+			typeof parsedEvent.trainingSteps === "number"
+				? parsedEvent.trainingSteps
+				: currentTrainingSteps;
+		const currentTriggerWord = readMetadataString(
+			currentTraining,
+			"triggerWord"
+		);
+		const currentUploadMethod = readMetadataString(
+			currentTraining,
+			"uploadMethod"
+		);
 		const nextTrainingMetadata = {
 			...currentTraining,
 			assetReleaseId:
 				parsedEvent.assetReleaseId ??
-				(typeof currentTraining.assetReleaseId === "string"
-					? currentTraining.assetReleaseId
-					: null),
+				readMetadataString(currentTraining, "assetReleaseId"),
+			completedAt,
 			datasetUrl:
-				parsedEvent.datasetUrl ??
-				(typeof currentTraining.datasetUrl === "string"
-					? currentTraining.datasetUrl
-					: person.datasetUrl),
+				parsedEvent.datasetUrl ?? currentDatasetUrl ?? person.datasetUrl,
+			datasetZipSizeBytes:
+				typeof parsedEvent.datasetZipSizeBytes === "number"
+					? parsedEvent.datasetZipSizeBytes
+					: currentDatasetZipSizeBytes,
+			debug: nextDebug,
+			debugCorrelationId:
+				parsedEvent.debugCorrelationId ?? currentDebugCorrelationId,
 			errorSummary: parsedEvent.errorSummary ?? null,
-			loraUrl:
-				parsedEvent.loraUrl ??
-				(typeof currentTraining.loraUrl === "string"
-					? currentTraining.loraUrl
-					: person.loraUrl),
-			referenceImageUrls:
-				parsedEvent.referenceImageUrls ??
-				(Array.isArray(currentTraining.referenceImageUrls)
-					? currentTraining.referenceImageUrls
-					: []),
+			failedAt,
+			history: nextHistory,
+			lastEventAt: parsedEvent.lastEventAt ?? now,
+			loraUrl: parsedEvent.loraUrl ?? currentLoraUrl ?? person.loraUrl,
+			phase: nextPhase,
+			progressPct: nextProgressPct,
+			provider: parsedEvent.provider ?? currentProvider,
+			providerJobId: nextProviderJobId,
+			providerRequestId: nextProviderRequestId,
+			providerStatus: nextProviderStatus,
+			referenceImageCount: nextReferenceImageCount,
+			referenceImageTargetCount,
+			referenceImageUrls: nextReferenceImageUrls,
+			startedAt: startedAtValue,
 			status: parsedEvent.status,
-			trainingRunId: currentTrainingRunId,
-			triggerWord:
-				parsedEvent.triggerWord ??
-				(typeof currentTraining.triggerWord === "string"
-					? currentTraining.triggerWord
-					: null),
-			updatedAt: new Date().toISOString(),
+			trainingElapsedMs,
+			trainingRunId: currentTrainingRunId ?? callbackTrainingRunId,
+			trainingStartedAt,
+			trainingSteps,
+			triggerWord: parsedEvent.triggerWord ?? currentTriggerWord,
+			updatedAt: now,
+			uploadMethod: parsedEvent.uploadMethod ?? currentUploadMethod,
 		};
 
 		if (parsedEvent.referenceImageUrls?.length) {
-			const nextDatasetUrls = [...new Set(parsedEvent.referenceImageUrls)];
+			const nextDatasetUrls = [...new Set(nextReferenceImageUrls)];
 			await this.repository.deleteDatasetGenerations(personId, nextDatasetUrls);
 			const existingDatasetUrls = new Set(
 				(await this.repository.getPersonById(personId))?.generations

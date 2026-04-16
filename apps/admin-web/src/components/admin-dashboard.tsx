@@ -11,7 +11,7 @@ import { formatDateTime, formatRelativeTime } from "@generator/ui/lib/format";
 import { cn } from "@generator/ui/lib/utils";
 import { Boxes, Server, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
-
+import LoraTrainingConsole from "@/components/lora-training-console";
 import type {
 	AdminDashboardSnapshot,
 	DashboardRecentRun,
@@ -156,6 +156,8 @@ export default function AdminDashboard({
 }) {
 	return (
 		<section className="grid gap-6">
+			<LoraTrainingConsole items={snapshot.loraTrainings} />
+
 			{snapshot.notices.length > 0 ? (
 				<Card>
 					<CardContent className="pt-6">

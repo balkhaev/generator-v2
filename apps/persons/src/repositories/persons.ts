@@ -162,6 +162,7 @@ export function createDrizzlePersonsRepository(
 			const datasetGenerations = await database
 				.select({
 					id: personGeneration.id,
+					metadata: personGeneration.metadata,
 					sourceUrl: personGeneration.sourceUrl,
 				})
 				.from(personGeneration)

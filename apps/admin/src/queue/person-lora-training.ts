@@ -5,6 +5,7 @@ import {
 } from "@generator/queue";
 
 export interface PersonLoraTrainingJobData {
+	debugCorrelationId?: string;
 	description?: string;
 	outputName?: string;
 	personId: string;

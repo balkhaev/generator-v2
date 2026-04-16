@@ -137,14 +137,28 @@ export function createPersonRoutes(service: PersonsService) {
 
 	app.post("/:personId/generate-with-lora", async (c) => {
 		try {
-			const body = await c.req.json<{ prompt?: string }>();
+			const body = await c.req.json<{
+				extraLoraUrl?: string;
+				extraLoraWeight?: number;
+				prompt?: string;
+			}>();
 			const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
 			if (!prompt) {
 				return c.json({ error: "prompt is required" }, 400);
 			}
 			const person = await service.generateWithLora(
 				c.req.param("personId"),
-				prompt
+				prompt,
+				{
+					extraLoraUrl:
+						typeof body.extraLoraUrl === "string"
+							? body.extraLoraUrl.trim()
+							: undefined,
+					extraLoraWeight:
+						typeof body.extraLoraWeight === "number"
+							? body.extraLoraWeight
+							: undefined,
+				}
 			);
 			if (!person) {
 				return c.json({ error: "Person not found" }, 404);

@@ -65,6 +65,34 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the fal-zimage-turbo-lora payload with an optional extra lora", () => {
+		const workflow = getWorkflowDefinition("fal-zimage-turbo-lora");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					extraLoraUrl: "https://storage.example.com/zit-mystic.safetensors",
+					extraLoraWeight: 0.35,
+					loraUrl: "https://storage.example.com/my-lora.safetensors",
+					loraWeight: 0.8,
+				},
+				prompt: "portrait photo of my_character, cinematic lighting",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/z-image/turbo/lora",
+			loras: [
+				{
+					path: "https://storage.example.com/my-lora.safetensors",
+					weight: 0.8,
+				},
+				{
+					path: "https://storage.example.com/zit-mystic.safetensors",
+					weight: 0.35,
+				},
+			],
+		});
+	});
+
 	it("builds the fal-flux-dev payload", () => {
 		const workflow = getWorkflowDefinition("fal-flux-dev");
 

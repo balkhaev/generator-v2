@@ -93,12 +93,27 @@ export async function trainPersonLora(personId: string) {
 	return payload.person;
 }
 
-export async function generateWithLora(personId: string, prompt: string) {
+export async function generateWithLora(
+	personId: string,
+	prompt: string,
+	options?: {
+		extraLoraUrl?: string;
+		extraLoraWeight?: number;
+	}
+) {
 	const payload = await requestJson<{ person: PersonRecord }>(
 		`${API_BASE_URL}/api/persons/${personId}/generate-with-lora`,
 		{
 			method: "POST",
-			body: JSON.stringify({ prompt }),
+			body: JSON.stringify({
+				prompt,
+				...(options?.extraLoraUrl
+					? {
+							extraLoraUrl: options.extraLoraUrl,
+							extraLoraWeight: options.extraLoraWeight ?? 0.35,
+						}
+					: {}),
+			}),
 			headers: { "content-type": "application/json" },
 		}
 	);

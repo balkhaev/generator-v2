@@ -648,7 +648,14 @@ export class PersonsService {
 		return updatedPerson ?? person;
 	}
 
-	async generateWithLora(personId: string, userPrompt: string) {
+	async generateWithLora(
+		personId: string,
+		userPrompt: string,
+		options?: {
+			extraLoraUrl?: string;
+			extraLoraWeight?: number;
+		}
+	) {
 		const person = await this.repository.getPersonById(personId);
 		if (!person) {
 			return null;
@@ -688,6 +695,8 @@ export class PersonsService {
 					outputFormat: "jpeg",
 				}
 			: {
+					extraLoraUrl: options?.extraLoraUrl,
+					extraLoraWeight: options?.extraLoraWeight ?? 0.35,
 					loraUrl: person.loraUrl,
 					loraWeight: 1.0,
 					imageSize: "portrait_4_3",
@@ -730,6 +739,12 @@ export class PersonsService {
 			metadata: {
 				workflowKey,
 				generatedWithLora: true,
+				...(options?.extraLoraUrl
+					? {
+							extraLoraUrl: options.extraLoraUrl,
+							extraLoraWeight: options.extraLoraWeight ?? 0.35,
+						}
+					: {}),
 				generatorExecutionId: execution.id,
 				generatorWorkflowKey: execution.workflowKey,
 			},

@@ -550,9 +550,17 @@ function LoraActions({
 }: {
 	person: PersonRecord;
 	onTrainLora: () => void;
-	onGenerateWithLora: (prompt: string) => void;
+	onGenerateWithLora: (
+		prompt: string,
+		options?: {
+			extraLoraUrl?: string;
+			extraLoraWeight?: number;
+		}
+	) => void;
 }) {
 	const [loraPrompt, setLoraPrompt] = useState("");
+	const [extraLoraUrl, setExtraLoraUrl] = useState("");
+	const [extraLoraWeight, setExtraLoraWeight] = useState("0.35");
 	const training = getTrainingMeta(person);
 	const hasLora = Boolean(person.loraUrl);
 	const effectiveStatus =
@@ -620,10 +628,50 @@ function LoraActions({
 						placeholder="portrait photo, studio lighting..."
 						value={loraPrompt}
 					/>
+					<div className="grid gap-1.5">
+						<Label className="text-xs" htmlFor="extraLoraUrl">
+							Optional extra LoRA URL
+						</Label>
+						<Input
+							id="extraLoraUrl"
+							onChange={(event) => setExtraLoraUrl(event.target.value)}
+							placeholder="https://.../zit-mystic.safetensors"
+							value={extraLoraUrl}
+						/>
+						<p className="text-[11px] text-muted-foreground/70">
+							Use for additive LoRAs such as{" "}
+							<a
+								className="underline"
+								href="https://civitai.red/models/2206377/zit-mystic-xxx"
+								rel="noreferrer noopener"
+								target="_blank"
+							>
+								ZIT Mystic XXX
+							</a>
+							.
+						</p>
+					</div>
+					<div className="grid gap-1.5">
+						<Label className="text-xs" htmlFor="extraLoraWeight">
+							Optional extra LoRA weight
+						</Label>
+						<Input
+							id="extraLoraWeight"
+							onChange={(event) => setExtraLoraWeight(event.target.value)}
+							placeholder="0.35"
+							value={extraLoraWeight}
+						/>
+					</div>
 					<Button
 						disabled={!loraPrompt.trim()}
 						onClick={() => {
-							onGenerateWithLora(loraPrompt.trim());
+							const parsedExtraLoraWeight = Number.parseFloat(extraLoraWeight);
+							onGenerateWithLora(loraPrompt.trim(), {
+								extraLoraUrl: extraLoraUrl.trim() || undefined,
+								extraLoraWeight: Number.isFinite(parsedExtraLoraWeight)
+									? parsedExtraLoraWeight
+									: 0.35,
+							});
 							setLoraPrompt("");
 						}}
 						size="sm"
@@ -1205,12 +1253,22 @@ export default function PersonsWorkspace({
 		}
 	}
 
-	async function handleGenerateWithLora(prompt: string) {
+	async function handleGenerateWithLora(
+		prompt: string,
+		options?: {
+			extraLoraUrl?: string;
+			extraLoraWeight?: number;
+		}
+	) {
 		if (!selectedPerson) {
 			return;
 		}
 		try {
-			const updated = await generateWithLora(selectedPerson.id, prompt);
+			const updated = await generateWithLora(
+				selectedPerson.id,
+				prompt,
+				options
+			);
 			setPersons((current) =>
 				current.map((p) => (p.id === updated.id ? updated : p))
 			);

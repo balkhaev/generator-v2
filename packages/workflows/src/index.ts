@@ -99,6 +99,8 @@ const falZimageTurboLoraParamsSchema = z.object({
 	outputFormat: z.enum(["png", "jpeg", "webp"]).default("png"),
 	loraUrl: z.string().url(),
 	loraWeight: z.number().min(0).max(2).default(0.8),
+	extraLoraUrl: z.string().url().optional(),
+	extraLoraWeight: z.number().min(0).max(2).default(0.8),
 });
 
 const falFluxLoraParamsSchema = z.object({
@@ -435,9 +437,35 @@ export const workflowRegistry = {
 				label: "LoRA weight",
 				type: "number",
 			},
+			{
+				description: "Optional additional LoRA weights URL.",
+				key: "extraLoraUrl",
+				label: "Extra LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Optional additional LoRA strength.",
+				key: "extraLoraWeight",
+				label: "Extra LoRA weight",
+				type: "number",
+			},
 		],
 		buildProviderInput: ({ params, prompt }) => {
 			const parsed = falZimageTurboLoraParamsSchema.parse(params);
+			const loras = [
+				{
+					path: parsed.loraUrl,
+					weight: parsed.loraWeight,
+				},
+				...(parsed.extraLoraUrl
+					? [
+							{
+								path: parsed.extraLoraUrl,
+								weight: parsed.extraLoraWeight,
+							},
+						]
+					: []),
+			];
 			return {
 				__falModel: "fal-ai/z-image/turbo/lora",
 				prompt,
@@ -446,12 +474,7 @@ export const workflowRegistry = {
 				num_images: parsed.numImages,
 				enable_safety_checker: parsed.enableSafetyChecker,
 				output_format: parsed.outputFormat,
-				loras: [
-					{
-						path: parsed.loraUrl,
-						weight: parsed.loraWeight,
-					},
-				],
+				loras,
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},

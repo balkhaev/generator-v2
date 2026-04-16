@@ -187,6 +187,10 @@ export interface PersonsRepository {
 		generations: Omit<PersonGenerationRecord, "createdAt" | "updatedAt">[];
 		person: Omit<PersonRecord, "createdAt" | "updatedAt" | "generations">;
 	}): Promise<PersonRecord>;
+	deleteDatasetGenerations(
+		personId: string,
+		keepSourceUrls: string[]
+	): Promise<number>;
 	deletePerson(personId: string): Promise<boolean>;
 	findPersonByOperatorRunId(
 		operatorRunId: string
@@ -824,13 +828,15 @@ export class PersonsService {
 		};
 
 		if (parsedEvent.referenceImageUrls?.length) {
+			const nextDatasetUrls = [...new Set(parsedEvent.referenceImageUrls)];
+			await this.repository.deleteDatasetGenerations(personId, nextDatasetUrls);
 			const existingDatasetUrls = new Set(
-				person.generations
+				(await this.repository.getPersonById(personId))?.generations
 					.filter((g) => g.metadata.isDatasetPhoto === true)
-					.map((g) => g.sourceUrl)
+					.map((g) => g.sourceUrl) ?? []
 			);
 
-			for (const [index, url] of parsedEvent.referenceImageUrls.entries()) {
+			for (const [index, url] of nextDatasetUrls.entries()) {
 				if (!existingDatasetUrls.has(url)) {
 					await this.repository.createGeneration({
 						id: crypto.randomUUID(),

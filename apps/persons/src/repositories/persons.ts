@@ -158,6 +158,36 @@ export function createDrizzlePersonsRepository(
 				.returning({ id: person.id });
 			return deletedRows.length > 0;
 		},
+		async deleteDatasetGenerations(personId, keepSourceUrls) {
+			const datasetGenerations = await database
+				.select({
+					id: personGeneration.id,
+					sourceUrl: personGeneration.sourceUrl,
+				})
+				.from(personGeneration)
+				.where(eq(personGeneration.personId, personId));
+
+			const keepSet = new Set(keepSourceUrls);
+			const toDelete = datasetGenerations.filter(
+				(row) =>
+					row.metadata?.isDatasetPhoto === true &&
+					!keepSet.has(row.sourceUrl) &&
+					typeof row.id === "string"
+			);
+
+			let deletedCount = 0;
+			for (const row of toDelete) {
+				const [record] = await database
+					.delete(personGeneration)
+					.where(eq(personGeneration.id, row.id))
+					.returning({ id: personGeneration.id });
+				if (record) {
+					deletedCount += 1;
+				}
+			}
+
+			return deletedCount;
+		},
 		async findPersonByOperatorRunId(operatorRunId) {
 			const [generationRow] = await database
 				.select()

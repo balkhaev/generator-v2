@@ -94,6 +94,22 @@ function createMemoryRepository(): PersonsRepository {
 
 			return Promise.resolve(persons.delete(personId));
 		},
+		deleteDatasetGenerations(personId, keepSourceUrls) {
+			const keepSet = new Set(keepSourceUrls);
+			let deletedCount = 0;
+			for (const generation of generations.values()) {
+				if (
+					generation.personId === personId &&
+					generation.metadata.isDatasetPhoto === true &&
+					!keepSet.has(generation.sourceUrl)
+				) {
+					generations.delete(generation.id);
+					deletedCount += 1;
+				}
+			}
+
+			return Promise.resolve(deletedCount);
+		},
 		findPersonByOperatorRunId(operatorRunId) {
 			const generation = [...generations.values()].find(
 				(entry) => entry.operatorRunId === operatorRunId
@@ -344,5 +360,76 @@ describe("persons api", () => {
 		expect(payload.person.metadata.training).toMatchObject({
 			status: "queued",
 		});
+	});
+
+	it("replaces dataset photos on subsequent training callbacks", async () => {
+		const app = createApp({
+			corsOrigins: ["http://localhost:3004"],
+			repository: createMemoryRepository(),
+		});
+		const createResponse = await app.request("http://localhost/api/persons", {
+			body: JSON.stringify({
+				name: "Dataset Replace",
+				referencePhotoUrl: "https://assets.example.com/reference.png",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { person } = (await createResponse.json()) as {
+			person: PersonRecord;
+		};
+
+		await app.request("http://localhost/api/internal/lora-trainings", {
+			body: JSON.stringify({
+				context: { personId: person.id },
+				event: {
+					referenceImageUrls: [
+						"https://assets.example.com/reference.png",
+						"https://assets.example.com/dataset-1.png",
+						"https://assets.example.com/dataset-2.png",
+					],
+					status: "generating",
+				},
+			}),
+			headers: {
+				authorization: "Bearer local-training-control-token",
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		await app.request("http://localhost/api/internal/lora-trainings", {
+			body: JSON.stringify({
+				context: { personId: person.id },
+				event: {
+					referenceImageUrls: [
+						"https://assets.example.com/reference.png",
+						"https://assets.example.com/dataset-3.png",
+					],
+					status: "training",
+				},
+			}),
+			headers: {
+				authorization: "Bearer local-training-control-token",
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		const personResponse = await app.request(
+			`http://localhost/api/persons/${person.id}`
+		);
+		const { person: hydratedPerson } = (await personResponse.json()) as {
+			person: PersonRecord;
+		};
+		const datasetUrls = hydratedPerson.generations
+			.filter((generation) => generation.metadata.isDatasetPhoto === true)
+			.map((generation) => generation.sourceUrl)
+			.sort();
+
+		expect(datasetUrls).toEqual([
+			"https://assets.example.com/dataset-3.png",
+			"https://assets.example.com/reference.png",
+		]);
 	});
 });

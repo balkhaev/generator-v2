@@ -210,7 +210,10 @@ async function loadStudioDashboard(studioBaseUrl: string) {
 	}
 }
 
-async function loadLoraDashboard(personsApiBaseUrl: string | undefined) {
+async function loadLoraDashboard(
+	personsApiBaseUrl: string | undefined,
+	trainingControlToken: string | undefined
+) {
 	if (!personsApiBaseUrl) {
 		return {
 			loraTrainings: [] as DashboardLoraTrainingSnapshot[],
@@ -226,7 +229,14 @@ async function loadLoraDashboard(personsApiBaseUrl: string | undefined) {
 			""
 		);
 		const snapshot = await fetchJson<PersonsSnapshotResponse>(
-			`${normalizedBaseUrl}/api/persons`
+			`${normalizedBaseUrl}/api/internal/persons`,
+			trainingControlToken
+				? {
+						headers: {
+							authorization: `Bearer ${trainingControlToken}`,
+						},
+					}
+				: undefined
 		);
 		const loraTrainings = snapshot.persons
 			.map((person) => {
@@ -265,11 +275,12 @@ async function loadLoraDashboard(personsApiBaseUrl: string | undefined) {
 
 export async function getAdminDashboardSnapshot(
 	studioBaseUrl: string,
-	personsApiBaseUrl?: string
+	personsApiBaseUrl?: string,
+	trainingControlToken?: string
 ): Promise<AdminDashboardSnapshot> {
 	const [studioDashboard, loraDashboard] = await Promise.all([
 		loadStudioDashboard(studioBaseUrl),
-		loadLoraDashboard(personsApiBaseUrl),
+		loadLoraDashboard(personsApiBaseUrl, trainingControlToken),
 	]);
 
 	return {

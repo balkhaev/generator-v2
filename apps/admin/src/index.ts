@@ -88,7 +88,11 @@ const app = createApp({
 	internalTrainingControlService,
 	getSession: getRequestSession,
 	loadDashboardSnapshot: () =>
-		getAdminDashboardSnapshot(studioBaseUrl, personsApiBaseUrl),
+		getAdminDashboardSnapshot(
+			studioBaseUrl,
+			personsApiBaseUrl,
+			env.TRAINING_CONTROL_TOKEN
+		),
 	loadSetupStatus: async () => ({
 		setupRequired: await isInitialAdminSetupRequired(),
 	}),

@@ -586,6 +586,53 @@ describe("persons api", () => {
 		]);
 	});
 
+	it("exposes internal persons snapshot to bearer-authorized callers", async () => {
+		const repository = createMemoryRepository();
+		await repository.createPerson({
+			generations: [],
+			person: {
+				datasetUrl: null,
+				description: "",
+				id: "person-internal-snapshot",
+				loraUrl: null,
+				metadata: {},
+				name: "Internal Snapshot",
+				photoUrl: null,
+				referencePhotoUrl: "https://assets.example.com/reference.png",
+				slug: "internal-snapshot",
+				videoUrl: null,
+				voiceWavUrl: null,
+			},
+		});
+
+		const app = createApp({
+			corsOrigins: ["http://localhost:3004"],
+			getSession() {
+				return Promise.resolve(null);
+			},
+			repository,
+		});
+		const protectedResponse = await app.request("http://localhost/api/persons");
+		expect(protectedResponse.status).toBe(401);
+
+		const unauthorizedResponse = await app.request(
+			"http://localhost/api/internal/persons"
+		);
+		expect(unauthorizedResponse.status).toBe(401);
+
+		const response = await app.request(
+			"http://localhost/api/internal/persons",
+			{
+				headers: {
+					authorization: "Bearer local-training-control-token",
+				},
+			}
+		);
+		expect(response.status).toBe(200);
+		const { persons } = (await response.json()) as { persons: PersonRecord[] };
+		expect(persons.map((person) => person.name)).toEqual(["Internal Snapshot"]);
+	});
+
 	it("deletes generations and removes deleted dataset photos from training metadata", async () => {
 		const app = createApp({
 			corsOrigins: ["http://localhost:3004"],

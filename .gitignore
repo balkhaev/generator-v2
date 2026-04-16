@@ -8,6 +8,9 @@ dist
 build
 *.tsbuildinfo
 
+# packages/ui ships TS/TSX only; ignore stray JS emit next to sources
+packages/ui/src/**/*.js
+
 # Next.js / Turbopack (dev кэш: *.meta, *.sst, images и т.д. в .next/)
 .next/
 out/

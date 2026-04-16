@@ -22,7 +22,6 @@ import {
 	ArrowUpRight,
 	AudioLines,
 	AudioWaveform,
-	type Box,
 	CheckCircle2,
 	ChevronDown,
 	ChevronLeft,
@@ -40,7 +39,7 @@ import {
 import type { Route } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -197,63 +196,17 @@ const generationTone = {
 	ready: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
 } as const;
 
-function buildPersonsHref(
-	pathname: string,
-	currentSearch: string,
-	personSlug: string | null
-) {
-	const url = new URLSearchParams(currentSearch);
-	if (personSlug) {
-		url.set("person", personSlug);
-	} else {
-		url.delete("person");
-	}
-	const nextSearch = url.toString();
-	return (nextSearch ? `${pathname}?${nextSearch}` : pathname) as Route;
+function getPersonHrefBySlug(personSlug: string) {
+	return `/person/${personSlug}` as Route;
 }
+
+const CAST_HREF = "/" as Route;
 
 function createEmptyFormState(): CreatePersonInput {
 	return {
 		name: "",
 		description: "",
 	};
-}
-
-function PersonAsset({
-	href,
-	icon: Icon,
-	label,
-	value,
-}: {
-	href: string | null;
-	icon: typeof Box;
-	label: string;
-	value: string;
-}) {
-	return (
-		<div className="flex items-center gap-3 rounded-lg bg-muted/10 px-3 py-2.5 dark:bg-muted/5">
-			<Icon
-				className="size-4 shrink-0 text-muted-foreground/60"
-				strokeWidth={1.5}
-			/>
-			<div className="min-w-0 flex-1">
-				<p className="text-muted-foreground text-xs">{label}</p>
-			</div>
-			{href ? (
-				<a
-					className="inline-flex items-center gap-1 text-xs hover:underline"
-					href={href}
-					rel="noreferrer noopener"
-					target="_blank"
-				>
-					{value}
-					<ArrowUpRight className="size-3" />
-				</a>
-			) : (
-				<span className="text-muted-foreground/40 text-xs">—</span>
-			)}
-		</div>
-	);
 }
 
 function GenerationPreview({
@@ -394,36 +347,32 @@ function PersonCard({
 }) {
 	return (
 		<Link
-			className="group relative overflow-hidden rounded-xl bg-background/60 transition-all hover:shadow-black/5 hover:shadow-lg dark:bg-background/40 dark:hover:shadow-black/20"
+			className="group relative overflow-hidden rounded-2xl bg-background/60 ring-1 ring-border/30 transition-all hover:shadow-black/5 hover:shadow-xl hover:ring-border/60 dark:bg-background/40 dark:hover:shadow-black/20"
 			href={getHref(person.slug)}
-			scroll={false}
 		>
 			<div className="relative aspect-[3/4] overflow-hidden">
 				<Image
 					alt={person.name}
-					className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+					className="object-cover transition-transform duration-500 group-hover:scale-[1.03]"
 					fill
 					sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
 					src={person.referencePhotoUrl}
 				/>
-				<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent pt-16 pr-4 pb-4 pl-4">
-					<h3 className="font-medium text-base text-white tracking-tight">
+				<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent pt-20 pr-4 pb-4 pl-4">
+					<h3 className="font-semibold text-base text-white tracking-tight">
 						{person.name}
 					</h3>
 					{person.description ? (
-						<p className="mt-0.5 line-clamp-1 text-white/70 text-xs">
+						<p className="mt-0.5 line-clamp-1 text-white/60 text-xs">
 							{person.description}
 						</p>
 					) : null}
 				</div>
 			</div>
-			<div className="flex items-center justify-between gap-2 px-3 py-2.5">
-				<span className="text-muted-foreground text-xs">
+			<div className="flex items-center justify-between gap-2 px-3.5 py-2.5">
+				<span className="text-muted-foreground/60 text-xs tabular-nums">
 					{person.generations.length} generation
 					{person.generations.length === 1 ? "" : "s"}
-				</span>
-				<span className="rounded-full bg-muted/20 px-2 py-0.5 text-[11px] text-muted-foreground dark:bg-muted/10">
-					{person.slug}
 				</span>
 			</div>
 		</Link>
@@ -491,14 +440,14 @@ function GenerationCard({
 	const studioGenerationHref = buildStudioGenerationHref(studioUrl, generation);
 
 	return (
-		<div className="grid gap-2.5 rounded-xl bg-muted/8 p-3 dark:bg-muted/5">
+		<div className="grid gap-2 overflow-hidden rounded-xl border border-border/30 bg-background/60 dark:bg-background/40">
 			<GenerationPreview generation={generation} onImageClick={onImageClick} />
-			<div className="grid gap-1.5">
+			<div className="grid gap-1.5 px-3 pb-3">
 				<div className="flex items-center justify-between gap-2">
-					<h3 className="truncate text-sm">{generation.title}</h3>
+					<h3 className="truncate font-medium text-sm">{generation.title}</h3>
 					<span
 						className={cn(
-							"inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px]",
+							"inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px]",
 							generationTone[generation.status]
 						)}
 					>
@@ -506,20 +455,22 @@ function GenerationCard({
 						{generation.status}
 					</span>
 				</div>
-				<p className="line-clamp-2 text-muted-foreground text-xs leading-relaxed">
-					{generation.prompt || "Prompt not attached."}
-				</p>
+				{generation.prompt ? (
+					<p className="line-clamp-2 text-muted-foreground/70 text-xs leading-relaxed">
+						{generation.prompt}
+					</p>
+				) : null}
 				<div className="flex flex-wrap items-center gap-1.5">
-					<span className="inline-flex items-center rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground dark:bg-muted/8">
+					<span className="inline-flex items-center text-[11px] text-muted-foreground/50">
 						<GenerationMediaBadge mediaType={generation.mediaType} />
 					</span>
 					{studioGenerationHref ? (
 						<a
-							className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
+							className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground/50 transition hover:text-foreground"
 							href={studioGenerationHref}
 						>
 							Studio
-							<ArrowUpRight className="size-3" />
+							<ArrowUpRight className="size-2.5" />
 						</a>
 					) : null}
 				</div>
@@ -1048,13 +999,11 @@ function DatasetGallery({
 type DetailTab = "generations" | "dataset";
 
 function PersonDetailView({
-	backHref,
 	person,
 	studioUrl,
 	onTrainLora,
 	onGenerateWithLora,
 }: {
-	backHref: Route;
 	person: PersonRecord;
 	studioUrl: string;
 	onTrainLora: () => void;
@@ -1097,8 +1046,18 @@ function PersonDetailView({
 		setLightbox({ images: [person.referencePhotoUrl], index: 0 });
 	}
 
+	const assets = (
+		[
+			{ href: person.datasetUrl, icon: FolderArchive, label: "Dataset" },
+			{ href: person.loraUrl, icon: Sparkles, label: "LoRA" },
+			{ href: person.photoUrl, icon: ImageIcon, label: "Photo" },
+			{ href: person.videoUrl, icon: Clapperboard, label: "Video" },
+			{ href: person.voiceWavUrl, icon: AudioWaveform, label: "Voice" },
+		] as const
+	).filter((a): a is typeof a & { href: string } => typeof a.href === "string");
+
 	return (
-		<div className="grid h-full min-h-0 gap-4 overflow-y-auto">
+		<div className="grid h-full min-h-0 gap-6 overflow-y-auto">
 			{lightbox ? (
 				<Lightbox
 					images={lightbox.images}
@@ -1110,119 +1069,113 @@ function PersonDetailView({
 				/>
 			) : null}
 
-			<div className="flex items-center gap-3">
+			{/* Header */}
+			<div className="flex items-start gap-4">
 				<Link
-					className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/20 hover:text-foreground"
-					href={backHref}
-					scroll={false}
+					className="mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border/60 text-muted-foreground transition hover:border-border hover:text-foreground"
+					href={CAST_HREF}
 				>
-					<ArrowLeft className="size-4" />
+					<ArrowLeft className="size-3.5" />
 				</Link>
-				<div className="min-w-0">
-					<h2 className="truncate font-medium text-lg tracking-tight">
+				<div className="min-w-0 flex-1">
+					<h2 className="truncate font-semibold text-xl tracking-tight">
 						{person.name}
 					</h2>
-					<p className="text-muted-foreground text-xs">{person.slug}</p>
-				</div>
-			</div>
-
-			<div className="grid gap-4 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
-				<div className="grid gap-3">
-					<button
-						aria-label={`View ${person.name} reference photo`}
-						className="relative aspect-[3/4] overflow-hidden rounded-xl transition hover:ring-2 hover:ring-ring/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-						onClick={openReferenceLightbox}
-						type="button"
-					>
-						<Image
-							alt={person.name}
-							className="object-cover"
-							fill
-							priority
-							sizes="(max-width: 1024px) 100vw, 320px"
-							src={person.referencePhotoUrl}
-						/>
-					</button>
 					{person.description ? (
-						<p className="text-muted-foreground text-sm leading-relaxed">
+						<p className="mt-1 line-clamp-2 text-muted-foreground text-sm leading-relaxed">
 							{person.description}
 						</p>
 					) : null}
 				</div>
+			</div>
 
-				<div className="grid content-start gap-2">
-					<SectionLabel className="mb-1">Assets</SectionLabel>
-					<PersonAsset
-						href={person.datasetUrl}
-						icon={FolderArchive}
-						label="Dataset"
-						value="Open"
+			{/* Hero + Assets */}
+			<div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
+				<button
+					aria-label={`View ${person.name} reference photo`}
+					className="group relative aspect-[3/4] overflow-hidden rounded-2xl shadow-black/5 shadow-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:shadow-black/20"
+					onClick={openReferenceLightbox}
+					type="button"
+				>
+					<Image
+						alt={person.name}
+						className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
+						fill
+						priority
+						sizes="(max-width: 1024px) 100vw, 280px"
+						src={person.referencePhotoUrl}
 					/>
-					<PersonAsset
-						href={person.loraUrl}
-						icon={Sparkles}
-						label="LoRA"
-						value="Open"
-					/>
-					<PersonAsset
-						href={person.photoUrl}
-						icon={ImageIcon}
-						label="Photo"
-						value="Open"
-					/>
-					<PersonAsset
-						href={person.videoUrl}
-						icon={Clapperboard}
-						label="Video"
-						value="Open"
-					/>
-					<PersonAsset
-						href={person.voiceWavUrl}
-						icon={AudioWaveform}
-						label="Voice WAV"
-						value="Open"
+					<div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+				</button>
+
+				<div className="grid content-start gap-4">
+					{assets.length > 0 ? (
+						<div className="grid gap-1.5">
+							<span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider">
+								Assets
+							</span>
+							<div className="flex flex-wrap gap-1.5">
+								{assets.map((asset) => (
+									<a
+										className="inline-flex items-center gap-1.5 rounded-full border border-border/50 bg-background/80 px-3 py-1.5 text-xs transition hover:border-border hover:bg-muted/30"
+										href={asset.href}
+										key={asset.label}
+										rel="noreferrer noopener"
+										target="_blank"
+									>
+										<asset.icon
+											className="size-3 text-muted-foreground/60"
+											strokeWidth={1.5}
+										/>
+										{asset.label}
+										<ArrowUpRight className="size-3 text-muted-foreground/40" />
+									</a>
+								))}
+							</div>
+						</div>
+					) : null}
+
+					<LoraActions
+						onGenerateWithLora={onGenerateWithLora}
+						onTrainLora={onTrainLora}
+						person={person}
 					/>
 				</div>
 			</div>
 
-			<LoraActions
-				onGenerateWithLora={onGenerateWithLora}
-				onTrainLora={onTrainLora}
-				person={person}
-			/>
-
-			<div className="grid gap-3">
-				<div className="flex items-center gap-1 border-foreground/6 border-b dark:border-foreground/10">
+			{/* Tabs */}
+			<div className="grid gap-4">
+				<div className="flex gap-6 border-border/40 border-b">
 					<button
 						className={cn(
-							"-mb-px border-b-2 px-3 py-2 text-sm transition",
+							"-mb-px border-b-2 pb-2.5 font-medium text-sm transition",
 							activeTab === "generations"
 								? "border-foreground text-foreground"
-								: "border-transparent text-muted-foreground hover:text-foreground"
+								: "border-transparent text-muted-foreground/60 hover:text-muted-foreground"
 						)}
 						onClick={() => setActiveTab("generations")}
 						type="button"
 					>
 						Generations
 						{generations.length > 0 ? (
-							<span className="ml-1.5 text-muted-foreground text-xs">
+							<span className="ml-1.5 rounded-full bg-muted/40 px-1.5 py-0.5 text-[10px] tabular-nums dark:bg-muted/20">
 								{generations.length}
 							</span>
 						) : null}
 					</button>
 					<button
 						className={cn(
-							"-mb-px border-b-2 px-3 py-2 text-sm transition",
+							"-mb-px border-b-2 pb-2.5 font-medium text-sm transition",
 							activeTab === "dataset"
 								? "border-foreground text-foreground"
-								: "border-transparent text-muted-foreground hover:text-foreground"
+								: "border-transparent text-muted-foreground/60 hover:text-muted-foreground"
 						)}
 						onClick={() => setActiveTab("dataset")}
 						type="button"
 					>
 						Dataset
 						{datasetUrls.length > 0 ? (
-							<span className="ml-1.5 text-muted-foreground text-xs">
+							<span className="ml-1.5 rounded-full bg-muted/40 px-1.5 py-0.5 text-[10px] tabular-nums dark:bg-muted/20">
 								{datasetUrls.length}
 							</span>
 						) : null}
@@ -1230,19 +1183,20 @@ function PersonDetailView({
 				</div>
 
 				{activeTab === "generations" && generations.length > 0 ? (
-					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+					<div className="columns-1 gap-3 sm:columns-2 xl:columns-3">
 						{generations.map((generation) => (
-							<GenerationCard
-								generation={generation}
-								key={generation.id}
-								onImageClick={
-									generation.mediaType === "image" &&
-									generation.status === "ready"
-										? () => openGenerationLightbox(generation.id)
-										: undefined
-								}
-								studioUrl={studioUrl}
-							/>
+							<div className="mb-3 break-inside-avoid" key={generation.id}>
+								<GenerationCard
+									generation={generation}
+									onImageClick={
+										generation.mediaType === "image" &&
+										generation.status === "ready"
+											? () => openGenerationLightbox(generation.id)
+											: undefined
+									}
+									studioUrl={studioUrl}
+								/>
+							</div>
 						))}
 					</div>
 				) : null}
@@ -1437,22 +1391,20 @@ function CreatePersonForm({
 
 export default function PersonsWorkspace({
 	initialSnapshot,
+	personSlug,
 }: {
 	initialSnapshot: { persons: PersonRecord[]; warnings: string[] };
+	personSlug?: string;
 }) {
 	const [persons, setPersons] = useState(initialSnapshot.persons);
 	const [formState, setFormState] = useState<CreatePersonInput>(
 		createEmptyFormState()
 	);
 	const [isCreating, startCreateTransition] = useTransition();
-	const pathname = usePathname();
 	const router = useRouter();
-	const searchParams = useSearchParams();
-	const currentSearch = searchParams.toString();
-	const requestedPersonSlug = searchParams.get("person");
 
-	const selectedPerson = requestedPersonSlug
-		? (persons.find((person) => person.slug === requestedPersonSlug) ?? null)
+	const selectedPerson = personSlug
+		? (persons.find((person) => person.slug === personSlug) ?? null)
 		: null;
 
 	const needsPolling =
@@ -1514,10 +1466,7 @@ export default function PersonsWorkspace({
 			try {
 				const nextPerson = await createPerson(formState);
 				setPersons((current) => [nextPerson, ...current]);
-				router.push(
-					buildPersonsHref(pathname, currentSearch, nextPerson.slug),
-					{ scroll: false }
-				);
+				router.push(getPersonHrefBySlug(nextPerson.slug));
 				setFormState(createEmptyFormState());
 				toast.success("Person created");
 
@@ -1586,11 +1535,9 @@ export default function PersonsWorkspace({
 		}
 	}
 
-	function getPersonHref(personSlug: string) {
-		return buildPersonsHref(pathname, currentSearch, personSlug);
+	function getPersonHref(slug: string) {
+		return getPersonHrefBySlug(slug);
 	}
-
-	const backHref = buildPersonsHref(pathname, currentSearch, null);
 
 	return (
 		<WorkspaceShell
@@ -1619,7 +1566,7 @@ export default function PersonsWorkspace({
 			}
 			subtitle={
 				selectedPerson
-					? `${selectedPerson.slug} · ${selectedPerson.generations.length} generations`
+					? `${selectedPerson.generations.length} generations`
 					: "Reusable cast workspace"
 			}
 			title={selectedPerson?.name ?? "Cast"}
@@ -1627,7 +1574,6 @@ export default function PersonsWorkspace({
 		>
 			{selectedPerson ? (
 				<PersonDetailView
-					backHref={backHref}
 					onGenerateWithLora={handleGenerateWithLora}
 					onTrainLora={handleTrainLora}
 					person={selectedPerson}

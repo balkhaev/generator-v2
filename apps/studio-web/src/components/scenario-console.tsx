@@ -1232,7 +1232,7 @@ export default function ScenarioConsole({
 								linkedPerson.runId === run.providerJobId) ? (
 								<a
 									className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
-									href={`${personsUrl}?person=${linkedPerson.personSlug}`}
+									href={`${personsUrl}/person/${linkedPerson.personSlug}`}
 								>
 									Person
 									<ExternalLink className="size-3" />

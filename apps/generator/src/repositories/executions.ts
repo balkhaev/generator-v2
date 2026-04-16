@@ -1,7 +1,7 @@
 import { createDb } from "@generator/db";
+import { eq } from "@generator/db/operators";
 import { generatorExecution } from "@generator/db/schema/generator";
 import { env } from "@generator/env/server";
-import { eq } from "drizzle-orm";
 
 import type { ExecutionEntity, ExecutionRepository } from "@/domain/executions";
 

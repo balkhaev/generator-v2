@@ -1,11 +1,11 @@
 import type { ScenarioParamValue } from "@generator/contracts/generator";
 import { db } from "@generator/db";
+import { desc, eq, inArray } from "@generator/db/operators";
 import {
 	studioArtifact,
 	studioRun,
 	studioScenario,
 } from "@generator/db/schema/studio";
-import { desc, eq, inArray } from "drizzle-orm";
 
 import type {
 	StudioArtifactEntity,

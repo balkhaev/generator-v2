@@ -72,5 +72,17 @@ export function createAdminTrainingClient(
 				options
 			);
 		},
+
+		async cacheExternalLora(sourceUrl: string) {
+			const result = await request<{ url: string; sizeBytes: number }>(
+				"/api/internal/cache-lora",
+				{
+					body: JSON.stringify({ sourceUrl }),
+					headers: { "content-type": "application/json" },
+					method: "POST",
+				}
+			);
+			return result.url;
+		},
 	};
 }

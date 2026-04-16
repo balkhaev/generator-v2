@@ -1,6 +1,5 @@
 import { normalizeS3RuntimeEnv } from "@generator/env/server";
 
-import { CerebriumLoraTrainingRunner } from "@/providers/cerebrium-lora-training";
 import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
 import { createPersonLoraTrainingWorker } from "@/queue/person-lora-training";
 
@@ -13,13 +12,9 @@ if (!personsApiUrl) {
 }
 
 const falKey = process.env.FAL_KEY;
-const cerebriumApiKey = process.env.CEREBRIUM_API_KEY;
-const cerebriumProjectId = process.env.CEREBRIUM_PROJECT_ID;
 
-if (!(falKey || cerebriumApiKey)) {
-	throw new Error(
-		"At least one training provider is required: FAL_KEY or CEREBRIUM_API_KEY"
-	);
+if (!falKey) {
+	throw new Error("FAL_KEY is required for the admin training worker");
 }
 
 const trainingControlToken =
@@ -28,13 +23,15 @@ const trainingControlToken =
 const s3Env = normalizeS3RuntimeEnv(process.env);
 const s3Bucket = s3Env.S3_BUCKET?.trim();
 const s3Endpoint = s3Env.S3_ENDPOINT;
+const s3AccessKey = s3Env.S3_ACCESS_KEY_ID?.trim();
+const s3SecretKey = s3Env.S3_SECRET_ACCESS_KEY?.trim();
 const s3Config =
-	s3Bucket && s3Endpoint
+	s3Bucket && s3Endpoint && s3AccessKey && s3SecretKey
 		? {
 				bucket: s3Bucket,
 				endpoint: s3Endpoint,
-				accessKey: s3Env.S3_ACCESS_KEY_ID ?? "",
-				secretKey: s3Env.S3_SECRET_ACCESS_KEY ?? "",
+				accessKey: s3AccessKey,
+				secretKey: s3SecretKey,
 				region: s3Env.S3_REGION?.trim() ?? "us-east-1",
 				publicUrl:
 					s3Env.S3_PUBLIC_URL?.trim() ??
@@ -42,51 +39,28 @@ const s3Config =
 			}
 		: undefined;
 
-const trainingProvider =
-	process.env.TRAINING_PROVIDER ?? (cerebriumApiKey ? "cerebrium" : "fal");
+if (!s3Config) {
+	throw new Error(
+		"S3_BUCKET, S3_ENDPOINT, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required for the admin training worker"
+	);
+}
 
-const falRunner = falKey
-	? new FalZibLoraTrainingRunner({
-			apiKey: falKey,
-			personsApiBaseUrl: personsApiUrl,
-			trainingControlToken,
-			s3Config,
-			logger: console,
-		})
-	: null;
-
-const cerebriumRunner =
-	cerebriumApiKey && cerebriumProjectId
-		? new CerebriumLoraTrainingRunner({
-				apiKey: cerebriumApiKey,
-				projectId: cerebriumProjectId,
-				region: process.env.CEREBRIUM_REGION,
-				personsApiBaseUrl: personsApiUrl,
-				trainingControlToken,
-				falKey: falKey ?? undefined,
-				s3Config,
-				logger: console,
-			})
-		: null;
+const falRunner = new FalZibLoraTrainingRunner({
+	apiKey: falKey,
+	personsApiBaseUrl: personsApiUrl,
+	trainingControlToken,
+	s3Config,
+	logger: console,
+});
 
 console.info(
-	`admin.worker: ready (training provider: ${trainingProvider}, dataset upload: ${s3Config ? "S3" : "fal-storage"})`
+	"admin.worker: ready (training provider: fal, dataset upload: S3)"
 );
 
 createPersonLoraTrainingWorker({
 	handler: async (job) => {
-		console.info(
-			`admin.worker: processing job ${job.data.personId} (${trainingProvider})`
-		);
-		if (trainingProvider === "cerebrium" && cerebriumRunner) {
-			await cerebriumRunner.run(job.data);
-		} else if (falRunner) {
-			await falRunner.run(job.data);
-		} else {
-			throw new Error(
-				`Training provider "${trainingProvider}" is not configured`
-			);
-		}
+		console.info(`admin.worker: processing job ${job.data.personId} (fal)`);
+		await falRunner.run(job.data);
 	},
 	logger: console,
 	redisUrl,

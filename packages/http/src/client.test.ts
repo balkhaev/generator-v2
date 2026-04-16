@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import { requestJson } from "./client";
 
 const originalFetch = globalThis.fetch;
+type CredentialsValue = "include" | "omit" | "same-origin";
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
@@ -18,9 +19,9 @@ describe("requestJson", () => {
 				})
 		);
 
-		globalThis.fetch = fetchMock as typeof fetch;
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-		const payload = await requestJson<{ credentials?: RequestCredentials }>(
+		const payload = await requestJson<{ credentials?: CredentialsValue }>(
 			"http://localhost:3003/api/persons"
 		);
 
@@ -38,9 +39,9 @@ describe("requestJson", () => {
 				})
 		);
 
-		globalThis.fetch = fetchMock as typeof fetch;
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-		const payload = await requestJson<{ credentials?: RequestCredentials }>(
+		const payload = await requestJson<{ credentials?: CredentialsValue }>(
 			"http://localhost:3003/api/persons",
 			{ credentials: "omit" }
 		);

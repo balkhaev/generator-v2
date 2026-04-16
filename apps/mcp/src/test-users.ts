@@ -1,6 +1,6 @@
 import { db } from "@generator/db";
+import { and, eq } from "@generator/db/operators";
 import { account, session, user } from "@generator/db/schema/auth";
-import { and, eq } from "drizzle-orm";
 
 const allowedTestEmailDomains = new Set([
 	"example.com",

@@ -48,7 +48,7 @@
     "db:down": "docker compose down",
     "check": "ultracite check",
     "fix": "ultracite fix",
-    "test": "bun test --path-ignore-patterns '**/dist/**'"
+    "test": "DATABASE_URL=postgres://test:test@localhost:5432/test CORS_ORIGIN=http://localhost:3004 FAL_KEY=fal-test bun test --path-ignore-patterns '**/dist/**'"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",

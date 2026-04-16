@@ -21,7 +21,6 @@
     "@generator/generator-client-server": "workspace:*",
     "@generator/http": "workspace:*",
     "@generator/workflows": "workspace:*",
-    "drizzle-orm": "^0.45.1",
     "hono": "^4.8.2"
   },
   "devDependencies": {

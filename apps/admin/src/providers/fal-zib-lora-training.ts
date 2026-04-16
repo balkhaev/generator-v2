@@ -1,9 +1,14 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
+import {
+	buildZipFromBuffers,
+	downloadImageAsset,
+	persistLoraWeightsToS3,
+	type S3Config,
+	uploadZipToS3,
+} from "@/providers/lora-training-assets";
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
-const FAL_STORAGE_INITIATE =
-	"https://rest.alpha.fal.ai/storage/upload/initiate";
 const REQUEST_TIMEOUT_MS = 120_000;
 const DEFAULT_TRAINING_STEPS = 1000;
 const DEFAULT_TRAINING_POLL_MS = 30_000;
@@ -14,14 +19,7 @@ const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 2000;
 const REFERENCE_COUNT = 19;
 const FLUX_REFERENCE_EDIT_MODEL = "fal-ai/flux-2/edit";
-const referenceImageUrlExtensionPattern = /\.(png|jpe?g|webp)/i;
 const fileExtensionPattern = /\.[^.]+$/u;
-const imageContentTypeToExtensionMap = new Map<string, string>([
-	["image/jpeg", ".jpg"],
-	["image/jpg", ".jpg"],
-	["image/png", ".png"],
-	["image/webp", ".webp"],
-]);
 
 const REFERENCE_VARIANT_SUFFIXES = [
 	"same subject, front-facing editorial portrait, soft daylight, neutral backdrop",
@@ -74,6 +72,23 @@ function sanitizeSegment(value: string) {
 		.replace(/[^a-z0-9]+/giu, "-")
 		.replace(/^-+|-+$/gu, "")
 		.slice(0, 64);
+}
+
+const FEMALE_PATTERNS =
+	/\b(woman|girl|female|женщина|девушка|девочка|she|her)\b/i;
+const MALE_PATTERNS = /\b(man|boy|male|мужчина|парень|мальчик|he|his)\b/i;
+
+function inferGenderHint(description?: string): string | null {
+	if (!description) {
+		return null;
+	}
+	if (FEMALE_PATTERNS.test(description)) {
+		return "woman";
+	}
+	if (MALE_PATTERNS.test(description)) {
+		return "man";
+	}
+	return null;
 }
 
 function buildReferencePrompt(input: {
@@ -264,275 +279,18 @@ async function generateReferenceImageFal(
 	return url;
 }
 
-export function inferImageFileExtension(input: {
-	contentType?: string | null;
-	fallback?: string;
-	url: string;
-}) {
-	const normalizedContentType = input.contentType
-		?.split(";")[0]
-		?.trim()
-		.toLowerCase();
-	const extensionFromContentType = normalizedContentType
-		? imageContentTypeToExtensionMap.get(normalizedContentType)
-		: undefined;
-	if (extensionFromContentType) {
-		return extensionFromContentType;
-	}
-
-	const extensionFromUrl = input.url.match(
-		referenceImageUrlExtensionPattern
-	)?.[0];
-	if (extensionFromUrl) {
-		return extensionFromUrl.toLowerCase() === ".jpeg"
-			? ".jpg"
-			: extensionFromUrl.toLowerCase();
-	}
-
-	return input.fallback ?? ".jpg";
-}
-
-function downloadImageAsset(url: string): Promise<{
-	data: Uint8Array;
-	extension: string;
-}> {
-	return retry(async () => {
-		const response = await fetch(url);
-		if (!response.ok) {
-			throw new Error(`Failed to download: ${response.status}`);
-		}
-		return {
-			data: new Uint8Array(await response.arrayBuffer()),
-			extension: inferImageFileExtension({
-				contentType: response.headers.get("content-type"),
-				url,
-			}),
-		};
-	});
-}
-
-function crc32(data: Uint8Array): number {
-	let crc = 0xff_ff_ff_ff;
-	for (const byte of data) {
-		// biome-ignore lint/suspicious/noBitwiseOperators: CRC32 algorithm
-		crc ^= byte;
-		for (let bit = 0; bit < 8; bit += 1) {
-			// biome-ignore lint/suspicious/noBitwiseOperators: CRC32 algorithm
-			crc = crc & 1 ? (crc >>> 1) ^ 0xed_b8_83_20 : crc >>> 1;
-		}
-	}
-	// biome-ignore lint/suspicious/noBitwiseOperators: CRC32 algorithm
-	return (crc ^ 0xff_ff_ff_ff) >>> 0;
-}
-
-function buildZipFromBuffers(
-	files: Array<{ name: string; data: Uint8Array }>
-): Uint8Array {
-	const entries: Uint8Array[] = [];
-	const centralDir: Uint8Array[] = [];
-	let offset = 0;
-
-	for (const file of files) {
-		const nameBytes = new TextEncoder().encode(file.name);
-		const checksum = crc32(file.data);
-
-		const localHeader = new Uint8Array(30 + nameBytes.length);
-		const view = new DataView(localHeader.buffer);
-		view.setUint32(0, 0x04_03_4b_50, true);
-		view.setUint16(4, 20, true);
-		view.setUint16(8, 0, true);
-		view.setUint32(14, checksum, true);
-		view.setUint32(18, file.data.length, true);
-		view.setUint32(22, file.data.length, true);
-		view.setUint16(26, nameBytes.length, true);
-		localHeader.set(nameBytes, 30);
-
-		const cdEntry = new Uint8Array(46 + nameBytes.length);
-		const cdView = new DataView(cdEntry.buffer);
-		cdView.setUint32(0, 0x02_01_4b_50, true);
-		cdView.setUint16(4, 20, true);
-		cdView.setUint16(6, 20, true);
-		cdView.setUint16(12, 0, true);
-		cdView.setUint32(16, checksum, true);
-		cdView.setUint32(20, file.data.length, true);
-		cdView.setUint32(24, file.data.length, true);
-		cdView.setUint16(28, nameBytes.length, true);
-		cdView.setUint32(42, offset, true);
-		cdEntry.set(nameBytes, 46);
-
-		entries.push(localHeader, file.data);
-		centralDir.push(cdEntry);
-		offset += localHeader.length + file.data.length;
-	}
-
-	const cdOffset = offset;
-	let cdSize = 0;
-	for (const entry of centralDir) {
-		cdSize += entry.length;
-	}
-
-	const endRecord = new Uint8Array(22);
-	const endView = new DataView(endRecord.buffer);
-	endView.setUint32(0, 0x06_05_4b_50, true);
-	endView.setUint16(8, files.length, true);
-	endView.setUint16(10, files.length, true);
-	endView.setUint32(12, cdSize, true);
-	endView.setUint32(16, cdOffset, true);
-
-	const totalSize = offset + cdSize + 22;
-	const result = new Uint8Array(totalSize);
-	let pos = 0;
-	for (const part of [...entries, ...centralDir, endRecord]) {
-		result.set(part, pos);
-		pos += part.length;
-	}
-	return result;
-}
-
-const UPLOAD_TIMEOUT_MS = 600_000;
-const UPLOAD_RETRY_ATTEMPTS = 5;
-
-async function uploadZipToFalStorage(
-	apiKey: string,
-	zipData: Uint8Array,
-	filename: string
-): Promise<string> {
-	let lastError: Error | null = null;
-	for (let attempt = 1; attempt <= UPLOAD_RETRY_ATTEMPTS; attempt += 1) {
-		try {
-			const initResponse = await fetch(FAL_STORAGE_INITIATE, {
-				method: "POST",
-				headers: {
-					authorization: `Key ${apiKey}`,
-					"content-type": "application/json",
-				},
-				body: JSON.stringify({
-					file_name: filename,
-					content_type: "application/zip",
-				}),
-			});
-			if (!initResponse.ok) {
-				const detail = await initResponse.text().catch(() => "");
-				throw new Error(
-					`fal storage initiate failed: ${initResponse.status} ${detail}`
-				);
-			}
-			const { file_url, upload_url } = (await initResponse.json()) as {
-				file_url: string;
-				upload_url: string;
-			};
-
-			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
-			try {
-				const uploadResponse = await fetch(upload_url, {
-					method: "PUT",
-					headers: { "content-type": "application/zip" },
-					body: zipData,
-					signal: controller.signal,
-				});
-				if (!uploadResponse.ok) {
-					const detail = await uploadResponse.text().catch(() => "");
-					throw new Error(
-						`fal storage upload failed: ${uploadResponse.status} ${detail}`
-					);
-				}
-			} finally {
-				clearTimeout(timeout);
-			}
-			return file_url;
-		} catch (error) {
-			lastError =
-				error instanceof Error ? error : new Error("Unknown upload failure");
-			console.error(
-				`fal-storage-upload attempt ${attempt}/${UPLOAD_RETRY_ATTEMPTS} failed:`,
-				lastError.message
-			);
-			if (attempt < UPLOAD_RETRY_ATTEMPTS) {
-				await sleep(DEFAULT_RETRY_DELAY_MS * attempt);
-			}
-		}
-	}
-	throw lastError ?? new Error("fal storage upload exhausted retries");
-}
-
-async function uploadZipToS3(
-	zipData: Uint8Array,
-	filename: string,
-	s3Config: {
-		bucket: string;
-		endpoint: string;
-		accessKey: string;
-		secretKey: string;
-		region: string;
-		publicUrl: string;
-	}
-): Promise<string> {
-	const { writeFile, unlink } = await import("node:fs/promises");
-	const { join } = await import("node:path");
-	const { tmpdir } = await import("node:os");
-	const { execSync } = await import("node:child_process");
-
-	const key = `datasets/${filename}`;
-	const tmpPath = join(tmpdir(), `fal-dataset-${Date.now()}.zip`);
-
-	try {
-		await writeFile(tmpPath, zipData);
-
-		const uploadUrl = `${s3Config.endpoint}/${s3Config.bucket}/${key}`;
-		const cmd = [
-			"curl",
-			"-sf",
-			"--max-time",
-			"300",
-			"-X",
-			"PUT",
-			"-H",
-			"Content-Type: application/zip",
-			"--aws-sigv4",
-			`aws:amz:${s3Config.region}:s3`,
-			"--user",
-			`${s3Config.accessKey}:${s3Config.secretKey}`,
-			"-T",
-			tmpPath,
-			uploadUrl,
-		]
-			.map((arg) => `'${arg.replace(/'/g, "'\\''")}'`)
-			.join(" ");
-
-		execSync(cmd, { timeout: 300_000 });
-		return `${s3Config.publicUrl}/${key}`;
-	} finally {
-		unlink(tmpPath).catch(() => undefined);
-	}
-}
-
 export class FalZibLoraTrainingRunner {
 	private readonly apiKey: string;
 	private readonly personsApiBaseUrl: string;
 	private readonly trainingControlToken: string;
-	private readonly s3Config?: {
-		bucket: string;
-		endpoint: string;
-		accessKey: string;
-		secretKey: string;
-		region: string;
-		publicUrl: string;
-	};
+	private readonly s3Config?: S3Config;
 	private readonly logger: Pick<Console, "info" | "error">;
 
 	constructor(options: {
 		apiKey: string;
 		personsApiBaseUrl: string;
 		trainingControlToken: string;
-		s3Config?: {
-			bucket: string;
-			endpoint: string;
-			accessKey: string;
-			secretKey: string;
-			region: string;
-			publicUrl: string;
-		};
+		s3Config?: S3Config;
 		logger?: Pick<Console, "info" | "error">;
 	}) {
 		this.apiKey = options.apiKey;
@@ -597,6 +355,7 @@ export class FalZibLoraTrainingRunner {
 		const triggerWord =
 			parsed.triggerWord ??
 			sanitizeSegment(parsed.personSlug).replace(/-/gu, "_");
+		const genderHint = inferGenderHint(parsed.description);
 		const startedAt = new Date().toISOString();
 
 		try {
@@ -691,7 +450,9 @@ export class FalZibLoraTrainingRunner {
 				})
 			);
 
-			const captionContent = `a photo of ${triggerWord}, portrait`;
+			const captionContent = genderHint
+				? `a photo of ${triggerWord} ${genderHint}, portrait`
+				: `a photo of ${triggerWord}, portrait`;
 			const zipFiles: Array<{ name: string; data: Uint8Array }> = [
 				{ name: `000${refPhoto.extension}`, data: refPhoto.data },
 				{
@@ -709,6 +470,9 @@ export class FalZibLoraTrainingRunner {
 			}
 
 			const zipData = buildZipFromBuffers(zipFiles);
+			if (!this.s3Config) {
+				throw new Error("S3 config is required to persist LoRA dataset");
+			}
 
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
@@ -724,27 +488,21 @@ export class FalZibLoraTrainingRunner {
 					status: "generating",
 					trainingRunId: parsed.trainingRunId,
 					triggerWord,
-					uploadMethod: this.s3Config ? "s3" : "fal-storage",
+					uploadMethod: "s3",
 				},
 			});
 
 			this.logger.info("fal-zib-lora.uploading-dataset", {
 				personId: parsed.personId,
 				zipSizeBytes: zipData.length,
-				method: this.s3Config ? "s3" : "fal-storage",
+				method: "s3",
 			});
 
-			const datasetUrl = this.s3Config
-				? await uploadZipToS3(
-						zipData,
-						`${outputName}-dataset.zip`,
-						this.s3Config
-					)
-				: await uploadZipToFalStorage(
-						this.apiKey,
-						zipData,
-						`${outputName}-dataset.zip`
-					);
+			const datasetUrl = await uploadZipToS3(
+				zipData,
+				`${outputName}-dataset.zip`,
+				this.s3Config
+			);
 
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
@@ -770,7 +528,7 @@ export class FalZibLoraTrainingRunner {
 						process.env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS
 					),
 					triggerWord,
-					uploadMethod: this.s3Config ? "s3" : "fal-storage",
+					uploadMethod: "s3",
 				},
 			});
 
@@ -792,6 +550,7 @@ export class FalZibLoraTrainingRunner {
 				steps: trainingSteps,
 				default_caption: captionContent,
 				learning_rate: 0.0001,
+				training_type: "content",
 			});
 
 			this.logger.info("fal-zib-lora.training-started", {
@@ -873,17 +632,63 @@ export class FalZibLoraTrainingRunner {
 				loraUrl,
 			});
 
+			if (!this.s3Config) {
+				throw new Error("S3 config is required to persist LoRA weights");
+			}
+
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debug: {
+						providerLoraUrl: loraUrl,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					phase: "publishing-lora",
+					progressPct: 92,
+					provider: "fal",
+					providerJobId: trainingSubmit.request_id,
+					providerRequestId: trainingSubmit.request_id,
+					providerStatus: "COMPLETED",
+					status: "publishing",
+					trainingElapsedMs: Date.now() - trainingStartedMs,
+					trainingRunId: parsed.trainingRunId,
+					trainingStartedAt,
+					trainingSteps,
+					triggerWord,
+				},
+			});
+
+			const persistedLora = await persistLoraWeightsToS3(
+				{
+					filename: `${sanitizeSegment(outputName)}-${parsed.trainingRunId.slice(0, 8)}.safetensors`,
+					sourceUrl: loraUrl,
+				},
+				this.s3Config
+			);
+
+			this.logger.info("fal-zib-lora.lora-persisted", {
+				personId: parsed.personId,
+				sizeBytes: persistedLora.sizeBytes,
+				url: persistedLora.url,
+			});
+
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
 					completedAt: new Date().toISOString(),
 					datasetUrl,
 					debug: {
+						genderHint,
+						loraStorageKey: persistedLora.key,
+						loraStorageSizeBytes: persistedLora.sizeBytes,
+						persistedLoraUrl: persistedLora.url,
+						providerLoraUrl: loraUrl,
 						trainingResult,
 					},
 					debugCorrelationId: parsed.debugCorrelationId,
 					lastEventAt: new Date().toISOString(),
-					loraUrl,
+					loraUrl: persistedLora.url,
 					phase: "ready",
 					progressPct: 100,
 					provider: "fal",
@@ -899,7 +704,7 @@ export class FalZibLoraTrainingRunner {
 					trainingStartedAt,
 					trainingSteps,
 					triggerWord,
-					uploadMethod: this.s3Config ? "s3" : "fal-storage",
+					uploadMethod: "s3",
 				},
 			});
 		} catch (error) {

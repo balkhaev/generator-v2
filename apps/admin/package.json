@@ -22,7 +22,6 @@
     "@generator/http": "workspace:*",
     "@generator/queue": "workspace:*",
     "@generator/workflows": "workspace:*",
-    "drizzle-orm": "^0.45.1",
     "zod": "catalog:",
     "hono": "^4.8.2"
   },

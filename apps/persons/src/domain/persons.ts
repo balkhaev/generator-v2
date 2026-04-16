@@ -280,6 +280,36 @@ export interface OperatorServerScenarioRecord {
 	prompt: string;
 }
 
+const FEMALE_HINT_PATTERN =
+	/\b(woman|girl|female|женщина|девушка|девочка|she|her)\b/i;
+const MALE_HINT_PATTERN = /\b(man|boy|male|мужчина|парень|мальчик|he|his)\b/i;
+
+function inferGenderHint(description: string): string | null {
+	if (FEMALE_HINT_PATTERN.test(description)) {
+		return "woman";
+	}
+	if (MALE_HINT_PATTERN.test(description)) {
+		return "man";
+	}
+	return null;
+}
+
+function extractLoraTrainingMeta(metadata: Record<string, unknown>) {
+	const training =
+		metadata.training &&
+		typeof metadata.training === "object" &&
+		!Array.isArray(metadata.training)
+			? (metadata.training as Record<string, unknown>)
+			: {};
+	const debug =
+		training.debug &&
+		typeof training.debug === "object" &&
+		!Array.isArray(training.debug)
+			? (training.debug as Record<string, unknown>)
+			: {};
+	return { training, debug };
+}
+
 function slugifySegment(value: string) {
 	return value
 		.toLowerCase()
@@ -859,31 +889,43 @@ export class PersonsService {
 			throw new Error("Generator integration is not configured");
 		}
 
-		const training = (
-			person.metadata.training &&
-			typeof person.metadata.training === "object" &&
-			!Array.isArray(person.metadata.training)
-				? person.metadata.training
-				: {}
-		) as Record<string, unknown>;
+		const { training, debug: trainingDebug } = extractLoraTrainingMeta(
+			person.metadata
+		);
 		const triggerWord =
 			typeof training.triggerWord === "string"
 				? training.triggerWord
 				: person.slug.replace(/-/g, "_");
+		const genderHint =
+			typeof trainingDebug.genderHint === "string"
+				? trainingDebug.genderHint
+				: inferGenderHint(person.description);
 
-		const identityDescription = person.description.trim();
 		const prompt = [
-			`a photo of ${triggerWord}`,
-			identityDescription ? identityDescription : null,
+			genderHint
+				? `a photo of ${triggerWord} ${genderHint}`
+				: `a photo of ${triggerWord}`,
 			userPrompt,
 		]
 			.filter((part): part is string => Boolean(part))
 			.join(", ");
+		let resolvedExtraLoraUrl = options?.extraLoraUrl;
+		if (resolvedExtraLoraUrl && this.adminTrainingClient) {
+			try {
+				resolvedExtraLoraUrl =
+					await this.adminTrainingClient.cacheExternalLora(
+						resolvedExtraLoraUrl
+					);
+			} catch {
+				// fall through with original URL if caching fails
+			}
+		}
+
 		const workflowKey = env.PERSONS_DEFAULT_LORA_WORKFLOW;
 		const isImageToImageWorkflow = workflowKey.includes("image-to-image");
 		const loraParams = {
 			enableSafetyChecker: false,
-			extraLoraUrl: options?.extraLoraUrl,
+			extraLoraUrl: resolvedExtraLoraUrl,
 			extraLoraWeight: options?.extraLoraWeight ?? 0.05,
 			imageSize: "portrait_4_3",
 			loraUrl: person.loraUrl,

@@ -13,7 +13,6 @@ import {
 	type ExecutionRepository,
 	ExecutionService,
 } from "@/domain/executions";
-import { createCerebriumClient } from "@/providers/cerebrium";
 import { createFalClient } from "@/providers/fal";
 import type { InferenceClient } from "@/providers/inference";
 import { createInferenceRouter } from "@/providers/inference-router";
@@ -59,24 +58,13 @@ export function createApp(options: AppOptions) {
 	const internalToken = process.env.GENERATOR_INTERNAL_TOKEN?.trim();
 	const storageAdapter = options.storageAdapter ?? createStorageAdapter();
 	const falKey = process.env.FAL_KEY;
-	const cerebriumApiKey = process.env.CEREBRIUM_API_KEY;
-	const cerebriumProjectId = process.env.CEREBRIUM_PROJECT_ID;
 
 	const falClient = falKey ? createFalClient({ apiKey: falKey }) : undefined;
-	const cerebriumClientInstance =
-		cerebriumApiKey && cerebriumProjectId
-			? createCerebriumClient({
-					apiKey: cerebriumApiKey,
-					projectId: cerebriumProjectId,
-					region: process.env.CEREBRIUM_REGION,
-				})
-			: undefined;
 
 	const inferenceClient =
 		options.inferenceClient ??
-		(falClient || cerebriumClientInstance
+		(falClient
 			? createInferenceRouter({
-					cerebrium: cerebriumClientInstance,
 					fal: falClient,
 				})
 			: createStubInferenceClient());

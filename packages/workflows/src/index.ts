@@ -103,6 +103,23 @@ const falZimageTurboLoraParamsSchema = z.object({
 	extraLoraWeight: z.number().min(0).max(2).default(0.05),
 });
 
+const falZimageTurboImageToImageLoraParamsSchema =
+	falZimageTurboLoraParamsSchema.extend({
+		imageSize: z
+			.enum([
+				"square_hd",
+				"square",
+				"landscape_4_3",
+				"landscape_16_9",
+				"portrait_4_3",
+				"portrait_16_9",
+				"auto",
+			])
+			.default("portrait_4_3"),
+		numInferenceSteps: z.number().int().min(1).max(8).default(8),
+		strength: z.number().min(0).max(1).default(0.95),
+	});
+
 const falFluxLoraParamsSchema = z.object({
 	imageSize: z
 		.enum([
@@ -121,65 +138,6 @@ const falFluxLoraParamsSchema = z.object({
 	loraUrl: z.string().url(),
 	loraScale: z.number().min(0).max(2).default(1),
 	enableSafetyChecker: z.boolean().default(true),
-});
-
-const cerebriumZimageTurboParamsSchema = z.object({
-	width: z.number().int().min(512).max(2048).default(1024),
-	height: z.number().int().min(512).max(2048).default(1024),
-	numInferenceSteps: z.number().int().min(1).max(20).default(9),
-	guidanceScale: z.number().min(0).max(20).default(0.0),
-	numImages: z.number().int().min(1).max(4).default(1),
-	seed: z.number().int().nonnegative().optional(),
-	outputFormat: z.enum(["png", "jpeg", "webp"]).default("jpeg"),
-});
-
-const cerebriumZimageTurboLoraParamsSchema = z.object({
-	width: z.number().int().min(512).max(2048).default(1024),
-	height: z.number().int().min(512).max(2048).default(1024),
-	numInferenceSteps: z.number().int().min(1).max(50).default(28),
-	guidanceScale: z.number().min(0).max(20).default(4.5),
-	numImages: z.number().int().min(1).max(4).default(1),
-	seed: z.number().int().nonnegative().optional(),
-	loraUrl: z.string().url(),
-	loraScale: z.number().min(0).max(2).default(0.8),
-	triggerWord: z.string().trim().min(1).optional(),
-	outputFormat: z.enum(["png", "jpeg", "webp"]).default("jpeg"),
-});
-
-const cerebriumFlux2DevParamsSchema = z.object({
-	width: z.number().int().min(512).max(2048).default(1024),
-	height: z.number().int().min(512).max(2048).default(1024),
-	numInferenceSteps: z.number().int().min(1).max(50).default(28),
-	guidanceScale: z.number().min(1).max(20).default(3.5),
-	numImages: z.number().int().min(1).max(4).default(1),
-	seed: z.number().int().nonnegative().optional(),
-	outputFormat: z.enum(["png", "jpeg", "webp"]).default("jpeg"),
-});
-
-const ZIB_DPO_AGILE_MODEL_ID =
-	"GuangyuanSD/Z-Image-Distilled:RedZFUN-v6-ZIB-Distilled-AGILE-8steps-BF16-ComfyUI.safetensors";
-
-const cerebriumZibDpoParamsSchema = z.object({
-	width: z.number().int().min(512).max(2048).default(1024),
-	height: z.number().int().min(512).max(2048).default(1024),
-	numInferenceSteps: z.number().int().min(1).max(20).default(8),
-	guidanceScale: z.number().min(0).max(20).default(1.0),
-	numImages: z.number().int().min(1).max(4).default(1),
-	seed: z.number().int().nonnegative().optional(),
-	outputFormat: z.enum(["png", "jpeg", "webp"]).default("jpeg"),
-});
-
-const cerebriumZibDpoLoraParamsSchema = z.object({
-	width: z.number().int().min(512).max(2048).default(1024),
-	height: z.number().int().min(512).max(2048).default(1024),
-	numInferenceSteps: z.number().int().min(1).max(20).default(8),
-	guidanceScale: z.number().min(0).max(20).default(1.0),
-	numImages: z.number().int().min(1).max(4).default(1),
-	seed: z.number().int().nonnegative().optional(),
-	loraUrl: z.string().url(),
-	loraScale: z.number().min(0).max(2).default(0.8),
-	triggerWord: z.string().trim().min(1).optional(),
-	outputFormat: z.enum(["png", "jpeg", "webp"]).default("jpeg"),
 });
 
 const artifactDataUrlPattern = /^data:(image|video)\/[a-z0-9.+-]+;base64,/i;
@@ -480,6 +438,89 @@ export const workflowRegistry = {
 		},
 		extractArtifactUrls: collectFalImageUrls,
 	},
+	"fal-zimage-turbo-image-to-image-lora": {
+		key: "fal-zimage-turbo-image-to-image-lora",
+		name: "Z-Image Turbo Image-to-Image + LoRA",
+		description:
+			"Z-Image Turbo image-to-image generation with custom LoRA weights on fal.ai.",
+		requiresInputImage: true,
+		parameterSchema: falZimageTurboImageToImageLoraParamsSchema,
+		parameterFields: [
+			{
+				description: "Output image size preset.",
+				key: "imageSize",
+				label: "Image size",
+				type: "text",
+			},
+			{
+				description: "Image-to-image conditioning strength.",
+				key: "strength",
+				label: "Strength",
+				type: "number",
+			},
+			{
+				description: "Number of denoising steps.",
+				key: "numInferenceSteps",
+				label: "Steps",
+				type: "number",
+			},
+			{
+				description: "LoRA weights URL.",
+				key: "loraUrl",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "LoRA strength.",
+				key: "loraWeight",
+				label: "LoRA weight",
+				type: "number",
+			},
+			{
+				description: "Optional additional LoRA weights URL.",
+				key: "extraLoraUrl",
+				label: "Extra LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Optional additional LoRA strength.",
+				key: "extraLoraWeight",
+				label: "Extra LoRA weight",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = falZimageTurboImageToImageLoraParamsSchema.parse(params);
+			const loras = [
+				{
+					path: parsed.loraUrl,
+					weight: parsed.loraWeight,
+				},
+				...(parsed.extraLoraUrl
+					? [
+							{
+								path: parsed.extraLoraUrl,
+								weight: parsed.extraLoraWeight,
+							},
+						]
+					: []),
+			];
+			return {
+				__falModel: "fal-ai/z-image/turbo/image-to-image/lora",
+				prompt,
+				image_url: inputImageUrl,
+				strength: parsed.strength,
+				image_size: parsed.imageSize,
+				num_inference_steps: parsed.numInferenceSteps,
+				num_images: parsed.numImages,
+				enable_safety_checker: parsed.enableSafetyChecker,
+				output_format: parsed.outputFormat,
+				loras,
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectFalImageUrls,
+	},
 	"fal-flux2-dev-edit": {
 		key: "fal-flux2-dev-edit",
 		name: "Flux 2 Dev Edit",
@@ -599,353 +640,6 @@ export const workflowRegistry = {
 				num_images: parsed.numImages,
 				loras: [{ path: parsed.loraUrl, scale: parsed.loraScale }],
 				enable_safety_checker: parsed.enableSafetyChecker,
-				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
-			};
-		},
-		extractArtifactUrls: collectFalImageUrls,
-	},
-	"cerebrium-zimage-turbo": {
-		key: "cerebrium-zimage-turbo",
-		name: "Z-Image Turbo (Cerebrium)",
-		description:
-			"Fast text-to-image via Z-Image Turbo (Tongyi-MAI) on Cerebrium serverless GPU. 9-step inference.",
-		requiresInputImage: false,
-		parameterSchema: cerebriumZimageTurboParamsSchema,
-		parameterFields: [
-			{
-				description: "Output image width in pixels.",
-				key: "width",
-				label: "Width",
-				type: "number",
-			},
-			{
-				description: "Output image height in pixels.",
-				key: "height",
-				label: "Height",
-				type: "number",
-			},
-			{
-				description: "Number of denoising steps (recommended 9 for Turbo).",
-				key: "numInferenceSteps",
-				label: "Steps",
-				type: "number",
-			},
-			{
-				description: "Guidance scale (0.0 for Turbo distilled model).",
-				key: "guidanceScale",
-				label: "Guidance scale",
-				type: "number",
-			},
-			{
-				description: "Number of images to generate per request.",
-				key: "numImages",
-				label: "Number of images",
-				type: "number",
-			},
-			{
-				description: "Optional deterministic seed for repeatable outputs.",
-				key: "seed",
-				label: "Seed",
-				type: "number",
-			},
-		],
-		buildProviderInput: ({ params, prompt }) => {
-			const parsed = cerebriumZimageTurboParamsSchema.parse(params);
-			return {
-				__cerebriumApp: "flux-inference",
-				__cerebriumFunction: "generate",
-				model_id: "Tongyi-MAI/Z-Image-Turbo",
-				prompt,
-				width: parsed.width,
-				height: parsed.height,
-				num_inference_steps: parsed.numInferenceSteps,
-				guidance_scale: parsed.guidanceScale,
-				num_images: parsed.numImages,
-				output_format: parsed.outputFormat,
-				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
-			};
-		},
-		extractArtifactUrls: collectFalImageUrls,
-	},
-	"cerebrium-zimage-turbo-lora": {
-		key: "cerebrium-zimage-turbo-lora",
-		name: "Z-Image Turbo + LoRA (Cerebrium)",
-		description:
-			"Z-Image Turbo text-to-image with custom LoRA weights on Cerebrium.",
-		requiresInputImage: false,
-		parameterSchema: cerebriumZimageTurboLoraParamsSchema,
-		parameterFields: [
-			{
-				description: "Output image width in pixels.",
-				key: "width",
-				label: "Width",
-				type: "number",
-			},
-			{
-				description: "Output image height in pixels.",
-				key: "height",
-				label: "Height",
-				type: "number",
-			},
-			{
-				description: "Number of denoising steps.",
-				key: "numInferenceSteps",
-				label: "Steps",
-				type: "number",
-			},
-			{
-				description: "Guidance scale.",
-				key: "guidanceScale",
-				label: "Guidance scale",
-				type: "number",
-			},
-			{
-				description:
-					"Public URL pointing to the trained LoRA weights (.safetensors).",
-				key: "loraUrl",
-				label: "LoRA URL",
-				type: "text",
-			},
-			{
-				description: "Strength of the LoRA effect (0.5-1.2 recommended).",
-				key: "loraScale",
-				label: "LoRA scale",
-				type: "number",
-			},
-			{
-				description: "Trigger word used during LoRA training.",
-				key: "triggerWord",
-				label: "Trigger word",
-				type: "text",
-			},
-			{
-				description: "Optional deterministic seed for repeatable outputs.",
-				key: "seed",
-				label: "Seed",
-				type: "number",
-			},
-		],
-		buildProviderInput: ({ params, prompt }) => {
-			const parsed = cerebriumZimageTurboLoraParamsSchema.parse(params);
-			return {
-				__cerebriumApp: "flux-inference",
-				__cerebriumFunction: "generate",
-				model_id: "Tongyi-MAI/Z-Image-Turbo",
-				prompt,
-				width: parsed.width,
-				height: parsed.height,
-				num_inference_steps: parsed.numInferenceSteps,
-				guidance_scale: parsed.guidanceScale,
-				num_images: parsed.numImages,
-				lora_url: parsed.loraUrl,
-				lora_scale: parsed.loraScale,
-				output_format: parsed.outputFormat,
-				...(parsed.triggerWord ? { trigger_word: parsed.triggerWord } : {}),
-				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
-			};
-		},
-		extractArtifactUrls: collectFalImageUrls,
-	},
-	"cerebrium-flux2-dev": {
-		key: "cerebrium-flux2-dev",
-		name: "FLUX.2 Dev (Cerebrium)",
-		description:
-			"High-quality text-to-image via FLUX.2-dev (Black Forest Labs) on Cerebrium serverless GPU.",
-		requiresInputImage: false,
-		parameterSchema: cerebriumFlux2DevParamsSchema,
-		parameterFields: [
-			{
-				description: "Output image width in pixels.",
-				key: "width",
-				label: "Width",
-				type: "number",
-			},
-			{
-				description: "Output image height in pixels.",
-				key: "height",
-				label: "Height",
-				type: "number",
-			},
-			{
-				description: "Number of denoising steps.",
-				key: "numInferenceSteps",
-				label: "Steps",
-				type: "number",
-			},
-			{
-				description: "Classifier-free guidance scale.",
-				key: "guidanceScale",
-				label: "Guidance scale",
-				type: "number",
-			},
-			{
-				description: "Number of images to generate per request.",
-				key: "numImages",
-				label: "Number of images",
-				type: "number",
-			},
-			{
-				description: "Optional deterministic seed for repeatable outputs.",
-				key: "seed",
-				label: "Seed",
-				type: "number",
-			},
-		],
-		buildProviderInput: ({ params, prompt }) => {
-			const parsed = cerebriumFlux2DevParamsSchema.parse(params);
-			return {
-				__cerebriumApp: "flux-inference",
-				__cerebriumFunction: "generate",
-				model_id: "black-forest-labs/FLUX.2-dev",
-				prompt,
-				width: parsed.width,
-				height: parsed.height,
-				num_inference_steps: parsed.numInferenceSteps,
-				guidance_scale: parsed.guidanceScale,
-				num_images: parsed.numImages,
-				output_format: parsed.outputFormat,
-				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
-			};
-		},
-		extractArtifactUrls: collectFalImageUrls,
-	},
-	"cerebrium-zib-dpo": {
-		key: "cerebrium-zib-dpo",
-		name: "ZIB-DPO AGILE (Cerebrium)",
-		description:
-			"Text-to-image via ZIB-DPO AGILE distilled checkpoint on Cerebrium. 8-step inference, cfg 1.0.",
-		requiresInputImage: false,
-		parameterSchema: cerebriumZibDpoParamsSchema,
-		parameterFields: [
-			{
-				description: "Output image width in pixels.",
-				key: "width",
-				label: "Width",
-				type: "number",
-			},
-			{
-				description: "Output image height in pixels.",
-				key: "height",
-				label: "Height",
-				type: "number",
-			},
-			{
-				description: "Number of denoising steps (8 recommended for AGILE).",
-				key: "numInferenceSteps",
-				label: "Steps",
-				type: "number",
-			},
-			{
-				description: "Guidance scale (1.0 recommended for distilled models).",
-				key: "guidanceScale",
-				label: "Guidance scale",
-				type: "number",
-			},
-			{
-				description: "Number of images to generate per request.",
-				key: "numImages",
-				label: "Number of images",
-				type: "number",
-			},
-			{
-				description: "Optional deterministic seed for repeatable outputs.",
-				key: "seed",
-				label: "Seed",
-				type: "number",
-			},
-		],
-		buildProviderInput: ({ params, prompt }) => {
-			const parsed = cerebriumZibDpoParamsSchema.parse(params);
-			return {
-				__cerebriumApp: "flux-inference",
-				__cerebriumFunction: "generate",
-				model_id: ZIB_DPO_AGILE_MODEL_ID,
-				prompt,
-				width: parsed.width,
-				height: parsed.height,
-				num_inference_steps: parsed.numInferenceSteps,
-				guidance_scale: parsed.guidanceScale,
-				num_images: parsed.numImages,
-				output_format: parsed.outputFormat,
-				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
-			};
-		},
-		extractArtifactUrls: collectFalImageUrls,
-	},
-	"cerebrium-zib-dpo-lora": {
-		key: "cerebrium-zib-dpo-lora",
-		name: "ZIB-DPO AGILE + LoRA (Cerebrium)",
-		description:
-			"ZIB-DPO AGILE distilled checkpoint with custom LoRA weights on Cerebrium.",
-		requiresInputImage: false,
-		parameterSchema: cerebriumZibDpoLoraParamsSchema,
-		parameterFields: [
-			{
-				description: "Output image width in pixels.",
-				key: "width",
-				label: "Width",
-				type: "number",
-			},
-			{
-				description: "Output image height in pixels.",
-				key: "height",
-				label: "Height",
-				type: "number",
-			},
-			{
-				description: "Number of denoising steps.",
-				key: "numInferenceSteps",
-				label: "Steps",
-				type: "number",
-			},
-			{
-				description: "Guidance scale.",
-				key: "guidanceScale",
-				label: "Guidance scale",
-				type: "number",
-			},
-			{
-				description:
-					"Public URL pointing to the trained LoRA weights (.safetensors).",
-				key: "loraUrl",
-				label: "LoRA URL",
-				type: "text",
-			},
-			{
-				description: "Strength of the LoRA effect (0.6-1.0 recommended).",
-				key: "loraScale",
-				label: "LoRA scale",
-				type: "number",
-			},
-			{
-				description: "Trigger word used during LoRA training.",
-				key: "triggerWord",
-				label: "Trigger word",
-				type: "text",
-			},
-			{
-				description: "Optional deterministic seed for repeatable outputs.",
-				key: "seed",
-				label: "Seed",
-				type: "number",
-			},
-		],
-		buildProviderInput: ({ params, prompt }) => {
-			const parsed = cerebriumZibDpoLoraParamsSchema.parse(params);
-			return {
-				__cerebriumApp: "flux-inference",
-				__cerebriumFunction: "generate",
-				model_id: ZIB_DPO_AGILE_MODEL_ID,
-				prompt,
-				width: parsed.width,
-				height: parsed.height,
-				num_inference_steps: parsed.numInferenceSteps,
-				guidance_scale: parsed.guidanceScale,
-				num_images: parsed.numImages,
-				lora_url: parsed.loraUrl,
-				lora_scale: parsed.loraScale,
-				output_format: parsed.outputFormat,
-				...(parsed.triggerWord ? { trigger_word: parsed.triggerWord } : {}),
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},

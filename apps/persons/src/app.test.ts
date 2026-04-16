@@ -242,6 +242,9 @@ function createAdminTrainingClient(): AdminTrainingClient {
 				jobId: "training-job-1",
 			});
 		},
+		cacheExternalLora(sourceUrl: string) {
+			return Promise.resolve(sourceUrl);
+		},
 	};
 }
 

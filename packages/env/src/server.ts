@@ -50,9 +50,6 @@ const serverSchema = {
 	S3_ACCESS_KEY_ID: z.string().min(1).optional(),
 	S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
 	FAL_KEY: z.string().min(1).optional(),
-	CEREBRIUM_API_KEY: z.string().min(1).optional(),
-	CEREBRIUM_PROJECT_ID: z.string().min(1).optional(),
-	CEREBRIUM_REGION: z.string().min(1).optional(),
 };
 
 function createServerEnv(

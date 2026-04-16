@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { getWorkflowDefinition, listWorkflows } from "@generator/workflows";
 
-const workflowKeyProviderPrefixPattern = /^(fal-|cerebrium-)/;
+const workflowKeyProviderPrefixPattern = /^fal-/;
 
 describe("workflow registry", () => {
-	it("lists only fal- or cerebrium-prefixed workflows", () => {
+	it("lists only fal-prefixed workflows", () => {
 		const workflows = listWorkflows();
 		expect(workflows.length).toBeGreaterThan(0);
 		for (const workflow of workflows) {
@@ -88,6 +88,40 @@ describe("workflow registry", () => {
 				{
 					path: "https://storage.example.com/zit-mystic.safetensors",
 					weight: 0.35,
+				},
+			],
+		});
+	});
+
+	it("builds the fal-zimage-turbo image-to-image lora payload", () => {
+		const workflow = getWorkflowDefinition(
+			"fal-zimage-turbo-image-to-image-lora"
+		);
+
+		expect(
+			workflow?.buildProviderInput({
+				inputImageUrl: "https://storage.example.com/reference.png",
+				params: {
+					extraLoraUrl: "https://storage.example.com/zit-mystic.safetensors",
+					extraLoraWeight: 0.05,
+					loraUrl: "https://storage.example.com/my-lora.safetensors",
+					loraWeight: 1,
+					strength: 0.95,
+				},
+				prompt: "a photo of my_character, jumping in a window",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/z-image/turbo/image-to-image/lora",
+			image_url: "https://storage.example.com/reference.png",
+			strength: 0.95,
+			loras: [
+				{
+					path: "https://storage.example.com/my-lora.safetensors",
+					weight: 1,
+				},
+				{
+					path: "https://storage.example.com/zit-mystic.safetensors",
+					weight: 0.05,
 				},
 			],
 		});

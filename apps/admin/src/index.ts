@@ -8,6 +8,7 @@ import {
 	getGeneratorApiUrl,
 	getRequiredCorsOrigins,
 	getStudioApiUrl,
+	normalizeS3RuntimeEnv,
 } from "@generator/env/server";
 import { createApp } from "@/app";
 import { getAdminDashboardSnapshot } from "@/dashboard";
@@ -50,6 +51,26 @@ const assetReleasePresetService = new AssetReleasePresetService(
 	assetReleaseService
 );
 
+const trailingSlashesPattern = /\/+$/u;
+const s3Env = normalizeS3RuntimeEnv(process.env);
+const s3Bucket = s3Env.S3_BUCKET?.trim();
+const s3Endpoint = s3Env.S3_ENDPOINT;
+const s3AccessKey = s3Env.S3_ACCESS_KEY_ID?.trim();
+const s3SecretKey = s3Env.S3_SECRET_ACCESS_KEY?.trim();
+const s3Config =
+	s3Bucket && s3Endpoint && s3AccessKey && s3SecretKey
+		? {
+				bucket: s3Bucket,
+				endpoint: s3Endpoint,
+				accessKey: s3AccessKey,
+				secretKey: s3SecretKey,
+				region: s3Env.S3_REGION?.trim() ?? "us-east-1",
+				publicUrl:
+					s3Env.S3_PUBLIC_URL?.trim() ??
+					`${s3Endpoint.replace(trailingSlashesPattern, "")}/${s3Bucket}`,
+			}
+		: undefined;
+
 const app = createApp({
 	assetReleasePresetService,
 	assetReleaseService,
@@ -64,6 +85,7 @@ const app = createApp({
 		setupRequired: await isInitialAdminSetupRequired(),
 	}),
 	loggerImpl: console,
+	s3Config,
 	studioBaseUrl,
 });
 

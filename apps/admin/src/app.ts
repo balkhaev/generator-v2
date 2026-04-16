@@ -21,6 +21,7 @@ import { logger } from "hono/logger";
 import type { AssetReleasePresetService } from "@/domain/asset-release-presets";
 import type { AssetReleaseService } from "@/domain/asset-releases";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
+import type { S3Config } from "@/providers/lora-training-assets";
 import { createAssetReleasePresetRoutes } from "@/routes/asset-release-presets";
 import { createAssetReleaseRoutes } from "@/routes/asset-releases";
 import { createInternalRoutes } from "@/routes/internal";
@@ -48,6 +49,7 @@ interface AppOptions {
 	loadDashboardSnapshot: () => Promise<AdminDashboardSnapshot>;
 	loadSetupStatus: () => Promise<AdminSetupStatus>;
 	loggerImpl?: Pick<Console, "info" | "error">;
+	s3Config?: S3Config;
 	studioBaseUrl: string;
 }
 
@@ -180,7 +182,10 @@ export function createApp(options: AppOptions) {
 	if (options.internalTrainingControlService) {
 		app.route(
 			"/api/internal",
-			createInternalRoutes(options.internalTrainingControlService)
+			createInternalRoutes(
+				options.internalTrainingControlService,
+				options.s3Config
+			)
 		);
 	}
 

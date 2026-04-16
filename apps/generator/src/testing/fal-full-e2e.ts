@@ -38,6 +38,22 @@ interface FalSubmitResult {
 	status_url?: string;
 }
 
+function parseFalSubmitResult(body: Record<string, unknown>): FalSubmitResult {
+	if (typeof body.request_id !== "string" || body.request_id.length === 0) {
+		throw new Error(
+			`fal submit response is missing request_id: ${JSON.stringify(body)}`
+		);
+	}
+
+	return {
+		request_id: body.request_id,
+		response_url:
+			typeof body.response_url === "string" ? body.response_url : undefined,
+		status_url:
+			typeof body.status_url === "string" ? body.status_url : undefined,
+	};
+}
+
 async function falSubmit(
 	apiKey: string,
 	model: string,
@@ -57,7 +73,7 @@ async function falSubmit(
 			`fal submit ${model} failed (${response.status}): ${JSON.stringify(body)}`
 		);
 	}
-	return body as FalSubmitResult;
+	return parseFalSubmitResult(body);
 }
 
 async function falPollUntilDone(
@@ -161,9 +177,9 @@ async function createTrainingZip(imageUrls: string[]): Promise<string> {
 		compressedSize: number;
 	}> = [];
 
-	for (let i = 0; i < imageUrls.length; i++) {
+	for (const [i, imageUrl] of imageUrls.entries()) {
 		log("ZIP", `Downloading image ${i + 1}/${imageUrls.length}...`);
-		const imgResponse = await fetch(imageUrls[i]);
+		const imgResponse = await fetch(imageUrl);
 		const imgData = new Uint8Array(await imgResponse.arrayBuffer());
 
 		const fileName = encoder.encode(`image_${i}.png`);

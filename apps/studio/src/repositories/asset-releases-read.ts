@@ -1,10 +1,10 @@
 import { db } from "@generator/db";
+import { desc, eq } from "@generator/db/operators";
 import {
 	assetRelease,
 	assetReleaseItem,
 	volumeDistributionJob,
 } from "@generator/db/schema/assets";
-import { desc, eq } from "drizzle-orm";
 
 import type {
 	AssetReleaseDetailsRecord,

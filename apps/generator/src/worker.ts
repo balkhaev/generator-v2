@@ -1,5 +1,4 @@
 import { ExecutionService } from "@/domain/executions";
-import { createCerebriumClient } from "@/providers/cerebrium";
 import { createFalClient } from "@/providers/fal";
 import { createInferenceRouter } from "@/providers/inference-router";
 import { createStorageAdapter } from "@/providers/storage";
@@ -11,25 +10,13 @@ import { createDrizzleExecutionRepository } from "@/repositories/executions";
 
 const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 const falKey = process.env.FAL_KEY;
-const cerebriumApiKey = process.env.CEREBRIUM_API_KEY;
-const cerebriumProjectId = process.env.CEREBRIUM_PROJECT_ID;
 
-if (!(falKey || cerebriumApiKey)) {
-	throw new Error(
-		"At least one of FAL_KEY or CEREBRIUM_API_KEY is required for the generator worker"
-	);
+if (!falKey) {
+	throw new Error("FAL_KEY is required for the generator worker");
 }
 
 const inferenceClient = createInferenceRouter({
-	cerebrium:
-		cerebriumApiKey && cerebriumProjectId
-			? createCerebriumClient({
-					apiKey: cerebriumApiKey,
-					projectId: cerebriumProjectId,
-					region: process.env.CEREBRIUM_REGION,
-				})
-			: undefined,
-	fal: falKey ? createFalClient({ apiKey: falKey }) : undefined,
+	fal: createFalClient({ apiKey: falKey }),
 });
 
 const service = new ExecutionService(

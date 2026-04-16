@@ -142,6 +142,7 @@ const personLoraTrainingEventSchema = z.object({
 	loraUrl: optionalUrlSchema,
 	referenceImageUrls: z.array(z.url()).optional(),
 	status: personLoraTrainingStatusSchema,
+	trainingRunId: optionalStringSchema,
 	triggerWord: optionalStringSchema,
 });
 
@@ -601,6 +602,7 @@ export class PersonsService {
 			person.slug.replace(/-/g, "_").slice(0, 48) ||
 			person.id.replace(/-/g, "_");
 		const triggerWord = parsed.triggerWord ?? fallbackTriggerWord;
+		const trainingRunId = crypto.randomUUID();
 		const outputName =
 			parsed.outputName ??
 			`${person.slug}-sdxl-lora-${new Date().toISOString().slice(0, 10)}`;
@@ -619,6 +621,7 @@ export class PersonsService {
 			referencePrompt: parsed.referencePrompt ?? null,
 			requestedAt: new Date().toISOString(),
 			status: "queued",
+			trainingRunId,
 			triggerWord,
 		};
 
@@ -638,6 +641,7 @@ export class PersonsService {
 				personSlug: person.slug,
 				referencePhotoUrl: person.referencePhotoUrl,
 				referencePrompt: parsed.referencePrompt ?? undefined,
+				trainingRunId,
 				triggerWord,
 			},
 			{
@@ -696,7 +700,7 @@ export class PersonsService {
 				}
 			: {
 					extraLoraUrl: options?.extraLoraUrl,
-					extraLoraWeight: options?.extraLoraWeight ?? 0.35,
+					extraLoraWeight: options?.extraLoraWeight ?? 0.05,
 					loraUrl: person.loraUrl,
 					loraWeight: 1.0,
 					imageSize: "portrait_4_3",
@@ -742,7 +746,7 @@ export class PersonsService {
 				...(options?.extraLoraUrl
 					? {
 							extraLoraUrl: options.extraLoraUrl,
-							extraLoraWeight: options.extraLoraWeight ?? 0.35,
+							extraLoraWeight: options.extraLoraWeight ?? 0.05,
 						}
 					: {}),
 				generatorExecutionId: execution.id,
@@ -810,6 +814,21 @@ export class PersonsService {
 				? person.metadata.training
 				: {}
 		) as Record<string, unknown>;
+		const currentTrainingRunId =
+			typeof currentTraining.trainingRunId === "string"
+				? currentTraining.trainingRunId
+				: null;
+		const callbackTrainingRunId =
+			typeof parsedEvent.trainingRunId === "string"
+				? parsedEvent.trainingRunId
+				: null;
+		if (
+			currentTrainingRunId &&
+			(callbackTrainingRunId === null ||
+				callbackTrainingRunId !== currentTrainingRunId)
+		) {
+			return person;
+		}
 		const nextTrainingMetadata = {
 			...currentTraining,
 			assetReleaseId:
@@ -834,6 +853,7 @@ export class PersonsService {
 					? currentTraining.referenceImageUrls
 					: []),
 			status: parsedEvent.status,
+			trainingRunId: currentTrainingRunId,
 			triggerWord:
 				parsedEvent.triggerWord ??
 				(typeof currentTraining.triggerWord === "string"

@@ -12,6 +12,7 @@ export interface PersonLoraTrainingJobData {
 	personSlug: string;
 	referencePhotoUrl: string;
 	referencePrompt?: string;
+	trainingRunId: string;
 	triggerWord?: string;
 }
 

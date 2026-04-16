@@ -110,7 +110,7 @@ export async function generateWithLora(
 				...(options?.extraLoraUrl
 					? {
 							extraLoraUrl: options.extraLoraUrl,
-							extraLoraWeight: options.extraLoraWeight ?? 0.35,
+							extraLoraWeight: options.extraLoraWeight ?? 0.05,
 						}
 					: {}),
 			}),

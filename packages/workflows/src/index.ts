@@ -100,7 +100,7 @@ const falZimageTurboLoraParamsSchema = z.object({
 	loraUrl: z.string().url(),
 	loraWeight: z.number().min(0).max(2).default(0.8),
 	extraLoraUrl: z.string().url().optional(),
-	extraLoraWeight: z.number().min(0).max(2).default(0.8),
+	extraLoraWeight: z.number().min(0).max(2).default(0.05),
 });
 
 const falFluxLoraParamsSchema = z.object({

@@ -560,7 +560,7 @@ function LoraActions({
 }) {
 	const [loraPrompt, setLoraPrompt] = useState("");
 	const [extraLoraUrl, setExtraLoraUrl] = useState("");
-	const [extraLoraWeight, setExtraLoraWeight] = useState("0.35");
+	const [extraLoraWeight, setExtraLoraWeight] = useState("0.05");
 	const training = getTrainingMeta(person);
 	const hasLora = Boolean(person.loraUrl);
 	const effectiveStatus =
@@ -658,7 +658,7 @@ function LoraActions({
 						<Input
 							id="extraLoraWeight"
 							onChange={(event) => setExtraLoraWeight(event.target.value)}
-							placeholder="0.35"
+							placeholder="0.05"
 							value={extraLoraWeight}
 						/>
 					</div>
@@ -670,7 +670,7 @@ function LoraActions({
 								extraLoraUrl: extraLoraUrl.trim() || undefined,
 								extraLoraWeight: Number.isFinite(parsedExtraLoraWeight)
 									? parsedExtraLoraWeight
-									: 0.35,
+									: 0.05,
 							});
 							setLoraPrompt("");
 						}}

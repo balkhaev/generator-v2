@@ -43,6 +43,7 @@ export const startCerebriumLoraTrainingSchema = z.object({
 	personSlug: z.string().trim().min(1),
 	referencePhotoUrl: z.url(),
 	referencePrompt: z.string().trim().min(1).optional(),
+	trainingRunId: z.string().trim().min(1),
 	triggerWord: z.string().trim().min(1).optional(),
 });
 
@@ -550,6 +551,7 @@ export class CerebriumLoraTrainingRunner {
 			loraUrl?: string | null;
 			referenceImageUrls?: string[];
 			status: TrainingEventStatus;
+			trainingRunId?: string | null;
 			triggerWord?: string | null;
 		};
 	}) {
@@ -619,7 +621,11 @@ export class CerebriumLoraTrainingRunner {
 
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
-				event: { status: "generating", triggerWord },
+				event: {
+					status: "generating",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+				},
 			});
 
 			const sourceImageDataUrl = await toDataUrl(parsed.referencePhotoUrl);
@@ -715,6 +721,7 @@ export class CerebriumLoraTrainingRunner {
 					datasetUrl,
 					referenceImageUrls: [parsed.referencePhotoUrl, ...referenceImageUrls],
 					status: "training",
+					trainingRunId: parsed.trainingRunId,
 					triggerWord,
 				},
 			});
@@ -802,6 +809,7 @@ export class CerebriumLoraTrainingRunner {
 					loraUrl,
 					referenceImageUrls: [parsed.referencePhotoUrl, ...referenceImageUrls],
 					status: "ready",
+					trainingRunId: parsed.trainingRunId,
 					triggerWord,
 				},
 			});
@@ -816,7 +824,12 @@ export class CerebriumLoraTrainingRunner {
 			});
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
-				event: { errorSummary, status: "failed", triggerWord },
+				event: {
+					errorSummary,
+					status: "failed",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+				},
 			});
 			throw error;
 		}

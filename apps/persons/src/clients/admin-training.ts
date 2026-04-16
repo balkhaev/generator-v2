@@ -12,6 +12,7 @@ export interface StartPersonLoraTrainingInput {
 	personSlug: string;
 	referencePhotoUrl: string;
 	referencePrompt?: string;
+	trainingRunId: string;
 	triggerWord?: string;
 }
 

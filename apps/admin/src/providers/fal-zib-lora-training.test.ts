@@ -125,6 +125,7 @@ describe("FalZibLoraTrainingRunner", () => {
 				personName: "Person One",
 				personSlug: "person-one",
 				referencePhotoUrl: "https://cdn.example.com/reference.jpg",
+				trainingRunId: "training-run-1",
 			})
 		).rejects.toThrow();
 

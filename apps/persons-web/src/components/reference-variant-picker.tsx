@@ -35,6 +35,8 @@ const SKELETON_KEYS = [
 	"variant-skeleton-4",
 ] as const;
 
+type ExecutionMap = Record<string, GeneratorExecutionRecord>;
+
 function readDraft(): PersonReferenceDraft | null {
 	if (typeof window === "undefined") {
 		return null;
@@ -48,7 +50,9 @@ function readDraft(): PersonReferenceDraft | null {
 		if (
 			!(
 				parsed &&
-				typeof parsed.executionId === "string" &&
+				Array.isArray(parsed.executionIds) &&
+				parsed.executionIds.every((id) => typeof id === "string") &&
+				parsed.executionIds.length > 0 &&
 				typeof parsed.prompt === "string" &&
 				parsed.form &&
 				typeof parsed.form.name === "string"
@@ -100,7 +104,7 @@ function getExecutionProgressPct(execution: GeneratorExecutionRecord | null) {
 }
 
 function extractArtifactUrls(
-	execution: GeneratorExecutionRecord | null
+	execution: GeneratorExecutionRecord | null | undefined
 ): string[] {
 	if (!execution) {
 		return [];
@@ -117,18 +121,301 @@ function extractArtifactUrls(
 	return urls;
 }
 
+interface VariantItem {
+	executionId: string;
+	prompt?: string;
+	url: string;
+}
+
+function buildVariants(
+	executionIds: string[],
+	executions: ExecutionMap,
+	prompts: string[]
+): VariantItem[] {
+	const items: VariantItem[] = [];
+	const seen = new Set<string>();
+	executionIds.forEach((executionId, index) => {
+		const execution = executions[executionId];
+		const urls = extractArtifactUrls(execution);
+		for (const url of urls) {
+			if (seen.has(url)) {
+				continue;
+			}
+			seen.add(url);
+			items.push({
+				executionId,
+				prompt: prompts[index],
+				url,
+			});
+		}
+	});
+	return items;
+}
+
+function aggregateStatus(
+	executionIds: string[],
+	executions: ExecutionMap
+): {
+	allTerminal: boolean;
+	hasFailed: boolean;
+	progressPct: number;
+	someSucceeded: boolean;
+} {
+	if (executionIds.length === 0) {
+		return {
+			allTerminal: false,
+			hasFailed: false,
+			progressPct: 0,
+			someSucceeded: false,
+		};
+	}
+	let totalPct = 0;
+	let allTerminal = true;
+	let hasFailed = false;
+	let someSucceeded = false;
+	for (const id of executionIds) {
+		const execution = executions[id] ?? null;
+		totalPct += getExecutionProgressPct(execution);
+		const status = execution?.status;
+		if (status !== "succeeded" && status !== "failed") {
+			allTerminal = false;
+		}
+		if (status === "failed") {
+			hasFailed = true;
+		}
+		if (status === "succeeded") {
+			someSucceeded = true;
+		}
+	}
+	return {
+		allTerminal,
+		hasFailed,
+		progressPct: Math.round(totalPct / executionIds.length),
+		someSucceeded,
+	};
+}
+
+function HeaderActions({
+	hasFailedAll,
+	isCreating,
+	isReady,
+	isRegenerating,
+	onConfirm,
+	onRegenerate,
+	selectedUrl,
+}: {
+	hasFailedAll: boolean;
+	isCreating: boolean;
+	isReady: boolean;
+	isRegenerating: boolean;
+	onConfirm: () => void;
+	onRegenerate: () => void;
+	selectedUrl: string | null;
+}) {
+	return (
+		<div className="flex flex-wrap items-center gap-2">
+			<Button
+				disabled={isRegenerating || !(isReady || hasFailedAll)}
+				onClick={onRegenerate}
+				size="sm"
+				variant="outline"
+			>
+				{isRegenerating ? (
+					<Loader2 className="size-3.5 animate-spin" />
+				) : (
+					<RefreshCw className="size-3.5" />
+				)}
+				Regenerate
+			</Button>
+			<Button
+				disabled={!(isReady && selectedUrl) || isCreating}
+				onClick={onConfirm}
+				size="sm"
+			>
+				{isCreating ? (
+					<Loader2 className="size-3.5 animate-spin" />
+				) : (
+					<Sparkles className="size-3.5" />
+				)}
+				Use this reference
+			</Button>
+		</div>
+	);
+}
+
+function FailedNotice({
+	errorSummary,
+	onRetry,
+}: {
+	errorSummary?: string;
+	onRetry: () => void;
+}) {
+	return (
+		<div className="grid gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-5">
+			<div className="flex items-center gap-2 text-rose-700 text-sm dark:text-rose-300">
+				<RefreshCw className="size-4" />
+				Generation failed
+			</div>
+			{errorSummary ? (
+				<p className="text-muted-foreground text-xs">{errorSummary}</p>
+			) : null}
+			<Button onClick={onRetry} size="sm" variant="outline">
+				<RefreshCw className="size-3.5" />
+				Try again
+			</Button>
+		</div>
+	);
+}
+
+function ProgressPanel({ progressPct }: { progressPct: number }) {
+	return (
+		<div className="grid gap-4 rounded-2xl border border-border/40 bg-muted/10 p-6 dark:bg-muted/5">
+			<div className="flex items-center gap-2 text-muted-foreground text-sm">
+				<Loader2 className="size-4 animate-spin" />
+				Generating reference variants…
+			</div>
+			<div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/30 dark:bg-muted/15">
+				<div
+					className="h-full rounded-full bg-sky-500/70 transition-[width] duration-500"
+					style={{ width: `${progressPct}%` }}
+				/>
+			</div>
+			<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+				{SKELETON_KEYS.map((skeletonKey) => (
+					<div
+						className="aspect-[3/4] animate-pulse rounded-xl bg-muted/30 dark:bg-muted/10"
+						key={skeletonKey}
+					/>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function VariantsGrid({
+	onSelect,
+	selectedUrl,
+	variants,
+}: {
+	onSelect: (url: string) => void;
+	selectedUrl: string | null;
+	variants: VariantItem[];
+}) {
+	return (
+		<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+			{variants.map((variant, index) => {
+				const isSelected = selectedUrl === variant.url;
+				return (
+					<button
+						aria-label={`Use variant ${index + 1}`}
+						aria-pressed={isSelected}
+						className={cn(
+							"group relative aspect-[3/4] overflow-hidden rounded-xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+							isSelected
+								? "border-foreground shadow-black/10 shadow-lg"
+								: "border-border/40 hover:border-border"
+						)}
+						key={variant.url}
+						onClick={() => onSelect(variant.url)}
+						title={variant.prompt}
+						type="button"
+					>
+						<Image
+							alt={`Variant ${index + 1}`}
+							className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
+							fill
+							sizes="(max-width: 640px) 50vw, 25vw"
+							src={variant.url}
+							unoptimized
+						/>
+						{isSelected ? (
+							<div className="absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-full bg-foreground text-background shadow-sm">
+								<CheckCircle2 className="size-4" />
+							</div>
+						) : null}
+					</button>
+				);
+			})}
+		</div>
+	);
+}
+
+function usePollExecutions(executionIds: string[] | null) {
+	const [executions, setExecutions] = useState<ExecutionMap>({});
+	const [pollError, setPollError] = useState<string | null>(null);
+	const inFlightRef = useRef<string[] | null>(null);
+
+	useEffect(() => {
+		setExecutions({});
+		setPollError(null);
+	}, []);
+
+	useEffect(() => {
+		if (!executionIds || executionIds.length === 0) {
+			return;
+		}
+		inFlightRef.current = executionIds;
+		setExecutions({});
+		setPollError(null);
+		let cancelled = false;
+		const timers = new Map<string, number>();
+
+		const isCurrentBatch = () => inFlightRef.current === executionIds;
+
+		const scheduleNext = (executionId: string) => {
+			const timer = window.setTimeout(
+				() => pollOne(executionId),
+				POLL_INTERVAL_MS
+			);
+			timers.set(executionId, timer);
+		};
+
+		const pollOne = async (executionId: string) => {
+			try {
+				const next = await getAvatarPreview(executionId);
+				if (cancelled || !isCurrentBatch()) {
+					return;
+				}
+				setExecutions((prev) => ({ ...prev, [executionId]: next }));
+				setPollError(null);
+				if (next.status === "succeeded" || next.status === "failed") {
+					return;
+				}
+				scheduleNext(executionId);
+			} catch (error) {
+				if (cancelled || !isCurrentBatch()) {
+					return;
+				}
+				setPollError(
+					error instanceof Error ? error.message : "Failed to fetch preview"
+				);
+				scheduleNext(executionId);
+			}
+		};
+
+		for (const executionId of executionIds) {
+			const timer = window.setTimeout(() => pollOne(executionId), 0);
+			timers.set(executionId, timer);
+		}
+
+		return () => {
+			cancelled = true;
+			for (const timer of timers.values()) {
+				window.clearTimeout(timer);
+			}
+		};
+	}, [executionIds]);
+
+	return { executions, pollError };
+}
+
 export default function ReferenceVariantPicker() {
 	const router = useRouter();
 	const [draft, setDraft] = useState<PersonReferenceDraft | null>(null);
 	const [isHydrated, setIsHydrated] = useState(false);
-	const [execution, setExecution] = useState<GeneratorExecutionRecord | null>(
-		null
-	);
 	const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isRegenerating, setIsRegenerating] = useState(false);
-	const [pollError, setPollError] = useState<string | null>(null);
-	const inFlightExecutionId = useRef<string | null>(null);
 
 	useEffect(() => {
 		setIsHydrated(true);
@@ -141,61 +428,35 @@ export default function ReferenceVariantPicker() {
 		setDraft(stored);
 	}, [router]);
 
-	useEffect(() => {
-		if (!draft) {
-			return;
-		}
-		const targetExecutionId = draft.executionId;
-		let cancelled = false;
-		inFlightExecutionId.current = targetExecutionId;
+	const { executions, pollError } = usePollExecutions(
+		draft?.executionIds ?? null
+	);
 
-		async function poll() {
-			try {
-				const next = await getAvatarPreview(targetExecutionId);
-				if (cancelled || inFlightExecutionId.current !== targetExecutionId) {
-					return;
-				}
-				setExecution(next);
-				setPollError(null);
-				if (next.status === "succeeded" || next.status === "failed") {
-					return;
-				}
-				timerId = window.setTimeout(poll, POLL_INTERVAL_MS);
-			} catch (error) {
-				if (cancelled) {
-					return;
-				}
-				setPollError(
-					error instanceof Error ? error.message : "Failed to fetch preview"
-				);
-				timerId = window.setTimeout(poll, POLL_INTERVAL_MS);
-			}
-		}
-
-		let timerId = window.setTimeout(poll, 0);
-		return () => {
-			cancelled = true;
-			window.clearTimeout(timerId);
-		};
-	}, [draft]);
-
-	const variants = extractArtifactUrls(execution);
-	const status = execution?.status ?? "queued";
-	const progressPct = getExecutionProgressPct(execution);
-	const isReady = status === "succeeded" && variants.length > 0;
-	const hasFailed = status === "failed";
+	const variants = draft
+		? buildVariants(draft.executionIds, executions, draft.prompts ?? [])
+		: [];
+	const aggregate = draft
+		? aggregateStatus(draft.executionIds, executions)
+		: {
+				allTerminal: false,
+				hasFailed: false,
+				progressPct: 0,
+				someSucceeded: false,
+			};
+	const isReady = aggregate.allTerminal && variants.length > 0;
+	const hasFailedAll = aggregate.hasFailed && !aggregate.someSucceeded;
 
 	useEffect(() => {
-		if (!isReady) {
+		if (variants.length === 0) {
 			return;
 		}
 		setSelectedUrl((current) => {
-			if (current && variants.includes(current)) {
+			if (current && variants.some((variant) => variant.url === current)) {
 				return current;
 			}
-			return variants[0] ?? null;
+			return variants[0]?.url ?? null;
 		});
-	}, [isReady, variants]);
+	}, [variants]);
 
 	const handleRegenerate = useCallback(async () => {
 		if (!draft || isRegenerating) {
@@ -206,13 +467,15 @@ export default function ReferenceVariantPicker() {
 			const next = await requestAvatarPreviews({
 				prompt: draft.prompt,
 				count: 4,
+				enhance: draft.enhanced,
 			});
 			const nextDraft: PersonReferenceDraft = {
 				...draft,
-				executionId: next.id,
+				enhanced: next.enhanced,
+				executionIds: next.executions.map((execution) => execution.id),
+				prompts: next.prompts,
 			};
 			writeDraft(nextDraft);
-			setExecution(null);
 			setSelectedUrl(null);
 			setDraft(nextDraft);
 			toast.success("Generating new variants");
@@ -231,8 +494,16 @@ export default function ReferenceVariantPicker() {
 		}
 		setIsCreating(true);
 		try {
+			const selectedVariant = variants.find(
+				(variant) => variant.url === selectedUrl
+			);
+			const description =
+				selectedVariant?.prompt && selectedVariant.prompt.length > 0
+					? selectedVariant.prompt
+					: draft.form.description;
 			const nextPerson = await createPerson({
 				...draft.form,
+				description,
 				referencePhotoUrl: selectedUrl,
 			});
 			toast.success("Person created");
@@ -254,7 +525,7 @@ export default function ReferenceVariantPicker() {
 			);
 			setIsCreating(false);
 		}
-	}, [draft, selectedUrl, isCreating, router]);
+	}, [draft, selectedUrl, isCreating, router, variants]);
 
 	const handleCancel = useCallback(() => {
 		clearDraft();
@@ -268,6 +539,10 @@ export default function ReferenceVariantPicker() {
 			</main>
 		);
 	}
+
+	const failedExecution = draft.executionIds
+		.map((id) => executions[id])
+		.find((execution) => execution?.status === "failed");
 
 	return (
 		<main className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-8 sm:px-6 sm:py-12">
@@ -289,42 +564,37 @@ export default function ReferenceVariantPicker() {
 							Pick a reference photo
 						</h1>
 						<p className="max-w-2xl text-muted-foreground text-sm leading-relaxed">
-							We generated a few options based on your description. Choose one
-							to use as the reference for the LoRA training pipeline.
+							{draft.enhanced
+								? "Grok обогатил промт и сгенерировал четыре разных образа. Выберите подходящий референс для пайплайна LoRA."
+								: "We generated a few options based on your description. Choose one to use as the reference for the LoRA training pipeline."}
 						</p>
 					</div>
-					<div className="flex flex-wrap items-center gap-2">
-						<Button
-							disabled={isRegenerating || !(isReady || hasFailed)}
-							onClick={handleRegenerate}
-							size="sm"
-							variant="outline"
-						>
-							{isRegenerating ? (
-								<Loader2 className="size-3.5 animate-spin" />
-							) : (
-								<RefreshCw className="size-3.5" />
-							)}
-							Regenerate
-						</Button>
-						<Button
-							disabled={!(isReady && selectedUrl) || isCreating}
-							onClick={handleConfirm}
-							size="sm"
-						>
-							{isCreating ? (
-								<Loader2 className="size-3.5 animate-spin" />
-							) : (
-								<Sparkles className="size-3.5" />
-							)}
-							Use this reference
-						</Button>
-					</div>
+					<HeaderActions
+						hasFailedAll={hasFailedAll}
+						isCreating={isCreating}
+						isReady={isReady}
+						isRegenerating={isRegenerating}
+						onConfirm={handleConfirm}
+						onRegenerate={handleRegenerate}
+						selectedUrl={selectedUrl}
+					/>
 				</div>
 				<p className="rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-muted-foreground text-xs leading-relaxed">
 					<span className="font-medium text-foreground/80">Prompt: </span>
 					{draft.prompt}
 				</p>
+				{draft.enhanced && draft.prompts && draft.prompts.length > 0 ? (
+					<details className="rounded-lg border border-border/40 bg-muted/10 px-3 py-2 text-muted-foreground text-xs">
+						<summary className="cursor-pointer font-medium text-foreground/80">
+							Grok variants ({draft.prompts.length})
+						</summary>
+						<ol className="mt-2 grid list-decimal gap-1 pl-4">
+							{draft.prompts.map((prompt, index) => (
+								<li key={`${index}-${prompt.slice(0, 16)}`}>{prompt}</li>
+							))}
+						</ol>
+					</details>
+				) : null}
 			</header>
 
 			{pollError ? (
@@ -333,82 +603,23 @@ export default function ReferenceVariantPicker() {
 				</div>
 			) : null}
 
-			{hasFailed ? (
-				<div className="grid gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-5">
-					<div className="flex items-center gap-2 text-rose-700 text-sm dark:text-rose-300">
-						<RefreshCw className="size-4" />
-						Generation failed
-					</div>
-					{execution?.errorSummary ? (
-						<p className="text-muted-foreground text-xs">
-							{execution.errorSummary}
-						</p>
-					) : null}
-					<Button onClick={handleRegenerate} size="sm" variant="outline">
-						<RefreshCw className="size-3.5" />
-						Try again
-					</Button>
-				</div>
+			{hasFailedAll ? (
+				<FailedNotice
+					errorSummary={failedExecution?.errorSummary ?? undefined}
+					onRetry={handleRegenerate}
+				/>
 			) : null}
 
-			{isReady || hasFailed ? null : (
-				<div className="grid gap-4 rounded-2xl border border-border/40 bg-muted/10 p-6 dark:bg-muted/5">
-					<div className="flex items-center gap-2 text-muted-foreground text-sm">
-						<Loader2 className="size-4 animate-spin" />
-						Generating reference variants…
-					</div>
-					<div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/30 dark:bg-muted/15">
-						<div
-							className="h-full rounded-full bg-sky-500/70 transition-[width] duration-500"
-							style={{ width: `${progressPct}%` }}
-						/>
-					</div>
-					<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-						{SKELETON_KEYS.map((skeletonKey) => (
-							<div
-								className="aspect-[3/4] animate-pulse rounded-xl bg-muted/30 dark:bg-muted/10"
-								key={skeletonKey}
-							/>
-						))}
-					</div>
-				</div>
+			{isReady || hasFailedAll ? null : (
+				<ProgressPanel progressPct={aggregate.progressPct} />
 			)}
 
-			{isReady ? (
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-					{variants.map((url, index) => {
-						const isSelected = selectedUrl === url;
-						return (
-							<button
-								aria-label={`Use variant ${index + 1}`}
-								aria-pressed={isSelected}
-								className={cn(
-									"group relative aspect-[3/4] overflow-hidden rounded-xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-									isSelected
-										? "border-foreground shadow-black/10 shadow-lg"
-										: "border-border/40 hover:border-border"
-								)}
-								key={url}
-								onClick={() => setSelectedUrl(url)}
-								type="button"
-							>
-								<Image
-									alt={`Variant ${index + 1}`}
-									className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
-									fill
-									sizes="(max-width: 640px) 50vw, 25vw"
-									src={url}
-									unoptimized
-								/>
-								{isSelected ? (
-									<div className="absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-full bg-foreground text-background shadow-sm">
-										<CheckCircle2 className="size-4" />
-									</div>
-								) : null}
-							</button>
-						);
-					})}
-				</div>
+			{variants.length > 0 ? (
+				<VariantsGrid
+					onSelect={setSelectedUrl}
+					selectedUrl={selectedUrl}
+					variants={variants}
+				/>
 			) : null}
 		</main>
 	);

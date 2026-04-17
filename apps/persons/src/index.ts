@@ -8,6 +8,7 @@ import { createGeneratorExecutionClient } from "@generator/generator-client-serv
 import { createApp } from "@/app";
 import { createAdminLoraClient } from "@/clients/admin-loras";
 import { createAdminTrainingClient } from "@/clients/admin-training";
+import { createGrokClient } from "@/clients/grok";
 import { createDrizzlePersonsRepository } from "@/repositories/persons";
 
 const PORT = Number(process.env.PORT ?? 3003);
@@ -23,6 +24,9 @@ const operatorServerClient = env.PERSONS_OPERATOR_URL
 	? createGeneratorExecutionClient(env.PERSONS_OPERATOR_URL, {
 			internalToken: env.GENERATOR_INTERNAL_TOKEN,
 		})
+	: undefined;
+const grokClient = env.XAI_API_KEY
+	? createGrokClient({ apiKey: env.XAI_API_KEY })
 	: undefined;
 
 const corsOriginsFromEnv = getCorsOrigins();
@@ -40,6 +44,7 @@ const app = createApp({
 	},
 	corsOrigins: effectiveCorsOrigins,
 	getSession: getRequestSession,
+	grokClient,
 	operatorServerClient,
 	repository,
 });

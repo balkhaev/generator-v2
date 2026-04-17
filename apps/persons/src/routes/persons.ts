@@ -39,10 +39,16 @@ export function createPersonRoutes(service: PersonsService) {
 	app.post("/avatar-previews", async (c) => {
 		try {
 			const payload = await c.req.json();
-			const execution = await service.requestAvatarPreviews(payload, {
+			const batch = await service.requestAvatarPreviews(payload, {
 				debugCorrelationId: c.get("debugCorrelationId"),
 			});
-			return c.json({ execution }, 201);
+			return c.json(
+				{
+					batch,
+					execution: batch.executions[0],
+				},
+				201
+			);
 		} catch (error) {
 			const response = toErrorResponse(error);
 			return c.json(response.body, response.status as 400);

@@ -162,19 +162,26 @@ export async function findPersonByOperatorRunId(operatorRunId: string) {
 	return payload.person;
 }
 
+export interface AvatarPreviewBatch {
+	enhanced: boolean;
+	executions: GeneratorExecutionRecord[];
+	prompts: string[];
+}
+
 export async function requestAvatarPreviews(input: {
 	prompt: string;
 	count?: number;
-}) {
-	const payload = await requestJson<{ execution: GeneratorExecutionRecord }>(
-		`${API_BASE_URL}/api/persons/avatar-previews`,
-		{
-			method: "POST",
-			body: JSON.stringify(input),
-			headers: { "content-type": "application/json" },
-		}
-	);
-	return payload.execution;
+	enhance?: boolean;
+}): Promise<AvatarPreviewBatch> {
+	const payload = await requestJson<{
+		batch: AvatarPreviewBatch;
+		execution: GeneratorExecutionRecord;
+	}>(`${API_BASE_URL}/api/persons/avatar-previews`, {
+		method: "POST",
+		body: JSON.stringify(input),
+		headers: { "content-type": "application/json" },
+	});
+	return payload.batch;
 }
 
 export async function getAvatarPreview(executionId: string) {

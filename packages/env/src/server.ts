@@ -91,6 +91,7 @@ const serverSchema = {
 	// Provider credentials
 	CIVITAI_API_KEY: z.string().min(1).optional(),
 	FAL_KEY: z.string().min(1).optional(),
+	XAI_API_KEY: z.string().min(1).optional(),
 
 	// Public asset URLs
 	ASSET_PUBLIC_BASE_URL: optionalUrlSchema,

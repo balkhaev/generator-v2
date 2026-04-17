@@ -14,6 +14,7 @@ import { logger } from "hono/logger";
 
 import type { AdminLoraClient } from "@/clients/admin-loras";
 import type { AdminTrainingClient } from "@/clients/admin-training";
+import type { GrokClient } from "@/clients/grok";
 import type { OperatorServerClient, PersonsRepository } from "@/domain/persons";
 import { PersonsService } from "@/domain/persons";
 import { createIntegrationRoutes } from "@/routes/integrations";
@@ -33,6 +34,7 @@ interface AppOptions {
 	getSession?: (
 		request: Request
 	) => Promise<{ session: unknown; user: unknown } | null>;
+	grokClient?: GrokClient;
 	operatorServerClient?: OperatorServerClient;
 	repository: PersonsRepository;
 }
@@ -43,12 +45,13 @@ const isPublicApiPath = createPublicPathMatcher({
 });
 
 export function createApp(options: AppOptions) {
-	const service = new PersonsService(
-		options.repository,
-		options.operatorServerClient,
-		options.callbackConfig,
-		options.adminTrainingClient
-	);
+	const service = new PersonsService({
+		adminTrainingClient: options.adminTrainingClient,
+		callbackConfig: options.callbackConfig,
+		grokClient: options.grokClient,
+		operatorServerClient: options.operatorServerClient,
+		repository: options.repository,
+	});
 	const app = new Hono<{
 		Variables: AuthVariables & {
 			debugCorrelationId: string;

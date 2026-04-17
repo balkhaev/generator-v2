@@ -3,6 +3,7 @@ import { env } from "@generator/env/server";
 import type { GeneratorExecutionClient } from "@generator/generator-client-server";
 import { z } from "zod";
 import type { AdminTrainingClient } from "@/clients/admin-training";
+import type { GrokClient } from "@/clients/grok";
 
 const optionalStringSchema = z.preprocess((value) => {
 	if (typeof value !== "string") {
@@ -196,7 +197,14 @@ export const createPersonFromPromptInputSchema = z.object({
 export const requestAvatarPreviewsInputSchema = z.object({
 	prompt: z.string().trim().min(1, "Avatar prompt is required"),
 	count: z.number().int().min(1).max(4).default(4),
+	enhance: z.boolean().optional().default(false),
 });
+
+export interface AvatarPreviewBatch {
+	enhanced: boolean;
+	executions: GeneratorExecutionRecord[];
+	prompts: string[];
+}
 
 const AVATAR_PREVIEW_WORKFLOW_KEY = "fal-flux2-turbo";
 
@@ -470,22 +478,55 @@ function hasProgressMetadataChanged(
 	);
 }
 
+export interface PersonsServiceDependencies {
+	adminTrainingClient?: AdminTrainingClient;
+	callbackConfig?: { token: string; url: string };
+	grokClient?: GrokClient;
+	operatorServerClient?: OperatorServerClient;
+	repository: PersonsRepository;
+}
+
 export class PersonsService {
 	private readonly repository: PersonsRepository;
 	private readonly operatorServerClient?: OperatorServerClient;
 	private readonly callbackConfig?: { token: string; url: string };
 	private readonly adminTrainingClient?: AdminTrainingClient;
+	private readonly grokClient?: GrokClient;
 
+	constructor(deps: PersonsServiceDependencies);
 	constructor(
 		repository: PersonsRepository,
 		operatorServerClient?: OperatorServerClient,
 		callbackConfig?: { token: string; url: string },
-		adminTrainingClient?: AdminTrainingClient
+		adminTrainingClient?: AdminTrainingClient,
+		grokClient?: GrokClient
+	);
+	constructor(
+		repositoryOrDeps: PersonsRepository | PersonsServiceDependencies,
+		operatorServerClient?: OperatorServerClient,
+		callbackConfig?: { token: string; url: string },
+		adminTrainingClient?: AdminTrainingClient,
+		grokClient?: GrokClient
 	) {
-		this.repository = repository;
-		this.operatorServerClient = operatorServerClient;
-		this.callbackConfig = callbackConfig;
-		this.adminTrainingClient = adminTrainingClient;
+		const deps: PersonsServiceDependencies =
+			"repository" in repositoryOrDeps
+				? repositoryOrDeps
+				: {
+						adminTrainingClient,
+						callbackConfig,
+						grokClient,
+						operatorServerClient,
+						repository: repositoryOrDeps,
+					};
+		this.repository = deps.repository;
+		this.operatorServerClient = deps.operatorServerClient;
+		this.callbackConfig = deps.callbackConfig;
+		this.adminTrainingClient = deps.adminTrainingClient;
+		this.grokClient = deps.grokClient;
+	}
+
+	get isGrokEnhanceConfigured() {
+		return Boolean(this.grokClient);
 	}
 
 	listPersons() {
@@ -546,34 +587,91 @@ export class PersonsService {
 		});
 	}
 
-	requestAvatarPreviews(
+	async requestAvatarPreviews(
 		input: z.input<typeof requestAvatarPreviewsInputSchema>,
 		options?: {
 			debugCorrelationId?: string;
 		}
-	) {
+	): Promise<AvatarPreviewBatch> {
 		const parsed = requestAvatarPreviewsInputSchema.parse(input);
 		if (!this.operatorServerClient) {
 			throw new Error("Generator integration is not configured");
 		}
 
-		return this.operatorServerClient.createExecution(
-			{
-				workflowKey: AVATAR_PREVIEW_WORKFLOW_KEY,
-				prompt: parsed.prompt,
-				params: {
-					imageSize: "portrait_4_3",
-					guidanceScale: 2.5,
-					numImages: parsed.count,
-					enableSafetyChecker: false,
-					enablePromptExpansion: false,
-					outputFormat: "png",
+		const debugCorrelationId = options?.debugCorrelationId;
+		const operatorServerClient = this.operatorServerClient;
+
+		const enhanced = parsed.enhance && Boolean(this.grokClient);
+		const prompts = enhanced
+			? await this.buildEnhancedPrompts(parsed.prompt, parsed.count)
+			: [parsed.prompt];
+
+		const buildParams = (numImages: number) => ({
+			imageSize: "portrait_4_3",
+			guidanceScale: 2.5,
+			numImages,
+			enableSafetyChecker: false,
+			enablePromptExpansion: false,
+			outputFormat: "png",
+		});
+
+		if (!enhanced) {
+			const execution = await operatorServerClient.createExecution(
+				{
+					workflowKey: AVATAR_PREVIEW_WORKFLOW_KEY,
+					prompt: parsed.prompt,
+					params: buildParams(parsed.count),
 				},
-			},
-			{
-				debugCorrelationId: options?.debugCorrelationId,
-			}
+				{ debugCorrelationId }
+			);
+			return { enhanced: false, executions: [execution], prompts };
+		}
+
+		const executions = await Promise.all(
+			prompts.map((prompt) =>
+				operatorServerClient.createExecution(
+					{
+						workflowKey: AVATAR_PREVIEW_WORKFLOW_KEY,
+						prompt,
+						params: buildParams(1),
+					},
+					{ debugCorrelationId }
+				)
+			)
 		);
+
+		return { enhanced: true, executions, prompts };
+	}
+
+	private async buildEnhancedPrompts(
+		basePrompt: string,
+		count: number
+	): Promise<string[]> {
+		if (!this.grokClient) {
+			return [basePrompt];
+		}
+
+		const targetCount = Math.max(1, count);
+		const variantCount = Math.max(0, targetCount - 1);
+		const [enhanced, variants] = await Promise.all([
+			this.grokClient.enhancePrompt(basePrompt),
+			variantCount > 0
+				? this.grokClient.expandPrompt({
+						prompt: basePrompt,
+						count: variantCount,
+					})
+				: Promise.resolve<string[]>([]),
+		]);
+
+		const combined = [enhanced, ...variants]
+			.map((entry) => entry.trim())
+			.filter((entry) => entry.length > 0);
+
+		while (combined.length < targetCount) {
+			combined.push(basePrompt);
+		}
+
+		return combined.slice(0, targetCount);
 	}
 
 	getAvatarPreview(

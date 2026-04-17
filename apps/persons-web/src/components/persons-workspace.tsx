@@ -1527,25 +1527,31 @@ function getCreatePersonSubmitLabel(formState: CreatePersonInput) {
 export const PERSON_REFERENCE_DRAFT_STORAGE_KEY = "persons-web:reference-draft";
 
 export interface PersonReferenceDraft {
-	executionId: string;
+	enhanced: boolean;
+	executionIds: string[];
 	form: CreatePersonInput;
 	prompt: string;
+	prompts: string[];
 }
 
 const REFERENCES_HREF = "/new/references" as Route<"/new/references">;
 
 async function createReferenceVariantDraft(
-	formState: CreatePersonInput
+	formState: CreatePersonInput,
+	options: { enhance: boolean }
 ): Promise<PersonReferenceDraft> {
 	const prompt = formState.description?.trim() ?? "";
-	const execution = await requestAvatarPreviews({
+	const batch = await requestAvatarPreviews({
 		prompt,
 		count: 4,
+		enhance: options.enhance,
 	});
 	return {
-		executionId: execution.id,
+		enhanced: batch.enhanced,
+		executionIds: batch.executions.map((execution) => execution.id),
 		form: formState,
 		prompt,
+		prompts: batch.prompts,
 	};
 }
 
@@ -1579,13 +1585,17 @@ function CreatePersonHint({ formState }: { formState: CreatePersonInput }) {
 }
 
 function CreatePersonForm({
+	enhance,
 	formState,
 	isCreating,
+	onEnhanceChange,
 	onFieldChange,
 	onSubmit,
 }: {
+	enhance: boolean;
 	formState: CreatePersonInput;
 	isCreating: boolean;
+	onEnhanceChange: (value: boolean) => void;
 	onFieldChange: <Key extends keyof CreatePersonInput>(
 		key: Key,
 		value: CreatePersonInput[Key]
@@ -1593,6 +1603,7 @@ function CreatePersonForm({
 	onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
 }) {
 	const [showMore, setShowMore] = useState(false);
+	const enhanceAvailable = shouldPickReferenceVariant(formState);
 
 	return (
 		<WorkspacePane className="min-h-0">
@@ -1710,6 +1721,35 @@ function CreatePersonForm({
 									/>
 								</div>
 							</div>
+						) : null}
+
+						{enhanceAvailable ? (
+							<label
+								className={cn(
+									"flex cursor-pointer items-start gap-2 rounded-lg border bg-background/40 px-3 py-2 text-xs transition-colors",
+									enhance
+										? "border-violet-400/60 bg-violet-500/5"
+										: "border-border/60 hover:border-border"
+								)}
+								htmlFor="enhancePrompt"
+							>
+								<input
+									checked={enhance}
+									className="mt-0.5 size-3.5 cursor-pointer accent-violet-500"
+									id="enhancePrompt"
+									onChange={(event) => onEnhanceChange(event.target.checked)}
+									type="checkbox"
+								/>
+								<span className="grid gap-0.5 leading-tight">
+									<span className="flex items-center gap-1 font-medium">
+										<Sparkles className="size-3 text-violet-500" />
+										Enhance with Grok
+									</span>
+									<span className="text-[11px] text-muted-foreground/70">
+										Обогатим промт и сгенерируем 4 разные референсные девушки
+									</span>
+								</span>
+							</label>
 						) : null}
 
 						<Button
@@ -1969,6 +2009,7 @@ export default function PersonsWorkspace({
 	const [formState, setFormState] = useState<CreatePersonInput>(
 		createEmptyFormState()
 	);
+	const [enhanceWithGrok, setEnhanceWithGrok] = useState(false);
 	const [managementFormState, setManagementFormState] =
 		useState<PersonManagementFormState | null>(null);
 	const [cancellingGenerationId, setCancellingGenerationId] = useState<
@@ -2065,9 +2106,12 @@ export default function PersonsWorkspace({
 	}
 
 	async function startReferenceVariantFlow(form: CreatePersonInput) {
-		const draft = await createReferenceVariantDraft(form);
+		const draft = await createReferenceVariantDraft(form, {
+			enhance: enhanceWithGrok,
+		});
 		persistReferenceVariantDraft(draft);
 		setFormState(createEmptyFormState());
+		setEnhanceWithGrok(false);
 		router.push(REFERENCES_HREF);
 	}
 
@@ -2292,8 +2336,10 @@ export default function PersonsWorkspace({
 					/>
 				) : (
 					<CreatePersonForm
+						enhance={enhanceWithGrok}
 						formState={formState}
 						isCreating={isCreating}
+						onEnhanceChange={setEnhanceWithGrok}
 						onFieldChange={updateFormField}
 						onSubmit={handleCreatePerson}
 					/>

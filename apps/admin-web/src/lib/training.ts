@@ -1,52 +1,44 @@
-import type {
-	PersonLoraTrainingMeta,
-	PersonLoraTrainingStatus,
+import {
+	getPersonLoraReferenceImageCount,
+	getPersonLoraTrainingDisplayStatus,
+	getPersonLoraTrainingPhaseLabel,
+	getPersonLoraTrainingProgressPct,
+	isActivePersonLoraTrainingStatus,
+	type PersonLoraTrainingMeta,
+	type PersonLoraTrainingStatus,
 } from "@generator/contracts/persons";
 
-export function clampProgressPct(value: number) {
-	return Math.max(0, Math.min(100, Math.round(value)));
-}
-
 export function isActiveTrainingStatus(
-	status: PersonLoraTrainingStatus | undefined
+	status: PersonLoraTrainingStatus | string | null | undefined
 ) {
-	return (
-		status === "queued" ||
-		status === "generating" ||
-		status === "training" ||
-		status === "publishing"
-	);
+	return isActivePersonLoraTrainingStatus(status);
 }
 
-export function getDerivedProgressPct(training: PersonLoraTrainingMeta | null) {
-	if (typeof training?.progressPct === "number") {
-		return clampProgressPct(training.progressPct);
-	}
-	switch (training?.status) {
-		case "queued":
-			return 2;
-		case "generating":
-			return 30;
-		case "training":
-			return 76;
-		case "publishing":
-			return 92;
-		case "ready":
-			return 100;
-		case "failed":
-			return 100;
-		default:
-			return 0;
-	}
+export function getDisplayTrainingStatus(
+	training: PersonLoraTrainingMeta | null,
+	hasLora: boolean
+) {
+	return getPersonLoraTrainingDisplayStatus(training, hasLora);
+}
+
+export function getDerivedProgressPct(
+	training: PersonLoraTrainingMeta | null,
+	hasLora = false
+) {
+	return getPersonLoraTrainingProgressPct(training, hasLora);
 }
 
 export function getReferenceImageCount(
 	training: PersonLoraTrainingMeta | null
 ) {
-	if (typeof training?.referenceImageCount === "number") {
-		return training.referenceImageCount;
-	}
-	return training?.referenceImageUrls?.length ?? 0;
+	return getPersonLoraReferenceImageCount(training);
+}
+
+export function getTrainingPhaseLabel(
+	training: PersonLoraTrainingMeta | null,
+	hasLora: boolean
+) {
+	return getPersonLoraTrainingPhaseLabel(training, hasLora);
 }
 
 export function formatDurationMs(value: number | null | undefined) {

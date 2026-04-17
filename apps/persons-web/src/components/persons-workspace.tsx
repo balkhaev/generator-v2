@@ -1,8 +1,17 @@
 "use client";
 
-import type {
-	PersonLoraTrainingMeta,
-	PersonLoraTrainingStatus,
+import {
+	clampProgressPct,
+	DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT,
+	getPersonLoraReferenceImageCount,
+	getPersonLoraReferenceImageTarget,
+	getPersonLoraTrainingDisplayStatus,
+	getPersonLoraTrainingPhaseLabel,
+	getPersonLoraTrainingProgressPct,
+	isActivePersonLoraTrainingStatus,
+	type PersonLoraTrainingMeta,
+	type PersonLoraTrainingStatus,
+	readPersonLoraTrainingMeta,
 } from "@generator/contracts/persons";
 import { env } from "@generator/env/web";
 import { Button } from "@generator/ui/components/button";
@@ -19,6 +28,7 @@ import WorkspaceShell, {
 	WorkspacePane,
 	WorkspaceStatus,
 } from "@generator/ui/components/workspace-shell";
+import { formatRelativeTime } from "@generator/ui/lib/format";
 import { cn } from "@generator/ui/lib/utils";
 import { createWorkspaceNavigation } from "@generator/ui/lib/workspace-nav";
 import {
@@ -74,7 +84,6 @@ const textareaClassName =
 const selectClassName =
 	"flex h-9 w-full rounded-lg border border-input bg-transparent px-3 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
 
-const DATASET_TARGET_COUNT = 20;
 const LORA_OPTIMISTIC_GENERATION_PREFIX = "__optimistic:lora:";
 const trailingSlashesPattern = /\/+$/u;
 const DEFAULT_ADMIN_URL = "http://localhost:3001";
@@ -482,6 +491,18 @@ function PersonCard({
 	getHref: (slug: string) => Route;
 	person: PersonRecord;
 }) {
+	const training = readPersonLoraTrainingMeta(person);
+	const status = getPersonLoraTrainingDisplayStatus(
+		training,
+		Boolean(person.loraUrl)
+	);
+	const isTraining = isActivePersonLoraTrainingStatus(status);
+	const progressPct = getPersonLoraTrainingProgressPct(
+		training,
+		Boolean(person.loraUrl)
+	);
+	const showTrainingBadge = isTraining || status === "failed";
+
 	return (
 		<Link
 			className="group relative overflow-hidden rounded-2xl bg-background/60 ring-1 ring-border/30 transition-all hover:shadow-black/5 hover:shadow-xl hover:ring-border/60 dark:bg-background/40 dark:hover:shadow-black/20"
@@ -507,10 +528,24 @@ function PersonCard({
 				</div>
 			</div>
 			<div className="flex items-center justify-between gap-2 px-3.5 py-2.5">
-				<span className="text-muted-foreground/60 text-xs tabular-nums">
+				<span className="min-w-0 truncate text-muted-foreground/60 text-xs tabular-nums">
 					{person.generations.length} generation
 					{person.generations.length === 1 ? "" : "s"}
 				</span>
+				{showTrainingBadge && status ? (
+					<span
+						className={cn(
+							"inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium text-[11px]",
+							trainingStatusTone[status]
+						)}
+					>
+						{isTraining ? <Loader2 className="size-3 animate-spin" /> : null}
+						{status}
+						{isTraining ? (
+							<span className="tabular-nums">{progressPct}%</span>
+						) : null}
+					</span>
+				) : null}
 			</div>
 		</Link>
 	);
@@ -656,14 +691,6 @@ function GenerationCard({
 	);
 }
 
-function getTrainingMeta(person: PersonRecord): PersonLoraTrainingMeta | null {
-	const training = person.metadata?.training;
-	if (training && typeof training === "object" && !Array.isArray(training)) {
-		return training as PersonLoraTrainingMeta;
-	}
-	return null;
-}
-
 const trainingStatusTone: Record<PersonLoraTrainingStatus | "ready", string> = {
 	queued: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
 	generating: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
@@ -672,110 +699,6 @@ const trainingStatusTone: Record<PersonLoraTrainingStatus | "ready", string> = {
 	ready: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
 	failed: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
 };
-
-function clampProgressPct(value: number) {
-	return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function getEffectiveTrainingStatus(
-	training: PersonLoraTrainingMeta | null,
-	hasLora: boolean
-): PersonLoraTrainingStatus | "ready" | undefined {
-	if (hasLora && training?.status !== "failed") {
-		return "ready";
-	}
-	return training?.status;
-}
-
-function getTrainingProgressPct(
-	training: PersonLoraTrainingMeta | null,
-	hasLora: boolean
-) {
-	if (hasLora && training?.status !== "failed") {
-		return 100;
-	}
-	if (typeof training?.progressPct === "number") {
-		return clampProgressPct(training.progressPct);
-	}
-
-	switch (training?.status) {
-		case "queued":
-			return 2;
-		case "generating":
-			return 32;
-		case "training":
-			return 76;
-		case "publishing":
-			return 92;
-		case "ready":
-			return 100;
-		case "failed":
-			return 100;
-		default:
-			return 0;
-	}
-}
-
-function getTrainingPhaseLabel(
-	training: PersonLoraTrainingMeta | null,
-	hasLora: boolean
-) {
-	if (hasLora && training?.status !== "failed") {
-		return "Weights ready";
-	}
-
-	switch (training?.phase) {
-		case "generating-references":
-			return "Generating reference set";
-		case "uploading-dataset":
-			return "Packing and uploading dataset";
-		case "starting-training":
-			return "Submitting trainer job";
-		case "polling-training":
-			return "Training LoRA weights";
-		case "cancelled":
-			return "Pipeline cancelled";
-		case "ready":
-			return "Weights ready";
-		case "failed":
-			return "Training failed";
-		default:
-			switch (training?.status) {
-				case "queued":
-					return "Waiting for worker";
-				case "generating":
-					return "Preparing dataset";
-				case "training":
-					return "Training LoRA weights";
-				case "publishing":
-					return "Publishing weights";
-				case "ready":
-					return "Weights ready";
-				case "failed":
-					return "Training failed";
-				default:
-					return "Idle";
-			}
-	}
-}
-
-function getTrainingReferenceImageCount(
-	training: PersonLoraTrainingMeta | null
-) {
-	if (typeof training?.referenceImageCount === "number") {
-		return training.referenceImageCount;
-	}
-	return training?.referenceImageUrls?.length ?? 0;
-}
-
-function getTrainingReferenceImageTarget(
-	training: PersonLoraTrainingMeta | null
-) {
-	if (typeof training?.referenceImageTargetCount === "number") {
-		return training.referenceImageTargetCount;
-	}
-	return DATASET_TARGET_COUNT;
-}
 
 function formatDurationMs(value: number | null | undefined) {
 	if (!(typeof value === "number" && Number.isFinite(value) && value >= 0)) {
@@ -875,6 +798,7 @@ function LoraTrainingStatusPanel({
 		},
 	];
 	const elapsed = formatDurationMs(training?.trainingElapsedMs);
+	const lastEventAt = training?.lastEventAt ?? training?.updatedAt ?? null;
 
 	return (
 		<div className="grid gap-3 rounded-xl border border-border/50 bg-muted/10 p-3 dark:bg-muted/5">
@@ -952,22 +876,32 @@ function LoraTrainingStatusPanel({
 						elapsed {elapsed}
 					</span>
 				) : null}
+				{lastEventAt ? (
+					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+						updated {formatRelativeTime(lastEventAt)}
+					</span>
+				) : null}
 			</div>
 		</div>
 	);
 }
 
 function LoraTrainingActions({
+	hasLora,
 	isCancellingTraining,
 	isTraining,
 	onCancelTraining,
 	onTrainLora,
 }: {
+	hasLora: boolean;
 	isCancellingTraining: boolean;
 	isTraining: boolean;
 	onCancelTraining: () => void;
 	onTrainLora: () => void;
 }) {
+	const actionLabel = hasLora ? "Retrain LoRA" : "Train LoRA";
+	const pendingLabel = hasLora ? "Retraining..." : "Training...";
+
 	return (
 		<>
 			<Button
@@ -981,7 +915,7 @@ function LoraTrainingActions({
 				) : (
 					<Sparkles className="size-3.5" />
 				)}
-				{isTraining ? "Training..." : "Train LoRA"}
+				{isTraining ? pendingLabel : actionLabel}
 			</Button>
 			{isTraining ? (
 				<Button
@@ -1094,19 +1028,14 @@ function LoraActions({
 			cancelled = true;
 		};
 	}, []);
-	const training = getTrainingMeta(person);
+	const training = readPersonLoraTrainingMeta(person);
 	const hasLora = Boolean(person.loraUrl);
-	const effectiveStatus = getEffectiveTrainingStatus(training, hasLora);
-	const progressPct = getTrainingProgressPct(training, hasLora);
-	const phaseLabel = getTrainingPhaseLabel(training, hasLora);
-	const referenceImageCount = getTrainingReferenceImageCount(training);
-	const referenceImageTarget = getTrainingReferenceImageTarget(training);
-	const isTraining =
-		!hasLora &&
-		(effectiveStatus === "queued" ||
-			effectiveStatus === "generating" ||
-			effectiveStatus === "training" ||
-			effectiveStatus === "publishing");
+	const effectiveStatus = getPersonLoraTrainingDisplayStatus(training, hasLora);
+	const progressPct = getPersonLoraTrainingProgressPct(training, hasLora);
+	const phaseLabel = getPersonLoraTrainingPhaseLabel(training, hasLora);
+	const referenceImageCount = getPersonLoraReferenceImageCount(training);
+	const referenceImageTarget = getPersonLoraReferenceImageTarget(training);
+	const isTraining = isActivePersonLoraTrainingStatus(effectiveStatus);
 	const hasTrainingError = Boolean(training?.errorSummary);
 	const showTrainingSection = !hasLora || isTraining || hasTrainingError;
 
@@ -1135,6 +1064,7 @@ function LoraActions({
 					) : null}
 
 					<LoraTrainingActions
+						hasLora={hasLora}
 						isCancellingTraining={isCancellingTraining}
 						isTraining={isTraining}
 						onCancelTraining={onCancelTraining}
@@ -1286,7 +1216,8 @@ function DatasetGallery({
 				<div className="flex items-center gap-2 text-muted-foreground text-xs">
 					<Loader2 className="size-3.5 animate-spin" />
 					<span>
-						Generating dataset… {items.length} / {DATASET_TARGET_COUNT}
+						Generating dataset… {items.length} /{" "}
+						{DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT}
 					</span>
 				</div>
 			) : null}
@@ -1386,7 +1317,7 @@ function PersonDetailView({
 }) {
 	const [activeTab, setActiveTab] = useState<DetailTab>("generations");
 	const [lightbox, setLightbox] = useState<LightboxState | null>(null);
-	const trainingMeta = getTrainingMeta(person);
+	const trainingMeta = readPersonLoraTrainingMeta(person);
 	const isGeneratingDataset = trainingMeta?.status === "generating";
 	const generations = person.generations
 		.filter((g) => g.metadata.isDatasetPhoto !== true)
@@ -2130,17 +2061,8 @@ export default function PersonsWorkspace({
 			person.generations.some((generation) => generation.status === "queued")
 		) ||
 		persons.some((person) => {
-			const t = person.metadata?.training;
-			if (t && typeof t === "object" && !Array.isArray(t)) {
-				const status = (t as Record<string, unknown>).status;
-				return (
-					status === "queued" ||
-					status === "generating" ||
-					status === "training" ||
-					status === "publishing"
-				);
-			}
-			return false;
+			const training = readPersonLoraTrainingMeta(person);
+			return isActivePersonLoraTrainingStatus(training?.status);
 		});
 
 	useEffect(() => {
@@ -2164,6 +2086,10 @@ export default function PersonsWorkspace({
 		(total, person) => total + person.generations.length,
 		0
 	);
+	const activeTrainingCount = persons.filter((person) => {
+		const training = readPersonLoraTrainingMeta(person);
+		return isActivePersonLoraTrainingStatus(training?.status);
+	}).length;
 	const adminUrl = env.NEXT_PUBLIC_ADMIN_URL ?? DEFAULT_ADMIN_URL;
 	const studioUrl = env.NEXT_PUBLIC_STUDIO_URL ?? "http://localhost:3002";
 
@@ -2467,6 +2393,11 @@ export default function PersonsWorkspace({
 					<WorkspaceStatus tone="info">
 						{totalGenerations} generations
 					</WorkspaceStatus>
+					{activeTrainingCount > 0 ? (
+						<WorkspaceStatus tone="warning">
+							{activeTrainingCount} training
+						</WorkspaceStatus>
+					) : null}
 				</>
 			}
 			subtitle={

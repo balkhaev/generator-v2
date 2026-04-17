@@ -24,7 +24,6 @@ import {
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
-import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import {
 	Tooltip,
@@ -55,6 +54,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import ComposeForm from "@/components/compose/compose-form";
 import IconButton from "@/components/icon-button";
 import { getMediaType } from "@/components/preview-surface";
 
@@ -125,11 +125,6 @@ async function findPersonSlugByOperatorRunId(operatorRunId: string) {
 
 	return payload.person.slug;
 }
-
-const textareaClassName =
-	"min-h-20 w-full rounded-lg border border-input bg-background/45 px-2.5 py-2 text-xs leading-5 outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
-const selectClassName =
-	"h-8 w-full rounded-lg border border-input bg-background/45 px-2.5 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
 
 const runStatusTone: Record<ScenarioRunRecord["status"], string> = {
 	failed: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
@@ -860,9 +855,7 @@ export default function ScenarioConsole({
 		}
 	}
 
-	async function handleCreateScenario(event: React.FormEvent<HTMLFormElement>) {
-		event.preventDefault();
-
+	async function handleCreateScenario() {
 		if (!(scenarioForm && selectedWorkflow)) {
 			toast.error("Scenario form is unavailable.");
 			return;
@@ -1032,263 +1025,60 @@ export default function ScenarioConsole({
 		}
 
 		return (
-			<form className="grid gap-3" onSubmit={handleCreateScenario}>
+			<div className="grid gap-3">
 				{suggestedPresets.length > 0 ? (
-					<div className="grid gap-2">
-						<div className="flex items-center justify-between gap-2">
-							<SectionLabel>Presets</SectionLabel>
-							<a
-								className="inline-flex items-center gap-1 text-[11px] text-muted-foreground transition hover:text-foreground"
-								href={adminWebUrl}
-								rel="noreferrer noopener"
-								target="_blank"
-							>
-								Admin
-								<ExternalLink className="size-3" />
-							</a>
-						</div>
-						<div className="grid gap-1.5">
-							{suggestedPresets.slice(0, 3).map((preset) => {
-								const linkedWorkflow = workflows.find((workflow) =>
-									preset.workflowKeys.includes(workflow.key)
-								);
-
-								return (
-									<div
-										className="grid gap-1.5 rounded-lg bg-muted/8 px-3 py-2.5 dark:bg-muted/5"
-										key={preset.id}
-									>
-										<div className="flex items-start justify-between gap-2">
-											<p className="min-w-0 truncate text-xs">{preset.name}</p>
-											<span
-												className={cn(
-													"shrink-0 rounded-full px-2 py-0.5 text-[11px]",
-													presetStatusTone[preset.status]
-												)}
-											>
-												{preset.matchedAssets}/{preset.assetCount}
-											</span>
-										</div>
-										<div className="flex flex-wrap items-center gap-1.5">
-											{linkedWorkflow ? (
-												<button
-													className="inline-flex items-center gap-1 rounded-full bg-foreground/5 px-2 py-0.5 text-[11px] transition hover:bg-foreground/10"
-													onClick={() =>
-														setScenarioForm(
-															createScenarioFormState(linkedWorkflow)
-														)
-													}
-													type="button"
-												>
-													<Package2 className="size-3" />
-													Use
-												</button>
-											) : null}
-											<a
-												className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-												href={preset.sourceUrl}
-												rel="noreferrer noopener"
-												target="_blank"
-											>
-												<ExternalLink className="size-3" />
-												Source
-											</a>
-										</div>
-									</div>
-								);
-							})}
-						</div>
-					</div>
-				) : null}
-
-				<div className="grid gap-1.5">
-					<SectionLabel>Workflow</SectionLabel>
-					<div className="grid gap-1">
-						{workflows.map((workflow) => {
-							const isActive = workflow.key === scenarioForm.workflowKey;
-
-							return (
-								<button
-									aria-pressed={isActive}
-									className={cn(
-										"grid gap-1 rounded-lg px-3 py-2.5 text-left transition",
-										isActive
-											? "bg-foreground text-background"
-											: "bg-muted/8 hover:bg-muted/15 dark:bg-muted/5 dark:hover:bg-muted/10"
-									)}
-									key={workflow.key}
-									onClick={() =>
-										setScenarioForm(createScenarioFormState(workflow))
-									}
-									type="button"
+					<details className="group rounded-lg bg-foreground/[0.03] open:bg-foreground/[0.05]">
+						<summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-[11px] text-muted-foreground transition hover:text-foreground">
+							<span className="inline-flex items-center gap-1.5">
+								<Package2 className="size-3" />
+								<span>Asset presets ({suggestedPresets.length})</span>
+							</span>
+							<ChevronDown className="size-3 transition-transform group-open:rotate-180" />
+						</summary>
+						<div className="grid gap-1.5 px-3 pb-3">
+							{suggestedPresets.slice(0, 3).map((preset) => (
+								<div
+									className="grid gap-1 rounded-md bg-background/40 px-2.5 py-2"
+									key={preset.id}
 								>
-									<div className="flex items-center justify-between gap-2">
-										<p className="text-xs">{workflow.name}</p>
-										<Sparkles className="size-3.5" />
-									</div>
-									<p
-										className={cn(
-											"line-clamp-1 text-[11px]",
-											isActive ? "text-background/65" : "text-muted-foreground"
-										)}
-									>
-										{workflow.summary}
-									</p>
-								</button>
-							);
-						})}
-					</div>
-				</div>
-
-				<div className="grid gap-2">
-					<div className="grid gap-1.5">
-						<Label className="text-xs" htmlFor="scenario-name">
-							Name
-						</Label>
-						<Input
-							id="scenario-name"
-							onChange={(event) => {
-								const value = event.target.value;
-
-								setScenarioForm((current) =>
-									current ? { ...current, name: value } : current
-								);
-							}}
-							placeholder="Hero close-up push"
-							value={scenarioForm.name}
-						/>
-					</div>
-
-					<div className="grid gap-1.5">
-						<Label className="text-xs" htmlFor="workflow-key">
-							Key
-						</Label>
-						<select
-							className={selectClassName}
-							id="workflow-key"
-							onChange={(event) => {
-								const workflow = workflows.find(
-									(item) => item.key === event.target.value
-								);
-
-								if (!workflow) {
-									return;
-								}
-
-								setScenarioForm(createScenarioFormState(workflow));
-							}}
-							value={scenarioForm.workflowKey}
-						>
-							{workflows.map((workflow) => (
-								<option key={workflow.key} value={workflow.key}>
-									{workflow.key}
-								</option>
-							))}
-						</select>
-					</div>
-				</div>
-
-				<div className="grid gap-1.5">
-					<Label className="text-xs" htmlFor="scenario-prompt">
-						Prompt
-					</Label>
-					<textarea
-						className={textareaClassName}
-						id="scenario-prompt"
-						onChange={(event) => {
-							const value = event.target.value;
-
-							setScenarioForm((current) =>
-								current ? { ...current, prompt: value } : current
-							);
-						}}
-						placeholder={selectedWorkflow.promptHint}
-						value={scenarioForm.prompt}
-					/>
-				</div>
-
-				{selectedWorkflow.parameters.length > 0 ? (
-					<div className="grid gap-2 sm:grid-cols-2">
-						{selectedWorkflow.parameters.map((parameter) => {
-							const currentValue = scenarioForm.params[parameter.key] ?? "";
-							const handleChange = (value: string) => {
-								setScenarioForm((current) =>
-									current
-										? {
-												...current,
-												params: {
-													...current.params,
-													[parameter.key]: value,
-												},
-											}
-										: current
-								);
-							};
-							if (parameter.kind === "lora-url") {
-								const matchedEntry = availableLoras.find(
-									(entry) => entry.s3Url === currentValue
-								);
-								return (
-									<div className="grid gap-1" key={parameter.key}>
-										<Label className="text-xs" htmlFor={parameter.key}>
-											{parameter.label}
-										</Label>
-										<select
-											className={selectClassName}
-											id={parameter.key}
-											onChange={(event) => handleChange(event.target.value)}
-											value={matchedEntry ? matchedEntry.s3Url : currentValue}
-										>
-											<option value="">None</option>
-											{availableLoras.map((entry) => (
-												<option key={entry.id} value={entry.s3Url}>
-													{entry.name}
-												</option>
-											))}
-										</select>
-										<p className="line-clamp-1 text-[11px] text-muted-foreground">
-											{parameter.helperText} · Managed in{" "}
-											<a
-												className="underline"
-												href={adminLorasHref}
-												rel="noreferrer noopener"
-												target="_blank"
-											>
-												admin · LoRAs
-											</a>
+									<div className="flex items-start justify-between gap-2">
+										<p className="min-w-0 truncate text-[11px]">
+											{preset.name}
 										</p>
+										<span
+											className={cn(
+												"shrink-0 rounded-full px-1.5 py-0.5 text-[10px]",
+												presetStatusTone[preset.status]
+											)}
+										>
+											{preset.matchedAssets}/{preset.assetCount}
+										</span>
 									</div>
-								);
-							}
-							return (
-								<div className="grid gap-1" key={parameter.key}>
-									<Label className="text-xs" htmlFor={parameter.key}>
-										{parameter.label}
-									</Label>
-									<Input
-										id={parameter.key}
-										onChange={(event) => handleChange(event.target.value)}
-										placeholder={parameter.defaultValue || parameter.label}
-										value={currentValue}
-									/>
-									<p className="line-clamp-1 text-[11px] text-muted-foreground">
-										{parameter.helperText}
-									</p>
+									<a
+										className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+										href={preset.sourceUrl}
+										rel="noreferrer noopener"
+										target="_blank"
+									>
+										<ExternalLink className="size-2.5" />
+										Source
+									</a>
 								</div>
-							);
-						})}
-					</div>
+							))}
+						</div>
+					</details>
 				) : null}
 
-				<Button disabled={isSavingScenario} size="sm" type="submit">
-					{isSavingScenario ? (
-						<Loader2 className="size-3.5 animate-spin" />
-					) : (
-						<Plus className="size-3.5" />
-					)}
-					Save scenario
-				</Button>
-			</form>
+				<ComposeForm
+					adminLorasHref={adminLorasHref}
+					availableLoras={availableLoras}
+					form={scenarioForm}
+					isSubmitting={isSavingScenario}
+					onFormChange={setScenarioForm}
+					onSubmit={handleCreateScenario}
+					workflows={workflows}
+				/>
+			</div>
 		);
 	}
 

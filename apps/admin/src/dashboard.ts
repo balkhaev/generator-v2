@@ -5,10 +5,11 @@ import type {
 	DashboardRunStatusSummary,
 	DashboardScenarioSummary,
 } from "@generator/contracts/admin";
-import type {
-	PersonLoraTrainingMeta,
-	PersonLoraTrainingStatus,
-	PersonRecord,
+import {
+	isActivePersonLoraTrainingStatus,
+	type PersonLoraTrainingMeta,
+	type PersonRecord,
+	readPersonLoraTrainingMeta,
 } from "@generator/contracts/persons";
 
 type RunStatus = DashboardRecentRun["status"];
@@ -47,12 +48,6 @@ interface ServerRunRecord {
 	workflowKey: string;
 }
 
-const ACTIVE_TRAINING_STATUSES = new Set<PersonLoraTrainingStatus>([
-	"queued",
-	"generating",
-	"training",
-	"publishing",
-]);
 const RECENT_RUN_LIMIT = 8;
 const FILE_EXTENSION_PATTERN = /\.[a-z0-9]+$/i;
 const TRAILING_SLASH_PATTERN = /\/$/;
@@ -80,14 +75,6 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 	return (await response.json()) as T;
 }
 
-function getTrainingMeta(person: PersonRecord): PersonLoraTrainingMeta | null {
-	const training = person.metadata?.training;
-	if (training && typeof training === "object" && !Array.isArray(training)) {
-		return training as PersonLoraTrainingMeta;
-	}
-	return null;
-}
-
 function getTrainingSortTimestamp(
 	person: PersonRecord,
 	training: PersonLoraTrainingMeta | null
@@ -104,7 +91,7 @@ function getTrainingSortTimestamp(
 
 function getTrainingPriority(training: PersonLoraTrainingMeta | null) {
 	const status = training?.status;
-	if (status && ACTIVE_TRAINING_STATUSES.has(status)) {
+	if (isActivePersonLoraTrainingStatus(status)) {
 		return 0;
 	}
 	if (status === "failed") {
@@ -240,7 +227,7 @@ async function loadLoraDashboard(
 		);
 		const loraTrainings = snapshot.persons
 			.map((person) => {
-				const training = getTrainingMeta(person);
+				const training = readPersonLoraTrainingMeta(person);
 				if (!(training || person.loraUrl)) {
 					return null;
 				}

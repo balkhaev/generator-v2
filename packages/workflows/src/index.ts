@@ -745,6 +745,61 @@ export const workflowRegistry = {
 
 export type WorkflowKey = keyof typeof workflowRegistry;
 
+const SUPPORTED_IMAGE_SIZES = [
+	"square_hd",
+	"square",
+	"portrait_4_3",
+	"portrait_16_9",
+	"landscape_4_3",
+	"landscape_16_9",
+] as const;
+
+const SUPPORTED_OUTPUT_FORMATS = ["png", "jpeg", "webp"] as const;
+
+function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
+	if (field.enumValues || field.min !== undefined || field.max !== undefined) {
+		return field;
+	}
+
+	switch (field.key) {
+		case "imageSize": {
+			const enumValues =
+				workflowKey === "fal-zimage-turbo-image-to-image-lora"
+					? ([...SUPPORTED_IMAGE_SIZES, "auto"] as const)
+					: SUPPORTED_IMAGE_SIZES;
+			return { ...field, enumValues };
+		}
+		case "outputFormat":
+			return { ...field, enumValues: SUPPORTED_OUTPUT_FORMATS };
+		case "numInferenceSteps": {
+			let max = 50;
+			if (workflowKey === "fal-flux-schnell") {
+				max = 12;
+			} else if (workflowKey.startsWith("fal-zimage-turbo")) {
+				max = 20;
+			}
+			return { ...field, min: 1, max, step: 1, unit: "steps" };
+		}
+		case "guidanceScale":
+			return { ...field, min: 1, max: 20, step: 0.1 };
+		case "numImages":
+			return { ...field, min: 1, max: 4, step: 1 };
+		case "loraScale":
+		case "loraWeight":
+			return { ...field, min: 0, max: 2, step: 0.05 };
+		case "extraLoraWeight":
+			return { ...field, min: 0, max: 2, step: 0.05, optional: true };
+		case "extraLoraUrl":
+			return { ...field, optional: true };
+		case "seed":
+			return { ...field, min: 0, optional: true };
+		case "strength":
+			return { ...field, min: 0, max: 1, step: 0.01 };
+		default:
+			return field;
+	}
+}
+
 export function listWorkflows(): WorkflowSummary[] {
 	return Object.values(workflowRegistry).map((workflow) => {
 		const result = workflow.parameterSchema.safeParse({});
@@ -754,7 +809,10 @@ export function listWorkflows(): WorkflowSummary[] {
 			description: workflow.description,
 			key: workflow.key,
 			name: workflow.name,
-			parameterFields: workflow.parameterFields,
+			parameterFields: workflow.parameterFields.map((field) =>
+				enrichField(field, workflow.key)
+			),
+			requiresInputImage: workflow.requiresInputImage,
 		};
 	});
 }

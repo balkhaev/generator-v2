@@ -17,7 +17,10 @@ import { useMemo, useState } from "react";
 
 import TrainingCard from "@/components/training/training-card";
 import { useAdminDashboard } from "@/hooks/use-admin-dashboard";
-import { isActiveTrainingStatus } from "@/lib/training";
+import {
+	getDisplayTrainingStatus,
+	isActiveTrainingStatus,
+} from "@/lib/training";
 
 type TrainingStatusFilter = PersonLoraTrainingStatus | "ready" | "all";
 
@@ -49,8 +52,11 @@ export default function TrainingContent({
 		let ready = 0;
 		let failed = 0;
 		for (const item of snapshot.loraTrainings) {
-			const status = item.training?.status;
-			if (status === "ready" || (!status && item.loraUrl)) {
+			const status = getDisplayTrainingStatus(
+				item.training,
+				Boolean(item.loraUrl)
+			);
+			if (status === "ready") {
 				ready++;
 			} else if (status === "failed") {
 				failed++;
@@ -70,8 +76,10 @@ export default function TrainingContent({
 		const term = search.trim().toLowerCase();
 		return snapshot.loraTrainings.filter((item) => {
 			if (filter !== "all") {
-				const status =
-					item.training?.status ?? (item.loraUrl ? "ready" : undefined);
+				const status = getDisplayTrainingStatus(
+					item.training,
+					Boolean(item.loraUrl)
+				);
 				if (status !== filter) {
 					return false;
 				}

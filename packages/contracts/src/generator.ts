@@ -6,10 +6,16 @@ export type ScenarioParamValue = string | number | boolean | null;
 
 export interface WorkflowField {
 	description: string;
+	enumValues?: readonly string[];
 	key: string;
 	kind?: WorkflowParameterKind;
 	label: string;
+	max?: number;
+	min?: number;
+	optional?: boolean;
+	step?: number;
 	type: WorkflowParameterType;
+	unit?: string;
 }
 
 export interface WorkflowSummary {
@@ -19,6 +25,7 @@ export interface WorkflowSummary {
 	key: string;
 	name: string;
 	parameterFields: readonly WorkflowField[];
+	requiresInputImage?: boolean;
 }
 
 export interface GeneratorScenarioRecord {

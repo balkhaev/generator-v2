@@ -1,4 +1,5 @@
 import type { GeneratorExecutionRecord } from "@generator/contracts/generator";
+import { isActivePersonLoraTrainingStatus } from "@generator/contracts/persons";
 import { env } from "@generator/env/server";
 import type { GeneratorExecutionClient } from "@generator/generator-client-server";
 import { z } from "zod";
@@ -395,12 +396,6 @@ const imageMediaUrlPattern = /\.(png|jpe?g|webp|gif)(\?.*)?$/;
 const audioMediaUrlPattern = /\.(wav|mp3|ogg|m4a)(\?.*)?$/;
 const CANCELLED_GENERATION_ERROR = "Generation cancelled by operator";
 const CANCELLED_LORA_PIPELINE_ERROR = "LoRA pipeline cancelled by operator";
-const ACTIVE_LORA_TRAINING_STATUSES = new Set([
-	"queued",
-	"generating",
-	"training",
-	"publishing",
-]);
 
 function inferMediaTypeFromUrl(url: string): PersonGenerationMediaType {
 	const normalizedUrl = url.toLowerCase();
@@ -1039,9 +1034,7 @@ export class PersonsService {
 				: null;
 		const trainingStatus = readMetadataString(training ?? {}, "status");
 
-		if (
-			!(training && ACTIVE_LORA_TRAINING_STATUSES.has(trainingStatus ?? ""))
-		) {
+		if (!(training && isActivePersonLoraTrainingStatus(trainingStatus))) {
 			return person;
 		}
 
@@ -1141,10 +1134,8 @@ export class PersonsService {
 		// person.loraUrl already set) is intentionally allowed to be retrained
 		// — that's exactly what the "Retrain LoRA" button is for.
 		if (
-			currentTrainingStatus === "queued" ||
-			currentTrainingStatus === "generating" ||
-			currentTrainingStatus === "training" ||
-			currentTrainingStatus === "publishing"
+			typeof currentTrainingStatus === "string" &&
+			isActivePersonLoraTrainingStatus(currentTrainingStatus)
 		) {
 			return person;
 		}

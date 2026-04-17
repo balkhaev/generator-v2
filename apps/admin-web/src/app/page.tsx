@@ -9,6 +9,10 @@ import OverviewContent from "@/components/overview-content";
 import WorkspaceActions from "@/components/workspace-actions";
 import { getAdminDashboardSnapshot } from "@/lib/admin-dashboard";
 import { getModuleUrls, requireSession } from "@/lib/session";
+import {
+	getDisplayTrainingStatus,
+	isActiveTrainingStatus,
+} from "@/lib/training";
 
 export const dynamic = "force-dynamic";
 
@@ -20,13 +24,11 @@ export default async function Home() {
 		const snapshot = await getAdminDashboardSnapshot(requestHeaders);
 		const failedCount = snapshot.runStatus.failed;
 		const activeTrainings = snapshot.loraTrainings.filter((item) => {
-			const status = item.training?.status;
-			return (
-				status === "queued" ||
-				status === "generating" ||
-				status === "training" ||
-				status === "publishing"
+			const status = getDisplayTrainingStatus(
+				item.training,
+				Boolean(item.loraUrl)
 			);
+			return isActiveTrainingStatus(status);
 		}).length;
 
 		return (

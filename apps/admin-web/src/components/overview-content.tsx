@@ -23,16 +23,19 @@ import Link from "next/link";
 
 import { useAdminDashboard } from "@/hooks/use-admin-dashboard";
 import { runStatusTone, trainingStatusTone } from "@/lib/status-tone";
+import {
+	getDisplayTrainingStatus,
+	getTrainingPhaseLabel,
+	isActiveTrainingStatus,
+} from "@/lib/training";
 
 function getActiveLoraTrainingCount(snapshot: AdminDashboardSnapshot) {
 	return snapshot.loraTrainings.filter((item) => {
-		const status = item.training?.status;
-		return (
-			status === "queued" ||
-			status === "generating" ||
-			status === "training" ||
-			status === "publishing"
+		const status = getDisplayTrainingStatus(
+			item.training,
+			Boolean(item.loraUrl)
 		);
+		return isActiveTrainingStatus(status);
 	}).length;
 }
 
@@ -178,9 +181,11 @@ export default function OverviewContent({
 							) : (
 								<ul className="grid gap-1.5">
 									{recentTrainings.map((item) => {
-										const status =
-											item.training?.status ??
-											(item.loraUrl ? "ready" : undefined);
+										const hasLora = Boolean(item.loraUrl);
+										const status = getDisplayTrainingStatus(
+											item.training,
+											hasLora
+										);
 										return (
 											<li
 												className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5"
@@ -191,8 +196,7 @@ export default function OverviewContent({
 														{item.personName}
 													</span>
 													<span className="truncate text-[11px] text-muted-foreground">
-														{item.training?.phase ??
-															(status === "ready" ? "ready" : "no phase")}
+														{getTrainingPhaseLabel(item.training, hasLora)}
 													</span>
 												</span>
 												{status ? (

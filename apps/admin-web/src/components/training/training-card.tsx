@@ -9,7 +9,9 @@ import { trainingStatusTone } from "@/lib/status-tone";
 import {
 	formatDurationMs,
 	getDerivedProgressPct,
+	getDisplayTrainingStatus,
 	getReferenceImageCount,
+	getTrainingPhaseLabel,
 	isActiveTrainingStatus,
 } from "@/lib/training";
 
@@ -26,11 +28,7 @@ function statusIcon(status: string | undefined) {
 	if (status === "failed") {
 		return AlertTriangle;
 	}
-	if (
-		isActiveTrainingStatus(
-			status as Parameters<typeof isActiveTrainingStatus>[0]
-		)
-	) {
+	if (isActiveTrainingStatus(status)) {
 		return Loader2;
 	}
 	return undefined;
@@ -179,15 +177,16 @@ export default function TrainingCard({
 	item: DashboardLoraTrainingSnapshot;
 }) {
 	const training = item.training;
-	const progressPct = getDerivedProgressPct(training);
-	const status = training?.status ?? (item.loraUrl ? "ready" : undefined);
+	const hasLora = Boolean(item.loraUrl);
+	const progressPct = getDerivedProgressPct(training, hasLora);
+	const status = getDisplayTrainingStatus(training, hasLora);
 	const referenceImageCount = getReferenceImageCount(training);
 	const referenceImageTargetCount =
 		typeof training?.referenceImageTargetCount === "number"
 			? training.referenceImageTargetCount
 			: null;
 	const recentHistory = training?.history?.slice(-4).reverse() ?? [];
-	const phaseLabel = training?.phase ?? "No active phase";
+	const phaseLabel = getTrainingPhaseLabel(training, hasLora);
 	const Icon = statusIcon(status);
 
 	return (

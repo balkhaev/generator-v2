@@ -8,6 +8,36 @@ export type PersonLoraTrainingStatus =
 	| "ready"
 	| "failed";
 
+export const PERSON_LORA_ACTIVE_TRAINING_STATUSES = [
+	"queued",
+	"generating",
+	"training",
+	"publishing",
+] as const satisfies readonly PersonLoraTrainingStatus[];
+
+export type ActivePersonLoraTrainingStatus =
+	(typeof PERSON_LORA_ACTIVE_TRAINING_STATUSES)[number];
+
+export const DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT = 20;
+
+const PERSON_LORA_ACTIVE_TRAINING_STATUS_SET = new Set<string>(
+	PERSON_LORA_ACTIVE_TRAINING_STATUSES
+);
+
+const PERSON_LORA_FALLBACK_PROGRESS: Record<PersonLoraTrainingStatus, number> =
+	{
+		failed: 100,
+		generating: 32,
+		publishing: 92,
+		queued: 2,
+		ready: 100,
+		training: 76,
+	};
+
+const PROVIDER_TRAINING_BASE_PROGRESS = 76;
+const PROVIDER_TRAINING_MAX_DISPLAY_PROGRESS = 89;
+const PROVIDER_TRAINING_SOFT_PROGRESS_WINDOW_MS = 45 * 60 * 1000;
+
 export interface PersonLoraTrainingHistoryEntry {
 	at: string;
 	errorSummary: string | null;
@@ -88,6 +118,150 @@ export interface PersonRecord {
 	updatedAt: string;
 	videoUrl: string | null;
 	voiceWavUrl: string | null;
+}
+
+export function clampProgressPct(value: number) {
+	return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+export function isActivePersonLoraTrainingStatus(
+	status: string | null | undefined
+): status is ActivePersonLoraTrainingStatus {
+	return (
+		typeof status === "string" &&
+		PERSON_LORA_ACTIVE_TRAINING_STATUS_SET.has(status)
+	);
+}
+
+export function readPersonLoraTrainingMeta(
+	person: Pick<PersonRecord, "metadata">
+): PersonLoraTrainingMeta | null {
+	const training = person.metadata?.training;
+	if (training && typeof training === "object" && !Array.isArray(training)) {
+		return training as PersonLoraTrainingMeta;
+	}
+	return null;
+}
+
+export function getPersonLoraTrainingDisplayStatus(
+	training: PersonLoraTrainingMeta | null,
+	hasLora: boolean
+): PersonLoraTrainingStatus | undefined {
+	if (isActivePersonLoraTrainingStatus(training?.status)) {
+		return training.status;
+	}
+	if (training?.status === "failed") {
+		return "failed";
+	}
+	if (training?.status === "ready" || hasLora) {
+		return "ready";
+	}
+	return training?.status;
+}
+
+function getProviderTrainingSoftProgressPct(
+	training: PersonLoraTrainingMeta | null,
+	progressPct: number
+) {
+	if (training?.status !== "training") {
+		return progressPct;
+	}
+
+	const elapsedMs = training.trainingElapsedMs;
+	if (!(typeof elapsedMs === "number" && Number.isFinite(elapsedMs))) {
+		return progressPct;
+	}
+
+	const elapsedRatio = Math.min(
+		1,
+		Math.max(0, elapsedMs) / PROVIDER_TRAINING_SOFT_PROGRESS_WINDOW_MS
+	);
+	const softProgressPct = clampProgressPct(
+		PROVIDER_TRAINING_BASE_PROGRESS +
+			elapsedRatio *
+				(PROVIDER_TRAINING_MAX_DISPLAY_PROGRESS -
+					PROVIDER_TRAINING_BASE_PROGRESS)
+	);
+
+	return Math.max(progressPct, softProgressPct);
+}
+
+export function getPersonLoraTrainingProgressPct(
+	training: PersonLoraTrainingMeta | null,
+	hasLora: boolean
+) {
+	const displayStatus = getPersonLoraTrainingDisplayStatus(training, hasLora);
+	if (!displayStatus) {
+		return 0;
+	}
+
+	const progressPct =
+		typeof training?.progressPct === "number"
+			? clampProgressPct(training.progressPct)
+			: PERSON_LORA_FALLBACK_PROGRESS[displayStatus];
+
+	return getProviderTrainingSoftProgressPct(training, progressPct);
+}
+
+export function getPersonLoraTrainingPhaseLabel(
+	training: PersonLoraTrainingMeta | null,
+	hasLora: boolean
+) {
+	const displayStatus = getPersonLoraTrainingDisplayStatus(training, hasLora);
+
+	switch (training?.phase) {
+		case "generating-references":
+			return "Generating reference set";
+		case "uploading-dataset":
+			return "Packing and uploading dataset";
+		case "starting-training":
+			return "Submitting trainer job";
+		case "polling-training":
+			return "Training LoRA weights";
+		case "publishing-lora":
+			return "Publishing weights";
+		case "cancelled":
+			return "Pipeline cancelled";
+		case "ready":
+			return "Weights ready";
+		case "failed":
+			return "Training failed";
+		default:
+			switch (displayStatus) {
+				case "queued":
+					return "Waiting for worker";
+				case "generating":
+					return "Preparing dataset";
+				case "training":
+					return "Training LoRA weights";
+				case "publishing":
+					return "Publishing weights";
+				case "ready":
+					return "Weights ready";
+				case "failed":
+					return "Training failed";
+				default:
+					return "Idle";
+			}
+	}
+}
+
+export function getPersonLoraReferenceImageCount(
+	training: PersonLoraTrainingMeta | null
+) {
+	if (typeof training?.referenceImageCount === "number") {
+		return training.referenceImageCount;
+	}
+	return training?.referenceImageUrls?.length ?? 0;
+}
+
+export function getPersonLoraReferenceImageTarget(
+	training: PersonLoraTrainingMeta | null
+) {
+	if (typeof training?.referenceImageTargetCount === "number") {
+		return training.referenceImageTargetCount;
+	}
+	return DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT;
 }
 
 export interface CreatePersonInput {

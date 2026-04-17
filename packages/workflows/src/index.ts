@@ -5,6 +5,31 @@ import type {
 } from "@generator/contracts/generator";
 import { z } from "zod";
 
+const falFlux2TurboParamsSchema = z.object({
+	guidanceScale: z.number().min(1).max(20).default(2.5),
+	imageSize: z
+		.union([
+			z.enum([
+				"square_hd",
+				"square",
+				"portrait_4_3",
+				"portrait_16_9",
+				"landscape_4_3",
+				"landscape_16_9",
+			]),
+			z.object({
+				width: z.number().int().min(512).max(2048),
+				height: z.number().int().min(512).max(2048),
+			}),
+		])
+		.default("portrait_4_3"),
+	numImages: z.number().int().min(1).max(4).default(1),
+	enableSafetyChecker: z.boolean().default(false),
+	enablePromptExpansion: z.boolean().default(false),
+	outputFormat: z.enum(["png", "jpeg", "webp"]).default("png"),
+	seed: z.number().int().nonnegative().optional(),
+});
+
 const falFlux2DevEditParamsSchema = z.object({
 	guidanceScale: z.number().min(1).max(20).default(2.5),
 	numInferenceSteps: z.number().int().min(1).max(50).default(28),
@@ -527,6 +552,63 @@ export const workflowRegistry = {
 				enable_safety_checker: parsed.enableSafetyChecker,
 				output_format: parsed.outputFormat,
 				loras,
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectFalImageUrls,
+	},
+	"fal-flux2-turbo": {
+		baseModel: "flux",
+		key: "fal-flux2-turbo",
+		name: "Flux 2 Turbo",
+		description:
+			"Fast text-to-image generation using FLUX.2 [dev] in turbo mode on fal.ai.",
+		requiresInputImage: false,
+		parameterSchema: falFlux2TurboParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Output image size preset or custom width/height (512-2048).",
+				key: "imageSize",
+				label: "Image size",
+				type: "text",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "Guidance scale",
+				type: "number",
+			},
+			{
+				description: "Number of images to generate per request.",
+				key: "numImages",
+				label: "Number of images",
+				type: "number",
+			},
+			{
+				description: "Output image format.",
+				key: "outputFormat",
+				label: "Output format",
+				type: "text",
+			},
+			{
+				description: "Optional deterministic seed for repeatable outputs.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = falFlux2TurboParamsSchema.parse(params);
+			return {
+				__falModel: "fal-ai/flux-2/turbo",
+				prompt,
+				image_size: parsed.imageSize,
+				guidance_scale: parsed.guidanceScale,
+				num_images: parsed.numImages,
+				enable_safety_checker: parsed.enableSafetyChecker,
+				enable_prompt_expansion: parsed.enablePromptExpansion,
+				output_format: parsed.outputFormat,
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},

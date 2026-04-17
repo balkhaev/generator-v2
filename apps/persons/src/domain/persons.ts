@@ -198,6 +198,8 @@ export const requestAvatarPreviewsInputSchema = z.object({
 	count: z.number().int().min(1).max(4).default(4),
 });
 
+const AVATAR_PREVIEW_WORKFLOW_KEY = "fal-flux2-turbo";
+
 export const startPersonLoraTrainingInputSchema = z.object({
 	outputName: optionalStringSchema,
 	referencePrompt: optionalStringSchema,
@@ -555,16 +557,16 @@ export class PersonsService {
 			throw new Error("Generator integration is not configured");
 		}
 
-		const avatarWorkflow = env.PERSONS_DEFAULT_AVATAR_WORKFLOW;
 		return this.operatorServerClient.createExecution(
 			{
-				workflowKey: avatarWorkflow,
+				workflowKey: AVATAR_PREVIEW_WORKFLOW_KEY,
 				prompt: parsed.prompt,
 				params: {
 					imageSize: "portrait_4_3",
-					numInferenceSteps: 8,
+					guidanceScale: 2.5,
 					numImages: parsed.count,
 					enableSafetyChecker: false,
+					enablePromptExpansion: false,
 					outputFormat: "png",
 				},
 			},

@@ -5,7 +5,7 @@ import {
 	user,
 	verification,
 } from "@generator/db/schema/auth";
-import { env, getAuthConfig } from "@generator/env/server";
+import { env, getAuthConfig, getDatabaseUrl } from "@generator/env/server";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
@@ -13,7 +13,7 @@ import { APIError } from "better-auth/api";
 import { deriveCrossSubdomainCookieDomain } from "./cookie-domain";
 
 const isDev = env.NODE_ENV !== "production";
-const db = createDb(env.DATABASE_URL);
+const db = createDb(getDatabaseUrl());
 
 const DEV_USER = {
 	email: "dev@local.dev",

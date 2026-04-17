@@ -3,6 +3,7 @@ import type {
 	GeneratorExecutionRecord,
 	SyncGeneratorExecutionInput,
 } from "@generator/contracts/generator";
+import type { EventPublisher } from "@generator/events";
 import { GENERATOR_CALLBACK_TOKEN_HEADER } from "@generator/http/shared";
 import { getWorkflowDefinition, listWorkflows } from "@generator/workflows";
 import { z } from "zod";
@@ -17,7 +18,7 @@ export const createExecutionInputSchema = z.object({
 		.object({
 			context: z.record(z.string(), z.unknown()).optional(),
 			token: z.string().trim().min(1).optional(),
-			url: z.url(),
+			url: z.url().optional(),
 		})
 		.optional(),
 	inputImageUrl: z.string().trim().min(1).optional(),
@@ -83,7 +84,7 @@ export interface ExecutionEntity {
 	callback: {
 		context?: Record<string, unknown>;
 		token?: string;
-		url: string;
+		url?: string;
 	} | null;
 	createdAt: Date;
 	errorSummary: string | null;
@@ -151,19 +152,22 @@ export class ExecutionService {
 	private readonly inferenceClient: InferenceClient;
 	private readonly storageAdapter: StorageAdapter;
 	private readonly logger: ExecutionLogger;
+	private readonly eventPublisher: EventPublisher | null;
 
 	constructor(
 		repository: ExecutionRepository,
 		queue: GeneratorExecutionQueue,
 		inferenceClient: InferenceClient,
 		storageAdapter: StorageAdapter,
-		logger: ExecutionLogger = console
+		logger: ExecutionLogger = console,
+		eventPublisher: EventPublisher | null = null
 	) {
 		this.repository = repository;
 		this.queue = queue;
 		this.inferenceClient = inferenceClient;
 		this.storageAdapter = storageAdapter;
 		this.logger = logger;
+		this.eventPublisher = eventPublisher;
 	}
 
 	private buildSubmissionPayload(
@@ -325,6 +329,24 @@ export class ExecutionService {
 
 	private async dispatchExecutionCallback(execution: ExecutionEntity) {
 		if (!execution.callback) {
+			return;
+		}
+
+		if (this.eventPublisher) {
+			try {
+				await this.eventPublisher.publishGeneratorExecutionUpdated({
+					context: execution.callback.context ?? {},
+					execution: toExecutionRecord(execution),
+				});
+			} catch (error) {
+				this.logger.error("generator.event-publish.error", {
+					error: error instanceof Error ? error.message : "unknown error",
+					executionId: execution.id,
+				});
+			}
+		}
+
+		if (!execution.callback.url) {
 			return;
 		}
 

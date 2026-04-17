@@ -1,4 +1,4 @@
-import { env } from "@generator/env/server";
+import { getDatabaseUrl } from "@generator/env/server";
 import { drizzle } from "drizzle-orm/node-postgres";
 
 import {
@@ -91,10 +91,7 @@ let cachedDb: Database | null = null;
 
 function getDb() {
 	if (!cachedDb) {
-		if (!env.DATABASE_URL) {
-			throw new Error("DATABASE_URL is required to use the shared db client");
-		}
-		cachedDb = createDb(env.DATABASE_URL);
+		cachedDb = createDb(getDatabaseUrl());
 	}
 	return cachedDb;
 }

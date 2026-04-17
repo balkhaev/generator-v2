@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { env } from "@generator/env/server";
+import type { EventPublisher } from "@generator/events";
 import { z } from "zod";
 import {
 	buildZipFromBuffers,
@@ -282,14 +283,16 @@ async function generateReferenceImageFal(
 
 export class FalZibLoraTrainingRunner {
 	private readonly apiKey: string;
-	private readonly personsApiBaseUrl: string;
+	private readonly personsApiBaseUrl?: string;
 	private readonly trainingControlToken: string;
 	private readonly s3Config?: S3Config;
 	private readonly logger: Pick<Console, "info" | "error">;
+	private readonly eventPublisher: EventPublisher | null;
 
 	constructor(options: {
 		apiKey: string;
-		personsApiBaseUrl: string;
+		eventPublisher?: EventPublisher | null;
+		personsApiBaseUrl?: string;
 		trainingControlToken: string;
 		s3Config?: S3Config;
 		logger?: Pick<Console, "info" | "error">;
@@ -299,6 +302,7 @@ export class FalZibLoraTrainingRunner {
 		this.trainingControlToken = options.trainingControlToken;
 		this.s3Config = options.s3Config;
 		this.logger = options.logger ?? console;
+		this.eventPublisher = options.eventPublisher ?? null;
 	}
 
 	private async sendTrainingEvent(input: {
@@ -332,6 +336,23 @@ export class FalZibLoraTrainingRunner {
 			uploadMethod?: string | null;
 		};
 	}) {
+		if (this.eventPublisher) {
+			await this.eventPublisher.publishPersonLoraTrainingUpdated({
+				context: {
+					personId: input.personId,
+					trainingRunId: input.event.trainingRunId ?? null,
+				},
+				event: input.event,
+			});
+			return;
+		}
+
+		if (!this.personsApiBaseUrl) {
+			throw new Error(
+				"PERSONS_API_URL or KAFKA_BROKERS is required to publish training events"
+			);
+		}
+
 		await retry(async () => {
 			const response = await fetch(
 				`${this.personsApiBaseUrl}/api/internal/lora-trainings`,

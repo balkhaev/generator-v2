@@ -1,7 +1,7 @@
 import { createDb } from "@generator/db";
 import { eq } from "@generator/db/operators";
 import { generatorExecution } from "@generator/db/schema/generator";
-import { env } from "@generator/env/server";
+import { getDatabaseUrl } from "@generator/env/server";
 
 import type { ExecutionEntity, ExecutionRepository } from "@/domain/executions";
 
@@ -23,7 +23,7 @@ function mapExecution(
 }
 
 export function createDrizzleExecutionRepository(
-	database: GeneratorDatabase = createDb(env.DATABASE_URL)
+	database: GeneratorDatabase = createDb(getDatabaseUrl())
 ): ExecutionRepository {
 	return {
 		async createExecution(input) {

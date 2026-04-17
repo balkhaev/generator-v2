@@ -15,6 +15,7 @@
 - фронты собираются в `standalone`, рантайм не тащит весь workspace
 - backend/worker контейнеры умеют ждать Postgres и прогонять Drizzle migrations под `pg_advisory_lock`
 - для API и web выставлены встроенные `HEALTHCHECK`
+- Kafka используется как шина событий между доменными сервисами: generator публикует статусы executions, admin-worker публикует события LoRA training, а persons/studio workers подписываются на свои consumer groups
 
 ## Сборка
 
@@ -75,6 +76,21 @@ docker run -d --name generator-redis \
   --network generator-net \
   -p 6379:6379 \
   redis:7-alpine
+
+docker run -d --name generator-kafka \
+  --network generator-net \
+  -e KAFKA_NODE_ID=1 \
+  -e KAFKA_PROCESS_ROLES=broker,controller \
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@generator-kafka:9093 \
+  -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://generator-kafka:9092 \
+  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+  -e KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT \
+  -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+  -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+  -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+  apache/kafka:3.9.1
 ```
 
 Пример backend-сервиса:
@@ -85,6 +101,7 @@ docker run -d --name admin-api \
   --env-file apps/admin/.env.example \
   -e DATABASE_URL=postgresql://postgres:password@generator-postgres:5432/generator \
   -e REDIS_URL=redis://generator-redis:6379 \
+  -e KAFKA_BROKERS=generator-kafka:9092 \
   -e GENERATOR_API_URL=http://generator-api:3005 \
   -e STUDIO_API_URL=http://studio-api:3006 \
   -e PERSONS_API_URL=http://persons-api:3003 \
@@ -101,6 +118,7 @@ docker run -d --name generator-worker \
   --env-file apps/generator/.env.example \
   -e DATABASE_URL=postgresql://postgres:password@generator-postgres:5432/generator \
   -e REDIS_URL=redis://generator-redis:6379 \
+  -e KAFKA_BROKERS=generator-kafka:9092 \
   generator/generator-worker:local
 ```
 
@@ -123,3 +141,9 @@ docker run -d --name admin-web \
 - Включаются через `RUN_DB_MIGRATIONS=true`.
 - Advisory lock защищает от одновременного запуска нескольких контейнеров с миграциями, но обычно достаточно включить этот флаг только у одного API контейнера на окружение.
 - Таймаут и polling можно регулировать через `DATABASE_READY_TIMEOUT_MS` и `DATABASE_READY_INTERVAL_MS`.
+
+## Event bus
+
+Локально `docker compose up -d` поднимает Kafka на `localhost:9092`.
+Внутри Docker-сети сервисы должны использовать `KAFKA_BROKERS=generator-kafka:9092`
+или имя сервиса compose, например `kafka:9092`.

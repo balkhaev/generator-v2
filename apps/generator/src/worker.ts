@@ -1,4 +1,5 @@
-import { env } from "@generator/env/server";
+import { env, getKafkaEventBusConfig } from "@generator/env/server";
+import { createKafkaEventPublisher } from "@generator/events";
 
 import { ExecutionService } from "@/domain/executions";
 import { createFalClient } from "@/providers/fal";
@@ -12,6 +13,10 @@ import { createDrizzleExecutionRepository } from "@/repositories/executions";
 
 const redisUrl = env.REDIS_URL;
 const falKey = env.FAL_KEY;
+const kafkaConfig = getKafkaEventBusConfig("generator-worker");
+const eventPublisher = kafkaConfig
+	? createKafkaEventPublisher(kafkaConfig, { source: "generator-worker" })
+	: null;
 
 if (!falKey) {
 	throw new Error("FAL_KEY is required for the generator worker");
@@ -26,7 +31,8 @@ const service = new ExecutionService(
 	createGeneratorExecutionQueueClient(redisUrl),
 	inferenceClient,
 	createStorageAdapter(),
-	console
+	console,
+	eventPublisher
 );
 
 const worker = createGeneratorExecutionWorker({
@@ -56,6 +62,7 @@ await new Promise<void>((resolve) => {
 
 		isShuttingDown = true;
 		await worker.close();
+		await eventPublisher?.close();
 		resolve();
 	};
 

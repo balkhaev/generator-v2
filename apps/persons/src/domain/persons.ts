@@ -480,7 +480,7 @@ function hasProgressMetadataChanged(
 
 export interface PersonsServiceDependencies {
 	adminTrainingClient?: AdminTrainingClient;
-	callbackConfig?: { token: string; url: string };
+	callbackConfig?: { token: string; url?: string };
 	grokClient?: GrokClient;
 	operatorServerClient?: OperatorServerClient;
 	repository: PersonsRepository;
@@ -489,7 +489,7 @@ export interface PersonsServiceDependencies {
 export class PersonsService {
 	private readonly repository: PersonsRepository;
 	private readonly operatorServerClient?: OperatorServerClient;
-	private readonly callbackConfig?: { token: string; url: string };
+	private readonly callbackConfig?: { token: string; url?: string };
 	private readonly adminTrainingClient?: AdminTrainingClient;
 	private readonly grokClient?: GrokClient;
 
@@ -497,14 +497,14 @@ export class PersonsService {
 	constructor(
 		repository: PersonsRepository,
 		operatorServerClient?: OperatorServerClient,
-		callbackConfig?: { token: string; url: string },
+		callbackConfig?: { token: string; url?: string },
 		adminTrainingClient?: AdminTrainingClient,
 		grokClient?: GrokClient
 	);
 	constructor(
 		repositoryOrDeps: PersonsRepository | PersonsServiceDependencies,
 		operatorServerClient?: OperatorServerClient,
-		callbackConfig?: { token: string; url: string },
+		callbackConfig?: { token: string; url?: string },
 		adminTrainingClient?: AdminTrainingClient,
 		grokClient?: GrokClient
 	) {
@@ -523,6 +523,18 @@ export class PersonsService {
 		this.callbackConfig = deps.callbackConfig;
 		this.adminTrainingClient = deps.adminTrainingClient;
 		this.grokClient = deps.grokClient;
+	}
+
+	private createExecutionCallback(context: Record<string, unknown>) {
+		if (!this.callbackConfig) {
+			return undefined;
+		}
+
+		return {
+			context,
+			token: this.callbackConfig.token,
+			...(this.callbackConfig.url ? { url: this.callbackConfig.url } : {}),
+		};
 	}
 
 	get isGrokEnhanceConfigured() {
@@ -751,16 +763,10 @@ export class PersonsService {
 		}
 
 		const execution = await this.operatorServerClient.createExecution({
-			callback: this.callbackConfig
-				? {
-						context: {
-							generationId: queuedGeneration.id,
-							personId: createdPerson.id,
-						},
-						token: this.callbackConfig.token,
-						url: this.callbackConfig.url,
-					}
-				: undefined,
+			callback: this.createExecutionCallback({
+				generationId: queuedGeneration.id,
+				personId: createdPerson.id,
+			}),
 			workflowKey: avatarWorkflow,
 			prompt: parsed.prompt,
 			params: defaultParams,
@@ -1272,13 +1278,7 @@ export class PersonsService {
 		});
 
 		const execution = await this.operatorServerClient.createExecution({
-			callback: this.callbackConfig
-				? {
-						context: { generationId, personId },
-						token: this.callbackConfig.token,
-						url: this.callbackConfig.url,
-					}
-				: undefined,
+			callback: this.createExecutionCallback({ generationId, personId }),
 			inputImageUrl: isImageToImageWorkflow
 				? person.referencePhotoUrl
 				: undefined,

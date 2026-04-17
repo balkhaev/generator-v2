@@ -233,13 +233,13 @@ export class StudioService {
 	private readonly executionClient: StudioExecutionClient;
 	private readonly logger: StudioLogger;
 	private readonly repository: StudioRepository;
-	private readonly callbackConfig?: { token: string; url: string };
+	private readonly callbackConfig?: { token: string; url?: string };
 
 	constructor(
 		repository: StudioRepository,
 		executionClient: StudioExecutionClient,
 		logger: StudioLogger = console,
-		callbackConfig?: { token: string; url: string }
+		callbackConfig?: { token: string; url?: string }
 	) {
 		this.repository = repository;
 		this.executionClient = executionClient;
@@ -361,7 +361,9 @@ export class StudioService {
 								runId: createdRun.id,
 							},
 							token: this.callbackConfig.token,
-							url: this.callbackConfig.url,
+							...(this.callbackConfig.url
+								? { url: this.callbackConfig.url }
+								: {}),
 						}
 					: undefined,
 				inputImageUrl: parsed.inputImageUrl,

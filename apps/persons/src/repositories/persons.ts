@@ -1,7 +1,7 @@
 import { createDb } from "@generator/db";
 import { and, desc, eq } from "@generator/db/operators";
 import { person, personGeneration } from "@generator/db/schema/persons";
-import { env } from "@generator/env/server";
+import { getDatabaseUrl } from "@generator/env/server";
 
 import type {
 	PersonGenerationRecord,
@@ -55,7 +55,7 @@ function groupGenerationsByPerson(
 }
 
 export function createDrizzlePersonsRepository(
-	database: PersonsDatabase = createDb(env.DATABASE_URL)
+	database: PersonsDatabase = createDb(getDatabaseUrl())
 ): PersonsRepository {
 	return {
 		async listPersons() {

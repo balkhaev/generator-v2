@@ -1,3 +1,4 @@
+import type { EventPublisher } from "@generator/events";
 import {
 	DEBUG_CORRELATION_HEADER,
 	normalizeBaseUrl,
@@ -17,13 +18,21 @@ export interface StartPersonLoraTrainingInput {
 	triggerWord?: string;
 }
 
-export type AdminTrainingClient = ReturnType<typeof createAdminTrainingClient>;
+export interface AdminTrainingClient {
+	cacheExternalLora(sourceUrl: string): Promise<string>;
+	startPersonLoraTraining(
+		input: StartPersonLoraTrainingInput,
+		options?: {
+			debugCorrelationId?: string;
+		}
+	): Promise<{ accepted: true; jobId: string }>;
+}
 
 export function createAdminTrainingClient(
 	baseUrl: string,
 	token: string,
 	fetchImpl: typeof fetch = fetch
-) {
+): AdminTrainingClient {
 	const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
 
 	async function request<T>(
@@ -83,6 +92,33 @@ export function createAdminTrainingClient(
 				}
 			);
 			return result.url;
+		},
+	};
+}
+
+export function createKafkaAdminTrainingClient(
+	eventPublisher: EventPublisher,
+	fallbackClient?: AdminTrainingClient
+): AdminTrainingClient {
+	return {
+		cacheExternalLora(sourceUrl) {
+			if (!fallbackClient) {
+				throw new Error("Admin LoRA cache integration is not configured");
+			}
+			return fallbackClient.cacheExternalLora(sourceUrl);
+		},
+		async startPersonLoraTraining(input, options) {
+			const debugCorrelationId =
+				input.debugCorrelationId ?? options?.debugCorrelationId;
+			const payload = {
+				...input,
+				...(debugCorrelationId ? { debugCorrelationId } : {}),
+			};
+			await eventPublisher.publishPersonLoraTrainingRequested(payload);
+			return {
+				accepted: true,
+				jobId: `person-lora-training-${input.personId}-${input.trainingRunId}`,
+			};
 		},
 	};
 }

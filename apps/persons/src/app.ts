@@ -28,7 +28,7 @@ interface AppOptions {
 	authHandler?: (request: Request) => Response | Promise<Response>;
 	callbackConfig?: {
 		token: string;
-		url: string;
+		url?: string;
 	};
 	corsOrigins: string[];
 	getSession?: (

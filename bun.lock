@@ -27,6 +27,7 @@
         "@generator/contracts": "workspace:*",
         "@generator/db": "workspace:*",
         "@generator/env": "workspace:*",
+        "@generator/events": "workspace:*",
         "@generator/generator-client-server": "workspace:*",
         "@generator/http": "workspace:*",
         "@generator/queue": "workspace:*",
@@ -80,6 +81,7 @@
         "@generator/contracts": "workspace:*",
         "@generator/db": "workspace:*",
         "@generator/env": "workspace:*",
+        "@generator/events": "workspace:*",
         "@generator/http": "workspace:*",
         "@generator/queue": "workspace:*",
         "@generator/workflows": "workspace:*",
@@ -116,6 +118,7 @@
         "@generator/contracts": "workspace:*",
         "@generator/db": "workspace:*",
         "@generator/env": "workspace:*",
+        "@generator/events": "workspace:*",
         "@generator/generator-client-server": "workspace:*",
         "@generator/http": "workspace:*",
         "dotenv": "catalog:",
@@ -168,6 +171,7 @@
         "@generator/contracts": "workspace:*",
         "@generator/db": "workspace:*",
         "@generator/env": "workspace:*",
+        "@generator/events": "workspace:*",
         "@generator/generator-client-server": "workspace:*",
         "@generator/http": "workspace:*",
         "@generator/workflows": "workspace:*",
@@ -300,6 +304,20 @@
         "@t3-oss/env-core": "^0.13.1",
         "@t3-oss/env-nextjs": "^0.13.1",
         "dotenv": "catalog:",
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@generator/config": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "^5",
+      },
+    },
+    "packages/events": {
+      "name": "@generator/events",
+      "version": "0.0.0",
+      "dependencies": {
+        "@generator/contracts": "workspace:*",
+        "kafkajs": "^2.2.4",
         "zod": "catalog:",
       },
       "devDependencies": {
@@ -608,6 +626,8 @@
     "@generator/debug-tools": ["@generator/debug-tools@workspace:packages/debug-tools"],
 
     "@generator/env": ["@generator/env@workspace:packages/env"],
+
+    "@generator/events": ["@generator/events@workspace:packages/events"],
 
     "@generator/generator-client-server": ["@generator/generator-client-server@workspace:packages/generator-client-server"],
 
@@ -1234,6 +1254,8 @@
     "jsonc-parser": ["jsonc-parser@3.3.1", "", {}, "sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ=="],
 
     "jsonfile": ["jsonfile@6.2.0", "", { "dependencies": { "universalify": "^2.0.0" }, "optionalDependencies": { "graceful-fs": "^4.1.6" } }, "sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg=="],
+
+    "kafkajs": ["kafkajs@2.2.4", "", {}, "sha512-j/YeapB1vfPT2iOIUn/vxdyKEuhuY2PxMBvf5JWux6iSaukAccrMtXEY/Lb7OvavDhOWME589bpLrEdnVHjfjA=="],
 
     "kleur": ["kleur@4.1.5", "", {}, "sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ=="],
 

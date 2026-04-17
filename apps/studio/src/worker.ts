@@ -1,5 +1,10 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { env, getGeneratorApiUrl } from "@generator/env/server";
+import {
+	env,
+	getGeneratorApiUrl,
+	getKafkaEventBusConfig,
+} from "@generator/env/server";
+import { createKafkaEventConsumer, eventTopics } from "@generator/events";
 import { createGeneratorExecutionClient } from "@generator/generator-client-server";
 
 import { StudioService } from "@/domain/studio";
@@ -7,6 +12,7 @@ import { createDrizzleStudioRepository } from "@/repositories/studio";
 
 const RECONCILE_INTERVAL_MS = env.RECONCILE_INTERVAL_MS;
 const RECONCILE_WATCH = env.RECONCILE_WATCH;
+const kafkaConfig = getKafkaEventBusConfig("studio-worker");
 
 const service = new StudioService(
 	createDrizzleStudioRepository(),
@@ -14,10 +20,29 @@ const service = new StudioService(
 	console
 );
 
+const eventConsumer = kafkaConfig
+	? await createKafkaEventConsumer({
+			config: kafkaConfig,
+			groupId: "studio-worker",
+			handlers: {
+				onGeneratorExecutionUpdated: async (event) => {
+					await service.applyExecutionCallback(event.data);
+				},
+			},
+			logger: console,
+			topics: [eventTopics.generatorExecutionUpdates],
+		})
+	: null;
+
 let isShuttingDown = false;
 
 const shutdown = () => {
 	isShuttingDown = true;
+	eventConsumer?.close().catch((error) => {
+		console.error("studio.events.shutdown.error", {
+			message: error instanceof Error ? error.message : "unknown",
+		});
+	});
 };
 
 process.on("SIGTERM", shutdown);

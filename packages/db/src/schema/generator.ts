@@ -25,7 +25,7 @@ export const generatorExecution = pgTable(
 		callback: jsonb("callback").$type<{
 			context?: Record<string, unknown>;
 			token?: string;
-			url: string;
+			url?: string;
 		} | null>(),
 		inputImageUrl: text("input_image_url"),
 		providerEndpointId: text("provider_endpoint_id"),

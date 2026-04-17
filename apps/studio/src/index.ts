@@ -30,7 +30,6 @@ const app = createApp({
 	authHandler: handleAuthRequest,
 	callbackConfig: {
 		token: getGeneratorCallbackToken(),
-		url: `${env.STUDIO_API_URL ?? `http://localhost:${PORT}`}/api/internal/generator-executions`,
 	},
 	corsOrigins: getRequiredCorsOrigins(),
 	generatorBaseUrl,

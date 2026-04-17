@@ -26,10 +26,17 @@ bun install
 
 ## Database Setup
 
-This project uses PostgreSQL with Drizzle ORM.
+This project uses PostgreSQL with Drizzle ORM, Redis for BullMQ queues, and Kafka as the cross-service event bus.
 
-1. Make sure you have a PostgreSQL database set up.
-2. Update your `apps/admin/.env` and `apps/generator/.env` files with your PostgreSQL connection details.
+1. Start local infrastructure:
+
+```bash
+bun run infra:start
+```
+
+2. Make sure your service env files use the local infrastructure URLs:
+   `DATABASE_URL=postgresql://postgres:password@localhost:5435/generator`,
+   `REDIS_URL=redis://localhost:6381`, and `KAFKA_BROKERS=localhost:9092`.
 
 3. Apply the schema to your database:
 
@@ -48,25 +55,28 @@ The admin gateway runs at [http://localhost:3000](http://localhost:3000), the st
 
 ## MCP
 
-The repo now includes project-level MCP configuration so coding agents can attach to the deployed debug server without extra local setup.
+The repo now includes project-level MCP configuration so coding agents can attach to the deployed debug server and the Balkhaev Coolify MCP without extra local setup.
 
-- `.mcp.json` exposes the shared `generator-debug` MCP server for agents that read root MCP config.
-- `.vscode/mcp.json` exposes the same server for VS Code-compatible agent tooling.
-- Set `GENERATOR_DEBUG_MCP_TOKEN` in your local environment before starting your agent/editor.
+- `.mcp.json` exposes the shared `generator-debug` and `balkhaev-coolify` MCP servers for agents that read root MCP config.
+- `.vscode/mcp.json` exposes the same servers for VS Code-compatible agent tooling.
+- Set `GENERATOR_DEBUG_MCP_TOKEN`, `BALKHAEV_COOLIFY_BASE_URL`, and `BALKHAEV_COOLIFY_ACCESS_TOKEN` in your local environment before starting your agent/editor.
 
-Current endpoint:
+Current endpoints:
 
 ```text
 https://mcp.gen.balkhaev.com/mcp
+https://deploy.balkhaev.com
 ```
 
 Example:
 
 ```bash
 export GENERATOR_DEBUG_MCP_TOKEN="your-token-here"
+export BALKHAEV_COOLIFY_BASE_URL="https://deploy.balkhaev.com"
+export BALKHAEV_COOLIFY_ACCESS_TOKEN="your-token-here"
 ```
 
-If the MCP auth token is rotated, update the local environment variable value instead of committing secrets into the repo.
+If an MCP auth token is rotated, update the local environment variable value instead of committing secrets into the repo.
 
 ## UI Customization
 

@@ -11,7 +11,7 @@ function jsonResponse(body: unknown) {
 	});
 }
 
-function getAuthorization(headers: HeadersInit | undefined) {
+function getAuthorization(headers: RequestInit["headers"] | undefined) {
 	if (!headers) {
 		return null;
 	}
@@ -43,55 +43,63 @@ describe("admin dashboard", () => {
 		const originalFetch = globalThis.fetch;
 		const requests: Array<{ authorization: string | null; url: string }> = [];
 
-		globalThis.fetch = (input, init) => {
-			const url = getRequestUrl(input);
-			const headers = getRequestHeaders(input, init);
-			requests.push({
-				authorization: getAuthorization(headers),
-				url,
-			});
+		globalThis.fetch = Object.assign(
+			(
+				input: Parameters<typeof fetch>[0],
+				init: Parameters<typeof fetch>[1]
+			) => {
+				const url = getRequestUrl(input);
+				const headers = getRequestHeaders(input, init);
+				requests.push({
+					authorization: getAuthorization(headers),
+					url,
+				});
 
-			if (url === "https://studio.example.com/api/studio-snapshot") {
-				return Promise.resolve(
-					jsonResponse({
-						runs: [],
-						scenarios: [],
-					})
-				);
-			}
+				if (url === "https://studio.example.com/api/studio-snapshot") {
+					return Promise.resolve(
+						jsonResponse({
+							runs: [],
+							scenarios: [],
+						})
+					);
+				}
 
-			if (url === "https://persons.example.com/api/internal/persons") {
-				return Promise.resolve(
-					jsonResponse({
-						persons: [
-							{
-								createdAt: "2026-04-16T10:00:00.000Z",
-								datasetUrl: "https://assets.example.com/dataset.zip",
-								description: "",
-								generations: [],
-								id: "person-1",
-								loraUrl: null,
-								metadata: {
-									training: {
-										lastEventAt: "2026-04-16T10:01:00.000Z",
-										status: "training",
+				if (url === "https://persons.example.com/api/internal/persons") {
+					return Promise.resolve(
+						jsonResponse({
+							persons: [
+								{
+									createdAt: "2026-04-16T10:00:00.000Z",
+									datasetUrl: "https://assets.example.com/dataset.zip",
+									description: "",
+									generations: [],
+									id: "person-1",
+									loraUrl: null,
+									metadata: {
+										training: {
+											lastEventAt: "2026-04-16T10:01:00.000Z",
+											status: "training",
+										},
 									},
+									name: "Demo Person",
+									photoUrl: null,
+									referencePhotoUrl: "https://assets.example.com/reference.png",
+									slug: "demo-person",
+									updatedAt: "2026-04-16T10:00:00.000Z",
+									videoUrl: null,
+									voiceWavUrl: null,
 								},
-								name: "Demo Person",
-								photoUrl: null,
-								referencePhotoUrl: "https://assets.example.com/reference.png",
-								slug: "demo-person",
-								updatedAt: "2026-04-16T10:00:00.000Z",
-								videoUrl: null,
-								voiceWavUrl: null,
-							},
-						],
-					})
-				);
-			}
+							],
+						})
+					);
+				}
 
-			return Promise.resolve(new Response(null, { status: 404 }));
-		};
+				return Promise.resolve(new Response(null, { status: 404 }));
+			},
+			{
+				preconnect: originalFetch.preconnect,
+			}
+		);
 
 		try {
 			const snapshot = await getAdminDashboardSnapshot(

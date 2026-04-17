@@ -55,6 +55,19 @@ const serverSchema = {
 		.optional()
 		.transform((value) => value === "true"),
 
+	// Event bus
+	KAFKA_BROKERS: z.string().min(1).optional(),
+	KAFKA_CLIENT_ID: z.string().min(1).default("generator"),
+	KAFKA_SSL: z
+		.string()
+		.optional()
+		.transform((value) => value === "true"),
+	KAFKA_SASL_MECHANISM: z
+		.enum(["plain", "scram-sha-256", "scram-sha-512"])
+		.default("plain"),
+	KAFKA_SASL_USERNAME: z.string().min(1).optional(),
+	KAFKA_SASL_PASSWORD: z.string().min(1).optional(),
+
 	// Auth
 	BETTER_AUTH_SECRET: z.string().min(32).optional(),
 	BETTER_AUTH_URL: z.url().optional(),
@@ -202,6 +215,10 @@ export function getAuthConfig() {
 	};
 }
 
+export function getDatabaseUrl() {
+	return getRequiredEnvValue(env.DATABASE_URL, "DATABASE_URL");
+}
+
 export function getGeneratorApiUrl() {
 	return getRequiredEnvValue(env.GENERATOR_API_URL, "GENERATOR_API_URL");
 }
@@ -227,6 +244,34 @@ export function getAdminApiUrl() {
 		env.ADMIN_API_URL ?? env.STUDIO_ADMIN_URL,
 		"ADMIN_API_URL"
 	);
+}
+
+export function getKafkaEventBusConfig(clientIdSuffix: string) {
+	const brokers = (env.KAFKA_BROKERS ?? "")
+		.split(",")
+		.map((broker) => broker.trim())
+		.filter((broker) => broker.length > 0);
+
+	if (brokers.length === 0) {
+		return null;
+	}
+
+	const username = env.KAFKA_SASL_USERNAME?.trim();
+	const password = env.KAFKA_SASL_PASSWORD?.trim();
+
+	return {
+		brokers,
+		clientId: `${env.KAFKA_CLIENT_ID}-${clientIdSuffix}`,
+		sasl:
+			username && password
+				? {
+						mechanism: env.KAFKA_SASL_MECHANISM,
+						password,
+						username,
+					}
+				: undefined,
+		ssl: env.KAFKA_SSL,
+	};
 }
 
 /**

@@ -3,20 +3,35 @@ import {
 	getRequestSession,
 	handleAuthRequest,
 } from "@generator/auth";
-import { env, getCorsOrigins } from "@generator/env/server";
+import {
+	env,
+	getCorsOrigins,
+	getKafkaEventBusConfig,
+} from "@generator/env/server";
+import { createKafkaEventPublisher } from "@generator/events";
 import { createGeneratorExecutionClient } from "@generator/generator-client-server";
 import { createApp } from "@/app";
 import { createAdminLoraClient } from "@/clients/admin-loras";
-import { createAdminTrainingClient } from "@/clients/admin-training";
+import {
+	createAdminTrainingClient,
+	createKafkaAdminTrainingClient,
+} from "@/clients/admin-training";
 import { createGrokClient } from "@/clients/grok";
 import { createDrizzlePersonsRepository } from "@/repositories/persons";
 
 const PORT = Number(process.env.PORT ?? 3003);
+const kafkaConfig = getKafkaEventBusConfig("persons-api");
+const eventPublisher = kafkaConfig
+	? createKafkaEventPublisher(kafkaConfig, { source: "persons-api" })
+	: null;
 
 const repository = createDrizzlePersonsRepository();
-const adminTrainingClient = env.PERSONS_ADMIN_URL
+const adminTrainingHttpClient = env.PERSONS_ADMIN_URL
 	? createAdminTrainingClient(env.PERSONS_ADMIN_URL, env.TRAINING_CONTROL_TOKEN)
 	: undefined;
+const adminTrainingClient = eventPublisher
+	? createKafkaAdminTrainingClient(eventPublisher, adminTrainingHttpClient)
+	: adminTrainingHttpClient;
 const adminLoraClient = env.PERSONS_ADMIN_URL
 	? createAdminLoraClient(env.PERSONS_ADMIN_URL, env.TRAINING_CONTROL_TOKEN)
 	: undefined;
@@ -40,7 +55,6 @@ const app = createApp({
 	authHandler: handleAuthRequest,
 	callbackConfig: {
 		token: env.GENERATOR_CALLBACK_TOKEN,
-		url: `${env.PERSONS_BASE_URL ?? `http://localhost:${PORT}`}/api/internal/generator-executions`,
 	},
 	corsOrigins: effectiveCorsOrigins,
 	getSession: getRequestSession,

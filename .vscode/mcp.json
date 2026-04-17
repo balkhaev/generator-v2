@@ -1,5 +1,13 @@
 {
   "servers": {
+    "balkhaev-coolify": {
+      "command": "npx",
+      "args": ["-y", "@masonator/coolify-mcp@latest"],
+      "env": {
+        "COOLIFY_ACCESS_TOKEN": "${BALKHAEV_COOLIFY_ACCESS_TOKEN}",
+        "COOLIFY_BASE_URL": "${BALKHAEV_COOLIFY_BASE_URL}"
+      }
+    },
     "generator-debug": {
       "type": "http",
       "url": "https://mcp.gen.balkhaev.com/mcp",

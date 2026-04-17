@@ -1,6 +1,7 @@
 import type { AuthVariables } from "@generator/auth/middleware";
 import { createSessionMiddleware } from "@generator/auth/middleware";
 import { createPublicPathMatcher } from "@generator/auth/public-paths";
+import type { EventPublisher } from "@generator/events";
 import {
 	DEBUG_CORRELATION_HEADER,
 	GENERATOR_INTERNAL_TOKEN_HEADER,
@@ -39,6 +40,7 @@ import { createWorkflowRoutes } from "@/routes/workflows";
 
 interface AppOptions {
 	corsOrigin?: string | string[];
+	eventPublisher?: EventPublisher | null;
 	executionQueue?: GeneratorExecutionQueue;
 	executionRepository?: ExecutionRepository;
 	getSession?: (
@@ -79,7 +81,8 @@ export function createApp(options: AppOptions) {
 		options.executionQueue ?? createGeneratorExecutionQueueClient(redisUrl),
 		inferenceClient,
 		storageAdapter,
-		options.loggerImpl
+		options.loggerImpl,
+		options.eventPublisher ?? null
 	);
 
 	const app = new Hono<{

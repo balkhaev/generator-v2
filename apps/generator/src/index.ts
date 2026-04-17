@@ -1,10 +1,16 @@
 import { ensureDevUser, getRequestSession } from "@generator/auth";
-import { env } from "@generator/env/server";
+import { env, getKafkaEventBusConfig } from "@generator/env/server";
+import { createKafkaEventPublisher } from "@generator/events";
 import { createApp } from "@/app";
 
 const skipAuth = env.SKIP_AUTH;
+const kafkaConfig = getKafkaEventBusConfig("generator-api");
+const eventPublisher = kafkaConfig
+	? createKafkaEventPublisher(kafkaConfig, { source: "generator-api" })
+	: null;
 
 const app = createApp({
+	eventPublisher,
 	getSession: skipAuth ? undefined : getRequestSession,
 	loggerImpl: console,
 	redisUrl: env.REDIS_URL,

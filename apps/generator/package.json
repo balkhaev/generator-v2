@@ -16,6 +16,7 @@
     "@generator/contracts": "workspace:*",
     "@generator/db": "workspace:*",
     "@generator/env": "workspace:*",
+    "@generator/events": "workspace:*",
     "@generator/http": "workspace:*",
     "@generator/queue": "workspace:*",
     "@generator/workflows": "workspace:*",

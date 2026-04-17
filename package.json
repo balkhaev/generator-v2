@@ -46,6 +46,10 @@
     "db:watch": "docker compose up",
     "db:stop": "docker compose stop",
     "db:down": "docker compose down",
+    "infra:start": "docker compose up -d",
+    "infra:watch": "docker compose up",
+    "infra:stop": "docker compose stop",
+    "infra:down": "docker compose down",
     "check": "ultracite check",
     "fix": "ultracite fix",
     "test": "DATABASE_URL=postgres://test:test@localhost:5432/test CORS_ORIGIN=http://localhost:3004 FAL_KEY=fal-test bun test --path-ignore-patterns '**/dist/**'"

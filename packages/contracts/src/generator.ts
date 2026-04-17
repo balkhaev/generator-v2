@@ -69,7 +69,7 @@ export interface CreateGeneratorExecutionInput {
 	callback?: {
 		context?: Record<string, unknown>;
 		token?: string;
-		url: string;
+		url?: string;
 	};
 	inputImageUrl?: string;
 	params?: Record<string, unknown>;

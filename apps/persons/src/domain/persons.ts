@@ -377,6 +377,20 @@ function slugifySegment(value: string) {
 		.replace(/-{2,}/g, "-");
 }
 
+/**
+ * Builds the canonical trigger word for a person LoRA. Mirrors
+ * `buildDefaultTriggerWord` in the admin training runner so a person whose
+ * trigger has not been explicitly stored yet still resolves to the same
+ * `ohwx_<slug>` token at inference time. The `ohwx` prefix is a rare token
+ * that the base model has no associations with, so all identity weight stays
+ * with the LoRA rather than leaking through the person's name.
+ */
+function buildDefaultPersonTriggerWord(slug: string) {
+	const sanitized = slug.replace(/-/g, "_").slice(0, 48);
+	const stem = sanitized.length > 0 ? sanitized : "person";
+	return `ohwx_${stem}`.slice(0, 60);
+}
+
 const imageMediaUrlPattern = /\.(png|jpe?g|webp|gif)(\?.*)?$/;
 const audioMediaUrlPattern = /\.(wav|mp3|ogg|m4a)(\?.*)?$/;
 const CANCELLED_GENERATION_ERROR = "Generation cancelled by operator";
@@ -1135,9 +1149,9 @@ export class PersonsService {
 			return person;
 		}
 
-		const fallbackTriggerWord =
-			person.slug.replace(/-/g, "_").slice(0, 48) ||
-			person.id.replace(/-/g, "_");
+		const fallbackTriggerWord = buildDefaultPersonTriggerWord(
+			person.slug || person.id
+		);
 		const triggerWord = parsed.triggerWord ?? fallbackTriggerWord;
 		const trainingRunId = crypto.randomUUID();
 		const outputName =
@@ -1247,7 +1261,7 @@ export class PersonsService {
 		const triggerWord =
 			typeof training.triggerWord === "string"
 				? training.triggerWord
-				: person.slug.replace(/-/g, "_");
+				: buildDefaultPersonTriggerWord(person.slug);
 		const genderHint =
 			typeof trainingDebug.genderHint === "string"
 				? trainingDebug.genderHint
@@ -1259,11 +1273,13 @@ export class PersonsService {
 			shouldEnhance
 		);
 
+		const subject = genderHint ? `${triggerWord} ${genderHint}` : triggerWord;
+		// Prefix and suffix the trigger so the LoRA dominates the user prompt
+		// without smuggling any explicit appearance description into the text.
 		const prompt = [
-			genderHint
-				? `a photo of ${triggerWord} ${genderHint}`
-				: `a photo of ${triggerWord}`,
+			`a photo of ${subject}`,
 			effectiveUserPrompt,
+			`portrait of ${triggerWord}`,
 		]
 			.filter((part): part is string => Boolean(part))
 			.join(", ");

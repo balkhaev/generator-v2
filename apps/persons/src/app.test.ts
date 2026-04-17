@@ -678,8 +678,13 @@ describe("persons api", () => {
 				strength: 0.95,
 			},
 		});
-		expect(executionInput.prompt).toContain("a photo of generated_subject");
+		expect(executionInput.prompt).toContain(
+			"a photo of ohwx_generated_subject"
+		);
 		expect(executionInput.prompt).toContain("jumping in a window");
+		expect(executionInput.prompt).toContain(
+			"portrait of ohwx_generated_subject"
+		);
 
 		const callbackResponse = await app.request(
 			"http://localhost/api/internal/generator-executions",

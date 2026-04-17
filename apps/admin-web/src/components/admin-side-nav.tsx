@@ -73,7 +73,7 @@ export default function AdminSideNav() {
 	return (
 		<nav
 			aria-label="Admin sections"
-			className="grid h-full min-h-0 gap-1 overflow-y-auto rounded-lg border border-foreground/6 bg-background/80 px-2 py-2 backdrop-blur-xl dark:border-foreground/10 dark:bg-background/60"
+			className="grid h-full min-h-0 content-start gap-1 overflow-y-auto rounded-lg border border-foreground/6 bg-background/80 px-2 py-2 backdrop-blur-xl dark:border-foreground/10 dark:bg-background/60"
 		>
 			{ITEMS.map((item) => {
 				const active = isActive(item.href, pathname);

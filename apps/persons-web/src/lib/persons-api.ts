@@ -237,6 +237,7 @@ export async function generateWithLora(
 	personId: string,
 	prompt: string,
 	options?: {
+		enhance?: boolean;
 		extraLoraUrl?: string;
 		extraLoraWeight?: number;
 	}
@@ -247,6 +248,7 @@ export async function generateWithLora(
 			method: "POST",
 			body: JSON.stringify({
 				prompt,
+				...(options?.enhance ? { enhance: true } : {}),
 				...(options?.extraLoraUrl
 					? {
 							extraLoraUrl: options.extraLoraUrl,

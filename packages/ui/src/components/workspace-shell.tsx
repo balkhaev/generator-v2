@@ -85,8 +85,13 @@ export default function WorkspaceShell({
 	workspaceLabel: string;
 }) {
 	return (
-		<main className={cn("grid min-h-svh xl:grid-cols-[3rem_1fr]", className)}>
-			<div className="flex items-start gap-2 overflow-x-auto border-foreground/5 px-1 py-3 xl:flex-col xl:items-center xl:gap-1 xl:border-r xl:px-0 xl:py-4 dark:border-foreground/8">
+		<main
+			className={cn(
+				"grid min-h-svh xl:h-svh xl:grid-cols-[3rem_1fr] xl:overflow-hidden",
+				className
+			)}
+		>
+			<div className="flex min-h-0 items-start gap-2 overflow-x-auto border-foreground/5 px-1 py-3 xl:flex-col xl:items-center xl:gap-1 xl:border-r xl:px-0 xl:py-4 dark:border-foreground/8">
 				<nav
 					aria-label="Workspace navigation"
 					className="flex gap-1 xl:flex-col"
@@ -120,7 +125,7 @@ export default function WorkspaceShell({
 
 			<div
 				className={cn(
-					"grid min-h-0 gap-3 p-3 xl:grid-rows-[auto_minmax(0,1fr)]",
+					"grid min-h-0 gap-3 p-3 xl:grid-rows-[auto_minmax(0,1fr)] xl:overflow-hidden",
 					context
 						? "xl:grid-cols-[15rem_minmax(0,1fr)_20rem]"
 						: "xl:grid-cols-[minmax(0,1fr)_20rem]"

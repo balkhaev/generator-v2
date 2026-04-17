@@ -215,6 +215,7 @@ export function createPersonRoutes(service: PersonsService) {
 	app.post("/:personId/generate-with-lora", async (c) => {
 		try {
 			const body = await c.req.json<{
+				enhance?: boolean;
 				extraLoraUrl?: string;
 				extraLoraWeight?: number;
 				prompt?: string;
@@ -227,6 +228,7 @@ export function createPersonRoutes(service: PersonsService) {
 				c.req.param("personId"),
 				prompt,
 				{
+					enhance: body.enhance === true,
 					extraLoraUrl:
 						typeof body.extraLoraUrl === "string"
 							? body.extraLoraUrl.trim()

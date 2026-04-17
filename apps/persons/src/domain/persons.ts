@@ -686,6 +686,34 @@ export class PersonsService {
 		return combined.slice(0, targetCount);
 	}
 
+	private async resolveOptionalGrokEnhancedPrompt(
+		userPrompt: string,
+		shouldEnhance: boolean
+	): Promise<string> {
+		if (!(shouldEnhance && this.grokClient)) {
+			return userPrompt;
+		}
+		try {
+			const enhanced = await this.grokClient.enhancePrompt(userPrompt);
+			return enhanced.trim().length > 0 ? enhanced : userPrompt;
+		} catch {
+			return userPrompt;
+		}
+	}
+
+	private async resolveExtraLoraUrlWithCaching(
+		url: string | undefined
+	): Promise<string | undefined> {
+		if (!(url && this.adminTrainingClient)) {
+			return url;
+		}
+		try {
+			return await this.adminTrainingClient.cacheExternalLora(url);
+		} catch {
+			return url;
+		}
+	}
+
 	getAvatarPreview(
 		executionId: string,
 		options?: {
@@ -1197,6 +1225,7 @@ export class PersonsService {
 		personId: string,
 		userPrompt: string,
 		options?: {
+			enhance?: boolean;
 			extraLoraUrl?: string;
 			extraLoraWeight?: number;
 		}
@@ -1224,25 +1253,23 @@ export class PersonsService {
 				? trainingDebug.genderHint
 				: inferGenderHint(person.description);
 
+		const shouldEnhance = Boolean(options?.enhance) && Boolean(this.grokClient);
+		const effectiveUserPrompt = await this.resolveOptionalGrokEnhancedPrompt(
+			userPrompt,
+			shouldEnhance
+		);
+
 		const prompt = [
 			genderHint
 				? `a photo of ${triggerWord} ${genderHint}`
 				: `a photo of ${triggerWord}`,
-			userPrompt,
+			effectiveUserPrompt,
 		]
 			.filter((part): part is string => Boolean(part))
 			.join(", ");
-		let resolvedExtraLoraUrl = options?.extraLoraUrl;
-		if (resolvedExtraLoraUrl && this.adminTrainingClient) {
-			try {
-				resolvedExtraLoraUrl =
-					await this.adminTrainingClient.cacheExternalLora(
-						resolvedExtraLoraUrl
-					);
-			} catch {
-				// fall through with original URL if caching fails
-			}
-		}
+		const resolvedExtraLoraUrl = await this.resolveExtraLoraUrlWithCaching(
+			options?.extraLoraUrl
+		);
 
 		const workflowKey = env.PERSONS_DEFAULT_LORA_WORKFLOW;
 		const isImageToImageWorkflow = workflowKey.includes("image-to-image");
@@ -1273,7 +1300,13 @@ export class PersonsService {
 			operatorScenarioId: null,
 			errorSummary: null,
 			metadata: getGenerationProgressMetadata({
-				metadata: { workflowKey, generatedWithLora: true },
+				metadata: {
+					workflowKey,
+					generatedWithLora: true,
+					...(shouldEnhance
+						? { enhanced: true, originalPrompt: userPrompt }
+						: {}),
+				},
 			}),
 		});
 
@@ -1293,6 +1326,9 @@ export class PersonsService {
 				metadata: {
 					workflowKey,
 					generatedWithLora: true,
+					...(shouldEnhance
+						? { enhanced: true, originalPrompt: userPrompt }
+						: {}),
 					...(options?.extraLoraUrl
 						? {
 								extraLoraUrl: options.extraLoraUrl,

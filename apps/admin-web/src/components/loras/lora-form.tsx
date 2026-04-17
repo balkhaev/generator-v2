@@ -18,7 +18,8 @@ import {
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { formatBytes } from "@generator/ui/lib/format";
-import { Eye, Loader2, Plus } from "lucide-react";
+import { cn } from "@generator/ui/lib/utils";
+import { ChevronDown, Eye, Loader2, Plus } from "lucide-react";
 import {
 	type FormEvent,
 	useCallback,
@@ -257,6 +258,7 @@ export default function LoraForm() {
 	const [description, setDescription] = useState("");
 	const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
 	const [elapsedSeconds, setElapsedSeconds] = useState(0);
+	const [formOpen, setFormOpen] = useState(false);
 	const trimmedSourceUrl = sourceUrl.trim();
 	const activeVariant = useMemo(
 		() =>
@@ -389,13 +391,34 @@ export default function LoraForm() {
 
 	return (
 		<Card>
-			<CardHeader>
-				<CardTitle>Add LoRA</CardTitle>
-				<CardDescription>
-					Import from Civitai, Hugging Face, or a direct file URL.
-				</CardDescription>
+			<CardHeader className="p-0">
+				<button
+					aria-controls="add-lora-form"
+					aria-expanded={formOpen}
+					className="flex w-full items-start gap-3 rounded-none px-4 py-4 text-left transition-colors hover:bg-muted/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+					onClick={() => setFormOpen((open) => !open)}
+					type="button"
+				>
+					<span className="grid min-w-0 flex-1 gap-1">
+						<CardTitle>Add LoRA</CardTitle>
+						<CardDescription>
+							Import from Civitai, Hugging Face, or a direct file URL.
+						</CardDescription>
+					</span>
+					<ChevronDown
+						aria-hidden="true"
+						className={cn(
+							"mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
+							formOpen ? "rotate-180" : ""
+						)}
+					/>
+				</button>
 			</CardHeader>
-			<form onSubmit={handleSubmit}>
+			<form
+				className={formOpen ? "contents" : "hidden"}
+				id="add-lora-form"
+				onSubmit={handleSubmit}
+			>
 				<CardContent className="grid gap-3 md:grid-cols-2">
 					<div className="grid gap-1.5">
 						<Label htmlFor="lora-base-model">Base model</Label>

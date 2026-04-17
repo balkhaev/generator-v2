@@ -70,6 +70,7 @@ const selectClassName =
 	"flex h-9 w-full rounded-lg border border-input bg-transparent px-3 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
 
 const DATASET_TARGET_COUNT = 20;
+const LORA_OPTIMISTIC_GENERATION_PREFIX = "__optimistic:lora:";
 const trailingSlashesPattern = /\/+$/u;
 const DEFAULT_ADMIN_URL = "http://localhost:3001";
 const adminBaseUrl = (env.NEXT_PUBLIC_ADMIN_URL ?? DEFAULT_ADMIN_URL).replace(
@@ -295,6 +296,38 @@ function getGenerationProgressPct(generation: PersonGenerationRecord) {
 	}
 }
 
+function isOptimisticLoraGeneration(generation: PersonGenerationRecord) {
+	return generation.id.startsWith(LORA_OPTIMISTIC_GENERATION_PREFIX);
+}
+
+function createOptimisticLoraGeneration(
+	personId: string,
+	prompt: string
+): PersonGenerationRecord {
+	const now = new Date().toISOString();
+	const suffix =
+		typeof globalThis.crypto !== "undefined" &&
+		typeof globalThis.crypto.randomUUID === "function"
+			? globalThis.crypto.randomUUID()
+			: String(Date.now());
+	return {
+		createdAt: now,
+		errorSummary: null,
+		id: `${LORA_OPTIMISTIC_GENERATION_PREFIX}${suffix}`,
+		mediaType: "image",
+		metadata: {},
+		operatorRunId: null,
+		operatorScenarioId: null,
+		personId,
+		previewUrl: null,
+		prompt,
+		sourceUrl: "",
+		status: "queued",
+		title: "Generating with LoRA",
+		updatedAt: now,
+	};
+}
+
 function GenerationPreview({
 	generation,
 	onImageClick,
@@ -307,8 +340,10 @@ function GenerationPreview({
 
 		return (
 			<div className="flex aspect-[4/3] items-center justify-center rounded-lg bg-muted/10 px-5 dark:bg-muted/5">
-				<div className="grid w-full max-w-44 place-items-center gap-2.5">
-					<Loader2 className="size-6 animate-spin text-muted-foreground/50" />
+				<div className="flex w-full max-w-44 flex-col items-stretch gap-2.5">
+					<div className="flex justify-center">
+						<Loader2 className="size-6 animate-spin text-muted-foreground/50" />
+					</div>
 					<div className="flex w-full items-center justify-between gap-3 text-muted-foreground/60 text-xs">
 						<span>Generating</span>
 						<span className="font-medium tabular-nums">{progressPct}%</span>
@@ -543,7 +578,8 @@ function GenerationCard({
 	onImageClick?: () => void;
 }) {
 	const studioGenerationHref = buildStudioGenerationHref(studioUrl, generation);
-	const canCancel = generation.status === "queued";
+	const optimistic = isOptimisticLoraGeneration(generation);
+	const canCancel = generation.status === "queued" && !optimistic;
 
 	return (
 		<div className="grid gap-2 overflow-hidden rounded-xl border border-border/30 bg-background/60 dark:bg-background/40">
@@ -565,7 +601,7 @@ function GenerationCard({
 							<button
 								aria-label={`Cancel ${generation.title}`}
 								className="inline-flex size-6 items-center justify-center rounded-full text-muted-foreground/50 transition hover:bg-amber-500/10 hover:text-amber-600 disabled:pointer-events-none disabled:opacity-50 dark:hover:text-amber-400"
-								disabled={isCancelling || isDeleting}
+								disabled={isCancelling || isDeleting || optimistic}
 								onClick={onCancel}
 								type="button"
 							>
@@ -579,7 +615,7 @@ function GenerationCard({
 						<button
 							aria-label={`Delete ${generation.title}`}
 							className="inline-flex size-6 items-center justify-center rounded-full text-muted-foreground/50 transition hover:bg-rose-500/10 hover:text-rose-600 disabled:pointer-events-none disabled:opacity-50 dark:hover:text-rose-400"
-							disabled={isDeleting || isCancelling}
+							disabled={isDeleting || isCancelling || optimistic}
 							onClick={onDelete}
 							type="button"
 						>
@@ -961,6 +997,55 @@ function LoraTrainingActions({
 	);
 }
 
+function EnhanceWithGrokToggle({
+	checked,
+	disabled = false,
+	disabledHint,
+	id,
+	onChange,
+	tooltip,
+}: {
+	checked: boolean;
+	disabled?: boolean;
+	disabledHint?: string;
+	id: string;
+	onChange: (value: boolean) => void;
+	tooltip: string;
+}) {
+	const isActive = checked && !disabled;
+	const tooltipText = disabled && disabledHint ? disabledHint : tooltip;
+	return (
+		<label
+			className={cn(
+				"flex items-center gap-2 rounded-lg border bg-background/40 px-3 py-2 text-xs transition-colors",
+				disabled
+					? "cursor-not-allowed border-border/40 opacity-60"
+					: "cursor-pointer",
+				isActive ? "border-violet-400/60 bg-violet-500/5" : "border-border/60",
+				!(disabled || isActive) && "hover:border-border"
+			)}
+			htmlFor={id}
+			title={tooltipText}
+		>
+			<input
+				checked={isActive}
+				className={cn(
+					"size-3.5 accent-violet-500",
+					disabled ? "cursor-not-allowed" : "cursor-pointer"
+				)}
+				disabled={disabled}
+				id={id}
+				onChange={(event) => onChange(event.target.checked)}
+				type="checkbox"
+			/>
+			<span className="flex items-center gap-1 font-medium leading-none">
+				<Sparkles className="size-3 text-violet-500" />
+				Enhance with Grok
+			</span>
+		</label>
+	);
+}
+
 function LoraActions({
 	isCancellingTraining,
 	person,
@@ -975,12 +1060,14 @@ function LoraActions({
 	onGenerateWithLora: (
 		prompt: string,
 		options?: {
+			enhance?: boolean;
 			extraLoraUrl?: string;
 			extraLoraWeight?: number;
 		}
 	) => void;
 }) {
 	const [loraPrompt, setLoraPrompt] = useState("");
+	const [enhanceLoraPrompt, setEnhanceLoraPrompt] = useState(false);
 	const [extraLoraId, setExtraLoraId] = useState("");
 	const [extraLoraWeight, setExtraLoraWeight] = useState("");
 	const [availableLoras, setAvailableLoras] = useState<LoraRegistryEntry[]>([]);
@@ -1110,6 +1197,12 @@ function LoraActions({
 							</div>
 						) : null}
 					</div>
+					<EnhanceWithGrokToggle
+						checked={enhanceLoraPrompt}
+						id={`enhanceLoraPrompt-${person.id}`}
+						onChange={setEnhanceLoraPrompt}
+						tooltip="Grok перепишет ваш промт, добавив детали для более качественной генерации"
+					/>
 					<Button
 						disabled={!loraPrompt.trim()}
 						onClick={() => {
@@ -1120,12 +1213,14 @@ function LoraActions({
 							const resolvedExtraLoraUrl = selectedEntry?.s3Url;
 							const fallbackWeight = selectedEntry?.defaultWeight ?? 0.05;
 							onGenerateWithLora(loraPrompt.trim(), {
+								enhance: enhanceLoraPrompt,
 								extraLoraUrl: resolvedExtraLoraUrl,
 								extraLoraWeight: Number.isFinite(parsedExtraLoraWeight)
 									? parsedExtraLoraWeight
 									: fallbackWeight,
 							});
 							setLoraPrompt("");
+							setEnhanceLoraPrompt(false);
 						}}
 						size="sm"
 					>
@@ -1271,6 +1366,7 @@ function PersonDetailView({
 	onGenerateWithLora: (
 		prompt: string,
 		options?: {
+			enhance?: boolean;
 			extraLoraUrl?: string;
 			extraLoraWeight?: number;
 		}
@@ -1720,42 +1816,14 @@ function CreatePersonForm({
 							</div>
 						) : null}
 
-						<label
-							className={cn(
-								"flex items-start gap-2 rounded-lg border bg-background/40 px-3 py-2 text-xs transition-colors",
-								enhanceDisabled
-									? "cursor-not-allowed border-border/40 opacity-60"
-									: "cursor-pointer",
-								isEnhanceActive
-									? "border-violet-400/60 bg-violet-500/5"
-									: "border-border/60",
-								!(enhanceDisabled || isEnhanceActive) && "hover:border-border"
-							)}
-							htmlFor="enhancePrompt"
-						>
-							<input
-								checked={isEnhanceActive}
-								className={cn(
-									"mt-0.5 size-3.5 accent-violet-500",
-									enhanceDisabled ? "cursor-not-allowed" : "cursor-pointer"
-								)}
-								disabled={enhanceDisabled}
-								id="enhancePrompt"
-								onChange={(event) => onEnhanceChange(event.target.checked)}
-								type="checkbox"
-							/>
-							<span className="grid gap-0.5 leading-tight">
-								<span className="flex items-center gap-1 font-medium">
-									<Sparkles className="size-3 text-violet-500" />
-									Enhance with Grok
-								</span>
-								<span className="text-[11px] text-muted-foreground/70">
-									{enhanceDisabled
-										? "Недоступно при загруженном референсном фото"
-										: "Обогатим промт и сгенерируем 4 разные референсные девушки"}
-								</span>
-							</span>
-						</label>
+						<EnhanceWithGrokToggle
+							checked={isEnhanceActive}
+							disabled={enhanceDisabled}
+							disabledHint="Недоступно при загруженном референсном фото"
+							id="enhancePrompt"
+							onChange={onEnhanceChange}
+							tooltip="Обогатим промт и сгенерируем 4 разные референсные девушки"
+						/>
 
 						<Button
 							disabled={isCreating || !canSubmitForm(formState)}
@@ -2234,6 +2302,7 @@ export default function PersonsWorkspace({
 	async function handleGenerateWithLora(
 		prompt: string,
 		options?: {
+			enhance?: boolean;
 			extraLoraUrl?: string;
 			extraLoraWeight?: number;
 		}
@@ -2241,6 +2310,17 @@ export default function PersonsWorkspace({
 		if (!selectedPerson) {
 			return;
 		}
+		const optimistic = createOptimisticLoraGeneration(
+			selectedPerson.id,
+			prompt
+		);
+		setPersons((current) =>
+			current.map((p) =>
+				p.id === selectedPerson.id
+					? { ...p, generations: [optimistic, ...p.generations] }
+					: p
+			)
+		);
 		try {
 			const updated = await generateWithLora(
 				selectedPerson.id,
@@ -2252,6 +2332,18 @@ export default function PersonsWorkspace({
 			);
 			toast.success("Generation with LoRA started");
 		} catch (error) {
+			setPersons((current) =>
+				current.map((p) =>
+					p.id === selectedPerson.id
+						? {
+								...p,
+								generations: p.generations.filter(
+									(g) => g.id !== optimistic.id
+								),
+							}
+						: p
+				)
+			);
 			toast.error(
 				error instanceof Error ? error.message : "Failed to start generation"
 			);

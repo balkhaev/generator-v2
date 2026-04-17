@@ -4,10 +4,15 @@ import {
 	createKafkaEventPublisher,
 	eventTopics,
 } from "@generator/events";
+import { createRedisIdempotencyLock, withIdempotency } from "@generator/queue";
 import { resolveS3StorageConfig } from "@generator/storage";
 
 import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
+import type { PersonLoraTrainingJobData } from "@/queue/person-lora-training";
 import { createPersonLoraTrainingWorker } from "@/queue/person-lora-training";
+
+const TRAINING_LOCK_TTL_SECONDS = 24 * 60 * 60;
+const TRAINING_LOCK_PREFIX = "admin:person-lora-training";
 
 const redisUrl = env.REDIS_URL;
 const personsApiUrl = env.PERSONS_API_URL;
@@ -41,14 +46,45 @@ const falRunner = new FalZibLoraTrainingRunner({
 	logger: console,
 });
 
+const trainingLock = createRedisIdempotencyLock({
+	keyPrefix: TRAINING_LOCK_PREFIX,
+	redisUrl,
+	ttlSeconds: TRAINING_LOCK_TTL_SECONDS,
+});
+
+const runTrainingOnce = async (
+	source: "bullmq" | "kafka",
+	data: PersonLoraTrainingJobData
+) => {
+	const outcome = await withIdempotency(
+		trainingLock,
+		data.trainingRunId,
+		async () => {
+			console.info("admin.worker: starting training", {
+				personId: data.personId,
+				source,
+				trainingRunId: data.trainingRunId,
+			});
+			await falRunner.run(data);
+		}
+	);
+
+	if (!outcome.acquired) {
+		console.info("admin.worker: skipped duplicate training request", {
+			personId: data.personId,
+			source,
+			trainingRunId: data.trainingRunId,
+		});
+	}
+};
+
 console.info(
 	"admin.worker: ready (training provider: fal, dataset upload: S3)"
 );
 
 const queueWorker = createPersonLoraTrainingWorker({
 	handler: async (job) => {
-		console.info(`admin.worker: processing job ${job.data.personId} (fal)`);
-		await falRunner.run(job.data);
+		await runTrainingOnce("bullmq", job.data);
 	},
 	logger: console,
 	redisUrl,
@@ -60,11 +96,7 @@ const eventConsumer = kafkaConfig
 			groupId: "admin-worker",
 			handlers: {
 				onPersonLoraTrainingRequested: async (event) => {
-					console.info("admin.worker: processing kafka training request", {
-						personId: event.data.personId,
-						trainingRunId: event.data.trainingRunId,
-					});
-					await falRunner.run(event.data);
+					await runTrainingOnce("kafka", event.data);
 				},
 			},
 			logger: console,
@@ -84,6 +116,7 @@ await new Promise<void>((resolve) => {
 		await queueWorker.close();
 		await eventConsumer?.close();
 		await eventPublisher?.close();
+		await trainingLock.close();
 		resolve();
 	};
 

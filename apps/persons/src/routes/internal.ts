@@ -38,6 +38,42 @@ export function createInternalRoutes(service: PersonsService) {
 		return c.json({ persons: await service.listPersons() });
 	});
 
+	app.post("/persons/:personId/retrain-lora", async (c) => {
+		const token = c.req
+			.header("authorization")
+			?.replace(bearerPrefixPattern, "");
+		if (!isAuthorized(token)) {
+			return c.json({ error: "Unauthorized callback" }, 401);
+		}
+
+		try {
+			const body = (await c.req.json().catch(() => ({}))) as {
+				outputName?: string;
+				referencePrompt?: string;
+				triggerWord?: string;
+			};
+			const person = await service.startLoraTraining(c.req.param("personId"), {
+				outputName: body.outputName,
+				referencePrompt: body.referencePrompt,
+				triggerWord: body.triggerWord,
+			});
+			if (!person) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+			return c.json({ person }, 202);
+		} catch (error) {
+			return c.json(
+				{
+					error:
+						error instanceof Error
+							? error.message
+							: "Unable to enqueue retraining job.",
+				},
+				400
+			);
+		}
+	});
+
 	app.post("/lora-trainings", async (c) => {
 		const token = c.req
 			.header("authorization")

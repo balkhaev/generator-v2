@@ -1129,10 +1129,6 @@ export class PersonsService {
 			throw new Error("Admin training integration is not configured");
 		}
 
-		if (person.loraUrl) {
-			return person;
-		}
-
 		const currentTrainingObj =
 			person.metadata.training &&
 			typeof person.metadata.training === "object" &&
@@ -1140,6 +1136,10 @@ export class PersonsService {
 				? (person.metadata.training as Record<string, unknown>)
 				: null;
 		const currentTrainingStatus = currentTrainingObj?.status;
+		// Block while a training run is already active so we never enqueue a
+		// duplicate job. A previously-completed training (status === "ready" or
+		// person.loraUrl already set) is intentionally allowed to be retrained
+		// — that's exactly what the "Retrain LoRA" button is for.
 		if (
 			currentTrainingStatus === "queued" ||
 			currentTrainingStatus === "generating" ||

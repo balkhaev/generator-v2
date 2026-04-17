@@ -71,7 +71,12 @@ const selectClassName =
 
 const DATASET_TARGET_COUNT = 20;
 const trailingSlashesPattern = /\/+$/u;
-const adminLorasHref = `${env.NEXT_PUBLIC_SERVER_URL?.replace(trailingSlashesPattern, "") ?? ""}/loras`;
+const DEFAULT_ADMIN_URL = "http://localhost:3001";
+const adminBaseUrl = (env.NEXT_PUBLIC_ADMIN_URL ?? DEFAULT_ADMIN_URL).replace(
+	trailingSlashesPattern,
+	""
+);
+const adminLorasHref = `${adminBaseUrl}/loras`;
 
 interface LightboxState {
 	images: string[];
@@ -2089,7 +2094,7 @@ export default function PersonsWorkspace({
 		(total, person) => total + person.generations.length,
 		0
 	);
-	const adminUrl = env.NEXT_PUBLIC_ADMIN_URL ?? "http://localhost:3001";
+	const adminUrl = env.NEXT_PUBLIC_ADMIN_URL ?? DEFAULT_ADMIN_URL;
 	const studioUrl = env.NEXT_PUBLIC_STUDIO_URL ?? "http://localhost:3002";
 
 	function updateFormField<Key extends keyof CreatePersonInput>(

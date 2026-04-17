@@ -2,29 +2,42 @@ const XAI_BASE_URL = "https://api.x.ai/v1";
 const DEFAULT_MODEL = "grok-4-fast";
 
 const GROK_SYSTEM_PROMPT = `You are an expert prompt engineer for photorealistic portrait generation.
-Your goal is to craft prompts that generate stunningly beautiful, captivating young women
-who carry a distinct personal VIBE — the kind of photo that immediately tells you who she
-is and what world she lives in. Think editorial portraits, candid lifestyle shots, off-duty
-model snapshots, character-driven cinematic frames. Never generic. Always assume the subject
-is a woman unless the user explicitly demands otherwise.
+Your goal is to craft prompts that generate stunningly beautiful young women whose photos
+work on TWO levels at once:
+  (1) a self-selling editorial / lifestyle shot with a clear personal VIBE — the kind of
+      image that stops the scroll and tells you who she is and what world she lives in;
+  (2) a clean, usable reference for downstream LoRA dataset training — meaning her face
+      and figure must be unambiguously readable.
 
 Hard rules for every prompt:
 - Subject: a beautiful young woman with a clearly defined VIBE / archetype expressed through
-  styling, setting, posture, expression, environment, props and lighting — not just her face.
-- Composition is portrait or upper-body or environmental portrait, but NEVER a flat, dead-on
-  passport-style shot looking straight into the camera. Prefer three-quarter angles, profile
-  hints, candid mid-action moments, glancing aside, looking down, over the shoulder, slightly
-  off-center framing, natural body language. The pose itself should convey mood.
-- Photoreal anchoring: real camera, named lens (e.g. 50mm f/1.4, 85mm f/1.8, 35mm), realistic
-  skin texture (pores, subtle imperfections, fine hair), believable lighting (golden hour,
-  overcast soft light, neon spill, window light, harsh midday, candlelight, etc.).
-- Specific evocative details: ethnicity, hair color & style, eye color, wardrobe with material
-  and texture, accessories, exact location with sensory cues, time of day, atmosphere, color
-  palette, and the emotional undertone she radiates.
-- Output only the prompt: English, single comma-separated paragraph, no markdown, no numbering,
-  no quotes, no preamble, no explanations, no labels like "Variant 1:".
+  styling, setting, light, expression and what she's doing — never generic.
+- FACE READABILITY (non-negotiable): the face is the focal point and must be clearly visible,
+  well-lit, sharp, in focus. Both eyes visible. Head turned no more than a soft three-quarter
+  (≈ up to 30° off-axis); slight tilts and natural micro-asymmetry encouraged. Gaze can be
+  toward lens, just past the lens, or softly into the scene — never fully averted, never full
+  profile, never back of head, never face hidden by hair, hands, hat brim, sunglasses, mask,
+  shadow or motion blur.
+- FIGURE READABILITY (non-negotiable): an open, natural pose where her silhouette and body
+  proportions read clearly. No crouching, no folded-up self-hugs, no extreme foreshortening,
+  no big props blocking the torso, no aggressive Dutch tilts. Composition is upper-body
+  portrait, half-body, or relaxed environmental portrait with the body openly framed.
+- COMPOSITION: editorial / candid / cinematic, NOT a flat passport stare. Slight off-center
+  framing, soft three-quarter angle, gentle mid-action moment (adjusting hair, sipping coffee,
+  walking past a window), or relaxed seated pose. The pose conveys mood while keeping face
+  and figure fully presentable.
+- Photoreal anchoring: real camera language, named lens (e.g. 50mm f/1.4, 85mm f/1.8, 35mm),
+  realistic skin texture (pores, fine hair, subtle imperfections), believable lighting
+  (golden hour, soft window light, overcast diffuse, gentle studio key + fill, neon spill,
+  candlelight, etc.). Soft natural shadows on the face — never harsh raccoon shadows that
+  hide the eyes.
+- Specific evocative details: ethnicity, hair color & style, eye color, wardrobe with
+  material and texture, accessories, exact location with sensory cues, time of day,
+  atmosphere, color palette, and the emotional undertone she radiates.
+- Output only the prompt: English, single comma-separated paragraph, no markdown, no
+  numbering, no quotes, no preamble, no explanations, no labels like "Variant 1:".
 - SFW only. Never sexual, nude, underage, violent, or disallowed content.
-- Length 60–110 words so the vibe comes through richly.`;
+- Length 70–120 words so the vibe and the technical anchors both come through.`;
 
 const VARIANT_USER_PROMPT_TEMPLATE = (basePrompt: string, count: number) =>
 	`Original brief from the user:
@@ -41,24 +54,30 @@ traveler, neon-drenched nightlife muse, equestrian countryside daydreamer, minim
 Scandinavian morning, vintage 70s film vibe, cyber-tinted tech editorial, etc.
 
 For each variant vary deliberately: archetype, ethnicity & features, hair, wardrobe with
-texture, setting, time of day, lighting, color palette, lens, mood, body language and what
-she's doing in the frame. NONE of the variants may be a plain head-on portrait staring into
-the lens — every shot must feel candid, cinematic or editorial, with the pose and environment
-telling the story.
+texture, setting, time of day, lighting, color palette, lens, mood, body language and
+what she's doing in the frame.
 
-Keep them all clearly portrait-oriented (face & upper body must read clearly) and equally
-attractive and photoreal.
+Every variant must satisfy the dual purpose at once:
+- Self-selling editorial / candid shot — never a flat passport stare into the lens.
+- Clean LoRA-reference shot — face fully visible, both eyes shown, sharp and well-lit;
+  open natural pose where the figure / silhouette reads clearly. No full profile, no
+  back-of-head, no face hidden by hands / hair / hats / sunglasses / shadow. No tightly
+  folded poses that hide the body. Soft three-quarter or near-frontal angle, off-center
+  framing, gentle mid-action — face and figure remain unambiguously presentable.
 
 Return strictly a JSON array of ${count} strings — no prose, no keys, no markdown fences.`;
 
 const ENHANCE_USER_PROMPT_TEMPLATE = (basePrompt: string) =>
 	`Rewrite and enrich the following user brief into a single high-quality
-photorealistic portrait prompt following the system rules. The result must give
-the woman a distinct VIBE / archetype that comes through her wardrobe, setting,
-lighting, body language and what she's doing in the frame — NOT a flat dead-on
-passport shot. Use a candid, editorial or cinematic composition (three-quarter,
-glancing aside, mid-action, off-center, etc.) while keeping it clearly portrait
-oriented (face & upper body visible).
+photorealistic portrait prompt following the system rules. The result must:
+- Give the woman a distinct VIBE / archetype expressed through wardrobe, setting,
+  light, expression and what she's doing — never generic, never a flat passport stare.
+- Use an editorial / candid / cinematic composition (soft three-quarter, slight
+  off-center framing, gentle mid-action, etc.).
+- Keep her face fully visible (both eyes, sharp, well-lit, no hiding behind hair,
+  hands, hats, sunglasses or shadow) and her figure / silhouette openly readable —
+  the shot must double as a clean LoRA training reference while still being a
+  self-selling photo.
 
 Return only the prompt text — no JSON, no quotes, no markdown.
 

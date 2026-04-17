@@ -30,6 +30,7 @@ import {
 	FolderArchive,
 	ImageIcon,
 	Loader2,
+	Save,
 	Sparkles,
 	Trash2,
 	Upload,
@@ -45,15 +46,21 @@ import { toast } from "sonner";
 
 import {
 	type CreatePersonInput,
+	cancelGeneration,
+	cancelPersonLoraTraining,
 	createPerson,
 	deleteGeneration,
+	deletePerson,
 	fetchLoras,
 	generateWithLora,
 	getPersonsDashboard,
 	type LoraRegistryEntry,
 	type PersonGenerationRecord,
 	type PersonRecord,
+	requestAvatarPreviews,
 	trainPersonLora,
+	type UpdatePersonInput,
+	updatePerson,
 } from "@/lib/persons-api";
 
 const textareaClassName =
@@ -212,6 +219,57 @@ function createEmptyFormState(): CreatePersonInput {
 	return {
 		name: "",
 		description: "",
+	};
+}
+
+interface PersonManagementFormState {
+	datasetUrl: string;
+	description: string;
+	loraUrl: string;
+	name: string;
+	personId: string;
+	photoUrl: string;
+	referencePhotoUrl: string;
+	slug: string;
+	videoUrl: string;
+	voiceWavUrl: string;
+}
+
+function createManagementFormState(
+	person: PersonRecord
+): PersonManagementFormState {
+	return {
+		datasetUrl: person.datasetUrl ?? "",
+		description: person.description,
+		loraUrl: person.loraUrl ?? "",
+		name: person.name,
+		personId: person.id,
+		photoUrl: person.photoUrl ?? "",
+		referencePhotoUrl: person.referencePhotoUrl,
+		slug: person.slug,
+		videoUrl: person.videoUrl ?? "",
+		voiceWavUrl: person.voiceWavUrl ?? "",
+	};
+}
+
+function optionalUrlPayload(value: string) {
+	const trimmedValue = value.trim();
+	return trimmedValue.length > 0 ? trimmedValue : null;
+}
+
+function createUpdatePersonPayload(
+	formState: PersonManagementFormState
+): UpdatePersonInput {
+	return {
+		datasetUrl: optionalUrlPayload(formState.datasetUrl),
+		description: formState.description.trim(),
+		loraUrl: optionalUrlPayload(formState.loraUrl),
+		name: formState.name.trim(),
+		photoUrl: optionalUrlPayload(formState.photoUrl),
+		referencePhotoUrl: formState.referencePhotoUrl.trim(),
+		slug: formState.slug.trim(),
+		videoUrl: optionalUrlPayload(formState.videoUrl),
+		voiceWavUrl: optionalUrlPayload(formState.voiceWavUrl),
 	};
 }
 
@@ -464,18 +522,23 @@ function buildStudioGenerationHref(
 
 function GenerationCard({
 	generation,
+	isCancelling,
 	isDeleting,
+	onCancel,
 	onDelete,
 	studioUrl,
 	onImageClick,
 }: {
 	generation: PersonGenerationRecord;
+	isCancelling: boolean;
 	isDeleting: boolean;
+	onCancel: () => void;
 	onDelete: () => void;
 	studioUrl: string;
 	onImageClick?: () => void;
 }) {
 	const studioGenerationHref = buildStudioGenerationHref(studioUrl, generation);
+	const canCancel = generation.status === "queued";
 
 	return (
 		<div className="grid gap-2 overflow-hidden rounded-xl border border-border/30 bg-background/60 dark:bg-background/40">
@@ -493,10 +556,25 @@ function GenerationCard({
 							<GenerationStatusIcon status={generation.status} />
 							{generation.status}
 						</span>
+						{canCancel ? (
+							<button
+								aria-label={`Cancel ${generation.title}`}
+								className="inline-flex size-6 items-center justify-center rounded-full text-muted-foreground/50 transition hover:bg-amber-500/10 hover:text-amber-600 disabled:pointer-events-none disabled:opacity-50 dark:hover:text-amber-400"
+								disabled={isCancelling || isDeleting}
+								onClick={onCancel}
+								type="button"
+							>
+								{isCancelling ? (
+									<Loader2 className="size-3 animate-spin" />
+								) : (
+									<X className="size-3" />
+								)}
+							</button>
+						) : null}
 						<button
 							aria-label={`Delete ${generation.title}`}
 							className="inline-flex size-6 items-center justify-center rounded-full text-muted-foreground/50 transition hover:bg-rose-500/10 hover:text-rose-600 disabled:pointer-events-none disabled:opacity-50 dark:hover:text-rose-400"
-							disabled={isDeleting}
+							disabled={isDeleting || isCancelling}
 							onClick={onDelete}
 							type="button"
 						>
@@ -609,6 +687,8 @@ function getTrainingPhaseLabel(
 			return "Submitting trainer job";
 		case "polling-training":
 			return "Training LoRA weights";
+		case "cancelled":
+			return "Pipeline cancelled";
 		case "ready":
 			return "Weights ready";
 		case "failed":
@@ -831,12 +911,61 @@ function LoraTrainingStatusPanel({
 	);
 }
 
+function LoraTrainingActions({
+	isCancellingTraining,
+	isTraining,
+	onCancelTraining,
+	onTrainLora,
+}: {
+	isCancellingTraining: boolean;
+	isTraining: boolean;
+	onCancelTraining: () => void;
+	onTrainLora: () => void;
+}) {
+	return (
+		<>
+			<Button
+				disabled={isTraining || isCancellingTraining}
+				onClick={onTrainLora}
+				size="sm"
+				variant="outline"
+			>
+				{isTraining ? (
+					<Loader2 className="size-3.5 animate-spin" />
+				) : (
+					<Sparkles className="size-3.5" />
+				)}
+				{isTraining ? "Training..." : "Train LoRA"}
+			</Button>
+			{isTraining ? (
+				<Button
+					disabled={isCancellingTraining}
+					onClick={onCancelTraining}
+					size="sm"
+					variant="destructive"
+				>
+					{isCancellingTraining ? (
+						<Loader2 className="size-3.5 animate-spin" />
+					) : (
+						<X className="size-3.5" />
+					)}
+					{isCancellingTraining ? "Cancelling..." : "Cancel pipeline"}
+				</Button>
+			) : null}
+		</>
+	);
+}
+
 function LoraActions({
+	isCancellingTraining,
 	person,
+	onCancelTraining,
 	onTrainLora,
 	onGenerateWithLora,
 }: {
+	isCancellingTraining: boolean;
 	person: PersonRecord;
+	onCancelTraining: () => void;
 	onTrainLora: () => void;
 	onGenerateWithLora: (
 		prompt: string,
@@ -901,19 +1030,12 @@ function LoraActions({
 						</p>
 					) : null}
 
-					<Button
-						disabled={isTraining}
-						onClick={onTrainLora}
-						size="sm"
-						variant="outline"
-					>
-						{isTraining ? (
-							<Loader2 className="size-3.5 animate-spin" />
-						) : (
-							<Sparkles className="size-3.5" />
-						)}
-						{isTraining ? "Training..." : "Train LoRA"}
-					</Button>
+					<LoraTrainingActions
+						isCancellingTraining={isCancellingTraining}
+						isTraining={isTraining}
+						onCancelTraining={onCancelTraining}
+						onTrainLora={onTrainLora}
+					/>
 				</>
 			) : null}
 
@@ -1121,19 +1243,33 @@ function compareGenerationNewestFirst(
 }
 
 function PersonDetailView({
+	cancellingGenerationId,
+	isCancellingTraining,
 	deletingGenerationId,
 	person,
 	studioUrl,
+	onCancelGeneration,
+	onCancelTraining,
 	onDeleteGeneration,
 	onTrainLora,
 	onGenerateWithLora,
 }: {
+	cancellingGenerationId: string | null;
+	isCancellingTraining: boolean;
 	deletingGenerationId: string | null;
 	person: PersonRecord;
 	studioUrl: string;
+	onCancelGeneration: (generationId: string) => void;
+	onCancelTraining: () => void;
 	onDeleteGeneration: (generationId: string) => void;
 	onTrainLora: () => void;
-	onGenerateWithLora: (prompt: string) => void;
+	onGenerateWithLora: (
+		prompt: string,
+		options?: {
+			extraLoraUrl?: string;
+			extraLoraWeight?: number;
+		}
+	) => void;
 }) {
 	const [activeTab, setActiveTab] = useState<DetailTab>("generations");
 	const [lightbox, setLightbox] = useState<LightboxState | null>(null);
@@ -1273,6 +1409,8 @@ function PersonDetailView({
 					) : null}
 
 					<LoraActions
+						isCancellingTraining={isCancellingTraining}
+						onCancelTraining={onCancelTraining}
 						onGenerateWithLora={onGenerateWithLora}
 						onTrainLora={onTrainLora}
 						person={person}
@@ -1324,8 +1462,10 @@ function PersonDetailView({
 						{generations.map((generation) => (
 							<GenerationCard
 								generation={generation}
+								isCancelling={cancellingGenerationId === generation.id}
 								isDeleting={deletingGenerationId === generation.id}
 								key={generation.id}
+								onCancel={() => onCancelGeneration(generation.id)}
 								onDelete={() => onDeleteGeneration(generation.id)}
 								onImageClick={
 									generation.mediaType === "image" &&
@@ -1369,6 +1509,73 @@ function canSubmitForm(form: CreatePersonInput) {
 
 function willRunPipeline(form: CreatePersonInput) {
 	return !form.loraUrl?.trim();
+}
+
+function shouldPickReferenceVariant(form: CreatePersonInput) {
+	const hasRef = Boolean(form.referencePhotoUrl?.trim());
+	const hasDesc = Boolean(form.description?.trim());
+	const hasLora = Boolean(form.loraUrl?.trim());
+	return !hasRef && hasDesc && !hasLora;
+}
+
+function getCreatePersonSubmitLabel(formState: CreatePersonInput) {
+	return shouldPickReferenceVariant(formState)
+		? "Generate references"
+		: "Create";
+}
+
+export const PERSON_REFERENCE_DRAFT_STORAGE_KEY = "persons-web:reference-draft";
+
+export interface PersonReferenceDraft {
+	executionId: string;
+	form: CreatePersonInput;
+	prompt: string;
+}
+
+const REFERENCES_HREF = "/new/references" as Route<"/new/references">;
+
+async function createReferenceVariantDraft(
+	formState: CreatePersonInput
+): Promise<PersonReferenceDraft> {
+	const prompt = formState.description?.trim() ?? "";
+	const execution = await requestAvatarPreviews({
+		prompt,
+		count: 4,
+	});
+	return {
+		executionId: execution.id,
+		form: formState,
+		prompt,
+	};
+}
+
+function persistReferenceVariantDraft(draft: PersonReferenceDraft) {
+	if (typeof window !== "undefined") {
+		window.sessionStorage.setItem(
+			PERSON_REFERENCE_DRAFT_STORAGE_KEY,
+			JSON.stringify(draft)
+		);
+	}
+}
+
+function CreatePersonHint({ formState }: { formState: CreatePersonInput }) {
+	if (shouldPickReferenceVariant(formState)) {
+		return (
+			<p className="text-center text-[11px] text-muted-foreground/60">
+				We&apos;ll generate a few reference variants for you to pick from
+			</p>
+		);
+	}
+
+	if (willRunPipeline(formState)) {
+		return (
+			<p className="text-center text-[11px] text-muted-foreground/60">
+				LoRA pipeline will run automatically
+			</p>
+		);
+	}
+
+	return null;
 }
 
 function CreatePersonForm({
@@ -1515,14 +1722,236 @@ function CreatePersonForm({
 							) : (
 								<Upload className="size-3.5" />
 							)}
-							Create
+							{getCreatePersonSubmitLabel(formState)}
 						</Button>
-						{willRunPipeline(formState) ? (
-							<p className="text-center text-[11px] text-muted-foreground/60">
-								LoRA pipeline will run automatically
-							</p>
-						) : null}
+						<CreatePersonHint formState={formState} />
 					</form>
+				</div>
+			</div>
+		</WorkspacePane>
+	);
+}
+
+function ManagePersonForm({
+	formState,
+	isDeleting,
+	isUpdating,
+	onDelete,
+	onFieldChange,
+	onSubmit,
+	person,
+}: {
+	formState: PersonManagementFormState;
+	isDeleting: boolean;
+	isUpdating: boolean;
+	onDelete: () => void;
+	onFieldChange: <Key extends keyof PersonManagementFormState>(
+		key: Key,
+		value: PersonManagementFormState[Key]
+	) => void;
+	onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+	person: PersonRecord;
+}) {
+	const [showAssets, setShowAssets] = useState(false);
+	const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+	const isDeleteDisabled = isDeleting || isUpdating;
+	const canSave =
+		Boolean(formState.name.trim()) &&
+		Boolean(formState.referencePhotoUrl.trim());
+
+	return (
+		<WorkspacePane className="min-h-0">
+			<div className="grid h-full min-h-0 gap-0">
+				<div className="px-4 py-3">
+					<SectionLabel>Manage person</SectionLabel>
+				</div>
+				<div className="min-h-0 overflow-y-auto px-4 pb-4">
+					<form className="grid gap-3" onSubmit={onSubmit}>
+						<div className="grid gap-1.5">
+							<Label className="text-xs" htmlFor="editName">
+								Name
+							</Label>
+							<Input
+								id="editName"
+								onChange={(event) => onFieldChange("name", event.target.value)}
+								value={formState.name}
+							/>
+						</div>
+						<div className="grid gap-1.5">
+							<Label className="text-xs" htmlFor="editSlug">
+								Slug
+							</Label>
+							<Input
+								id="editSlug"
+								onChange={(event) => onFieldChange("slug", event.target.value)}
+								value={formState.slug}
+							/>
+						</div>
+						<div className="grid gap-1.5">
+							<Label className="text-xs" htmlFor="editDescription">
+								Description
+							</Label>
+							<textarea
+								className={textareaClassName}
+								id="editDescription"
+								onChange={(event) =>
+									onFieldChange("description", event.target.value)
+								}
+								value={formState.description}
+							/>
+						</div>
+						<div className="grid gap-1.5">
+							<Label className="text-xs" htmlFor="editReferencePhotoUrl">
+								Reference photo URL
+							</Label>
+							<Input
+								id="editReferencePhotoUrl"
+								onChange={(event) =>
+									onFieldChange("referencePhotoUrl", event.target.value)
+								}
+								value={formState.referencePhotoUrl}
+							/>
+						</div>
+
+						<button
+							className="flex items-center gap-1.5 text-muted-foreground text-xs transition hover:text-foreground"
+							onClick={() => setShowAssets((value) => !value)}
+							type="button"
+						>
+							<ChevronDown
+								className={cn(
+									"size-3.5 transition-transform",
+									showAssets && "rotate-180"
+								)}
+							/>
+							Asset URLs
+						</button>
+
+						{showAssets ? (
+							<div className="fade-in slide-in-from-top-1 grid animate-in gap-3">
+								<div className="grid gap-1.5">
+									<Label className="text-xs" htmlFor="editDatasetUrl">
+										Dataset
+									</Label>
+									<Input
+										id="editDatasetUrl"
+										onChange={(event) =>
+											onFieldChange("datasetUrl", event.target.value)
+										}
+										placeholder="zip url"
+										value={formState.datasetUrl}
+									/>
+								</div>
+								<div className="grid gap-1.5">
+									<Label className="text-xs" htmlFor="editLoraUrl">
+										LoRA
+									</Label>
+									<Input
+										id="editLoraUrl"
+										onChange={(event) =>
+											onFieldChange("loraUrl", event.target.value)
+										}
+										placeholder="safetensors url"
+										value={formState.loraUrl}
+									/>
+								</div>
+								<div className="grid gap-1.5">
+									<Label className="text-xs" htmlFor="editPhotoUrl">
+										Photo
+									</Label>
+									<Input
+										id="editPhotoUrl"
+										onChange={(event) =>
+											onFieldChange("photoUrl", event.target.value)
+										}
+										placeholder="image url"
+										value={formState.photoUrl}
+									/>
+								</div>
+								<div className="grid gap-1.5">
+									<Label className="text-xs" htmlFor="editVideoUrl">
+										Video
+									</Label>
+									<Input
+										id="editVideoUrl"
+										onChange={(event) =>
+											onFieldChange("videoUrl", event.target.value)
+										}
+										placeholder="mp4 url"
+										value={formState.videoUrl}
+									/>
+								</div>
+								<div className="grid gap-1.5">
+									<Label className="text-xs" htmlFor="editVoiceWavUrl">
+										Voice WAV
+									</Label>
+									<Input
+										id="editVoiceWavUrl"
+										onChange={(event) =>
+											onFieldChange("voiceWavUrl", event.target.value)
+										}
+										placeholder="wav url"
+										value={formState.voiceWavUrl}
+									/>
+								</div>
+							</div>
+						) : null}
+
+						<Button disabled={isUpdating || !canSave} size="sm" type="submit">
+							{isUpdating ? (
+								<Loader2 className="size-3.5 animate-spin" />
+							) : (
+								<Save className="size-3.5" />
+							)}
+							Save changes
+						</Button>
+					</form>
+
+					<div className="mt-4 border-border/50 border-t pt-4">
+						{isConfirmingDelete ? (
+							<div className="grid gap-2">
+								<p className="text-muted-foreground text-xs">
+									Delete {person.name} and all related generations?
+								</p>
+								<div className="grid grid-cols-2 gap-2">
+									<Button
+										disabled={isDeleteDisabled}
+										onClick={() => setIsConfirmingDelete(false)}
+										size="sm"
+										type="button"
+										variant="outline"
+									>
+										Keep
+									</Button>
+									<Button
+										disabled={isDeleteDisabled}
+										onClick={onDelete}
+										size="sm"
+										type="button"
+										variant="destructive"
+									>
+										{isDeleting ? (
+											<Loader2 className="size-3.5 animate-spin" />
+										) : (
+											<Trash2 className="size-3.5" />
+										)}
+										Delete
+									</Button>
+								</div>
+							</div>
+						) : (
+							<Button
+								disabled={isDeleteDisabled}
+								onClick={() => setIsConfirmingDelete(true)}
+								size="sm"
+								type="button"
+								variant="destructive"
+							>
+								<Trash2 className="size-3.5" />
+								Delete person
+							</Button>
+						)}
+					</div>
 				</div>
 			</div>
 		</WorkspacePane>
@@ -1540,15 +1969,35 @@ export default function PersonsWorkspace({
 	const [formState, setFormState] = useState<CreatePersonInput>(
 		createEmptyFormState()
 	);
+	const [managementFormState, setManagementFormState] =
+		useState<PersonManagementFormState | null>(null);
+	const [cancellingGenerationId, setCancellingGenerationId] = useState<
+		string | null
+	>(null);
 	const [deletingGenerationId, setDeletingGenerationId] = useState<
 		string | null
 	>(null);
+	const [isCancellingTraining, setIsCancellingTraining] = useState(false);
+	const [isDeletingPerson, setIsDeletingPerson] = useState(false);
 	const [isCreating, startCreateTransition] = useTransition();
+	const [isUpdatingPerson, startUpdateTransition] = useTransition();
 	const router = useRouter();
 
 	const selectedPerson = personSlug
 		? (persons.find((person) => person.slug === personSlug) ?? null)
 		: null;
+
+	useEffect(() => {
+		setManagementFormState((current) => {
+			if (!selectedPerson) {
+				return null;
+			}
+			if (current?.personId === selectedPerson.id) {
+				return current;
+			}
+			return createManagementFormState(selectedPerson);
+		});
+	}, [selectedPerson]);
 
 	const needsPolling =
 		persons.some((person) =>
@@ -1602,36 +2051,118 @@ export default function PersonsWorkspace({
 		}));
 	}
 
+	function updateManagementFormField<
+		Key extends keyof PersonManagementFormState,
+	>(key: Key, value: PersonManagementFormState[Key]) {
+		setManagementFormState((current) =>
+			current
+				? {
+						...current,
+						[key]: value,
+					}
+				: current
+		);
+	}
+
+	async function startReferenceVariantFlow(form: CreatePersonInput) {
+		const draft = await createReferenceVariantDraft(form);
+		persistReferenceVariantDraft(draft);
+		setFormState(createEmptyFormState());
+		router.push(REFERENCES_HREF);
+	}
+
+	async function createPersonAndMaybeTrain(form: CreatePersonInput) {
+		const nextPerson = await createPerson(form);
+		setPersons((current) => [nextPerson, ...current]);
+		router.push(getPersonHrefBySlug(nextPerson.slug));
+		setFormState(createEmptyFormState());
+		toast.success("Person created");
+
+		if (!willRunPipeline(form)) {
+			return;
+		}
+
+		try {
+			const updated = await trainPersonLora(nextPerson.id);
+			setPersons((current) =>
+				current.map((p) => (p.id === updated.id ? updated : p))
+			);
+			toast.success("LoRA pipeline started");
+		} catch {
+			toast.info(
+				"Person created. Start the pipeline manually from the detail view."
+			);
+		}
+	}
+
 	function handleCreatePerson(event: React.FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 
 		startCreateTransition(async () => {
 			try {
-				const nextPerson = await createPerson(formState);
-				setPersons((current) => [nextPerson, ...current]);
-				router.push(getPersonHrefBySlug(nextPerson.slug));
-				setFormState(createEmptyFormState());
-				toast.success("Person created");
-
-				if (willRunPipeline(formState)) {
-					try {
-						const updated = await trainPersonLora(nextPerson.id);
-						setPersons((current) =>
-							current.map((p) => (p.id === updated.id ? updated : p))
-						);
-						toast.success("LoRA pipeline started");
-					} catch {
-						toast.info(
-							"Person created. Start the pipeline manually from the detail view."
-						);
-					}
+				if (shouldPickReferenceVariant(formState)) {
+					await startReferenceVariantFlow(formState);
+					return;
 				}
+
+				await createPersonAndMaybeTrain(formState);
 			} catch (error) {
 				toast.error(
 					error instanceof Error ? error.message : "Unable to create person"
 				);
 			}
 		});
+	}
+
+	function handleUpdatePerson(event: React.FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+
+		if (!(selectedPerson && managementFormState)) {
+			return;
+		}
+
+		startUpdateTransition(async () => {
+			try {
+				const updated = await updatePerson(
+					selectedPerson.id,
+					createUpdatePersonPayload(managementFormState)
+				);
+				setPersons((current) =>
+					current.map((person) => (person.id === updated.id ? updated : person))
+				);
+				setManagementFormState(createManagementFormState(updated));
+				if (updated.slug !== selectedPerson.slug) {
+					router.replace(getPersonHrefBySlug(updated.slug));
+				}
+				toast.success("Person updated");
+			} catch (error) {
+				toast.error(
+					error instanceof Error ? error.message : "Unable to update person"
+				);
+			}
+		});
+	}
+
+	async function handleDeletePerson() {
+		if (!(selectedPerson && !isDeletingPerson)) {
+			return;
+		}
+
+		setIsDeletingPerson(true);
+		try {
+			await deletePerson(selectedPerson.id);
+			setPersons((current) =>
+				current.filter((person) => person.id !== selectedPerson.id)
+			);
+			router.push(CAST_HREF);
+			toast.success("Person deleted");
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Unable to delete person"
+			);
+		} finally {
+			setIsDeletingPerson(false);
+		}
 	}
 
 	async function handleTrainLora() {
@@ -1678,6 +2209,48 @@ export default function PersonsWorkspace({
 		}
 	}
 
+	async function handleCancelGeneration(generationId: string) {
+		if (!(selectedPerson && !cancellingGenerationId)) {
+			return;
+		}
+
+		setCancellingGenerationId(generationId);
+		try {
+			const updated = await cancelGeneration(selectedPerson.id, generationId);
+			setPersons((current) =>
+				current.map((person) => (person.id === updated.id ? updated : person))
+			);
+			toast.success("Generation cancelled");
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Failed to cancel generation"
+			);
+		} finally {
+			setCancellingGenerationId(null);
+		}
+	}
+
+	async function handleCancelLoraTraining() {
+		if (!(selectedPerson && !isCancellingTraining)) {
+			return;
+		}
+
+		setIsCancellingTraining(true);
+		try {
+			const updated = await cancelPersonLoraTraining(selectedPerson.id);
+			setPersons((current) =>
+				current.map((person) => (person.id === updated.id ? updated : person))
+			);
+			toast.success("LoRA pipeline cancelled");
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Failed to cancel pipeline"
+			);
+		} finally {
+			setIsCancellingTraining(false);
+		}
+	}
+
 	async function handleDeleteGeneration(generationId: string) {
 		if (!(selectedPerson && !deletingGenerationId)) {
 			return;
@@ -1706,12 +2279,25 @@ export default function PersonsWorkspace({
 	return (
 		<WorkspaceShell
 			inspector={
-				<CreatePersonForm
-					formState={formState}
-					isCreating={isCreating}
-					onFieldChange={updateFormField}
-					onSubmit={handleCreatePerson}
-				/>
+				selectedPerson && managementFormState ? (
+					<ManagePersonForm
+						formState={managementFormState}
+						isDeleting={isDeletingPerson}
+						isUpdating={isUpdatingPerson}
+						key={selectedPerson.id}
+						onDelete={handleDeletePerson}
+						onFieldChange={updateManagementFormField}
+						onSubmit={handleUpdatePerson}
+						person={selectedPerson}
+					/>
+				) : (
+					<CreatePersonForm
+						formState={formState}
+						isCreating={isCreating}
+						onFieldChange={updateFormField}
+						onSubmit={handleCreatePerson}
+					/>
+				)
 			}
 			navigation={createWorkspaceNavigation("persons", {
 				admin: adminUrl,
@@ -1738,7 +2324,11 @@ export default function PersonsWorkspace({
 		>
 			{selectedPerson ? (
 				<PersonDetailView
+					cancellingGenerationId={cancellingGenerationId}
 					deletingGenerationId={deletingGenerationId}
+					isCancellingTraining={isCancellingTraining}
+					onCancelGeneration={handleCancelGeneration}
+					onCancelTraining={handleCancelLoraTraining}
 					onDeleteGeneration={handleDeleteGeneration}
 					onGenerateWithLora={handleGenerateWithLora}
 					onTrainLora={handleTrainLora}

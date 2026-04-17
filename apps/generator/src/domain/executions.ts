@@ -236,6 +236,57 @@ export class ExecutionService {
 		return execution ? toExecutionRecord(execution) : null;
 	}
 
+	async cancelExecution(
+		executionId: string,
+		context?: ExecutionContext
+	): Promise<GeneratorExecutionRecord | null> {
+		const execution = await this.repository.getExecutionById(executionId);
+		if (!execution) {
+			return null;
+		}
+
+		if (execution.status === "succeeded" || execution.status === "failed") {
+			return toExecutionRecord(execution);
+		}
+
+		if (execution.providerJobId) {
+			try {
+				await this.inferenceClient.cancel(
+					execution.providerJobId,
+					execution.providerEndpointId ?? undefined
+				);
+			} catch (error) {
+				this.logger.error("generator.execution.cancel-provider-failed", {
+					error: error instanceof Error ? error.message : "unknown",
+					executionId: execution.id,
+					providerJobId: execution.providerJobId,
+				});
+			}
+		}
+
+		const updatedExecution = await this.repository.updateExecution(
+			execution.id,
+			{
+				errorSummary: "Execution cancelled by operator",
+				status: "failed",
+			}
+		);
+
+		if (!updatedExecution) {
+			return toExecutionRecord(execution);
+		}
+
+		this.logger.info("generator.execution.cancelled", {
+			debugCorrelationId: context?.debugCorrelationId ?? null,
+			executionId: execution.id,
+			providerJobId: execution.providerJobId,
+			workflowKey: execution.workflowKey,
+		});
+
+		await this.dispatchExecutionCallback(updatedExecution);
+		return toExecutionRecord(updatedExecution);
+	}
+
 	async syncExecution(
 		input: SyncGeneratorExecutionInput,
 		context?: ExecutionContext
@@ -321,7 +372,11 @@ export class ExecutionService {
 
 	async processExecutionSubmitJob(input: { executionId: string }) {
 		const execution = await this.repository.getExecutionById(input.executionId);
-		if (!execution || execution.providerJobId) {
+		if (
+			!execution ||
+			execution.providerJobId ||
+			execution.status !== "queued"
+		) {
 			return;
 		}
 
@@ -384,7 +439,11 @@ export class ExecutionService {
 	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: sync worker state machine
 	async processExecutionSyncJob(input: { executionId: string }) {
 		const execution = await this.repository.getExecutionById(input.executionId);
-		if (!execution?.providerJobId) {
+		if (
+			!execution?.providerJobId ||
+			execution.status === "succeeded" ||
+			execution.status === "failed"
+		) {
 			return;
 		}
 

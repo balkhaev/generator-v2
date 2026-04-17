@@ -22,6 +22,19 @@ const optionalUrlSchema = z.preprocess((value) => {
 	return trimmedValue.length > 0 ? trimmedValue : undefined;
 }, z.url().optional());
 
+const nullableOptionalUrlSchema = z.preprocess((value) => {
+	if (value === null) {
+		return null;
+	}
+
+	if (typeof value !== "string") {
+		return value;
+	}
+
+	const trimmedValue = value.trim();
+	return trimmedValue.length > 0 ? trimmedValue : null;
+}, z.url().nullable().optional());
+
 const optionalNumberSchema = z.preprocess((value) => {
 	if (value === null || value === undefined) {
 		return undefined;
@@ -92,16 +105,73 @@ export const updatePersonInputSchema = z
 		slug: optionalStringSchema,
 		description: z.string().trim().optional(),
 		referencePhotoUrl: z.url().optional(),
-		datasetUrl: optionalUrlSchema,
-		loraUrl: optionalUrlSchema,
-		photoUrl: optionalUrlSchema,
-		videoUrl: optionalUrlSchema,
-		voiceWavUrl: optionalUrlSchema,
+		datasetUrl: nullableOptionalUrlSchema,
+		loraUrl: nullableOptionalUrlSchema,
+		photoUrl: nullableOptionalUrlSchema,
+		videoUrl: nullableOptionalUrlSchema,
+		voiceWavUrl: nullableOptionalUrlSchema,
 		metadata: z.record(z.string(), z.unknown()).optional(),
 	})
 	.refine((value) => Object.keys(value).length > 0, {
 		message: "At least one field must be provided",
 	});
+
+type ParsedUpdatePersonInput = z.output<typeof updatePersonInputSchema>;
+type PersonUpdatePatch = Partial<
+	Omit<PersonRecord, "createdAt" | "updatedAt" | "generations">
+>;
+type NullablePersonUrlKey =
+	| "datasetUrl"
+	| "loraUrl"
+	| "photoUrl"
+	| "videoUrl"
+	| "voiceWavUrl";
+
+const nullablePersonUrlKeys = [
+	"datasetUrl",
+	"loraUrl",
+	"photoUrl",
+	"videoUrl",
+	"voiceWavUrl",
+] as const satisfies readonly NullablePersonUrlKey[];
+
+function setNullablePersonUrl(
+	updateInput: PersonUpdatePatch,
+	parsed: ParsedUpdatePersonInput,
+	key: NullablePersonUrlKey
+) {
+	if (key in parsed) {
+		updateInput[key] = parsed[key] ?? null;
+	}
+}
+
+function buildPersonUpdatePatch(
+	parsed: ParsedUpdatePersonInput,
+	nextSlug: string | undefined
+): PersonUpdatePatch {
+	const updateInput: PersonUpdatePatch = {};
+
+	if (typeof parsed.name === "string") {
+		updateInput.name = parsed.name;
+	}
+	if (nextSlug) {
+		updateInput.slug = nextSlug;
+	}
+	if (typeof parsed.description === "string") {
+		updateInput.description = parsed.description;
+	}
+	if (typeof parsed.referencePhotoUrl === "string") {
+		updateInput.referencePhotoUrl = parsed.referencePhotoUrl;
+	}
+	for (const key of nullablePersonUrlKeys) {
+		setNullablePersonUrl(updateInput, parsed, key);
+	}
+	if (parsed.metadata) {
+		updateInput.metadata = parsed.metadata;
+	}
+
+	return updateInput;
+}
 
 export const importServerGenerationInputSchema = z.object({
 	providerEndpointId: optionalStringSchema,
@@ -121,6 +191,11 @@ export const createPersonFromPromptInputSchema = z.object({
 	videoUrl: optionalUrlSchema,
 	voiceWavUrl: optionalUrlSchema,
 	metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const requestAvatarPreviewsInputSchema = z.object({
+	prompt: z.string().trim().min(1, "Avatar prompt is required"),
+	count: z.number().int().min(1).max(4).default(4),
 });
 
 export const startPersonLoraTrainingInputSchema = z.object({
@@ -294,6 +369,14 @@ function slugifySegment(value: string) {
 
 const imageMediaUrlPattern = /\.(png|jpe?g|webp|gif)(\?.*)?$/;
 const audioMediaUrlPattern = /\.(wav|mp3|ogg|m4a)(\?.*)?$/;
+const CANCELLED_GENERATION_ERROR = "Generation cancelled by operator";
+const CANCELLED_LORA_PIPELINE_ERROR = "LoRA pipeline cancelled by operator";
+const ACTIVE_LORA_TRAINING_STATUSES = new Set([
+	"queued",
+	"generating",
+	"training",
+	"publishing",
+]);
 
 function inferMediaTypeFromUrl(url: string): PersonGenerationMediaType {
 	const normalizedUrl = url.toLowerCase();
@@ -461,6 +544,50 @@ export class PersonsService {
 		});
 	}
 
+	requestAvatarPreviews(
+		input: z.input<typeof requestAvatarPreviewsInputSchema>,
+		options?: {
+			debugCorrelationId?: string;
+		}
+	) {
+		const parsed = requestAvatarPreviewsInputSchema.parse(input);
+		if (!this.operatorServerClient) {
+			throw new Error("Generator integration is not configured");
+		}
+
+		const avatarWorkflow = env.PERSONS_DEFAULT_AVATAR_WORKFLOW;
+		return this.operatorServerClient.createExecution(
+			{
+				workflowKey: avatarWorkflow,
+				prompt: parsed.prompt,
+				params: {
+					imageSize: "portrait_4_3",
+					numInferenceSteps: 8,
+					numImages: parsed.count,
+					enableSafetyChecker: false,
+					outputFormat: "png",
+				},
+			},
+			{
+				debugCorrelationId: options?.debugCorrelationId,
+			}
+		);
+	}
+
+	getAvatarPreview(
+		executionId: string,
+		options?: {
+			debugCorrelationId?: string;
+		}
+	) {
+		if (!this.operatorServerClient) {
+			throw new Error("Generator integration is not configured");
+		}
+		return this.operatorServerClient.getExecution(executionId, {
+			debugCorrelationId: options?.debugCorrelationId,
+		});
+	}
+
 	async createPersonFromPrompt(
 		input: z.input<typeof createPersonFromPromptInputSchema>
 	) {
@@ -604,32 +731,35 @@ export class PersonsService {
 			return null;
 		}
 
-		let nextSlug = parsed.slug;
+		const nextSlug = await this.resolveUpdatedSlug(parsed, current, personId);
+		return this.repository.updatePerson(
+			personId,
+			buildPersonUpdatePatch(parsed, nextSlug)
+		);
+	}
 
-		if (typeof parsed.name === "string" && !nextSlug) {
-			const candidateSlug = slugifySegment(parsed.name);
-			if (candidateSlug.length > 0 && candidateSlug !== current.slug) {
-				nextSlug = await this.ensureUniqueSlug(candidateSlug, personId);
-			}
-		}
-
+	private resolveUpdatedSlug(
+		parsed: ParsedUpdatePersonInput,
+		current: PersonRecord,
+		personId: string
+	) {
 		if (typeof parsed.slug === "string") {
 			const candidateSlug = slugifySegment(parsed.slug);
-			nextSlug =
-				candidateSlug.length > 0
-					? await this.ensureUniqueSlug(candidateSlug, personId)
-					: current.slug;
+			return candidateSlug.length > 0
+				? this.ensureUniqueSlug(candidateSlug, personId)
+				: current.slug;
 		}
 
-		return this.repository.updatePerson(personId, {
-			...parsed,
-			slug: nextSlug,
-			datasetUrl: parsed.datasetUrl ?? current.datasetUrl,
-			loraUrl: parsed.loraUrl ?? current.loraUrl,
-			photoUrl: parsed.photoUrl ?? current.photoUrl,
-			videoUrl: parsed.videoUrl ?? current.videoUrl,
-			voiceWavUrl: parsed.voiceWavUrl ?? current.voiceWavUrl,
-		});
+		if (typeof parsed.name !== "string") {
+			return undefined;
+		}
+
+		const candidateSlug = slugifySegment(parsed.name);
+		if (candidateSlug.length === 0 || candidateSlug === current.slug) {
+			return undefined;
+		}
+
+		return this.ensureUniqueSlug(candidateSlug, personId);
 	}
 
 	deletePerson(personId: string) {
@@ -691,6 +821,120 @@ export class PersonsService {
 		});
 
 		return this.repository.getPersonById(personId);
+	}
+
+	async cancelGeneration(personId: string, generationId: string) {
+		const person = await this.repository.getPersonById(personId);
+
+		if (!person) {
+			return null;
+		}
+
+		const generation = person.generations.find(
+			(item) => item.id === generationId
+		);
+		if (!generation) {
+			return null;
+		}
+
+		if (generation.status !== "queued") {
+			return person;
+		}
+
+		const cancelledAt = new Date().toISOString();
+		const generatorExecutionId = readMetadataString(
+			generation.metadata,
+			"generatorExecutionId"
+		);
+		let cancellationError: string | null = null;
+
+		if (generatorExecutionId && this.operatorServerClient) {
+			try {
+				await this.operatorServerClient.cancelExecution(generatorExecutionId);
+			} catch (error) {
+				cancellationError =
+					error instanceof Error ? error.message : "Generator cancel failed";
+			}
+		}
+
+		const metadata = {
+			...generation.metadata,
+			cancelledAt,
+			generatorStatus: "failed",
+			progressPct: 100,
+			...(cancellationError ? { cancellationError } : {}),
+		};
+
+		await this.repository.updateGeneration(generationId, {
+			errorSummary: cancellationError
+				? `${CANCELLED_GENERATION_ERROR}; generator cancel failed: ${cancellationError}`
+				: CANCELLED_GENERATION_ERROR,
+			metadata,
+			status: "failed",
+		});
+
+		return this.repository.getPersonById(personId);
+	}
+
+	async cancelLoraTraining(personId: string) {
+		const person = await this.repository.getPersonById(personId);
+
+		if (!person) {
+			return null;
+		}
+
+		const training =
+			person.metadata.training &&
+			typeof person.metadata.training === "object" &&
+			!Array.isArray(person.metadata.training)
+				? (person.metadata.training as Record<string, unknown>)
+				: null;
+		const trainingStatus = readMetadataString(training ?? {}, "status");
+
+		if (
+			!(training && ACTIVE_LORA_TRAINING_STATUSES.has(trainingStatus ?? ""))
+		) {
+			return person;
+		}
+
+		const cancelledAt = new Date().toISOString();
+		const currentHistory = Array.isArray(training.history)
+			? training.history.filter(
+					(entry): entry is Record<string, unknown> =>
+						typeof entry === "object" && entry !== null && !Array.isArray(entry)
+				)
+			: [];
+		const historyEntry = {
+			at: cancelledAt,
+			errorSummary: CANCELLED_LORA_PIPELINE_ERROR,
+			phase: "cancelled",
+			progressPct: 100,
+			providerJobId: readMetadataString(training, "providerJobId"),
+			providerRequestId: readMetadataString(training, "providerRequestId"),
+			providerStatus: readMetadataString(training, "providerStatus"),
+			referenceImageCount: readMetadataNumber(training, "referenceImageCount"),
+			status: "failed",
+		};
+		const nextHistory = [...currentHistory, historyEntry].slice(-30);
+
+		return this.repository.updatePerson(personId, {
+			metadata: {
+				...person.metadata,
+				autoStartTraining: false,
+				training: {
+					...training,
+					cancelledAt,
+					errorSummary: CANCELLED_LORA_PIPELINE_ERROR,
+					failedAt: cancelledAt,
+					history: nextHistory,
+					lastEventAt: cancelledAt,
+					phase: "cancelled",
+					progressPct: 100,
+					status: "failed",
+					updatedAt: cancelledAt,
+				},
+			},
+		});
 	}
 
 	async createGeneration(
@@ -1030,6 +1274,12 @@ export class PersonsService {
 			typeof parsedEvent.trainingRunId === "string"
 				? parsedEvent.trainingRunId
 				: null;
+		const isCurrentTrainingCancelled =
+			readMetadataString(currentTraining, "phase") === "cancelled" ||
+			readMetadataString(currentTraining, "cancelledAt") !== null;
+		if (isCurrentTrainingCancelled) {
+			return person;
+		}
 		if (
 			currentTrainingRunId &&
 			(callbackTrainingRunId === null ||
@@ -1328,6 +1578,9 @@ export class PersonsService {
 		);
 		if (!currentGeneration) {
 			return null;
+		}
+		if (readMetadataString(currentGeneration.metadata, "cancelledAt")) {
+			return currentPerson;
 		}
 
 		const nextMetadata = getGenerationProgressMetadata({

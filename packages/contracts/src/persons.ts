@@ -22,6 +22,7 @@ export interface PersonLoraTrainingHistoryEntry {
 
 export interface PersonLoraTrainingMeta {
 	assetReleaseId?: string | null;
+	cancelledAt?: string | null;
 	completedAt?: string | null;
 	datasetUrl?: string | null;
 	datasetZipSizeBytes?: number | null;
@@ -96,8 +97,22 @@ export interface CreatePersonInput {
 	name: string;
 	photoUrl?: string;
 	referencePhotoUrl?: string;
+	slug?: string;
 	videoUrl?: string;
 	voiceWavUrl?: string;
+}
+
+export interface UpdatePersonInput {
+	datasetUrl?: null | string;
+	description?: string;
+	loraUrl?: null | string;
+	metadata?: Record<string, unknown>;
+	name?: string;
+	photoUrl?: null | string;
+	referencePhotoUrl?: string;
+	slug?: string;
+	videoUrl?: null | string;
+	voiceWavUrl?: null | string;
 }
 
 export interface CreatePersonFromPromptInput {

@@ -31,6 +31,24 @@ export function createExecutionRoutes(service: ExecutionService) {
 		return c.json({ execution });
 	});
 
+	app.post("/:executionId/cancel", async (c) => {
+		try {
+			const execution = await service.cancelExecution(
+				c.req.param("executionId"),
+				{
+					debugCorrelationId: c.get("debugCorrelationId"),
+				}
+			);
+			if (!execution) {
+				return c.json({ error: "Execution not found" }, 404);
+			}
+			return c.json({ execution });
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status);
+		}
+	});
+
 	app.post("/sync", async (c) => {
 		try {
 			const payload = await c.req.json();

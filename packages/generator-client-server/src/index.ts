@@ -28,6 +28,10 @@ export interface GeneratorExecutionClientOptions {
 }
 
 export interface GeneratorExecutionClient {
+	cancelExecution(
+		executionId: string,
+		options?: GeneratorExecutionRequestOptions
+	): Promise<GeneratorExecutionRecord>;
 	createExecution(
 		input: CreateGeneratorExecutionInput,
 		options?: GeneratorExecutionRequestOptions
@@ -100,6 +104,23 @@ export function createGeneratorExecutionClient(
 	}
 
 	return {
+		async cancelExecution(executionId, options) {
+			const debugCorrelationId = resolveDebugCorrelationId({
+				correlationId: options?.debugCorrelationId,
+			});
+			const payload = await requestJson<{
+				execution: GeneratorExecutionRecord;
+			}>(
+				fetchImpl,
+				`${normalizedBaseUrl}/api/executions/${executionId}/cancel`,
+				{
+					headers: buildHeaders(debugCorrelationId),
+					method: "POST",
+				}
+			);
+
+			return payload.execution;
+		},
 		async createExecution(input, options) {
 			const debugCorrelationId = resolveDebugCorrelationId({
 				correlationId: options?.debugCorrelationId,

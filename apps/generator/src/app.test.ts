@@ -260,6 +260,103 @@ describe("generator api", () => {
 		);
 	});
 
+	it("cancels persisted executions through the provider", async () => {
+		const repository = createMemoryExecutionRepository();
+		let cancelledJobId = "";
+		const inferenceClient = {
+			cancel(jobId: string) {
+				cancelledJobId = jobId;
+				return Promise.resolve();
+			},
+			submit() {
+				return Promise.resolve({
+					endpointId: "fal-ai/z-image",
+					jobId: "job-cancel",
+					status: "queued" as const,
+				});
+			},
+			getStatus() {
+				throw new Error("not used");
+			},
+		};
+		const backgroundService = new (
+			await import("@/domain/executions")
+		).ExecutionService(
+			repository,
+			{
+				enqueueSubmit() {
+					return Promise.resolve();
+				},
+				enqueueSync() {
+					return Promise.resolve();
+				},
+			},
+			inferenceClient,
+			{
+				createInputAssetKey(filename) {
+					return filename;
+				},
+				normalizeInputImageUrl(inputImageUrl) {
+					return inputImageUrl;
+				},
+				normalizeOutputUrl(outputUrl) {
+					return outputUrl;
+				},
+			}
+		);
+		const app = createApp({
+			executionQueue: {
+				async enqueueSubmit({ executionId }) {
+					await backgroundService.processExecutionSubmitJob({ executionId });
+				},
+				enqueueSync() {
+					return Promise.resolve();
+				},
+			},
+			executionRepository: repository,
+			inferenceClient,
+			storageAdapter: {
+				createInputAssetKey(filename) {
+					return filename;
+				},
+				normalizeInputImageUrl(inputImageUrl) {
+					return inputImageUrl;
+				},
+				normalizeOutputUrl(outputUrl) {
+					return outputUrl;
+				},
+			},
+		});
+
+		const createResponse = await app.request(
+			"http://localhost/api/executions",
+			{
+				body: JSON.stringify({
+					prompt: "portrait photo of a woman",
+					workflowKey: "fal-zimage-turbo",
+				}),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+		const { execution: createdExecution } = (await createResponse.json()) as {
+			execution: { id: string };
+		};
+
+		const cancelResponse = await app.request(
+			`http://localhost/api/executions/${createdExecution.id}/cancel`,
+			{ method: "POST" }
+		);
+
+		expect(cancelResponse.status).toBe(200);
+		expect(cancelledJobId).toBe("job-cancel");
+		const { execution } = (await cancelResponse.json()) as {
+			execution: { errorSummary: string | null; status: string };
+		};
+		expect(execution.status).toBe("failed");
+		expect(execution.errorSummary).toBe("Execution cancelled by operator");
+	});
+
 	it("rejects executions for unknown workflows", async () => {
 		const app = createApp({
 			executionQueue: {

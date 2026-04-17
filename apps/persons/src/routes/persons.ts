@@ -36,6 +36,34 @@ export function createPersonRoutes(service: PersonsService) {
 		}
 	});
 
+	app.post("/avatar-previews", async (c) => {
+		try {
+			const payload = await c.req.json();
+			const execution = await service.requestAvatarPreviews(payload, {
+				debugCorrelationId: c.get("debugCorrelationId"),
+			});
+			return c.json({ execution }, 201);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.get("/avatar-previews/:executionId", async (c) => {
+		try {
+			const execution = await service.getAvatarPreview(
+				c.req.param("executionId"),
+				{
+					debugCorrelationId: c.get("debugCorrelationId"),
+				}
+			);
+			return c.json({ execution });
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
 	app.get("/:personId", async (c) => {
 		const person = await service.getPersonById(c.req.param("personId"));
 		if (!person) {
@@ -93,6 +121,23 @@ export function createPersonRoutes(service: PersonsService) {
 		return c.json({ person });
 	});
 
+	app.post("/:personId/generations/:generationId/cancel", async (c) => {
+		try {
+			const person = await service.cancelGeneration(
+				c.req.param("personId"),
+				c.req.param("generationId")
+			);
+			if (!person) {
+				return c.json({ error: "Generation not found" }, 404);
+			}
+
+			return c.json({ person });
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
 	app.post("/:personId/generations", async (c) => {
 		try {
 			const generation = await service.createGeneration(
@@ -141,6 +186,20 @@ export function createPersonRoutes(service: PersonsService) {
 			}
 
 			return c.json({ person }, 202);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.post("/:personId/train-lora/cancel", async (c) => {
+		try {
+			const person = await service.cancelLoraTraining(c.req.param("personId"));
+			if (!person) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+
+			return c.json({ person });
 		} catch (error) {
 			const response = toErrorResponse(error);
 			return c.json(response.body, response.status as 400);

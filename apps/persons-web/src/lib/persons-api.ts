@@ -1,3 +1,4 @@
+import type { GeneratorExecutionRecord } from "@generator/contracts/generator";
 import type {
 	LoraBaseModel,
 	LoraRegistryEntry,
@@ -7,6 +8,7 @@ import type {
 	ImportGenerationInput,
 	PersonGenerationRecord,
 	PersonRecord,
+	UpdatePersonInput,
 } from "@generator/contracts/persons";
 import { env } from "@generator/env/web";
 import { requestJson } from "@generator/http/client";
@@ -18,6 +20,7 @@ export type {
 	ImportGenerationInput,
 	PersonGenerationRecord,
 	PersonRecord,
+	UpdatePersonInput,
 } from "@generator/contracts/persons";
 
 const API_BASE_URL = normalizeBaseUrl(env.NEXT_PUBLIC_SERVER_URL);
@@ -58,6 +61,59 @@ export async function createPerson(input: CreatePersonInput) {
 	return payload.person;
 }
 
+async function getErrorMessage(response: Response) {
+	try {
+		const payload = (await response.json()) as { error?: unknown };
+		if (typeof payload.error === "string" && payload.error.length > 0) {
+			return payload.error;
+		}
+	} catch {
+		// Fall back to text below.
+	}
+
+	try {
+		const text = await response.text();
+		if (text.length > 0) {
+			return text;
+		}
+	} catch {
+		// Fall back to the status line below.
+	}
+
+	return `${response.status} ${response.statusText}`.trim();
+}
+
+async function requestEmpty(input: string, init?: RequestInit) {
+	const response = await fetch(input, {
+		...init,
+		credentials: init?.credentials ?? "include",
+	});
+
+	if (!response.ok) {
+		throw new Error(await getErrorMessage(response));
+	}
+}
+
+export async function updatePerson(personId: string, input: UpdatePersonInput) {
+	const payload = await requestJson<{ person: PersonRecord }>(
+		`${API_BASE_URL}/api/persons/${personId}`,
+		{
+			method: "PATCH",
+			body: JSON.stringify(input),
+			headers: {
+				"content-type": "application/json",
+			},
+		}
+	);
+	return payload.person;
+}
+
+export function deletePerson(personId: string) {
+	return requestEmpty(`${API_BASE_URL}/api/persons/${personId}`, {
+		method: "DELETE",
+	});
+}
+
 export async function importGeneration(
 	personId: string,
 	input: ImportGenerationInput
@@ -85,6 +141,16 @@ export async function deleteGeneration(personId: string, generationId: string) {
 	return payload.person;
 }
 
+export async function cancelGeneration(personId: string, generationId: string) {
+	const payload = await requestJson<{ person: PersonRecord }>(
+		`${API_BASE_URL}/api/persons/${personId}/generations/${generationId}/cancel`,
+		{
+			method: "POST",
+		}
+	);
+	return payload.person;
+}
+
 export async function findPersonByOperatorRunId(operatorRunId: string) {
 	const payload = await requestJson<{ person: PersonRecord }>(
 		`${API_BASE_URL}/api/persons/lookup/run/${operatorRunId}`,
@@ -96,6 +162,29 @@ export async function findPersonByOperatorRunId(operatorRunId: string) {
 	return payload.person;
 }
 
+export async function requestAvatarPreviews(input: {
+	prompt: string;
+	count?: number;
+}) {
+	const payload = await requestJson<{ execution: GeneratorExecutionRecord }>(
+		`${API_BASE_URL}/api/persons/avatar-previews`,
+		{
+			method: "POST",
+			body: JSON.stringify(input),
+			headers: { "content-type": "application/json" },
+		}
+	);
+	return payload.execution;
+}
+
+export async function getAvatarPreview(executionId: string) {
+	const payload = await requestJson<{ execution: GeneratorExecutionRecord }>(
+		`${API_BASE_URL}/api/persons/avatar-previews/${executionId}`,
+		{ cache: "no-store" }
+	);
+	return payload.execution;
+}
+
 export async function trainPersonLora(personId: string) {
 	const payload = await requestJson<{ person: PersonRecord }>(
 		`${API_BASE_URL}/api/persons/${personId}/train-lora`,
@@ -103,6 +192,16 @@ export async function trainPersonLora(personId: string) {
 			method: "POST",
 			body: JSON.stringify({}),
 			headers: { "content-type": "application/json" },
+		}
+	);
+	return payload.person;
+}
+
+export async function cancelPersonLoraTraining(personId: string) {
+	const payload = await requestJson<{ person: PersonRecord }>(
+		`${API_BASE_URL}/api/persons/${personId}/train-lora/cancel`,
+		{
+			method: "POST",
 		}
 	);
 	return payload.person;

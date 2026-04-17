@@ -174,6 +174,18 @@ function createMemoryRepository(): PersonsRepository {
 
 function createOperatorClient(): OperatorServerClient {
 	return {
+		cancelExecution() {
+			return Promise.resolve({
+				errorSummary: "Execution cancelled by operator",
+				id: "execution-generated",
+				inputImageUrl: "",
+				providerEndpointId: null,
+				providerJobId: null,
+				status: "failed",
+				workflowKey: "fal-zimage-turbo",
+				artifacts: [],
+			});
+		},
 		createExecution(input) {
 			return Promise.resolve({
 				errorSummary: null,
@@ -362,6 +374,120 @@ describe("persons api", () => {
 		expect(hydratedPerson.metadata.autoStartTraining).toBe(true);
 	});
 
+	it("updates, clears asset fields, and deletes person records", async () => {
+		const app = createApp({
+			corsOrigins: ["http://localhost:3004"],
+			repository: createMemoryRepository(),
+			operatorServerClient: createOperatorClient(),
+		});
+		const createResponse = await app.request("http://localhost/api/persons", {
+			body: JSON.stringify({
+				datasetUrl: "https://assets.example.com/source.zip",
+				loraUrl: "https://assets.example.com/source.safetensors",
+				name: "Crud Girl",
+				referencePhotoUrl: "https://assets.example.com/reference.png",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { person } = (await createResponse.json()) as {
+			person: PersonRecord;
+		};
+
+		const updateResponse = await app.request(
+			`http://localhost/api/persons/${person.id}`,
+			{
+				body: JSON.stringify({
+					datasetUrl: "",
+					description: "Updated profile",
+					loraUrl: null,
+					name: "Crud Girl Updated",
+					slug: "custom-crud-girl",
+				}),
+				headers: { "content-type": "application/json" },
+				method: "PATCH",
+			}
+		);
+
+		expect(updateResponse.status).toBe(200);
+		const { person: updatedPerson } = (await updateResponse.json()) as {
+			person: PersonRecord;
+		};
+		expect(updatedPerson.name).toBe("Crud Girl Updated");
+		expect(updatedPerson.slug).toBe("custom-crud-girl");
+		expect(updatedPerson.description).toBe("Updated profile");
+		expect(updatedPerson.datasetUrl).toBeNull();
+		expect(updatedPerson.loraUrl).toBeNull();
+
+		const deleteResponse = await app.request(
+			`http://localhost/api/persons/${person.id}`,
+			{ method: "DELETE" }
+		);
+		expect(deleteResponse.status).toBe(204);
+
+		const listResponse = await app.request("http://localhost/api/persons");
+		const payload = (await listResponse.json()) as { persons: PersonRecord[] };
+		expect(payload.persons).toHaveLength(0);
+	});
+
+	it("cancels queued prompt generations through the operator client", async () => {
+		let cancelledExecutionId = "";
+		const app = createApp({
+			corsOrigins: ["http://localhost:3004"],
+			repository: createMemoryRepository(),
+			operatorServerClient: {
+				...createOperatorClient(),
+				cancelExecution(executionId) {
+					cancelledExecutionId = executionId;
+					return Promise.resolve({
+						artifacts: [],
+						errorSummary: "Execution cancelled by operator",
+						id: executionId,
+						inputImageUrl: "",
+						providerEndpointId: null,
+						providerJobId: null,
+						status: "failed",
+						workflowKey: "fal-zimage-turbo",
+					});
+				},
+			},
+		});
+
+		const createResponse = await app.request("http://localhost/api/persons", {
+			body: JSON.stringify({
+				name: "Cancel Prompt",
+				description: "Generate this person from prompt first.",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { person } = (await createResponse.json()) as {
+			person: PersonRecord;
+		};
+		const generation = person.generations[0];
+		if (!generation) {
+			throw new Error("Expected queued generation");
+		}
+
+		const cancelResponse = await app.request(
+			`http://localhost/api/persons/${person.id}/generations/${generation.id}/cancel`,
+			{ method: "POST" }
+		);
+
+		expect(cancelResponse.status).toBe(200);
+		expect(cancelledExecutionId).toBe("execution-generated");
+		const { person: cancelledPerson } = (await cancelResponse.json()) as {
+			person: PersonRecord;
+		};
+		expect(cancelledPerson.generations[0]?.status).toBe("failed");
+		expect(cancelledPerson.generations[0]?.errorSummary).toBe(
+			"Generation cancelled by operator"
+		);
+		expect(typeof cancelledPerson.generations[0]?.metadata.cancelledAt).toBe(
+			"string"
+		);
+	});
+
 	it("queues lora training for an existing person", async () => {
 		const app = createApp({
 			adminTrainingClient: createAdminTrainingClient(),
@@ -394,6 +520,83 @@ describe("persons api", () => {
 		const payload = (await response.json()) as { person: PersonRecord };
 		expect(payload.person.metadata.training).toMatchObject({
 			status: "queued",
+		});
+	});
+
+	it("cancels active lora training and ignores later callbacks for that run", async () => {
+		const app = createApp({
+			adminTrainingClient: createAdminTrainingClient(),
+			corsOrigins: ["http://localhost:3004"],
+			repository: createMemoryRepository(),
+			operatorServerClient: createOperatorClient(),
+		});
+		const createResponse = await app.request("http://localhost/api/persons", {
+			body: JSON.stringify({
+				name: "Cancel Training",
+				referencePhotoUrl: "https://assets.example.com/reference.png",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { person } = (await createResponse.json()) as {
+			person: PersonRecord;
+		};
+		const trainResponse = await app.request(
+			`http://localhost/api/persons/${person.id}/train-lora`,
+			{
+				body: JSON.stringify({}),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+		const { person: trainingPerson } = (await trainResponse.json()) as {
+			person: PersonRecord;
+		};
+		const training = trainingPerson.metadata.training as {
+			trainingRunId?: string;
+		};
+
+		const cancelResponse = await app.request(
+			`http://localhost/api/persons/${person.id}/train-lora/cancel`,
+			{ method: "POST" }
+		);
+
+		expect(cancelResponse.status).toBe(200);
+		const { person: cancelledPerson } = (await cancelResponse.json()) as {
+			person: PersonRecord;
+		};
+		expect(cancelledPerson.metadata.training).toMatchObject({
+			errorSummary: "LoRA pipeline cancelled by operator",
+			phase: "cancelled",
+			status: "failed",
+		});
+
+		await app.request("http://localhost/api/internal/lora-trainings", {
+			body: JSON.stringify({
+				context: { personId: person.id },
+				event: {
+					loraUrl: "https://assets.example.com/late.safetensors",
+					status: "ready",
+					trainingRunId: training.trainingRunId,
+				},
+			}),
+			headers: {
+				authorization: "Bearer local-training-control-token",
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		const personResponse = await app.request(
+			`http://localhost/api/persons/${person.id}`
+		);
+		const { person: hydratedPerson } = (await personResponse.json()) as {
+			person: PersonRecord;
+		};
+		expect(hydratedPerson.loraUrl).toBeNull();
+		expect(hydratedPerson.metadata.training).toMatchObject({
+			phase: "cancelled",
+			status: "failed",
 		});
 	});
 

@@ -29,6 +29,18 @@ if (!skipAuth) {
 	ensureDevUser();
 }
 
+if (eventPublisher) {
+	const shutdown = () => {
+		eventPublisher.close().catch((error) => {
+			console.error("generator.events-publisher.shutdown.error", {
+				message: error instanceof Error ? error.message : "unknown",
+			});
+		});
+	};
+	process.on("SIGTERM", shutdown);
+	process.on("SIGINT", shutdown);
+}
+
 export default {
 	maxRequestBodySize: 3_000_000_000,
 	port: Number(process.env.PORT ?? 3005),

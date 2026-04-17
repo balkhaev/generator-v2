@@ -220,29 +220,46 @@ export function createKafkaEventPublisher(
 	const getProducer = () => {
 		if (!producerPromise) {
 			const producer = kafka.producer();
-			producerPromise = producer.connect().then(() => producer);
+			const connected = producer.connect().then(() => producer);
+			producerPromise = connected;
+			connected.catch(() => {
+				if (producerPromise === connected) {
+					producerPromise = null;
+				}
+			});
 		}
 		return producerPromise;
 	};
 
 	const publish = async (topic: string, key: string, event: EventEnvelope) => {
-		const producer = await getProducer();
-		await producer.send({
-			messages: [
-				{
-					key,
-					value: JSON.stringify(event),
-				},
-			],
-			topic,
-		});
+		try {
+			const producer = await getProducer();
+			await producer.send({
+				messages: [
+					{
+						key,
+						value: JSON.stringify(event),
+					},
+				],
+				topic,
+			});
+		} catch (error) {
+			producerPromise = null;
+			throw error;
+		}
 	};
 
 	return {
 		async close() {
-			const producer = await producerPromise;
-			if (producer) {
-				await producer.disconnect();
+			const pending = producerPromise;
+			producerPromise = null;
+			try {
+				const producer = await pending;
+				if (producer) {
+					await producer.disconnect();
+				}
+			} catch {
+				// connect failed earlier, nothing to disconnect
 			}
 		},
 		async publishGeneratorExecutionUpdated(input) {
@@ -290,21 +307,81 @@ export function createKafkaEventPublisher(
 	};
 }
 
+export interface EventConsumerHandlers {
+	onGeneratorExecutionUpdated?: (
+		event: GeneratorExecutionUpdatedEvent
+	) => Promise<void>;
+	onPersonLoraTrainingRequested?: (
+		event: PersonLoraTrainingRequestedEvent
+	) => Promise<void>;
+	onPersonLoraTrainingUpdated?: (
+		event: PersonLoraTrainingUpdatedEvent
+	) => Promise<void>;
+}
+
+async function dispatchParsedEvent(
+	parsed: EventEnvelope,
+	handlers: EventConsumerHandlers,
+	logger: EventLogger | undefined,
+	topic: string
+) {
+	if (
+		parsed.name === eventNames.generatorExecutionUpdated &&
+		handlers.onGeneratorExecutionUpdated
+	) {
+		await handlers.onGeneratorExecutionUpdated(parsed);
+		return;
+	}
+
+	if (
+		parsed.name === eventNames.personLoraTrainingRequested &&
+		handlers.onPersonLoraTrainingRequested
+	) {
+		await handlers.onPersonLoraTrainingRequested(parsed);
+		return;
+	}
+
+	if (
+		parsed.name === eventNames.personLoraTrainingUpdated &&
+		handlers.onPersonLoraTrainingUpdated
+	) {
+		await handlers.onPersonLoraTrainingUpdated(parsed);
+		return;
+	}
+
+	logger?.info?.("events.kafka.unhandled", {
+		eventName: parsed.name,
+		topic,
+	});
+}
+
+function parseEnvelopeOrLog(
+	rawValue: string,
+	logger: EventLogger | undefined,
+	context: { offset: string; partition: number; topic: string }
+): EventEnvelope | null {
+	try {
+		return eventEnvelopeSchema.parse(JSON.parse(rawValue));
+	} catch (error) {
+		logger?.error("events.kafka.parse-failed", {
+			error: error instanceof Error ? error.message : "unknown error",
+			...context,
+		});
+		return null;
+	}
+}
+
 export async function createKafkaEventConsumer(options: {
 	config: KafkaEventBusConfig;
 	groupId: string;
-	handlers: {
-		onGeneratorExecutionUpdated?: (
-			event: GeneratorExecutionUpdatedEvent
-		) => Promise<void>;
-		onPersonLoraTrainingRequested?: (
-			event: PersonLoraTrainingRequestedEvent
-		) => Promise<void>;
-		onPersonLoraTrainingUpdated?: (
-			event: PersonLoraTrainingUpdatedEvent
-		) => Promise<void>;
-	};
+	handlers: EventConsumerHandlers;
 	logger?: EventLogger;
+	/**
+	 * If true, propagate handler errors back to kafkajs so the message is retried
+	 * (offsets are not committed). Defaults to false: errors are logged and the
+	 * message is skipped to avoid poison-pill loops.
+	 */
+	rethrowHandlerErrors?: boolean;
 	topics: string[];
 }): Promise<EventConsumerRuntime> {
 	const kafka = createKafka(options.config);
@@ -316,43 +393,40 @@ export async function createKafkaEventConsumer(options: {
 	}
 
 	await consumer.run({
-		eachMessage: async ({ message, topic }) => {
+		eachMessage: async ({ message, partition, topic }) => {
 			if (!message.value) {
 				return;
 			}
 
-			const parsed = eventEnvelopeSchema.parse(
-				JSON.parse(message.value.toString())
+			const parsed = parseEnvelopeOrLog(
+				message.value.toString(),
+				options.logger,
+				{ offset: message.offset, partition, topic }
 			);
-
-			if (
-				parsed.name === eventNames.generatorExecutionUpdated &&
-				options.handlers.onGeneratorExecutionUpdated
-			) {
-				await options.handlers.onGeneratorExecutionUpdated(parsed);
+			if (!parsed) {
 				return;
 			}
 
-			if (
-				parsed.name === eventNames.personLoraTrainingRequested &&
-				options.handlers.onPersonLoraTrainingRequested
-			) {
-				await options.handlers.onPersonLoraTrainingRequested(parsed);
-				return;
+			try {
+				await dispatchParsedEvent(
+					parsed,
+					options.handlers,
+					options.logger,
+					topic
+				);
+			} catch (error) {
+				options.logger?.error("events.kafka.handler-failed", {
+					error: error instanceof Error ? error.message : "unknown error",
+					eventId: parsed.id,
+					eventName: parsed.name,
+					offset: message.offset,
+					partition,
+					topic,
+				});
+				if (options.rethrowHandlerErrors) {
+					throw error;
+				}
 			}
-
-			if (
-				parsed.name === eventNames.personLoraTrainingUpdated &&
-				options.handlers.onPersonLoraTrainingUpdated
-			) {
-				await options.handlers.onPersonLoraTrainingUpdated(parsed);
-				return;
-			}
-
-			options.logger?.info?.("events.kafka.unhandled", {
-				eventName: parsed.name,
-				topic,
-			});
 		},
 	});
 

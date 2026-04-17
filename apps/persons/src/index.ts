@@ -65,6 +65,18 @@ const app = createApp({
 
 ensureDevUser();
 
+if (eventPublisher) {
+	const shutdown = () => {
+		eventPublisher.close().catch((error) => {
+			console.error("persons.events-publisher.shutdown.error", {
+				message: error instanceof Error ? error.message : "unknown",
+			});
+		});
+	};
+	process.on("SIGTERM", shutdown);
+	process.on("SIGINT", shutdown);
+}
+
 export default {
 	port: PORT,
 	fetch: app.fetch,

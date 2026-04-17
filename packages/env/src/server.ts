@@ -2,6 +2,13 @@ import "dotenv/config";
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
+function splitCsv(value: string | undefined) {
+	return (value ?? "")
+		.split(",")
+		.map((item) => item.trim())
+		.filter((item) => item.length > 0);
+}
+
 const s3EndpointHasHttpSchemePattern = /^https?:\/\//iu;
 
 /**
@@ -187,20 +194,9 @@ function getRequiredEnvValue(value: string | undefined, name: string) {
 	return value;
 }
 
-function parseCorsOrigins(rawOrigins: string | undefined) {
-	if (!rawOrigins) {
-		return [];
-	}
-
-	return rawOrigins
-		.split(",")
-		.map((origin) => origin.trim())
-		.filter((origin) => origin.length > 0);
-}
-
 export function getCorsOrigins() {
 	const origins = [
-		...parseCorsOrigins(env.CORS_ORIGINS),
+		...splitCsv(env.CORS_ORIGINS),
 		...(env.CORS_ORIGIN ? [env.CORS_ORIGIN] : []),
 	];
 
@@ -260,10 +256,7 @@ export function getAdminApiUrl() {
 }
 
 export function getKafkaEventBusConfig(clientIdSuffix: string) {
-	const brokers = (env.KAFKA_BROKERS ?? "")
-		.split(",")
-		.map((broker) => broker.trim())
-		.filter((broker) => broker.length > 0);
+	const brokers = splitCsv(env.KAFKA_BROKERS);
 
 	if (brokers.length === 0) {
 		return null;

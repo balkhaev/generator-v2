@@ -10,6 +10,18 @@ const nextConfig: NextConfig = {
 	outputFileTracingRoot: path.join(appDir, "../../"),
 	typedRoutes: true,
 	reactCompiler: true,
+	images: {
+		remotePatterns: [
+			{
+				hostname: "image.civitai.com",
+				protocol: "https",
+			},
+			{
+				hostname: "imagecache.civitai.com",
+				protocol: "https",
+			},
+		],
+	},
 	async redirects() {
 		return [
 			{

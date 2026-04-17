@@ -1,4 +1,5 @@
 import type { S3StorageConfig } from "./config";
+import type { DownloadRemoteAssetOptions } from "./download";
 import { downloadRemoteAsset } from "./download";
 
 const trailingSlashesPattern = /\/+$/u;
@@ -78,7 +79,8 @@ export async function uploadZipToS3(
 
 export async function cacheExternalLoraToS3(
 	sourceUrl: string,
-	config: S3StorageConfig
+	config: S3StorageConfig,
+	options: Pick<DownloadRemoteAssetOptions, "headers"> = {}
 ): Promise<{ key: string; sizeBytes: number; url: string }> {
 	const hash = Array.from(
 		new Uint8Array(
@@ -89,7 +91,9 @@ export async function cacheExternalLoraToS3(
 		.join("")
 		.slice(0, 16);
 	const filename = `external-${hash}.safetensors`;
-	const asset = await downloadRemoteAsset(sourceUrl);
+	const asset = await downloadRemoteAsset(sourceUrl, {
+		headers: options.headers,
+	});
 	return uploadObjectToS3(
 		{
 			contentType: asset.contentType || "application/octet-stream",

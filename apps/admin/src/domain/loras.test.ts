@@ -109,7 +109,11 @@ describe("slugify", () => {
 describe("LoraRegistryService", () => {
 	let repo: ReturnType<typeof createInMemoryRepo>;
 	let service: LoraRegistryService;
-	let cachedArgs: [string, unknown][];
+	let cachedArgs: [
+		string,
+		unknown,
+		{ headers?: Record<string, string> } | undefined,
+	][];
 	let idCounter: number;
 
 	beforeEach(() => {
@@ -120,7 +124,7 @@ describe("LoraRegistryService", () => {
 			repository: repo,
 			s3Config: fakeS3Config,
 			cacheLora: (sourceUrl, s3Config) => {
-				cachedArgs.push([sourceUrl, s3Config]);
+				cachedArgs.push([sourceUrl, s3Config, undefined]);
 				return Promise.resolve({
 					key: `loras/${sourceUrl.split("/").pop()}`,
 					sizeBytes: 12_345,
@@ -148,6 +152,47 @@ describe("LoraRegistryService", () => {
 		expect(entry.status).toBe("active");
 		expect(entry.defaultWeight).toBe(1);
 		expect(cachedArgs).toHaveLength(1);
+	});
+
+	it("resolves provider sources before caching", async () => {
+		const headers = { authorization: "Bearer token" };
+		service = new LoraRegistryService({
+			repository: repo,
+			s3Config: fakeS3Config,
+			cacheLora: (sourceUrl, s3Config, options) => {
+				cachedArgs.push([sourceUrl, s3Config, options]);
+				return Promise.resolve({
+					key: "loras/external/provider.safetensors",
+					sizeBytes: 12_345,
+					url: "https://cdn.test/loras/external/provider.safetensors",
+				});
+			},
+			generateId: () => "lora-provider",
+			resolveSource: () =>
+				Promise.resolve({
+					description: "Provider metadata",
+					downloadHeaders: headers,
+					downloadUrl: "https://civitai.com/api/download/models/123",
+					name: "Provider LoRA",
+					provider: "civitai",
+					sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+				}),
+		});
+
+		const entry = await service.createFromUrl({
+			sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+			baseModel: "flux",
+		});
+
+		expect(entry.name).toBe("Provider LoRA");
+		expect(entry.description).toBe("Provider metadata");
+		expect(entry.sourceUrl).toBe(
+			"https://civitai.com/models/9?modelVersionId=123"
+		);
+		expect(cachedArgs[0]?.[0]).toBe(
+			"https://civitai.com/api/download/models/123"
+		);
+		expect(cachedArgs[0]?.[2]?.headers).toBe(headers);
 	});
 
 	it("creates unique slugs on conflict", async () => {

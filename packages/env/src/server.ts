@@ -12,12 +12,13 @@ function splitCsv(value: string | undefined) {
 const s3EndpointHasHttpSchemePattern = /^https?:\/\//iu;
 
 /**
- * Normalizes S3-related env vars into a canonical shape:
+ * Normalizes runtime env aliases into a canonical shape:
  *   - Adds `https://` prefix to bare host `S3_ENDPOINT` values
  *   - Maps Hetzner-style `S3_ACCESS_KEY` / `S3_SECRET_KEY` aliases onto the
  *     canonical `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` names
  *   - Maps legacy `S3_PUBLIC_URL` / `ASSET_PUBLIC_BASE_URL` onto the canonical
  *     `S3_PUBLIC_BASE_URL`
+ *   - Maps provider token aliases onto the canonical names used by services
  */
 export function normalizeS3RuntimeEnv(
 	runtimeEnv: Record<string, string | undefined>
@@ -48,6 +49,18 @@ export function normalizeS3RuntimeEnv(
 		out.ASSET_PUBLIC_BASE_URL?.trim();
 	if (publicBaseUrl) {
 		out.S3_PUBLIC_BASE_URL = publicBaseUrl;
+	}
+
+	const civitaiApiKey =
+		out.CIVITAI_API_KEY?.trim() || out.CIVITAI_API_TOKEN?.trim();
+	if (civitaiApiKey) {
+		out.CIVITAI_API_KEY = civitaiApiKey;
+	}
+
+	const huggingFaceToken =
+		out.HUGGINGFACE_TOKEN?.trim() || out.HF_TOKEN?.trim();
+	if (huggingFaceToken) {
+		out.HUGGINGFACE_TOKEN = huggingFaceToken;
 	}
 
 	return out;
@@ -125,7 +138,10 @@ const serverSchema = {
 
 	// Provider credentials
 	CIVITAI_API_KEY: z.string().min(1).optional(),
+	CIVITAI_API_TOKEN: z.string().min(1).optional(),
 	FAL_KEY: z.string().min(1).optional(),
+	HF_TOKEN: z.string().min(1).optional(),
+	HUGGINGFACE_TOKEN: z.string().min(1).optional(),
 	XAI_API_KEY: z.string().min(1).optional(),
 
 	// Public asset URLs (S3_PUBLIC_BASE_URL is canonical; S3_PUBLIC_URL and

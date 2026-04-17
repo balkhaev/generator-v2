@@ -1,6 +1,7 @@
 import type {
 	LoraBaseModel,
 	LoraRegistryEntry,
+	LoraSourceProvider,
 	LoraStatus,
 } from "@generator/contracts/loras";
 import { db } from "@generator/db";
@@ -10,6 +11,29 @@ import { lora } from "@generator/db/schema/loras";
 type Db = typeof db;
 
 type LoraRow = typeof lora.$inferSelect;
+
+const civitaiHostPattern = /(^|\.)civitai\.com$/iu;
+const huggingFaceHostPattern = /(^|\.)huggingface\.co$/iu;
+
+function deriveSourceProvider(
+	sourceUrl: null | string
+): Exclude<LoraSourceProvider, "auto"> | undefined {
+	if (!sourceUrl) {
+		return;
+	}
+	try {
+		const url = new URL(sourceUrl);
+		if (civitaiHostPattern.test(url.hostname)) {
+			return "civitai";
+		}
+		if (huggingFaceHostPattern.test(url.hostname)) {
+			return "huggingface";
+		}
+		return "direct";
+	} catch {
+		return "direct";
+	}
+}
 
 function mapLora(row: LoraRow): LoraRegistryEntry {
 	return {
@@ -23,6 +47,7 @@ function mapLora(row: LoraRow): LoraRegistryEntry {
 		s3Url: row.s3Url,
 		sizeBytes: row.sizeBytes,
 		defaultWeight: row.defaultWeight,
+		sourceProvider: deriveSourceProvider(row.sourceUrl),
 		status: row.status as LoraStatus,
 		createdAt: row.createdAt.toISOString(),
 		updatedAt: row.updatedAt.toISOString(),

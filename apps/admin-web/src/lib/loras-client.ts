@@ -2,6 +2,8 @@ import type {
 	CreateLoraFromUrlInput,
 	ListLorasQuery,
 	LoraRegistryEntry,
+	LoraSourcePreview,
+	PreviewLoraSourceInput,
 	UpdateLoraInput,
 } from "@generator/contracts/loras";
 import { env } from "@generator/env/web";
@@ -41,6 +43,19 @@ export async function createLoraFromUrl(input: CreateLoraFromUrlInput) {
 		}
 	);
 	return payload.lora;
+}
+
+export async function previewLoraSource(input: PreviewLoraSourceInput) {
+	const payload = await requestJson<{ preview: LoraSourcePreview }>(
+		`${API_BASE_URL}/api/admin/loras/preview`,
+		{
+			method: "POST",
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(input),
+		}
+	);
+	return payload.preview;
 }
 
 export async function updateLora(id: string, patch: UpdateLoraInput) {

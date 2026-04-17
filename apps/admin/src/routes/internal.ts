@@ -6,6 +6,7 @@ import {
 import { Hono } from "hono";
 import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
+import { createLoraSourceResolver } from "@/providers/lora-source-resolver";
 import { resolveLoraListQuery } from "@/routes/loras";
 
 const bearerPrefixPattern = /^Bearer\s+/iu;
@@ -78,7 +79,17 @@ export function createInternalRoutes(
 			if (!body.sourceUrl || typeof body.sourceUrl !== "string") {
 				return c.json({ error: "sourceUrl is required" }, 400);
 			}
-			const result = await cacheExternalLoraToS3(body.sourceUrl, s3Config);
+			const source = await createLoraSourceResolver({
+				civitaiApiKey: env.CIVITAI_API_KEY,
+				huggingFaceToken: env.HUGGINGFACE_TOKEN,
+			}).resolve({
+				baseModel: "other",
+				sourceProvider: "auto",
+				sourceUrl: body.sourceUrl,
+			});
+			const result = await cacheExternalLoraToS3(source.downloadUrl, s3Config, {
+				headers: source.downloadHeaders,
+			});
 			return c.json({ url: result.url, sizeBytes: result.sizeBytes });
 		} catch (error) {
 			return c.json(

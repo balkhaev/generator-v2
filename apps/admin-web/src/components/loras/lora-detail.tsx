@@ -56,6 +56,9 @@ export default function LoraDetail({
 				<div className="grid gap-3">
 					<Field label="Slug" value={<code>{lora.slug}</code>} />
 					<Field label="Base model" value={lora.baseModel} />
+					{lora.sourceProvider ? (
+						<Field label="Source provider" value={lora.sourceProvider} />
+					) : null}
 					<Field label="Default weight" value={lora.defaultWeight} />
 					<Field label="Size" value={formatBytes(lora.sizeBytes)} />
 					<Field

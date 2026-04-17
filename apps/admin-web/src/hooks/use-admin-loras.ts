@@ -3,6 +3,7 @@
 import type {
 	CreateLoraFromUrlInput,
 	ListLorasQuery,
+	PreviewLoraSourceInput,
 	UpdateLoraInput,
 } from "@generator/contracts/loras";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,6 +12,7 @@ import {
 	archiveLora,
 	createLoraFromUrl,
 	fetchAdminLoras,
+	previewLoraSource,
 	updateLora,
 } from "@/lib/loras-client";
 
@@ -31,6 +33,12 @@ export function useCreateLora() {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["admin", "loras"] });
 		},
+	});
+}
+
+export function usePreviewLoraSource() {
+	return useMutation({
+		mutationFn: (input: PreviewLoraSourceInput) => previewLoraSource(input),
 	});
 }
 

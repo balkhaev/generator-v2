@@ -18,6 +18,7 @@ import type { AssetStorage } from "@/domain/asset-releases";
 import { AssetReleaseService } from "@/domain/asset-releases";
 import { LoraRegistryService } from "@/domain/loras";
 import { PersonLoraTrainingControlService } from "@/domain/person-lora-training-control";
+import { createLoraSourceResolver } from "@/providers/lora-source-resolver";
 import { createPersonLoraTrainingQueueClient } from "@/queue/person-lora-training";
 import { createDrizzleAssetReleaseRepository } from "@/repositories/asset-releases";
 import { createDrizzleLoraRepository } from "@/repositories/loras";
@@ -58,6 +59,10 @@ const s3Config = tryResolveS3StorageConfig() ?? undefined;
 
 const loraRegistryService = new LoraRegistryService({
 	repository: createDrizzleLoraRepository(),
+	resolveSource: createLoraSourceResolver({
+		civitaiApiKey: env.CIVITAI_API_KEY,
+		huggingFaceToken: env.HUGGINGFACE_TOKEN,
+	}).resolve,
 	s3Config,
 });
 

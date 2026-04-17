@@ -2,7 +2,9 @@ import type {
 	CreateLoraFromUrlInput,
 	ListLorasQuery,
 	LoraBaseModel,
+	LoraSourceProvider,
 	LoraStatus,
+	PreviewLoraSourceInput,
 	UpdateLoraInput,
 } from "@generator/contracts/loras";
 import { LORA_BASE_MODELS } from "@generator/contracts/loras";
@@ -12,6 +14,12 @@ import type { LoraRegistryService } from "@/domain/loras";
 import { toErrorResponse } from "@/routes/utils";
 
 const LORA_STATUSES: LoraStatus[] = ["active", "archived"];
+const LORA_SOURCE_PROVIDERS: LoraSourceProvider[] = [
+	"auto",
+	"civitai",
+	"direct",
+	"huggingface",
+];
 
 function parseBaseModel(value: string | undefined): LoraBaseModel | undefined {
 	if (!value) {
@@ -31,6 +39,17 @@ function parseStatus(value: string | undefined): LoraStatus | undefined {
 		: undefined;
 }
 
+function parseSourceProvider(
+	value: string | undefined
+): LoraSourceProvider | undefined {
+	if (!value) {
+		return;
+	}
+	return LORA_SOURCE_PROVIDERS.includes(value as LoraSourceProvider)
+		? (value as LoraSourceProvider)
+		: undefined;
+}
+
 function resolveListQuery(c: {
 	req: { query(key: string): string | undefined };
 }): ListLorasQuery {
@@ -45,14 +64,14 @@ function parseCreateBody(body: unknown): CreateLoraFromUrlInput {
 		throw new Error("Invalid request body");
 	}
 	const payload = body as Record<string, unknown>;
-	const name = typeof payload.name === "string" ? payload.name : "";
+	const name = typeof payload.name === "string" ? payload.name : undefined;
 	const sourceUrl =
 		typeof payload.sourceUrl === "string" ? payload.sourceUrl : "";
 	const baseModel = parseBaseModel(
 		typeof payload.baseModel === "string" ? payload.baseModel : undefined
 	);
-	if (!(name && sourceUrl && baseModel)) {
-		throw new Error("name, sourceUrl and baseModel are required");
+	if (!(sourceUrl && baseModel)) {
+		throw new Error("sourceUrl and baseModel are required");
 	}
 	return {
 		name,
@@ -64,6 +83,47 @@ function parseCreateBody(body: unknown): CreateLoraFromUrlInput {
 				: undefined,
 		description:
 			typeof payload.description === "string" ? payload.description : undefined,
+		sourceFilePath:
+			typeof payload.sourceFilePath === "string"
+				? payload.sourceFilePath
+				: undefined,
+		sourceProvider: parseSourceProvider(
+			typeof payload.sourceProvider === "string"
+				? payload.sourceProvider
+				: undefined
+		),
+		sourceRevision:
+			typeof payload.sourceRevision === "string"
+				? payload.sourceRevision
+				: undefined,
+	};
+}
+
+function parsePreviewBody(body: unknown): PreviewLoraSourceInput {
+	if (!body || typeof body !== "object") {
+		throw new Error("Invalid request body");
+	}
+	const payload = body as Record<string, unknown>;
+	const sourceUrl =
+		typeof payload.sourceUrl === "string" ? payload.sourceUrl : "";
+	if (!sourceUrl) {
+		throw new Error("sourceUrl is required");
+	}
+	return {
+		sourceFilePath:
+			typeof payload.sourceFilePath === "string"
+				? payload.sourceFilePath
+				: undefined,
+		sourceProvider: parseSourceProvider(
+			typeof payload.sourceProvider === "string"
+				? payload.sourceProvider
+				: undefined
+		),
+		sourceRevision:
+			typeof payload.sourceRevision === "string"
+				? payload.sourceRevision
+				: undefined,
+		sourceUrl,
 	};
 }
 
@@ -102,6 +162,17 @@ export function createAdminLoraRoutes(service: LoraRegistryService) {
 			const input = parseCreateBody(await c.req.json());
 			const entry = await service.createFromUrl(input);
 			return c.json({ lora: entry }, 201);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.post("/preview", async (c) => {
+		try {
+			const input = parsePreviewBody(await c.req.json());
+			const preview = await service.previewSource(input);
+			return c.json({ preview });
 		} catch (error) {
 			const response = toErrorResponse(error);
 			return c.json(response.body, response.status as 400);

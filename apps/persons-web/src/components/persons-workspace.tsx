@@ -1603,7 +1603,9 @@ function CreatePersonForm({
 	onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
 }) {
 	const [showMore, setShowMore] = useState(false);
-	const enhanceAvailable = shouldPickReferenceVariant(formState);
+	const hasReferencePhoto = Boolean(formState.referencePhotoUrl?.trim());
+	const enhanceDisabled = hasReferencePhoto;
+	const isEnhanceActive = enhance && !enhanceDisabled;
 
 	return (
 		<WorkspacePane className="min-h-0">
@@ -1723,34 +1725,42 @@ function CreatePersonForm({
 							</div>
 						) : null}
 
-						{enhanceAvailable ? (
-							<label
+						<label
+							className={cn(
+								"flex items-start gap-2 rounded-lg border bg-background/40 px-3 py-2 text-xs transition-colors",
+								enhanceDisabled
+									? "cursor-not-allowed border-border/40 opacity-60"
+									: "cursor-pointer",
+								isEnhanceActive
+									? "border-violet-400/60 bg-violet-500/5"
+									: "border-border/60",
+								!(enhanceDisabled || isEnhanceActive) && "hover:border-border"
+							)}
+							htmlFor="enhancePrompt"
+						>
+							<input
+								checked={isEnhanceActive}
 								className={cn(
-									"flex cursor-pointer items-start gap-2 rounded-lg border bg-background/40 px-3 py-2 text-xs transition-colors",
-									enhance
-										? "border-violet-400/60 bg-violet-500/5"
-										: "border-border/60 hover:border-border"
+									"mt-0.5 size-3.5 accent-violet-500",
+									enhanceDisabled ? "cursor-not-allowed" : "cursor-pointer"
 								)}
-								htmlFor="enhancePrompt"
-							>
-								<input
-									checked={enhance}
-									className="mt-0.5 size-3.5 cursor-pointer accent-violet-500"
-									id="enhancePrompt"
-									onChange={(event) => onEnhanceChange(event.target.checked)}
-									type="checkbox"
-								/>
-								<span className="grid gap-0.5 leading-tight">
-									<span className="flex items-center gap-1 font-medium">
-										<Sparkles className="size-3 text-violet-500" />
-										Enhance with Grok
-									</span>
-									<span className="text-[11px] text-muted-foreground/70">
-										Обогатим промт и сгенерируем 4 разные референсные девушки
-									</span>
+								disabled={enhanceDisabled}
+								id="enhancePrompt"
+								onChange={(event) => onEnhanceChange(event.target.checked)}
+								type="checkbox"
+							/>
+							<span className="grid gap-0.5 leading-tight">
+								<span className="flex items-center gap-1 font-medium">
+									<Sparkles className="size-3 text-violet-500" />
+									Enhance with Grok
 								</span>
-							</label>
-						) : null}
+								<span className="text-[11px] text-muted-foreground/70">
+									{enhanceDisabled
+										? "Недоступно при загруженном референсном фото"
+										: "Обогатим промт и сгенерируем 4 разные референсные девушки"}
+								</span>
+							</span>
+						</label>
 
 						<Button
 							disabled={isCreating || !canSubmitForm(formState)}

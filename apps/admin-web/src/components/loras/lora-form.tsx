@@ -1,11 +1,11 @@
 "use client";
 
+import { groupBaseModelsByFamily } from "@generator/contracts/base-models";
 import type {
 	LoraBaseModel,
 	LoraSourcePreview,
 	LoraSourcePreviewVariant,
 } from "@generator/contracts/loras";
-import { LORA_BASE_MODELS } from "@generator/contracts/loras";
 import { Button } from "@generator/ui/components/button";
 import {
 	Card,
@@ -31,12 +31,7 @@ import { toast } from "sonner";
 
 import { useCreateLora, usePreviewLoraSource } from "@/hooks/use-admin-loras";
 
-const baseModelLabels: Record<LoraBaseModel, string> = {
-	"z-image": "Z-Image",
-	flux: "Flux",
-	sdxl: "SDXL",
-	other: "Other",
-};
+const baseModelGroups = groupBaseModelsByFamily();
 
 const selectClassName =
 	"flex h-9 w-full rounded-md border border-foreground/10 bg-transparent px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
@@ -430,10 +425,14 @@ export default function LoraForm() {
 							}
 							value={baseModel}
 						>
-							{LORA_BASE_MODELS.map((model) => (
-								<option key={model} value={model}>
-									{baseModelLabels[model]}
-								</option>
+							{baseModelGroups.map((group) => (
+								<optgroup key={group.family} label={group.label}>
+									{group.models.map((model) => (
+										<option key={model.id} value={model.id}>
+											{model.label}
+										</option>
+									))}
+								</optgroup>
 							))}
 						</select>
 					</div>

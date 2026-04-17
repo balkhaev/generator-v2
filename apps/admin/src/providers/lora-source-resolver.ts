@@ -1,3 +1,4 @@
+import { mapCivitaiBaseModel } from "@generator/contracts/base-models";
 import type {
 	CreateLoraFromUrlInput,
 	LoraBaseModel,
@@ -220,22 +221,6 @@ function parseCivitaiModelVersionResponse(value: unknown): CivitaiModelVersion {
 		throw new Error("Civitai returned an unexpected model version response.");
 	}
 	return version;
-}
-
-function mapCivitaiBaseModel(
-	value: string | undefined
-): LoraBaseModel | undefined {
-	const normalized = value?.toLowerCase() ?? "";
-	if (normalized.includes("flux")) {
-		return "flux";
-	}
-	if (normalized.includes("sdxl") || normalized.includes("xl")) {
-		return "sdxl";
-	}
-	if (normalized.includes("z-image") || normalized.includes("z image")) {
-		return "z-image";
-	}
-	return undefined;
 }
 
 function isCivitaiHost(url: URL): boolean {

@@ -1,21 +1,16 @@
 "use client";
 
+import { groupBaseModelsByFamily } from "@generator/contracts/base-models";
 import type {
 	LoraBaseModel,
 	LoraRegistryEntry,
 } from "@generator/contracts/loras";
-import { LORA_BASE_MODELS } from "@generator/contracts/loras";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { Loader2 } from "lucide-react";
 
 import LoraRow from "./lora-row";
 
-const baseModelLabels: Record<LoraBaseModel, string> = {
-	"z-image": "Z-Image",
-	flux: "Flux",
-	sdxl: "SDXL",
-	other: "Other",
-};
+const baseModelGroups = groupBaseModelsByFamily();
 
 const selectClassName =
 	"h-8 rounded-md border border-foreground/10 bg-background px-2 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
@@ -50,10 +45,14 @@ export default function LoraList({
 					value={filterBaseModel}
 				>
 					<option value="">All base models</option>
-					{LORA_BASE_MODELS.map((model) => (
-						<option key={model} value={model}>
-							{baseModelLabels[model]}
-						</option>
+					{baseModelGroups.map((group) => (
+						<optgroup key={group.family} label={group.label}>
+							{group.models.map((model) => (
+								<option key={model.id} value={model.id}>
+									{model.label}
+								</option>
+							))}
+						</optgroup>
 					))}
 				</select>
 			</div>

@@ -1,9 +1,7 @@
 "use client";
 
-import type {
-	LoraBaseModel,
-	LoraRegistryEntry,
-} from "@generator/contracts/loras";
+import { getBaseModelLabel } from "@generator/contracts/base-models";
+import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import { Button } from "@generator/ui/components/button";
 import { StatusBadge } from "@generator/ui/components/status-badge";
 import { formatBytes } from "@generator/ui/lib/format";
@@ -12,13 +10,6 @@ import { Archive, ChevronRight, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 import { useArchiveLora, useUpdateLora } from "@/hooks/use-admin-loras";
-
-const baseModelLabels: Record<LoraBaseModel, string> = {
-	"z-image": "Z-Image",
-	flux: "Flux",
-	sdxl: "SDXL",
-	other: "Other",
-};
 
 export default function LoraRow({
 	isSelected,
@@ -76,7 +67,7 @@ export default function LoraRow({
 					<div className="flex items-center gap-2">
 						<p className="truncate font-medium text-sm">{lora.name}</p>
 						<StatusBadge tone="neutral">
-							{baseModelLabels[lora.baseModel]}
+							{getBaseModelLabel(lora.baseModel)}
 						</StatusBadge>
 						{lora.status === "archived" ? (
 							<StatusBadge tone="warning">archived</StatusBadge>

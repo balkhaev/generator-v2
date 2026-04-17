@@ -25,7 +25,7 @@ import {
 	generatorExecution,
 	generatorExecutionStatusEnum,
 } from "./schema/generator";
-import { lora, loraBaseModelEnum, loraStatusEnum } from "./schema/loras";
+import { lora, loraStatusEnum } from "./schema/loras";
 import {
 	person,
 	personGeneration,
@@ -56,7 +56,6 @@ const schema = {
 	generatorExecution,
 	generatorExecutionStatusEnum,
 	lora,
-	loraBaseModelEnum,
 	loraStatusEnum,
 	person,
 	personGeneration,

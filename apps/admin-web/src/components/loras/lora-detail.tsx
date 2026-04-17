@@ -1,5 +1,6 @@
 "use client";
 
+import { getBaseModelLabel } from "@generator/contracts/base-models";
 import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { SectionLabel } from "@generator/ui/components/section-label";
@@ -55,7 +56,7 @@ export default function LoraDetail({
 
 				<div className="grid gap-3">
 					<Field label="Slug" value={<code>{lora.slug}</code>} />
-					<Field label="Base model" value={lora.baseModel} />
+					<Field label="Base model" value={getBaseModelLabel(lora.baseModel)} />
 					{lora.sourceProvider ? (
 						<Field label="Source provider" value={lora.sourceProvider} />
 					) : null}

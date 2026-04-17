@@ -41,6 +41,12 @@ const selectClassName =
 	"flex h-9 w-full rounded-md border border-foreground/10 bg-transparent px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
 const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
 const videoUrlPattern = /\.(mp4|webm)(\?|$)/iu;
+const importProgressSteps = [
+	{ label: "Resolve source", pct: 12 },
+	{ label: "Download LoRA", pct: 34 },
+	{ label: "Upload to S3", pct: 72 },
+	{ label: "Save registry entry", pct: 92 },
+] as const;
 
 function isCivitaiUrl(value: string): boolean {
 	try {
@@ -52,6 +58,51 @@ function isCivitaiUrl(value: string): boolean {
 
 function inferMediaType(url: string | undefined) {
 	return url && videoUrlPattern.test(url) ? "video" : "image";
+}
+
+function formatElapsed(seconds: number) {
+	const minutes = Math.floor(seconds / 60);
+	const rest = seconds % 60;
+	return minutes > 0
+		? `${minutes}:${rest.toString().padStart(2, "0")}`
+		: `${rest}s`;
+}
+
+function getImportProgress(elapsedSeconds: number) {
+	if (elapsedSeconds < 2) {
+		return importProgressSteps[0];
+	}
+	if (elapsedSeconds < 8) {
+		return importProgressSteps[1];
+	}
+	if (elapsedSeconds < 20) {
+		return importProgressSteps[2];
+	}
+	return importProgressSteps[3];
+}
+
+function ImportProgress({ elapsedSeconds }: { elapsedSeconds: number }) {
+	const step = getImportProgress(elapsedSeconds);
+	return (
+		<div className="grid gap-2 md:col-span-2">
+			<div className="flex items-center justify-between gap-3 text-xs">
+				<span className="text-muted-foreground">{step.label}</span>
+				<span className="tabular-nums">
+					{step.pct}% / {formatElapsed(elapsedSeconds)}
+				</span>
+			</div>
+			<div className="h-1.5 overflow-hidden rounded-full bg-foreground/8">
+				<div
+					className="h-full rounded-full bg-foreground transition-[width]"
+					style={{ width: `${step.pct}%` }}
+				/>
+			</div>
+			<p className="text-muted-foreground text-xs">
+				Large LoRA files can take a while while the server downloads and caches
+				the weights.
+			</p>
+		</div>
+	);
 }
 
 function PreviewMedia({
@@ -204,6 +255,8 @@ export default function LoraForm() {
 	const [baseModel, setBaseModel] = useState<LoraBaseModel>("z-image");
 	const [defaultWeight, setDefaultWeight] = useState("1");
 	const [description, setDescription] = useState("");
+	const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
+	const [elapsedSeconds, setElapsedSeconds] = useState(0);
 	const trimmedSourceUrl = sourceUrl.trim();
 	const activeVariant = useMemo(
 		() =>
@@ -272,12 +325,28 @@ export default function LoraForm() {
 		return () => clearTimeout(timeout);
 	}, [loadPreview, resetPreview, trimmedSourceUrl]);
 
+	useEffect(() => {
+		if (!importStartedAt) {
+			setElapsedSeconds(0);
+			return;
+		}
+		const updateElapsed = () => {
+			setElapsedSeconds(
+				Math.max(0, Math.floor((Date.now() - importStartedAt) / 1000))
+			);
+		};
+		updateElapsed();
+		const interval = window.setInterval(updateElapsed, 1000);
+		return () => window.clearInterval(interval);
+	}, [importStartedAt]);
+
 	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		if (!trimmedSourceUrl) {
 			toast.error("Source URL is required");
 			return;
 		}
+		setImportStartedAt(Date.now());
 		try {
 			const weight = Number(defaultWeight);
 			const lora = await create.mutateAsync({
@@ -297,6 +366,8 @@ export default function LoraForm() {
 			toast.error(
 				error instanceof Error ? error.message : "Failed to add LoRA"
 			);
+		} finally {
+			setImportStartedAt(null);
 		}
 	}
 
@@ -405,6 +476,9 @@ export default function LoraForm() {
 							value={description}
 						/>
 					</div>
+					{create.isPending ? (
+						<ImportProgress elapsedSeconds={elapsedSeconds} />
+					) : null}
 				</CardContent>
 				<CardFooter>
 					<Button disabled={create.isPending} type="submit">

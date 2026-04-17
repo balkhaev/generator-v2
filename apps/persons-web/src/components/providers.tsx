@@ -1,6 +1,7 @@
 "use client";
 
 import { Toaster } from "@generator/ui/components/sonner";
+import { TooltipProvider } from "@generator/ui/components/tooltip";
 
 import { ThemeProvider } from "./theme-provider";
 
@@ -12,7 +13,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 			disableTransitionOnChange
 			enableSystem
 		>
-			{children}
+			<TooltipProvider>{children}</TooltipProvider>
 			<Toaster richColors />
 		</ThemeProvider>
 	);

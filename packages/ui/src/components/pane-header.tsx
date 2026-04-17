@@ -1,6 +1,7 @@
 import { cn } from "@generator/ui/lib/utils";
 import type { ReactNode } from "react";
 
+import { InfoTooltip } from "./info-tooltip";
 import { SectionLabel } from "./section-label";
 
 export function PaneHeader({
@@ -21,10 +22,12 @@ export function PaneHeader({
 				className
 			)}
 		>
-			<div className="grid gap-0.5">
+			<div className="flex min-w-0 items-center gap-1.5">
 				<SectionLabel>{label}</SectionLabel>
 				{description ? (
-					<p className="text-muted-foreground text-xs">{description}</p>
+					<InfoTooltip label="Show section details" side="bottom">
+						{description}
+					</InfoTooltip>
 				) : null}
 			</div>
 			{actions ?? null}

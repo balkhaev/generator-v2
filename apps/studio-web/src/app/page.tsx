@@ -30,7 +30,11 @@ export default async function Home() {
 		);
 
 		return (
-			<StudioShell initialSnapshot={snapshot} sessionName={session.user.name} />
+			<StudioShell
+				initialSnapshot={snapshot}
+				sessionEmail={session.user.email ?? null}
+				sessionName={session.user.name}
+			/>
 		);
 	} catch (error) {
 		if (

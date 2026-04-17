@@ -26,10 +26,17 @@ import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
-import { formatDateTime } from "@generator/ui/lib/format";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@generator/ui/components/tooltip";
+import { formatRelativeTime } from "@generator/ui/lib/format";
 import { cn } from "@generator/ui/lib/utils";
 import {
+	Check,
 	ChevronDown,
+	Copy,
 	ExternalLink,
 	ImageUp,
 	Loader2,
@@ -39,6 +46,7 @@ import {
 	RefreshCw,
 	RotateCw,
 	Sparkles,
+	Trash2,
 	Upload,
 } from "lucide-react";
 import type { Route } from "next";
@@ -46,6 +54,9 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+
+import IconButton from "@/components/icon-button";
+import { getMediaType } from "@/components/preview-surface";
 
 interface ScenarioConsoleProps {
 	className?: string;
@@ -56,6 +67,8 @@ interface ScenarioConsoleProps {
 }
 
 type ConsoleTab = "compose" | "launch" | "runs";
+type RunFilter = "all" | "active" | "succeeded" | "failed";
+
 type RunDraft = LaunchRunInput & {
 	uploadStorage?: UploadedInputAsset["storage"] | null;
 };
@@ -125,6 +138,13 @@ const runStatusTone: Record<ScenarioRunRecord["status"], string> = {
 	succeeded: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
 };
 
+const runStatusDot: Record<ScenarioRunRecord["status"], string> = {
+	failed: "bg-rose-500",
+	queued: "bg-sky-500",
+	running: "bg-amber-500 animate-pulse",
+	succeeded: "bg-emerald-500",
+};
+
 const presetStatusTone: Record<PresetReadiness["status"], string> = {
 	missing: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
 	partial: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
@@ -151,8 +171,6 @@ function buildConsoleHref(
 	params.set("tab", tab);
 	return `${pathname}?${params.toString()}` as Route;
 }
-
-const formatDate = formatDateTime;
 
 function formatScenarioDuration(params: ScenarioRecord["params"]) {
 	const frameRate =
@@ -183,25 +201,29 @@ function createRunDraft(scenarioId: string): RunDraft {
 	};
 }
 
+async function copyValueToClipboard(value: string) {
+	if (typeof navigator !== "undefined" && navigator.clipboard) {
+		await navigator.clipboard.writeText(value);
+		return;
+	}
+
+	throw new Error("Clipboard API is not available.");
+}
+
 function StatusPill({ status }: { status: ScenarioRunRecord["status"] }) {
 	return (
 		<span
 			className={cn(
-				"rounded-full px-2 py-0.5 text-[11px]",
+				"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]",
 				runStatusTone[status]
 			)}
 		>
+			<span
+				aria-hidden="true"
+				className={cn("size-1.5 rounded-full", runStatusDot[status])}
+			/>
 			{status}
 		</span>
-	);
-}
-
-function DockMetric({ label, value }: { label: string; value: string }) {
-	return (
-		<div className="rounded-lg bg-muted/10 px-2.5 py-2 dark:bg-muted/5">
-			<p className="text-[11px] text-muted-foreground">{label}</p>
-			<p className="mt-0.5 text-sm">{value}</p>
-		</div>
 	);
 }
 
@@ -313,27 +335,35 @@ function RecentInputPicker({
 				const isActive = activeUrl === run.inputImageUrl;
 
 				return (
-					<button
-						className={cn(
-							"group relative aspect-square overflow-hidden rounded-lg transition",
-							isActive
-								? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
-								: "opacity-70 hover:opacity-100"
-						)}
-						key={run.id}
-						onClick={() => onSelect(run.inputImageUrl)}
-						type="button"
-					>
-						<div
-							className="absolute inset-0 bg-center bg-cover"
-							style={{ backgroundImage: `url("${run.inputImageUrl}")` }}
-						/>
-						<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1 pt-3 pb-1">
-							<p className="truncate text-center text-[10px] text-white leading-tight">
-								{run.inputLabel}
-							</p>
-						</div>
-					</button>
+					<Tooltip key={run.id}>
+						<TooltipTrigger
+							render={
+								<button
+									aria-label={run.inputLabel}
+									className={cn(
+										"group relative aspect-square overflow-hidden rounded-lg transition",
+										isActive
+											? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
+											: "opacity-70 hover:opacity-100"
+									)}
+									onClick={() => onSelect(run.inputImageUrl)}
+									type="button"
+								/>
+							}
+						>
+							<div
+								aria-hidden="true"
+								className="absolute inset-0 bg-center bg-cover"
+								style={{ backgroundImage: `url("${run.inputImageUrl}")` }}
+							/>
+							<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1 pt-3 pb-1">
+								<p className="truncate text-center text-[10px] text-white leading-tight">
+									{run.inputLabel}
+								</p>
+							</div>
+						</TooltipTrigger>
+						<TooltipContent>{run.inputLabel}</TooltipContent>
+					</Tooltip>
 				);
 			})}
 		</div>
@@ -362,6 +392,7 @@ function ScenarioInfoHeader({ scenario }: { scenario: ScenarioRecord | null }) {
 					</p>
 				</div>
 				<ChevronDown
+					aria-hidden="true"
 					className={cn(
 						"size-3.5 shrink-0 text-muted-foreground transition-transform",
 						isExpanded && "rotate-180"
@@ -392,6 +423,177 @@ function ScenarioInfoHeader({ scenario }: { scenario: ScenarioRecord | null }) {
 	);
 }
 
+const runFilterOptions: { id: RunFilter; label: string }[] = [
+	{ id: "all", label: "All" },
+	{ id: "active", label: "Active" },
+	{ id: "succeeded", label: "Done" },
+	{ id: "failed", label: "Failed" },
+];
+
+function matchesRunFilter(
+	status: ScenarioRunRecord["status"],
+	filter: RunFilter
+) {
+	if (filter === "all") {
+		return true;
+	}
+
+	if (filter === "active") {
+		return status === "queued" || status === "running";
+	}
+
+	return status === filter;
+}
+
+function ScenarioRunCard({
+	isCopied,
+	isFocused,
+	linkedPerson,
+	onCopyRunId,
+	onSyncRun,
+	personsUrl,
+	run,
+	syncingRunId,
+}: {
+	isCopied: boolean;
+	isFocused: boolean;
+	linkedPerson: LinkedPersonState;
+	onCopyRunId: (runId: string) => Promise<void> | void;
+	onSyncRun: (runId: string) => Promise<void> | void;
+	personsUrl: string;
+	run: ScenarioRunRecord;
+	syncingRunId: string | null;
+}) {
+	const outputThumbnails = run.artifactUrls
+		.filter((url) => getMediaType(url) === "image")
+		.slice(0, 3);
+	const isSyncing = syncingRunId === run.id;
+	const hasLinkedPerson =
+		linkedPerson &&
+		(linkedPerson.runId === run.id || linkedPerson.runId === run.providerJobId);
+
+	return (
+		<article
+			className={cn(
+				"grid gap-2 rounded-lg bg-muted/8 p-3 transition dark:bg-muted/5",
+				isFocused && "ring-1 ring-foreground/30"
+			)}
+		>
+			<div className="flex items-start justify-between gap-2">
+				<div className="min-w-0">
+					<p className="truncate text-xs">{run.scenarioName}</p>
+					<p className="truncate text-[11px] text-muted-foreground">
+						{formatRelativeTime(run.createdAt)} ·{" "}
+						{run.providerJobId ?? "pending"}
+					</p>
+				</div>
+				<div className="flex items-center gap-1">
+					<StatusPill status={run.status} />
+					<IconButton
+						hint={isCopied ? "Copied" : "Copy run id"}
+						label="Copy run id"
+						onClick={() => onCopyRunId(run.id)}
+					>
+						{isCopied ? (
+							<Check className="size-3.5 text-emerald-500" />
+						) : (
+							<Copy className="size-3.5" />
+						)}
+					</IconButton>
+				</div>
+			</div>
+
+			{outputThumbnails.length > 0 ? (
+				<div className="grid grid-cols-3 gap-1">
+					{outputThumbnails.map((url, index) => (
+						<a
+							aria-label={`Open output ${index + 1}`}
+							className="group relative aspect-video overflow-hidden rounded-md bg-black/30"
+							href={url}
+							key={url}
+							rel="noopener noreferrer"
+							target="_blank"
+						>
+							<div
+								aria-hidden="true"
+								className="absolute inset-0 bg-center bg-cover transition group-hover:scale-105"
+								style={{ backgroundImage: `url("${url}")` }}
+							/>
+							<span className="sr-only">Open output {index + 1}</span>
+						</a>
+					))}
+				</div>
+			) : null}
+
+			<div className="grid grid-cols-2 gap-1.5">
+				<div className="rounded-lg bg-muted/10 px-2.5 py-1.5 dark:bg-muted/5">
+					<p className="text-[10px] text-muted-foreground">Input</p>
+					<p className="truncate text-[11px]">{run.inputLabel}</p>
+				</div>
+				<div className="rounded-lg bg-muted/10 px-2.5 py-1.5 dark:bg-muted/5">
+					<p className="text-[10px] text-muted-foreground">Outputs</p>
+					<p className="text-[11px] tabular-nums">{run.artifactUrls.length}</p>
+				</div>
+			</div>
+
+			{run.errorSummary ? (
+				<p className="rounded-lg bg-rose-500/10 px-2.5 py-1.5 text-rose-700 text-xs dark:text-rose-300">
+					{run.errorSummary}
+				</p>
+			) : null}
+
+			<div className="flex flex-wrap items-center gap-1.5">
+				{hasLinkedPerson ? (
+					<a
+						className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
+						href={`${personsUrl}/person/${linkedPerson.personSlug}`}
+						rel="noreferrer noopener"
+					>
+						Person
+						<ExternalLink className="size-3" />
+					</a>
+				) : null}
+				<a
+					className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
+					href={run.inputImageUrl}
+					rel="noreferrer noopener"
+					target="_blank"
+				>
+					Source
+					<ExternalLink className="size-3" />
+				</a>
+				{run.artifactUrls.slice(0, 2).map((artifactUrl, index) => (
+					<a
+						className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
+						href={artifactUrl}
+						key={artifactUrl}
+						rel="noreferrer noopener"
+						target="_blank"
+					>
+						Output {index + 1}
+						<ExternalLink className="size-3" />
+					</a>
+				))}
+				{run.status === "queued" || run.status === "running" ? (
+					<Button
+						disabled={isSyncing}
+						onClick={() => onSyncRun(run.id)}
+						size="xs"
+						variant="outline"
+					>
+						{isSyncing ? (
+							<Loader2 className="size-3 animate-spin" />
+						) : (
+							<RotateCw className="size-3" />
+						)}
+						Sync
+					</Button>
+				) : null}
+			</div>
+		</article>
+	);
+}
+
 export default function ScenarioConsole({
 	className,
 	onScenarioSelect,
@@ -413,6 +615,8 @@ export default function ScenarioConsole({
 	const [submittingRunId, setSubmittingRunId] = useState<string | null>(null);
 	const [syncingRunId, setSyncingRunId] = useState<string | null>(null);
 	const [uploadProgressPct, setUploadProgressPct] = useState(0);
+	const [runFilter, setRunFilter] = useState<RunFilter>("all");
+	const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
 	const fileInputId = useId();
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 	const pathname = usePathname();
@@ -435,6 +639,13 @@ export default function ScenarioConsole({
 
 		return runs.filter((run) => run.scenarioId === selectedScenarioId);
 	}, [runs, selectedScenarioId]);
+	const filteredScenarioRuns = useMemo(
+		() =>
+			selectedScenarioRuns.filter((run) =>
+				matchesRunFilter(run.status, runFilter)
+			),
+		[runFilter, selectedScenarioRuns]
+	);
 	const recentReferences = useMemo(
 		() => getRecentReferenceOptions(runs, selectedScenarioId),
 		[runs, selectedScenarioId]
@@ -467,6 +678,10 @@ export default function ScenarioConsole({
 			preset.workflowKeys.includes(selectedWorkflow.key)
 		);
 	}, [presetReadiness, selectedWorkflow]);
+
+	const activeRunCount = selectedScenarioRuns.filter(
+		(run) => run.status === "queued" || run.status === "running"
+	).length;
 
 	useEffect(() => {
 		let cancelled = false;
@@ -523,6 +738,45 @@ export default function ScenarioConsole({
 	}, [initialSnapshot]);
 
 	useEffect(() => {
+		function handleKeydown(event: KeyboardEvent) {
+			const target = event.target as HTMLElement | null;
+			const isEditableTarget =
+				target instanceof HTMLInputElement ||
+				target instanceof HTMLTextAreaElement ||
+				target instanceof HTMLSelectElement ||
+				target?.isContentEditable === true;
+
+			if (isEditableTarget || event.metaKey || event.ctrlKey || event.altKey) {
+				return;
+			}
+
+			let nextTab: ConsoleTab | null = null;
+
+			if (event.key === "l" || event.key === "L") {
+				nextTab = "launch";
+			} else if (event.key === "c" || event.key === "C") {
+				nextTab = "compose";
+			} else if (event.key === "r" || event.key === "R") {
+				nextTab = "runs";
+			}
+
+			if (!nextTab) {
+				return;
+			}
+
+			event.preventDefault();
+			router.replace(buildConsoleHref(pathname, currentSearch, nextTab), {
+				scroll: false,
+			});
+		}
+
+		window.addEventListener("keydown", handleKeydown);
+		return () => {
+			window.removeEventListener("keydown", handleKeydown);
+		};
+	}, [currentSearch, pathname, router]);
+
+	useEffect(() => {
 		const targetRunId = focusedRunId;
 
 		if (!targetRunId) {
@@ -575,7 +829,7 @@ export default function ScenarioConsole({
 	}, [selectedWorkflow]);
 
 	async function loadSnapshot({ silent = false }: { silent?: boolean } = {}) {
-		if (silent) {
+		if (!silent) {
 			setIsRefreshing(true);
 		}
 
@@ -591,6 +845,18 @@ export default function ScenarioConsole({
 			);
 		} finally {
 			setIsRefreshing(false);
+		}
+	}
+
+	async function handleCopyRunId(runId: string) {
+		try {
+			await copyValueToClipboard(runId);
+			setCopiedRunId(runId);
+			setTimeout(() => {
+				setCopiedRunId((current) => (current === runId ? null : current));
+			}, 1500);
+		} catch {
+			toast.error("Unable to copy.");
 		}
 	}
 
@@ -774,7 +1040,7 @@ export default function ScenarioConsole({
 							<a
 								className="inline-flex items-center gap-1 text-[11px] text-muted-foreground transition hover:text-foreground"
 								href={adminWebUrl}
-								rel="noreferrer"
+								rel="noreferrer noopener"
 								target="_blank"
 							>
 								Admin
@@ -821,7 +1087,7 @@ export default function ScenarioConsole({
 											<a
 												className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
 												href={preset.sourceUrl}
-												rel="noreferrer"
+												rel="noreferrer noopener"
 												target="_blank"
 											>
 												<ExternalLink className="size-3" />
@@ -1031,6 +1297,20 @@ export default function ScenarioConsole({
 		if (!selectedScenario) {
 			return (
 				<EmptyState
+					action={
+						<Button
+							onClick={() =>
+								router.replace(
+									buildConsoleHref(pathname, currentSearch, "compose"),
+									{ scroll: false }
+								)
+							}
+							size="sm"
+						>
+							<Plus className="size-3.5" />
+							Compose scenario
+						</Button>
+					}
 					hint="The launch panel stays pinned to the active scenario."
 					message="Create or select a scenario to launch."
 				/>
@@ -1043,28 +1323,48 @@ export default function ScenarioConsole({
 		const hasValidPreview = previewableUrlPattern.test(
 			selectedRunDraft?.inputImageUrl ?? ""
 		);
+		const isReadyToLaunch =
+			Boolean(selectedRunDraft?.inputImageUrl?.trim()) && !isUploadingImage;
 
 		return (
 			<div className="grid gap-3">
-				<div className="grid grid-cols-3 gap-1.5">
-					<DockMetric
-						label="Runs"
-						value={String(selectedScenarioRuns.length)}
-					/>
-					<DockMetric
-						label="Duration"
-						value={formatScenarioDuration(selectedScenario.params)}
-					/>
-					<DockMetric
-						label="Input"
-						value={
-							storageLabel ?? (selectedRunDraft?.inputImageUrl ? "URL" : "None")
-						}
-					/>
+				<div className="grid gap-2 rounded-lg bg-muted/10 px-3 py-2.5 dark:bg-muted/5">
+					<SectionLabel>Prompt</SectionLabel>
+					<p className="line-clamp-3 text-foreground/90 text-xs leading-relaxed">
+						{selectedScenario.prompt || (
+							<span className="text-muted-foreground italic">
+								No prompt set. Switch to Compose to add one.
+							</span>
+						)}
+					</p>
+					<div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+						<span className="rounded-full bg-foreground/[0.04] px-2 py-0.5">
+							{selectedScenario.workflowKey}
+						</span>
+						<span className="rounded-full bg-foreground/[0.04] px-2 py-0.5">
+							{formatScenarioDuration(selectedScenario.params)}
+						</span>
+						<span className="rounded-full bg-foreground/[0.04] px-2 py-0.5">
+							{selectedScenarioRuns.length} runs
+						</span>
+						{activeRunCount > 0 ? (
+							<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-600 dark:text-amber-400">
+								<span className="size-1 animate-pulse rounded-full bg-amber-500" />
+								{activeRunCount} active
+							</span>
+						) : null}
+					</div>
 				</div>
 
 				<div className="grid gap-2">
-					<SectionLabel>Input image</SectionLabel>
+					<div className="flex items-center justify-between gap-2">
+						<SectionLabel>Input image</SectionLabel>
+						{storageLabel ? (
+							<span className="rounded-full bg-foreground/[0.05] px-2 py-0.5 text-[10px] text-muted-foreground uppercase tracking-wide">
+								{storageLabel}
+							</span>
+						) : null}
+					</div>
 					<input
 						accept="image/*"
 						className="sr-only"
@@ -1104,47 +1404,40 @@ export default function ScenarioConsole({
 									backgroundImage: `url("${selectedRunDraft?.inputImageUrl}")`,
 								}}
 							/>
-							<div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-3 pt-8 pb-2.5">
-								<div className="min-w-0">
-									{storageLabel ? (
-										<span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] text-white/80 backdrop-blur-sm">
-											{storageLabel}
-										</span>
-									) : null}
-								</div>
-								<div className="flex items-center gap-1.5">
-									<button
-										className="rounded-lg bg-white/15 px-2.5 py-1 text-[11px] text-white backdrop-blur-sm transition hover:bg-white/25"
-										onClick={() => fileInputRef.current?.click()}
-										type="button"
-									>
-										Change
-									</button>
-									<button
-										className="rounded-lg bg-white/15 px-2.5 py-1 text-[11px] text-white backdrop-blur-sm transition hover:bg-rose-500/50"
-										onClick={() => {
-											setRunDrafts((current) => ({
-												...current,
-												[selectedScenario.id]: {
-													...(current[selectedScenario.id] ??
-														createRunDraft(selectedScenario.id)),
-													inputImageUrl: "",
-													scenarioId: selectedScenario.id,
-													uploadStorage: null,
-												},
-											}));
-										}}
-										type="button"
-									>
-										Clear
-									</button>
-								</div>
+							<div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-1.5 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-2 pt-8 pb-2">
+								<button
+									className="rounded-lg bg-white/15 px-2.5 py-1 text-[11px] text-white backdrop-blur-sm transition hover:bg-white/25"
+									onClick={() => fileInputRef.current?.click()}
+									type="button"
+								>
+									<Upload className="mr-1 inline size-3" />
+									Replace
+								</button>
+								<button
+									aria-label="Clear input image"
+									className="inline-flex size-7 items-center justify-center rounded-lg bg-white/15 text-white backdrop-blur-sm transition hover:bg-rose-500/60"
+									onClick={() => {
+										setRunDrafts((current) => ({
+											...current,
+											[selectedScenario.id]: {
+												...(current[selectedScenario.id] ??
+													createRunDraft(selectedScenario.id)),
+												inputImageUrl: "",
+												scenarioId: selectedScenario.id,
+												uploadStorage: null,
+											},
+										}));
+									}}
+									type="button"
+								>
+									<Trash2 className="size-3" />
+								</button>
 							</div>
 						</div>
 					) : (
 						// biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone for file input
 						<div
-							className="grid gap-3 rounded-xl border border-foreground/10 border-dashed px-3 py-3 transition hover:border-foreground/20 hover:bg-muted/5"
+							className="grid gap-3 rounded-xl border border-foreground/10 border-dashed px-3 py-4 transition hover:border-foreground/20 hover:bg-muted/5"
 							onDragOver={(event) => {
 								event.preventDefault();
 							}}
@@ -1244,7 +1537,7 @@ export default function ScenarioConsole({
 				) : null}
 
 				<Button
-					disabled={submittingRunId === selectedScenario.id || isUploadingImage}
+					disabled={!isReadyToLaunch || submittingRunId === selectedScenario.id}
 					onClick={() => handleLaunchRun(selectedScenario)}
 					size="sm"
 				>
@@ -1253,7 +1546,7 @@ export default function ScenarioConsole({
 					) : (
 						<Play className="size-3.5" />
 					)}
-					Launch
+					{isReadyToLaunch ? "Launch run" : "Add an input image to launch"}
 				</Button>
 			</div>
 		);
@@ -1263,7 +1556,21 @@ export default function ScenarioConsole({
 		if (selectedScenarioRuns.length === 0) {
 			return (
 				<EmptyState
-					hint="Launch a scenario and sync it from this panel."
+					action={
+						<Button
+							onClick={() =>
+								router.replace(
+									buildConsoleHref(pathname, currentSearch, "launch"),
+									{ scroll: false }
+								)
+							}
+							size="sm"
+						>
+							<Play className="size-3.5" />
+							Launch a run
+						</Button>
+					}
+					hint="Launch a scenario from the Launch tab to populate this list."
 					message="No runs yet."
 				/>
 			);
@@ -1271,87 +1578,61 @@ export default function ScenarioConsole({
 
 		return (
 			<div className="grid gap-2">
-				{selectedScenarioRuns.map((run) => (
-					<article
-						className={cn(
-							"grid gap-2 rounded-lg bg-muted/8 p-3 dark:bg-muted/5",
-							(focusedRunId === run.id || focusedRunId === run.providerJobId) &&
-								"ring-1 ring-foreground/20"
-						)}
-						key={run.id}
-					>
-						<div className="flex items-start justify-between gap-2">
-							<div className="min-w-0">
-								<p className="truncate text-xs">{run.scenarioName}</p>
-								<p className="truncate text-[11px] text-muted-foreground">
-									{run.providerJobId ?? "pending"}
-								</p>
-							</div>
-							<StatusPill status={run.status} />
-						</div>
+				<div className="flex flex-wrap items-center gap-1">
+					{runFilterOptions.map((option) => {
+						const count =
+							option.id === "all"
+								? selectedScenarioRuns.length
+								: selectedScenarioRuns.filter((run) =>
+										matchesRunFilter(run.status, option.id)
+									).length;
+						const isActive = runFilter === option.id;
+						const isDisabled = count === 0 && option.id !== "all";
 
-						<div className="grid grid-cols-2 gap-1.5">
-							<DockMetric label="Created" value={formatDate(run.createdAt)} />
-							<DockMetric label="Input" value={run.inputLabel} />
-						</div>
-
-						{run.errorSummary ? (
-							<p className="rounded-lg bg-rose-500/10 px-2.5 py-1.5 text-rose-700 text-xs dark:text-rose-300">
-								{run.errorSummary}
-							</p>
-						) : null}
-
-						<div className="flex flex-wrap items-center gap-1.5">
-							{linkedPerson &&
-							(linkedPerson.runId === run.id ||
-								linkedPerson.runId === run.providerJobId) ? (
-								<a
-									className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
-									href={`${personsUrl}/person/${linkedPerson.personSlug}`}
-								>
-									Person
-									<ExternalLink className="size-3" />
-								</a>
-							) : null}
-							<a
-								className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
-								href={run.inputImageUrl}
-								rel="noreferrer noopener"
-								target="_blank"
+						return (
+							<button
+								aria-pressed={isActive}
+								className={cn(
+									"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide transition",
+									isActive
+										? "bg-foreground text-background"
+										: "bg-foreground/[0.05] text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
+									isDisabled && "opacity-40"
+								)}
+								disabled={isDisabled}
+								key={option.id}
+								onClick={() => setRunFilter(option.id)}
+								type="button"
 							>
-								Source
-								<ExternalLink className="size-3" />
-							</a>
-							{run.artifactUrls.slice(0, 2).map((artifactUrl, index) => (
-								<a
-									className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
-									href={artifactUrl}
-									key={artifactUrl}
-									rel="noreferrer noopener"
-									target="_blank"
-								>
-									Output {index + 1}
-									<ExternalLink className="size-3" />
-								</a>
-							))}
-							{run.status === "queued" || run.status === "running" ? (
-								<Button
-									disabled={syncingRunId === run.id}
-									onClick={() => handleSyncRun(run.id)}
-									size="sm"
-									variant="outline"
-								>
-									{syncingRunId === run.id ? (
-										<Loader2 className="size-3.5 animate-spin" />
-									) : (
-										<RotateCw className="size-3.5" />
-									)}
-									Sync
-								</Button>
-							) : null}
-						</div>
-					</article>
-				))}
+								{option.label}
+								<span className="tabular-nums">{count}</span>
+							</button>
+						);
+					})}
+				</div>
+
+				{filteredScenarioRuns.length === 0 ? (
+					<EmptyState
+						hint="Switch the filter to see other runs."
+						message={`No ${runFilter} runs.`}
+					/>
+				) : (
+					filteredScenarioRuns.map((run) => (
+						<ScenarioRunCard
+							isCopied={copiedRunId === run.id}
+							isFocused={
+								focusedRunId === run.id || focusedRunId === run.providerJobId
+							}
+							key={run.id}
+							linkedPerson={linkedPerson}
+							onCopyRunId={handleCopyRunId}
+							onSyncRun={handleSyncRun}
+							personsUrl={personsUrl}
+							run={run}
+							syncingRunId={syncingRunId}
+						/>
+					))
+				)}
 			</div>
 		);
 	}
@@ -1368,39 +1649,61 @@ export default function ScenarioConsole({
 		return renderRunsTab();
 	})();
 
+	const tabs: {
+		badge?: number;
+		dot?: boolean;
+		icon: typeof Sparkles;
+		id: ConsoleTab;
+		label: string;
+		shortcut: string;
+	}[] = [
+		{ icon: Sparkles, id: "launch", label: "Launch", shortcut: "L" },
+		{ icon: Plus, id: "compose", label: "Compose", shortcut: "C" },
+		{
+			badge: selectedScenarioRuns.length,
+			dot: activeRunCount > 0,
+			icon: Upload,
+			id: "runs",
+			label: "Runs",
+			shortcut: "R",
+		},
+	];
+
 	return (
 		<section className={cn("studio-surface flex min-h-0 flex-col", className)}>
 			<div className="flex items-center justify-between gap-2 px-3 py-2.5">
 				<div className="flex items-center gap-2">
 					<SectionLabel>Dock</SectionLabel>
-					<span className="rounded-full bg-muted/15 px-2 py-0.5 text-[11px] text-muted-foreground dark:bg-muted/8">
-						{snapshot.source}
-					</span>
+					{activeRunCount > 0 ? (
+						<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+							<span className="size-1 animate-pulse rounded-full bg-amber-500" />
+							auto-syncing
+						</span>
+					) : null}
 				</div>
 
-				<button
-					className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/15 hover:text-foreground"
+				<IconButton
+					hint="Refresh snapshot"
+					label="Refresh snapshot"
 					onClick={() => {
-						loadSnapshot({ silent: true }).catch(() => undefined);
+						loadSnapshot({ silent: false }).catch(() => undefined);
 					}}
-					type="button"
 				>
 					{isRefreshing ? (
 						<Loader2 className="size-3.5 animate-spin" />
 					) : (
 						<RefreshCw className="size-3.5" />
 					)}
-				</button>
+				</IconButton>
 			</div>
 
 			<ScenarioInfoHeader scenario={selectedScenario} />
 
-			<div className="flex items-center gap-0.5 border-foreground/6 border-b px-3 py-1.5 dark:border-foreground/10">
-				{[
-					{ icon: Sparkles, id: "launch", label: "Launch" },
-					{ icon: Plus, id: "compose", label: "Compose" },
-					{ icon: Upload, id: "runs", label: "Runs" },
-				].map((tab) => {
+			<nav
+				aria-label="Console tabs"
+				className="flex items-center gap-0.5 border-foreground/6 border-b px-3 py-1.5 dark:border-foreground/10"
+			>
+				{tabs.map((tab) => {
 					const Icon = tab.icon;
 					const isActive = tab.id === activeTab;
 
@@ -1413,20 +1716,35 @@ export default function ScenarioConsole({
 									? "bg-foreground text-background"
 									: "text-muted-foreground hover:bg-muted/15 hover:text-foreground"
 							)}
-							href={buildConsoleHref(
-								pathname,
-								currentSearch,
-								tab.id as ConsoleTab
-							)}
+							href={buildConsoleHref(pathname, currentSearch, tab.id)}
 							key={tab.id}
 							scroll={false}
+							title={`${tab.label} (${tab.shortcut})`}
 						>
 							<Icon className="size-3.5" />
 							{tab.label}
+							{typeof tab.badge === "number" && tab.badge > 0 ? (
+								<span
+									className={cn(
+										"ml-0.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1 py-0 text-[9px] tabular-nums",
+										isActive
+											? "bg-background/15 text-background"
+											: "bg-foreground/10 text-foreground"
+									)}
+								>
+									{tab.badge}
+								</span>
+							) : null}
+							{tab.dot && !isActive ? (
+								<span
+									aria-hidden="true"
+									className="ml-0.5 size-1.5 animate-pulse rounded-full bg-amber-500"
+								/>
+							) : null}
 						</Link>
 					);
 				})}
-			</div>
+			</nav>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">{content}</div>
 

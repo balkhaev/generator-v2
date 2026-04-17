@@ -1,5 +1,10 @@
 "use client";
 
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@generator/ui/components/tooltip";
 import { cn } from "@generator/ui/lib/utils";
 import {
 	Boxes,
@@ -78,18 +83,14 @@ export default function AdminSideNav() {
 			{ITEMS.map((item) => {
 				const active = isActive(item.href, pathname);
 				const Icon = item.icon;
-				return (
-					<Link
-						aria-current={active ? "page" : undefined}
-						className={cn(
-							"group grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md px-2.5 py-2 transition-colors",
-							active
-								? "bg-foreground/8 text-foreground"
-								: "text-muted-foreground hover:bg-foreground/4 hover:text-foreground"
-						)}
-						href={item.href}
-						key={item.href}
-					>
+				const linkClassName = cn(
+					"group grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md px-2.5 py-2 transition-colors",
+					active
+						? "bg-foreground/8 text-foreground"
+						: "text-muted-foreground hover:bg-foreground/4 hover:text-foreground"
+				);
+				const linkContent = (
+					<>
 						<span
 							className={cn(
 								"flex size-8 items-center justify-center rounded-md",
@@ -104,17 +105,40 @@ export default function AdminSideNav() {
 								strokeWidth={active ? 2 : 1.5}
 							/>
 						</span>
-						<span className="grid min-w-0 gap-0.5">
-							<span className="truncate font-medium text-sm leading-tight">
-								{item.label}
-							</span>
-							{item.description ? (
-								<span className="truncate text-[11px] text-muted-foreground">
-									{item.description}
-								</span>
-							) : null}
+						<span className="truncate font-medium text-sm leading-tight">
+							{item.label}
 						</span>
-					</Link>
+					</>
+				);
+
+				if (!item.description) {
+					return (
+						<Link
+							aria-current={active ? "page" : undefined}
+							className={linkClassName}
+							href={item.href}
+							key={item.href}
+						>
+							{linkContent}
+						</Link>
+					);
+				}
+
+				return (
+					<Tooltip key={item.href}>
+						<TooltipTrigger
+							render={
+								<Link
+									aria-current={active ? "page" : undefined}
+									className={linkClassName}
+									href={item.href}
+								/>
+							}
+						>
+							{linkContent}
+						</TooltipTrigger>
+						<TooltipContent side="right">{item.description}</TooltipContent>
+					</Tooltip>
 				);
 			})}
 		</nav>

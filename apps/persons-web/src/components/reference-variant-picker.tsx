@@ -2,6 +2,12 @@
 
 import type { GeneratorExecutionRecord } from "@generator/contracts/generator";
 import { Button } from "@generator/ui/components/button";
+import { InfoTooltip } from "@generator/ui/components/info-tooltip";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@generator/ui/components/tooltip";
 import { cn } from "@generator/ui/lib/utils";
 import {
 	ArrowLeft,
@@ -305,35 +311,43 @@ function VariantsGrid({
 		<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
 			{variants.map((variant, index) => {
 				const isSelected = selectedUrl === variant.url;
+				const tooltipText = variant.prompt?.trim() || `Variant ${index + 1}`;
 				return (
-					<button
-						aria-label={`Use variant ${index + 1}`}
-						aria-pressed={isSelected}
-						className={cn(
-							"group relative aspect-[3/4] overflow-hidden rounded-xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-							isSelected
-								? "border-foreground shadow-black/10 shadow-lg"
-								: "border-border/40 hover:border-border"
-						)}
-						key={variant.url}
-						onClick={() => onSelect(variant.url)}
-						title={variant.prompt}
-						type="button"
-					>
-						<Image
-							alt={`Variant ${index + 1}`}
-							className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
-							fill
-							sizes="(max-width: 640px) 50vw, 25vw"
-							src={variant.url}
-							unoptimized
-						/>
-						{isSelected ? (
-							<div className="absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-full bg-foreground text-background shadow-sm">
-								<CheckCircle2 className="size-4" />
-							</div>
-						) : null}
-					</button>
+					<Tooltip key={variant.url}>
+						<TooltipTrigger
+							render={
+								<button
+									aria-label={`Use variant ${index + 1}`}
+									aria-pressed={isSelected}
+									className={cn(
+										"group relative aspect-[3/4] overflow-hidden rounded-xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+										isSelected
+											? "border-foreground shadow-black/10 shadow-lg"
+											: "border-border/40 hover:border-border"
+									)}
+									onClick={() => onSelect(variant.url)}
+									type="button"
+								/>
+							}
+						>
+							<Image
+								alt={`Variant ${index + 1}`}
+								className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
+								fill
+								sizes="(max-width: 640px) 50vw, 25vw"
+								src={variant.url}
+								unoptimized
+							/>
+							{isSelected ? (
+								<div className="absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-full bg-foreground text-background shadow-sm">
+									<CheckCircle2 className="size-4" />
+								</div>
+							) : null}
+						</TooltipTrigger>
+						<TooltipContent className="max-w-sm items-start text-left leading-relaxed">
+							{tooltipText}
+						</TooltipContent>
+					</Tooltip>
 				);
 			})}
 		</div>
@@ -543,6 +557,9 @@ export default function ReferenceVariantPicker() {
 	const failedExecution = draft.executionIds
 		.map((id) => executions[id])
 		.find((execution) => execution?.status === "failed");
+	const referenceGuidance = draft.enhanced
+		? "Grok обогатил промт и сгенерировал четыре разных образа. Выберите подходящий референс для пайплайна LoRA."
+		: "We generated a few options based on your description. Choose one to use as the reference for the LoRA training pipeline.";
 
 	return (
 		<main className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-8 sm:px-6 sm:py-12">
@@ -560,14 +577,14 @@ export default function ReferenceVariantPicker() {
 						<span className="text-muted-foreground/50 text-xs uppercase tracking-wider">
 							New person · {draft.form.name || "Untitled"}
 						</span>
-						<h1 className="font-medium text-2xl tracking-tight">
-							Pick a reference photo
-						</h1>
-						<p className="max-w-2xl text-muted-foreground text-sm leading-relaxed">
-							{draft.enhanced
-								? "Grok обогатил промт и сгенерировал четыре разных образа. Выберите подходящий референс для пайплайна LoRA."
-								: "We generated a few options based on your description. Choose one to use as the reference for the LoRA training pipeline."}
-						</p>
+						<div className="flex items-center gap-2">
+							<h1 className="font-medium text-2xl tracking-tight">
+								Pick a reference photo
+							</h1>
+							<InfoTooltip label="Show reference guidance" side="right">
+								{referenceGuidance}
+							</InfoTooltip>
+						</div>
 					</div>
 					<HeaderActions
 						hasFailedAll={hasFailedAll}
@@ -579,10 +596,16 @@ export default function ReferenceVariantPicker() {
 						selectedUrl={selectedUrl}
 					/>
 				</div>
-				<p className="rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-muted-foreground text-xs leading-relaxed">
-					<span className="font-medium text-foreground/80">Prompt: </span>
-					{draft.prompt}
-				</p>
+				<div className="flex w-fit items-center gap-2 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-muted-foreground text-xs">
+					<span className="font-medium text-foreground/80">Prompt</span>
+					<InfoTooltip
+						contentClassName="max-w-md"
+						label="Show source prompt"
+						side="bottom"
+					>
+						{draft.prompt}
+					</InfoTooltip>
+				</div>
 				{draft.enhanced && draft.prompts && draft.prompts.length > 0 ? (
 					<details className="rounded-lg border border-border/40 bg-muted/10 px-3 py-2 text-muted-foreground text-xs">
 						<summary className="cursor-pointer font-medium text-foreground/80">

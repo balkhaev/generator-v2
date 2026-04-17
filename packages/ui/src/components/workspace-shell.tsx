@@ -2,6 +2,8 @@ import { cn } from "@generator/ui/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
+
 export interface WorkspaceNavItem {
 	current?: boolean;
 	href: string;
@@ -97,24 +99,31 @@ export default function WorkspaceShell({
 					className="flex gap-1 xl:flex-col"
 				>
 					{navigation.map(({ current, href, icon: Icon, label }) => (
-						<a
-							aria-current={current ? "page" : undefined}
-							className={cn(
-								"group flex size-9 items-center justify-center rounded-lg transition-all duration-150 ease-out",
-								current
-									? "bg-foreground text-background shadow-black/8 shadow-sm"
-									: "text-muted-foreground/70 hover:bg-foreground/5 hover:text-foreground"
-							)}
-							href={href}
-							key={href}
-							title={label}
-						>
-							<Icon
-								aria-hidden="true"
-								className="size-[18px]"
-								strokeWidth={current ? 2 : 1.5}
+						<Tooltip key={href}>
+							<TooltipTrigger
+								render={
+									<a
+										aria-current={current ? "page" : undefined}
+										aria-label={label}
+										className={cn(
+											"group flex size-9 items-center justify-center rounded-lg transition-all duration-150 ease-out",
+											current
+												? "bg-foreground text-background shadow-black/8 shadow-sm"
+												: "text-muted-foreground/70 hover:bg-foreground/5 hover:text-foreground"
+										)}
+										href={href}
+									>
+										<Icon
+											aria-hidden="true"
+											className="size-[18px]"
+											strokeWidth={current ? 2 : 1.5}
+										/>
+										<span className="sr-only">{label}</span>
+									</a>
+								}
 							/>
-						</a>
+							<TooltipContent side="right">{label}</TooltipContent>
+						</Tooltip>
 					))}
 				</nav>
 

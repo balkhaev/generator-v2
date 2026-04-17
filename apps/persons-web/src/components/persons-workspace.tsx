@@ -10,6 +10,11 @@ import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@generator/ui/components/tooltip";
 import WorkspaceShell, {
 	WorkspacePane,
 	WorkspaceStatus,
@@ -1015,34 +1020,41 @@ function EnhanceWithGrokToggle({
 	const isActive = checked && !disabled;
 	const tooltipText = disabled && disabledHint ? disabledHint : tooltip;
 	return (
-		<label
-			className={cn(
-				"flex items-center gap-2 rounded-lg border bg-background/40 px-3 py-2 text-xs transition-colors",
-				disabled
-					? "cursor-not-allowed border-border/40 opacity-60"
-					: "cursor-pointer",
-				isActive ? "border-violet-400/60 bg-violet-500/5" : "border-border/60",
-				!(disabled || isActive) && "hover:border-border"
-			)}
-			htmlFor={id}
-			title={tooltipText}
-		>
-			<input
-				checked={isActive}
-				className={cn(
-					"size-3.5 accent-violet-500",
-					disabled ? "cursor-not-allowed" : "cursor-pointer"
-				)}
-				disabled={disabled}
-				id={id}
-				onChange={(event) => onChange(event.target.checked)}
-				type="checkbox"
-			/>
-			<span className="flex items-center gap-1 font-medium leading-none">
-				<Sparkles className="size-3 text-violet-500" />
-				Enhance with Grok
-			</span>
-		</label>
+		<Tooltip>
+			<TooltipTrigger render={<span className="block" />}>
+				<label
+					className={cn(
+						"flex items-center gap-2 rounded-lg border bg-background/40 px-3 py-2 text-xs transition-colors",
+						disabled
+							? "cursor-not-allowed border-border/40 opacity-60"
+							: "cursor-pointer",
+						isActive
+							? "border-violet-400/60 bg-violet-500/5"
+							: "border-border/60",
+						!(disabled || isActive) && "hover:border-border"
+					)}
+				>
+					<input
+						checked={isActive}
+						className={cn(
+							"size-3.5 accent-violet-500",
+							disabled ? "cursor-not-allowed" : "cursor-pointer"
+						)}
+						disabled={disabled}
+						id={id}
+						onChange={(event) => onChange(event.target.checked)}
+						type="checkbox"
+					/>
+					<span className="flex items-center gap-1 font-medium leading-none">
+						<Sparkles className="size-3 text-violet-500" />
+						Enhance with Grok
+					</span>
+				</label>
+			</TooltipTrigger>
+			<TooltipContent className="max-w-sm items-start text-left leading-relaxed">
+				{tooltipText}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

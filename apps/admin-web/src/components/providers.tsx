@@ -1,6 +1,7 @@
 "use client";
 
 import { Toaster } from "@generator/ui/components/sonner";
+import { TooltipProvider } from "@generator/ui/components/tooltip";
 
 import QueryProvider from "./query-provider";
 import { ThemeProvider } from "./theme-provider";
@@ -14,7 +15,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 			enableSystem
 		>
 			<QueryProvider>
-				{children}
+				<TooltipProvider>{children}</TooltipProvider>
 				<Toaster richColors />
 			</QueryProvider>
 		</ThemeProvider>

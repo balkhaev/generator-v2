@@ -36,7 +36,6 @@ const falFlux2DevEditParamsSchema = z.object({
 	imageSize: z
 		.union([
 			z.enum([
-				"auto",
 				"square_hd",
 				"square",
 				"portrait_4_3",
@@ -49,7 +48,7 @@ const falFlux2DevEditParamsSchema = z.object({
 				height: z.number().int().min(512).max(2048),
 			}),
 		])
-		.default("auto"),
+		.default("square_hd"),
 	numImages: z.number().int().min(1).max(4).default(1),
 	enableSafetyChecker: z.boolean().default(false),
 	seed: z.number().int().nonnegative().optional(),
@@ -134,15 +133,15 @@ const falZimageTurboImageToImageLoraParamsSchema =
 	falZimageTurboLoraParamsSchema.extend({
 		imageSize: z
 			.enum([
-				"auto",
 				"square_hd",
 				"square",
 				"landscape_4_3",
 				"landscape_16_9",
 				"portrait_4_3",
 				"portrait_16_9",
+				"auto",
 			])
-			.default("auto"),
+			.default("portrait_4_3"),
 		numInferenceSteps: z.number().int().min(1).max(8).default(8),
 		strength: z.number().min(0).max(1).default(0.95),
 	});
@@ -710,14 +709,13 @@ export const workflowRegistry = {
 		],
 		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
 			const parsed = falFlux2DevEditParamsSchema.parse(params);
-			const inheritsSourceSize = parsed.imageSize === "auto";
 			return {
 				__falModel: "fal-ai/flux-2/edit",
 				prompt,
 				image_urls: inputImageUrl ? [inputImageUrl] : [],
 				guidance_scale: parsed.guidanceScale,
 				num_inference_steps: parsed.numInferenceSteps,
-				...(inheritsSourceSize ? {} : { image_size: parsed.imageSize }),
+				image_size: parsed.imageSize,
 				num_images: parsed.numImages,
 				enable_safety_checker: parsed.enableSafetyChecker,
 				output_format: "webp",
@@ -1131,12 +1129,10 @@ function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
 
 	switch (field.key) {
 		case "imageSize": {
-			const supportsAuto =
-				workflowKey === "fal-zimage-turbo-image-to-image-lora" ||
-				workflowKey === "fal-flux2-dev-edit";
-			const enumValues = supportsAuto
-				? (["auto", ...SUPPORTED_IMAGE_SIZES] as const)
-				: SUPPORTED_IMAGE_SIZES;
+			const enumValues =
+				workflowKey === "fal-zimage-turbo-image-to-image-lora"
+					? ([...SUPPORTED_IMAGE_SIZES, "auto"] as const)
+					: SUPPORTED_IMAGE_SIZES;
 			return { ...field, enumValues };
 		}
 		case "outputFormat":

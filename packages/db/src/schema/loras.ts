@@ -9,6 +9,13 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+export const loraBaseModelEnum = pgEnum("lora_base_model", [
+	"z-image",
+	"flux",
+	"sdxl",
+	"other",
+]);
+
 export const loraStatusEnum = pgEnum("lora_status", ["active", "archived"]);
 
 export const lora = pgTable(
@@ -18,7 +25,7 @@ export const lora = pgTable(
 		slug: text("slug").notNull(),
 		name: text("name").notNull(),
 		description: text("description").notNull().default(""),
-		baseModel: text("base_model").notNull(),
+		baseModel: loraBaseModelEnum("base_model").notNull(),
 		sourceUrl: text("source_url"),
 		s3Key: text("s3_key").notNull(),
 		s3Url: text("s3_url").notNull(),

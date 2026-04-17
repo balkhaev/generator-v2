@@ -25,13 +25,11 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
 import type { AdminLoraClient } from "@/clients/admin-loras";
-import type { StudioGrokClient } from "@/clients/grok";
 import { AssetReleaseReadService } from "@/domain/asset-releases-read";
 import type { StudioExecutionClient, StudioRepository } from "@/domain/studio";
 import { StudioService } from "@/domain/studio";
 import { createDrizzleAssetReleaseReadRepository } from "@/repositories/asset-releases-read";
 import { createAssetReleasePresetRoutes } from "@/routes/asset-release-presets";
-import { createEnhanceRoutes } from "@/routes/enhance";
 import { createInputAssetRoutes } from "@/routes/input-assets";
 import { createInternalRoutes } from "@/routes/internal";
 import { createLoraRoutes } from "@/routes/loras";
@@ -60,7 +58,6 @@ interface AppOptions {
 	getSession: (
 		request: Request
 	) => Promise<{ session: unknown; user: unknown } | null>;
-	grokClient?: StudioGrokClient;
 	loggerImpl?: Pick<Console, "info" | "error" | "warn">;
 	repository: StudioRepository;
 	s3Client?: S3ClientLike;
@@ -302,7 +299,6 @@ export function createApp(options: AppOptions) {
 	app.route("/api/scenarios", createScenarioRoutes(service));
 	app.route("/api/runs", createRunRoutes(service));
 	app.route("/api/internal", createInternalRoutes(service));
-	app.route("/api/enhance-prompt", createEnhanceRoutes(options.grokClient));
 	if (options.adminLoraClient) {
 		app.route("/api/loras", createLoraRoutes(options.adminLoraClient));
 	}

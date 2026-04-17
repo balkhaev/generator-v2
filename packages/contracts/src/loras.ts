@@ -1,9 +1,11 @@
-import type { BaseModelId } from "./base-models";
-import { BASE_MODEL_IDS } from "./base-models";
+export type LoraBaseModel = "z-image" | "flux" | "sdxl" | "other";
 
-export type LoraBaseModel = BaseModelId;
-
-export const LORA_BASE_MODELS: readonly LoraBaseModel[] = BASE_MODEL_IDS;
+export const LORA_BASE_MODELS: LoraBaseModel[] = [
+	"z-image",
+	"flux",
+	"sdxl",
+	"other",
+];
 
 export type LoraStatus = "active" | "archived";
 

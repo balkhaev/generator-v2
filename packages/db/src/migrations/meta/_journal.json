@@ -22,13 +22,6 @@
       "when": 1776361816552,
       "tag": "0002_motionless_magik",
       "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1776449593357,
-      "tag": "0003_free_pet_avengers",
-      "breakpoints": true
     }
   ]
 }

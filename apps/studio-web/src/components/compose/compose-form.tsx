@@ -1,7 +1,6 @@
 "use client";
 
 import type { LoraRegistryEntry } from "@generator/contracts/loras";
-import { enhanceStudioPrompt } from "@generator/studio-client/client";
 import {
 	createScenarioFormState,
 	type ScenarioFormState,
@@ -9,38 +8,42 @@ import {
 	type WorkflowParameter,
 } from "@generator/studio-client/shared";
 import { Button } from "@generator/ui/components/button";
-import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import { cn } from "@generator/ui/lib/utils";
 import {
 	AlertCircle,
+	Brain,
 	ChevronDown,
+	Image as ImageIcon,
 	Loader2,
 	Plus,
 	Sparkles,
 	Wand2,
 } from "lucide-react";
 import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
-import { toast } from "sonner";
 
-import LoraStack from "./lora-stack";
+import LoraPicker from "./lora-picker";
 import ParameterField from "./parameter-field";
-import {
-	type Approach,
-	classifyWorkflow,
-	describeWorkflowSelection,
-	findCandidateWorkflows,
-	findWorkflow,
-	getAvailableApproaches,
-	getAvailableBaseModels,
-	getLoraSlots,
-	type Modality,
-	supportsLora,
-	type WorkflowSelection,
-} from "./workflow-matrix";
-import WorkflowSelector from "./workflow-selector";
+
+const baseModelLabels: Record<string, string> = {
+	flux: "Flux",
+	ltx: "LTX",
+	other: "Other",
+	sdxl: "SDXL",
+	wan: "Wan",
+	"z-image": "Z-Image",
+};
+
+const baseModelTints: Record<string, string> = {
+	flux: "bg-violet-500/12 text-violet-700 dark:text-violet-300",
+	ltx: "bg-cyan-500/12 text-cyan-700 dark:text-cyan-300",
+	other: "bg-foreground/[0.06] text-muted-foreground",
+	sdxl: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
+	wan: "bg-rose-500/12 text-rose-700 dark:text-rose-300",
+	"z-image": "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
+};
 
 const PROMPT_LIMIT = 1500;
 
@@ -89,45 +92,42 @@ function suggestNameFromPrompt(prompt: string) {
 		.join(" ");
 }
 
-interface PartitionedParameters {
-	advanced: WorkflowParameter[];
-	output: WorkflowParameter[];
-	sampling: WorkflowParameter[];
+function findWeightParameter(
+	loraUrlKey: string,
+	parameters: WorkflowParameter[]
+) {
+	const base = loraUrlKey.replace(loraUrlSuffixPattern, "");
+	return (
+		parameters.find(
+			(parameter) =>
+				parameter.key === `${base}Weight` || parameter.key === `${base}Scale`
+		) ?? null
+	);
 }
 
-function partitionNonLoraParameters(
-	workflow: WorkflowDefinition
-): PartitionedParameters {
+function partitionParameters(parameters: WorkflowParameter[]) {
 	const handledKeys = new Set<string>();
-	for (const parameter of workflow.parameters) {
+	const loraGroups: {
+		urlParameter: WorkflowParameter;
+		weightParameter: WorkflowParameter | null;
+	}[] = [];
+	const outputParameters: WorkflowParameter[] = [];
+	const samplingParameters: WorkflowParameter[] = [];
+	const advancedParameters: WorkflowParameter[] = [];
+
+	for (const parameter of parameters) {
 		if (parameter.kind === "lora-url") {
+			const weightParameter = findWeightParameter(parameter.key, parameters);
 			handledKeys.add(parameter.key);
-			const base = parameter.key.replace(loraUrlSuffixPattern, "");
-			const weightParameter = workflow.parameters.find(
-				(other) => other.key === `${base}Weight` || other.key === `${base}Scale`
-			);
 			if (weightParameter) {
 				handledKeys.add(weightParameter.key);
 			}
+			loraGroups.push({ urlParameter: parameter, weightParameter });
 		}
 	}
 
-	const output: WorkflowParameter[] = [];
-	const sampling: WorkflowParameter[] = [];
-	const advanced: WorkflowParameter[] = [];
-
-	for (const parameter of workflow.parameters) {
+	for (const parameter of parameters) {
 		if (handledKeys.has(parameter.key)) {
-			continue;
-		}
-
-		if (
-			parameter.key === "numInferenceSteps" ||
-			parameter.key === "seed" ||
-			parameter.key === "enableSafetyChecker" ||
-			parameter.key === "enableOutputSafetyChecker" ||
-			parameter.key === "enablePromptExpansion"
-		) {
 			continue;
 		}
 
@@ -143,14 +143,24 @@ function partitionNonLoraParameters(
 			parameter.key === "outputFormat" ||
 			parameter.key === "resolution"
 		) {
-			output.push(parameter);
+			outputParameters.push(parameter);
 			continue;
 		}
 
-		sampling.push(parameter);
+		if (parameter.key === "seed") {
+			advancedParameters.push(parameter);
+			continue;
+		}
+
+		samplingParameters.push(parameter);
 	}
 
-	return { advanced, output, sampling };
+	return {
+		advancedParameters,
+		loraGroups,
+		outputParameters,
+		samplingParameters,
+	};
 }
 
 function validate(
@@ -176,7 +186,7 @@ function validate(
 
 		if (value === "") {
 			if (parameter.kind === "lora-url") {
-				errors.push("At least one LoRA is required");
+				errors.push(`${parameter.label} is required`);
 			} else if (parameter.type === "number" && parameter.defaultValue === "") {
 				errors.push(`${parameter.label} is required`);
 			}
@@ -196,206 +206,145 @@ function getCharCounterTone(length: number, isOver: boolean) {
 	return "text-muted-foreground";
 }
 
-function buildSelectionFromForm(
-	workflow: WorkflowDefinition | null
-): WorkflowSelection | null {
-	if (!workflow) {
-		return null;
-	}
-	return describeWorkflowSelection(workflow);
-}
-
-function getAvailableModalities(workflows: WorkflowDefinition[]): Modality[] {
-	const seen = new Set<Modality>();
-	for (const workflow of workflows) {
-		seen.add(classifyWorkflow(workflow).modality);
-	}
-	return Array.from(seen);
-}
-
-function resolveBaseModel(
-	workflows: WorkflowDefinition[],
-	preferred: string | null,
-	criteria: { approach: Approach; modality: Modality }
-): string | null {
-	const baseModels = getAvailableBaseModels(workflows, criteria);
-	if (preferred && baseModels.includes(preferred)) {
-		return preferred;
-	}
-	return baseModels[0] ?? null;
-}
-
-function resolveApproach(
-	workflows: WorkflowDefinition[],
-	preferred: Approach,
-	modality: Modality
-): Approach {
-	const approaches = getAvailableApproaches(workflows, modality);
-	if (approaches.includes(preferred)) {
-		return preferred;
-	}
-	return approaches[0] ?? preferred;
-}
-
-interface LoraSectionProps {
-	adminLorasHref: string;
-	availableLoras: LoraRegistryEntry[];
-	form: ScenarioFormState;
-	hasLora: boolean;
-	loraSlots: ReturnType<typeof getLoraSlots>;
-	onEnableLora: () => void;
-	onParamChange: (key: string, value: string) => void;
-	workflow: WorkflowDefinition;
-}
-
-function LoraSection({
-	adminLorasHref,
-	availableLoras,
-	form,
-	hasLora,
-	loraSlots,
-	onEnableLora,
-	onParamChange,
+function WorkflowCard({
+	isActive,
+	onSelect,
 	workflow,
-}: LoraSectionProps) {
-	if (hasLora && loraSlots.length > 0) {
-		return (
-			<LoraStack
-				adminHref={adminLorasHref}
-				availableLoras={availableLoras}
-				form={form}
-				onParamChange={onParamChange}
-				slots={loraSlots}
-				workflow={workflow}
-			/>
-		);
-	}
+}: {
+	isActive: boolean;
+	onSelect: () => void;
+	workflow: WorkflowDefinition;
+}) {
+	const usesLora = workflow.parameters.some(
+		(parameter) => parameter.kind === "lora-url"
+	);
 
 	return (
 		<button
-			className="flex items-center gap-2.5 rounded-lg border border-foreground/15 border-dashed bg-foreground/[0.02] px-3 py-2.5 text-left transition hover:border-foreground/25 hover:bg-foreground/[0.04]"
-			onClick={onEnableLora}
+			aria-pressed={isActive}
+			className={cn(
+				"flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition",
+				isActive
+					? "bg-foreground text-background"
+					: "bg-foreground/[0.04] hover:bg-foreground/[0.08]"
+			)}
+			onClick={onSelect}
 			type="button"
 		>
-			<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-foreground/[0.06]">
-				<Sparkles
-					aria-hidden="true"
-					className="size-3.5 text-muted-foreground"
-					strokeWidth={1.6}
-				/>
-			</span>
-			<span className="grid flex-1">
-				<span className="font-medium text-[12px]">Add LoRA style</span>
-				<span className="text-[10px] text-muted-foreground">
-					Apply a custom character or style trained for this base model.
-				</span>
-			</span>
-			<Plus className="size-3.5 text-muted-foreground" />
+			<div
+				className={cn(
+					"flex size-7 shrink-0 items-center justify-center rounded-md",
+					isActive ? "bg-background/15" : "bg-foreground/[0.06]"
+				)}
+			>
+				{usesLora ? (
+					<Brain className="size-3.5" strokeWidth={1.6} />
+				) : (
+					<Sparkles className="size-3.5" strokeWidth={1.6} />
+				)}
+			</div>
+			<div className="min-w-0 flex-1">
+				<div className="flex items-center gap-1.5">
+					<p className="truncate font-medium text-xs">{workflow.name}</p>
+					{workflow.requiresInputImage ? (
+						<span
+							className={cn(
+								"inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px]",
+								isActive
+									? "bg-background/20 text-background"
+									: "bg-sky-500/12 text-sky-700 dark:text-sky-300"
+							)}
+						>
+							<ImageIcon className="size-2.5" />
+							image
+						</span>
+					) : null}
+					{usesLora ? (
+						<span
+							className={cn(
+								"rounded-full px-1.5 py-0.5 text-[9px] uppercase tracking-wide",
+								isActive
+									? "bg-background/20 text-background"
+									: "bg-foreground/[0.06] text-muted-foreground"
+							)}
+						>
+							LoRA
+						</span>
+					) : null}
+				</div>
+				<p
+					className={cn(
+						"mt-0.5 line-clamp-2 text-[11px] leading-snug",
+						isActive ? "text-background/70" : "text-muted-foreground"
+					)}
+				>
+					{workflow.summary}
+				</p>
+			</div>
 		</button>
 	);
 }
 
-interface ParametersGroupProps {
+interface LoraSlotProps {
+	adminLorasHref: string;
+	availableLoras: LoraRegistryEntry[];
+	baseModel?: string;
 	form: ScenarioFormState;
+	group: {
+		urlParameter: WorkflowParameter;
+		weightParameter: WorkflowParameter | null;
+	};
 	onParamChange: (key: string, value: string) => void;
-	parameters: WorkflowParameter[];
 }
 
-function ParametersGroup({
+function LoraSlot({
+	adminLorasHref,
+	availableLoras,
+	baseModel,
 	form,
+	group,
 	onParamChange,
-	parameters,
-}: ParametersGroupProps) {
+}: LoraSlotProps) {
+	const weightParameter = group.weightParameter;
+	const weightConfig =
+		weightParameter &&
+		weightParameter.min !== undefined &&
+		weightParameter.max !== undefined
+			? {
+					max: weightParameter.max,
+					min: weightParameter.min,
+					step: weightParameter.step ?? 0.05,
+				}
+			: undefined;
+
+	const weight = weightParameter
+		? Number(form.params[weightParameter.key])
+		: undefined;
+	const numericWeight = Number.isFinite(weight)
+		? (weight as number)
+		: undefined;
+
 	return (
-		<div className="grid gap-3">
-			{parameters.map((parameter) => (
-				<ParameterField
-					key={parameter.key}
-					onChange={(value) => onParamChange(parameter.key, value)}
-					parameter={parameter}
-					value={form.params[parameter.key] ?? parameter.defaultValue}
-				/>
-			))}
-		</div>
-	);
-}
-
-interface AdvancedSectionProps {
-	form: ScenarioFormState;
-	onParamChange: (key: string, value: string) => void;
-	parameters: WorkflowParameter[];
-}
-
-function AdvancedSection({
-	form,
-	onParamChange,
-	parameters,
-}: AdvancedSectionProps) {
-	const [open, setOpen] = useState(false);
-	return (
-		<section className="grid gap-2">
-			<button
-				aria-expanded={open}
-				className="flex w-full items-center justify-between rounded-lg bg-foreground/[0.03] px-3 py-2 text-left transition hover:bg-foreground/[0.06]"
-				onClick={() => setOpen((current) => !current)}
-				type="button"
-			>
-				<SectionLabel>Advanced</SectionLabel>
-				<ChevronDown
-					className={cn(
-						"size-3.5 text-muted-foreground transition-transform",
-						open && "rotate-180"
-					)}
-				/>
-			</button>
-			{open ? (
-				<div className="px-1">
-					<ParametersGroup
-						form={form}
-						onParamChange={onParamChange}
-						parameters={parameters}
-					/>
-				</div>
-			) : null}
-		</section>
-	);
-}
-
-interface FooterBarProps {
-	errors: string[];
-	isReady: boolean;
-	isSubmitting: boolean;
-	workflowName: string;
-}
-
-function FooterBar({
-	errors,
-	isReady,
-	isSubmitting,
-	workflowName,
-}: FooterBarProps) {
-	return (
-		<div className="mt-2 border-foreground/8 border-t bg-background/95 pt-3">
-			{errors.length > 0 ? (
-				<div className="mb-2 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
-					<AlertCircle className="mt-0.5 size-3 shrink-0" />
-					<span>{errors.join(" · ")}</span>
-				</div>
-			) : null}
-			<div className="flex items-center justify-between gap-2">
-				<p className="truncate text-[11px] text-muted-foreground">
-					{workflowName}
-				</p>
-				<Button disabled={!isReady || isSubmitting} size="sm" type="submit">
-					{isSubmitting ? (
-						<Loader2 className="size-3.5 animate-spin" />
-					) : (
-						<Plus className="size-3.5" />
-					)}
-					Save scenario
-				</Button>
-			</div>
-		</div>
+		<LoraPicker
+			adminHref={adminLorasHref}
+			allowNone={group.urlParameter.optional}
+			baseModelHint={
+				baseModel ? `for ${baseModelLabels[baseModel] ?? baseModel}` : undefined
+			}
+			emptyHint={baseModel ? `Add ${baseModel} LoRAs in admin` : undefined}
+			loras={availableLoras}
+			onUrlChange={(url) => onParamChange(group.urlParameter.key, url)}
+			onWeightChange={
+				weightParameter
+					? (next) => onParamChange(weightParameter.key, String(next))
+					: undefined
+			}
+			title={group.urlParameter.label}
+			url={form.params[group.urlParameter.key] ?? ""}
+			weight={numericWeight}
+			weightConfig={weightConfig}
+			weightLabel={weightParameter?.label ?? "Weight"}
+		/>
 	);
 }
 
@@ -426,63 +375,32 @@ export default function ComposeForm({
 }: ComposeFormProps) {
 	const nameId = useId();
 	const promptId = useId();
+	const [advancedOpen, setAdvancedOpen] = useState(false);
+
+	const workflowsByBaseModel = useMemo(() => {
+		const groups = new Map<string, WorkflowDefinition[]>();
+		for (const workflow of workflows) {
+			const key = workflow.baseModel ?? "other";
+			const list = groups.get(key) ?? [];
+			list.push(workflow);
+			groups.set(key, list);
+		}
+		return groups;
+	}, [workflows]);
 
 	const selectedWorkflow =
 		workflows.find((workflow) => workflow.key === form.workflowKey) ?? null;
-	const selection = buildSelectionFromForm(selectedWorkflow);
-
-	const availableModalities = useMemo(
-		() => getAvailableModalities(workflows),
-		[workflows]
-	);
-
-	const availableApproaches = useMemo(
-		() =>
-			selection ? getAvailableApproaches(workflows, selection.modality) : [],
-		[workflows, selection]
-	);
-
-	const availableBaseModels = useMemo(
-		() =>
-			selection
-				? getAvailableBaseModels(workflows, {
-						approach: selection.approach,
-						modality: selection.modality,
-					})
-				: [],
-		[workflows, selection]
-	);
-
-	const availableVariants = useMemo(() => {
-		if (!selection) {
-			return [] as WorkflowDefinition[];
-		}
-		return findCandidateWorkflows(workflows, {
-			approach: selection.approach,
-			baseModel: selection.baseModel,
-			hasLora: selection.hasLora,
-			modality: selection.modality,
-		});
-	}, [workflows, selection]);
-
-	const loraAvailable = useMemo(() => {
-		if (!selection) {
-			return false;
-		}
-		return supportsLora(workflows, selection);
-	}, [workflows, selection]);
-
-	const loraSlots = selectedWorkflow ? getLoraSlots(selectedWorkflow) : [];
 
 	const partitioned = useMemo(() => {
 		if (!selectedWorkflow) {
 			return {
-				advanced: [] as WorkflowParameter[],
-				output: [] as WorkflowParameter[],
-				sampling: [] as WorkflowParameter[],
+				advancedParameters: [],
+				loraGroups: [],
+				outputParameters: [],
+				samplingParameters: [],
 			};
 		}
-		return partitionNonLoraParameters(selectedWorkflow);
+		return partitionParameters(selectedWorkflow.parameters);
 	}, [selectedWorkflow]);
 
 	const errors = useMemo(() => {
@@ -504,74 +422,13 @@ export default function ComposeForm({
 		onValidityChange?.({ errors, isReady });
 	}, [errors, isReady, onValidityChange]);
 
-	function applySelection(nextSelection: WorkflowSelection) {
-		const nextWorkflow = findWorkflow(workflows, nextSelection);
-		if (!nextWorkflow || nextWorkflow.key === form.workflowKey) {
-			return;
-		}
-		const next = createScenarioFormState(nextWorkflow);
+	function handleWorkflowSelect(workflow: WorkflowDefinition) {
+		const next = createScenarioFormState(workflow);
 		onFormChange({
 			...next,
 			name: form.name,
 			prompt: form.prompt,
 		});
-	}
-
-	function handleModalityChange(nextModality: Modality) {
-		if (!selection || nextModality === selection.modality) {
-			return;
-		}
-		const nextApproach = resolveApproach(
-			workflows,
-			selection.approach,
-			nextModality
-		);
-		const nextBaseModel = resolveBaseModel(workflows, selection.baseModel, {
-			approach: nextApproach,
-			modality: nextModality,
-		});
-		applySelection({
-			approach: nextApproach,
-			baseModel: nextBaseModel,
-			hasLora: false,
-			modality: nextModality,
-		});
-	}
-
-	function handleApproachChange(nextApproach: Approach) {
-		if (!selection || nextApproach === selection.approach) {
-			return;
-		}
-		const nextBaseModel = resolveBaseModel(workflows, selection.baseModel, {
-			approach: nextApproach,
-			modality: selection.modality,
-		});
-		applySelection({
-			...selection,
-			approach: nextApproach,
-			baseModel: nextBaseModel,
-		});
-	}
-
-	function handleBaseModelChange(nextBaseModel: string) {
-		if (!selection || nextBaseModel === selection.baseModel) {
-			return;
-		}
-		applySelection({ ...selection, baseModel: nextBaseModel });
-	}
-
-	function handleEnableLora() {
-		if (!selection || selection.hasLora) {
-			return;
-		}
-		applySelection({ ...selection, hasLora: true });
-	}
-
-	function handleVariantChange(nextWorkflowKey: string) {
-		if (!selection || nextWorkflowKey === form.workflowKey) {
-			return;
-		}
-		applySelection({ ...selection, workflowKey: nextWorkflowKey });
 	}
 
 	function handleParamChange(key: string, value: string) {
@@ -592,7 +449,7 @@ export default function ComposeForm({
 		}
 	}
 
-	if (!(selectedWorkflow && selection)) {
+	if (!selectedWorkflow) {
 		return (
 			<div className="rounded-lg bg-rose-500/10 px-3 py-2 text-rose-700 text-xs dark:text-rose-300">
 				No workflows are available.
@@ -601,51 +458,46 @@ export default function ComposeForm({
 	}
 
 	return (
-		<form className="grid min-w-0 gap-5" id={formId} onSubmit={handleSubmit}>
+		<form className="grid min-w-0 gap-4" id={formId} onSubmit={handleSubmit}>
 			<section className="grid gap-2">
-				<SectionLabel>Workflow</SectionLabel>
-				<WorkflowSelector
-					approach={selection.approach}
-					availableApproaches={availableApproaches}
-					availableBaseModels={availableBaseModels}
-					availableModalities={availableModalities}
-					availableVariants={availableVariants}
-					baseModel={selection.baseModel}
-					modality={selection.modality}
-					onApproachChange={handleApproachChange}
-					onBaseModelChange={handleBaseModelChange}
-					onModalityChange={handleModalityChange}
-					onVariantChange={handleVariantChange}
-					selectedWorkflowKey={selectedWorkflow.key}
-				/>
-				<p className="rounded-lg bg-foreground/[0.03] px-2.5 py-1.5 text-[11px] text-muted-foreground">
-					<span className="font-medium text-foreground">
-						{selectedWorkflow.name}.
-					</span>{" "}
-					{selectedWorkflow.summary}
-				</p>
+				<div className="flex items-center justify-between gap-2">
+					<SectionLabel>Workflow</SectionLabel>
+					<span className="text-[10px] text-muted-foreground">
+						{workflows.length} available
+					</span>
+				</div>
+				<div className="grid gap-3">
+					{Array.from(workflowsByBaseModel.entries()).map(
+						([baseModel, models]) => (
+							<div className="grid gap-1.5" key={baseModel}>
+								<div className="flex items-center gap-2">
+									<span
+										className={cn(
+											"rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide",
+											baseModelTints[baseModel] ?? baseModelTints.other
+										)}
+									>
+										{baseModelLabels[baseModel] ?? baseModel}
+									</span>
+									<span className="text-[10px] text-muted-foreground">
+										{models.length} model{models.length === 1 ? "" : "s"}
+									</span>
+								</div>
+								<div className="grid gap-1">
+									{models.map((workflow) => (
+										<WorkflowCard
+											isActive={workflow.key === selectedWorkflow.key}
+											key={workflow.key}
+											onSelect={() => handleWorkflowSelect(workflow)}
+											workflow={workflow}
+										/>
+									))}
+								</div>
+							</div>
+						)
+					)}
+				</div>
 			</section>
-
-			{loraAvailable ? (
-				<section className="grid gap-2">
-					<div className="flex items-center justify-between gap-2">
-						<SectionLabel>Style LoRAs</SectionLabel>
-						<span className="text-[10px] text-muted-foreground">
-							{availableLoras.length} in registry
-						</span>
-					</div>
-					<LoraSection
-						adminLorasHref={adminLorasHref}
-						availableLoras={availableLoras}
-						form={form}
-						hasLora={selection.hasLora}
-						loraSlots={loraSlots}
-						onEnableLora={handleEnableLora}
-						onParamChange={handleParamChange}
-						workflow={selectedWorkflow}
-					/>
-				</section>
-			) : null}
 
 			<section className="grid gap-2">
 				<SectionLabel>Scenario</SectionLabel>
@@ -680,28 +532,14 @@ export default function ComposeForm({
 						<Label className="font-medium text-[11px]" htmlFor={promptId}>
 							Prompt
 						</Label>
-						<div className="flex items-center gap-2">
-							<EnhancePromptButton
-								enhance={async (value) => {
-									const result = await enhanceStudioPrompt(value);
-									return result.enhanced;
-								}}
-								onEnhanced={(enhanced) => {
-									onFormChange({ ...form, prompt: enhanced });
-									toast.success("Prompt enhanced with Grok");
-								}}
-								onError={(message) => toast.error(message)}
-								prompt={form.prompt}
-							/>
-							<span
-								className={cn(
-									"text-[10px] tabular-nums",
-									getCharCounterTone(promptLength, isOverLimit)
-								)}
-							>
-								{promptLength}/{PROMPT_LIMIT}
-							</span>
-						</div>
+						<span
+							className={cn(
+								"text-[10px] tabular-nums",
+								getCharCounterTone(promptLength, isOverLimit)
+							)}
+						>
+							{promptLength}/{PROMPT_LIMIT}
+						</span>
 					</div>
 					<textarea
 						className={cn(
@@ -718,43 +556,115 @@ export default function ComposeForm({
 				</div>
 			</section>
 
-			{partitioned.output.length > 0 ? (
+			{partitioned.loraGroups.length > 0 ? (
+				<section className="grid gap-2">
+					<div className="flex items-center justify-between gap-2">
+						<SectionLabel>Identity · LoRAs</SectionLabel>
+						<span className="text-[10px] text-muted-foreground">
+							{availableLoras.length} registered
+						</span>
+					</div>
+					<div className="grid gap-2">
+						{partitioned.loraGroups.map((group) => (
+							<LoraSlot
+								adminLorasHref={adminLorasHref}
+								availableLoras={availableLoras}
+								baseModel={selectedWorkflow.baseModel}
+								form={form}
+								group={group}
+								key={group.urlParameter.key}
+								onParamChange={handleParamChange}
+							/>
+						))}
+					</div>
+				</section>
+			) : null}
+
+			{partitioned.outputParameters.length > 0 ? (
 				<section className="grid gap-2">
 					<SectionLabel>Output</SectionLabel>
-					<ParametersGroup
-						form={form}
-						onParamChange={handleParamChange}
-						parameters={partitioned.output}
-					/>
+					<div className="grid gap-3">
+						{partitioned.outputParameters.map((parameter) => (
+							<ParameterField
+								key={parameter.key}
+								onChange={(value) => handleParamChange(parameter.key, value)}
+								parameter={parameter}
+								value={form.params[parameter.key] ?? parameter.defaultValue}
+							/>
+						))}
+					</div>
 				</section>
 			) : null}
 
-			{partitioned.sampling.length > 0 ? (
+			{partitioned.samplingParameters.length > 0 ? (
 				<section className="grid gap-2">
 					<SectionLabel>Sampling</SectionLabel>
-					<ParametersGroup
-						form={form}
-						onParamChange={handleParamChange}
-						parameters={partitioned.sampling}
-					/>
+					<div className="grid gap-3">
+						{partitioned.samplingParameters.map((parameter) => (
+							<ParameterField
+								key={parameter.key}
+								onChange={(value) => handleParamChange(parameter.key, value)}
+								parameter={parameter}
+								value={form.params[parameter.key] ?? parameter.defaultValue}
+							/>
+						))}
+					</div>
 				</section>
 			) : null}
 
-			{partitioned.advanced.length > 0 ? (
-				<AdvancedSection
-					form={form}
-					onParamChange={handleParamChange}
-					parameters={partitioned.advanced}
-				/>
+			{partitioned.advancedParameters.length > 0 ? (
+				<section className="grid gap-2">
+					<button
+						aria-expanded={advancedOpen}
+						className="flex w-full items-center justify-between rounded-lg bg-foreground/[0.03] px-3 py-2 text-left transition hover:bg-foreground/[0.06]"
+						onClick={() => setAdvancedOpen((current) => !current)}
+						type="button"
+					>
+						<SectionLabel>Advanced</SectionLabel>
+						<ChevronDown
+							className={cn(
+								"size-3.5 text-muted-foreground transition-transform",
+								advancedOpen && "rotate-180"
+							)}
+						/>
+					</button>
+					{advancedOpen ? (
+						<div className="grid gap-3 px-1">
+							{partitioned.advancedParameters.map((parameter) => (
+								<ParameterField
+									key={parameter.key}
+									onChange={(value) => handleParamChange(parameter.key, value)}
+									parameter={parameter}
+									value={form.params[parameter.key] ?? parameter.defaultValue}
+								/>
+							))}
+						</div>
+					) : null}
+				</section>
 			) : null}
 
 			{hideFooter ? null : (
-				<FooterBar
-					errors={errors}
-					isReady={isReady}
-					isSubmitting={isSubmitting}
-					workflowName={selectedWorkflow.name}
-				/>
+				<div className="mt-2 border-foreground/8 border-t bg-background/95 pt-3">
+					{errors.length > 0 ? (
+						<div className="mb-2 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+							<AlertCircle className="mt-0.5 size-3 shrink-0" />
+							<span>{errors.join(" · ")}</span>
+						</div>
+					) : null}
+					<div className="flex items-center justify-between gap-2">
+						<p className="truncate text-[11px] text-muted-foreground">
+							{selectedWorkflow.name}
+						</p>
+						<Button disabled={!isReady || isSubmitting} size="sm" type="submit">
+							{isSubmitting ? (
+								<Loader2 className="size-3.5 animate-spin" />
+							) : (
+								<Plus className="size-3.5" />
+							)}
+							Save scenario
+						</Button>
+					</div>
+				</div>
 			)}
 		</form>
 	);

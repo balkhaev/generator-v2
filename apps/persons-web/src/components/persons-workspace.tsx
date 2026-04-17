@@ -16,7 +16,6 @@ import {
 import { env } from "@generator/env/web";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
-import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
@@ -67,7 +66,6 @@ import {
 	createPerson,
 	deleteGeneration,
 	deletePerson,
-	enhancePersonsPrompt,
 	fetchLoras,
 	generateWithLora,
 	getPersonsDashboard,
@@ -1077,20 +1075,9 @@ function LoraActions({
 
 			{hasLora ? (
 				<div className="grid gap-2">
-					<div className="flex items-center justify-between gap-2">
-						<Label className="text-xs" htmlFor="loraPrompt">
-							Generate with LoRA
-						</Label>
-						<EnhancePromptButton
-							enhance={enhancePersonsPrompt}
-							onEnhanced={(enhanced) => {
-								setLoraPrompt(enhanced);
-								toast.success("Prompt enhanced with Grok");
-							}}
-							onError={(message) => toast.error(message)}
-							prompt={loraPrompt}
-						/>
-					</div>
+					<Label className="text-xs" htmlFor="loraPrompt">
+						Generate with LoRA
+					</Label>
 					<textarea
 						className={textareaClassName}
 						id="loraPrompt"
@@ -1674,20 +1661,9 @@ function CreatePersonForm({
 							/>
 						</div>
 						<div className="grid gap-1.5">
-							<div className="flex items-center justify-between gap-2">
-								<Label className="text-xs" htmlFor="description">
-									Description
-								</Label>
-								<EnhancePromptButton
-									enhance={enhancePersonsPrompt}
-									onEnhanced={(enhanced) => {
-										onFieldChange("description", enhanced);
-										toast.success("Description enhanced with Grok");
-									}}
-									onError={(message) => toast.error(message)}
-									prompt={formState.description ?? ""}
-								/>
-							</div>
+							<Label className="text-xs" htmlFor="description">
+								Description
+							</Label>
 							<textarea
 								className={textareaClassName}
 								id="description"
@@ -1868,20 +1844,9 @@ function ManagePersonForm({
 							/>
 						</div>
 						<div className="grid gap-1.5">
-							<div className="flex items-center justify-between gap-2">
-								<Label className="text-xs" htmlFor="editDescription">
-									Description
-								</Label>
-								<EnhancePromptButton
-									enhance={enhancePersonsPrompt}
-									onEnhanced={(enhanced) => {
-										onFieldChange("description", enhanced);
-										toast.success("Description enhanced with Grok");
-									}}
-									onError={(message) => toast.error(message)}
-									prompt={formState.description}
-								/>
-							</div>
+							<Label className="text-xs" htmlFor="editDescription">
+								Description
+							</Label>
 							<textarea
 								className={textareaClassName}
 								id="editDescription"

@@ -30,15 +30,6 @@ const fileExtensionPattern = /\.[^.]+$/u;
  */
 const ORIGINAL_PHOTO_DUPLICATES = 4;
 
-/**
- * Identity gate threshold (0–100). Synthetic references whose face-similarity
- * score against the source photo falls below this value are regenerated with a
- * fresh seed up to MAX_VARIANT_RETRIES times. Disabled gracefully when no
- * vision-capable judge is configured (XAI_API_KEY not set).
- */
-const IDENTITY_GATE_THRESHOLD = 70;
-const MAX_VARIANT_RETRIES = 2;
-
 interface ReferenceVariant {
 	caption: string;
 	prompt: string;
@@ -432,8 +423,7 @@ async function falPollUntilDone(
 async function generateReferenceImageFal(
 	apiKey: string,
 	imageUrl: string,
-	prompt: string,
-	options?: { seed?: number }
+	prompt: string
 ): Promise<string> {
 	const submit = await falSubmit(apiKey, FLUX_REFERENCE_EDIT_MODEL, {
 		enable_prompt_expansion: false,
@@ -444,7 +434,6 @@ async function generateReferenceImageFal(
 		num_inference_steps: 28,
 		output_format: "jpeg",
 		prompt,
-		...(options?.seed === undefined ? {} : { seed: options.seed }),
 	});
 	const result = await falPollUntilDone(
 		apiKey,
@@ -461,107 +450,6 @@ async function generateReferenceImageFal(
 	return url;
 }
 
-const XAI_BASE_URL = "https://api.x.ai/v1";
-const DEFAULT_VISION_MODEL = "grok-2-vision-1212";
-
-const FACE_JUDGE_PROMPT = `You are a strict face-identity verifier for a LoRA training dataset.
-Compare ONE source reference photo with ONE candidate photo.
-Decide whether the candidate is the SAME PERSON as the source — only the face/identity matters.
-Ignore differences in pose, framing, lighting, wardrobe, background, expression, hair styling, makeup or color grading.
-Reply with ONE compact JSON object and nothing else: {"score": <integer 0-100>, "same_person": <true|false>}.
-score = your confidence (0 = obviously different person, 100 = obviously the same person).`;
-
-interface FaceJudge {
-	scoreSimilarity(input: {
-		candidateImageUrl: string;
-		sourceImageUrl: string;
-	}): Promise<number>;
-}
-
-interface GrokVisionFaceJudgeOptions {
-	apiKey: string;
-	fetchImpl?: typeof fetch;
-	model?: string;
-}
-
-const jsonObjectPattern = /\{[\s\S]*?\}/u;
-
-function parseFaceScore(content: string): number {
-	const match = content.match(jsonObjectPattern);
-	if (!match) {
-		throw new Error("Face judge returned no JSON payload");
-	}
-	const parsed = JSON.parse(match[0]) as { score?: unknown };
-	const rawScore = typeof parsed.score === "number" ? parsed.score : Number.NaN;
-	if (!Number.isFinite(rawScore)) {
-		throw new Error("Face judge returned non-numeric score");
-	}
-	return Math.max(0, Math.min(100, Math.round(rawScore)));
-}
-
-export function createGrokVisionFaceJudge(
-	options: GrokVisionFaceJudgeOptions
-): FaceJudge {
-	const apiKey = options.apiKey.trim();
-	if (!apiKey) {
-		throw new Error("XAI_API_KEY is required to create face judge");
-	}
-	const fetchImpl = options.fetchImpl ?? fetch;
-	const model = options.model ?? DEFAULT_VISION_MODEL;
-
-	return {
-		async scoreSimilarity({ candidateImageUrl, sourceImageUrl }) {
-			const response = await fetchImpl(`${XAI_BASE_URL}/chat/completions`, {
-				body: JSON.stringify({
-					messages: [
-						{ role: "system", content: FACE_JUDGE_PROMPT },
-						{
-							role: "user",
-							content: [
-								{
-									type: "image_url",
-									image_url: { url: sourceImageUrl, detail: "high" },
-								},
-								{
-									type: "image_url",
-									image_url: { url: candidateImageUrl, detail: "high" },
-								},
-								{
-									type: "text",
-									text: "Image 1 is the source reference. Image 2 is the candidate. Are they the same person?",
-								},
-							],
-						},
-					],
-					model,
-					temperature: 0,
-				}),
-				headers: {
-					authorization: `Bearer ${apiKey}`,
-					"content-type": "application/json",
-				},
-				method: "POST",
-			});
-
-			if (!response.ok) {
-				const detail = await response.text().catch(() => "");
-				throw new Error(
-					`Grok vision request failed: ${response.status}${detail ? ` — ${detail.slice(0, 200)}` : ""}`
-				);
-			}
-
-			const payload = (await response.json()) as {
-				choices?: Array<{ message?: { content?: string | null } }>;
-			};
-			const content = payload.choices?.[0]?.message?.content?.trim();
-			if (!content) {
-				throw new Error("Grok vision response was empty");
-			}
-			return parseFaceScore(content);
-		},
-	};
-}
-
 export class FalZibLoraTrainingRunner {
 	private readonly apiKey: string;
 	private readonly personsApiBaseUrl?: string;
@@ -569,12 +457,10 @@ export class FalZibLoraTrainingRunner {
 	private readonly s3Config?: S3StorageConfig;
 	private readonly logger: Pick<Console, "info" | "error">;
 	private readonly eventPublisher: EventPublisher | null;
-	private readonly faceJudge: FaceJudge | null;
 
 	constructor(options: {
 		apiKey: string;
 		eventPublisher?: EventPublisher | null;
-		faceJudge?: FaceJudge | null;
 		personsApiBaseUrl?: string;
 		trainingControlToken: string;
 		s3Config?: S3StorageConfig;
@@ -586,82 +472,6 @@ export class FalZibLoraTrainingRunner {
 		this.s3Config = options.s3Config;
 		this.logger = options.logger ?? console;
 		this.eventPublisher = options.eventPublisher ?? null;
-		this.faceJudge = options.faceJudge ?? null;
-	}
-
-	/**
-	 * Generates ONE reference variant via flux-2/edit and (when a face judge is
-	 * configured) verifies that the result still looks like the source person.
-	 * Retries up to MAX_VARIANT_RETRIES times with new seeds if the judge
-	 * scores below IDENTITY_GATE_THRESHOLD. Returns `null` if every attempt
-	 * fails the gate — caller should drop the variant rather than poisoning
-	 * the dataset with a wrong face.
-	 */
-	private async generateReferenceVariantWithGate(input: {
-		personId: string;
-		prompt: string;
-		sourceImageUrl: string;
-		variantIndex: number;
-	}): Promise<{ score: number | null; url: string } | null> {
-		let bestUrl: string | null = null;
-		let bestScore = -1;
-
-		for (let attempt = 0; attempt <= MAX_VARIANT_RETRIES; attempt += 1) {
-			const seed =
-				attempt === 0 ? undefined : Math.floor(Math.random() * 2_000_000_000);
-			const url = await generateReferenceImageFal(
-				this.apiKey,
-				input.sourceImageUrl,
-				input.prompt,
-				{ seed }
-			);
-
-			if (!this.faceJudge) {
-				return { score: null, url };
-			}
-
-			let score = 0;
-			try {
-				score = await this.faceJudge.scoreSimilarity({
-					candidateImageUrl: url,
-					sourceImageUrl: input.sourceImageUrl,
-				});
-			} catch (error) {
-				this.logger.error("fal-zib-lora.face-judge-failed", {
-					personId: input.personId,
-					variantIndex: input.variantIndex,
-					attempt,
-					error: error instanceof Error ? error.message : String(error),
-				});
-				return { score: null, url };
-			}
-
-			this.logger.info("fal-zib-lora.face-judge", {
-				personId: input.personId,
-				variantIndex: input.variantIndex,
-				attempt,
-				score,
-				accepted: score >= IDENTITY_GATE_THRESHOLD,
-			});
-
-			if (score > bestScore) {
-				bestScore = score;
-				bestUrl = url;
-			}
-			if (score >= IDENTITY_GATE_THRESHOLD) {
-				return { score, url };
-			}
-		}
-
-		if (bestUrl === null) {
-			return null;
-		}
-		this.logger.info("fal-zib-lora.face-judge-fallback", {
-			personId: input.personId,
-			variantIndex: input.variantIndex,
-			bestScore,
-		});
-		return { score: bestScore, url: bestUrl };
 	}
 
 	private async sendTrainingEvent(input: {
@@ -746,14 +556,12 @@ export class FalZibLoraTrainingRunner {
 			this.logger.info("fal-zib-lora.generating-references", {
 				personId: parsed.personId,
 				count: REFERENCE_COUNT,
-				identityGate: this.faceJudge ? "enabled" : "disabled",
 			});
 
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
 					debug: {
-						identityGate: this.faceJudge ? "enabled" : "disabled",
 						originalPhotoDuplicates: ORIGINAL_PHOTO_DUPLICATES,
 						referenceModel: FLUX_REFERENCE_EDIT_MODEL,
 						referenceVariantCount: REFERENCE_COUNT,
@@ -775,14 +583,9 @@ export class FalZibLoraTrainingRunner {
 
 			const generatedReferences: Array<{
 				caption: string;
-				score: number | null;
 				url: string;
 			}> = [];
-			let droppedVariantCount = 0;
-			for (const [
-				variantIndex,
-				variant,
-			] of REFERENCE_DATASET_VARIANTS.entries()) {
+			for (const variant of REFERENCE_DATASET_VARIANTS) {
 				const prompt = buildVariantPrompt({
 					referencePrompt: parsed.referencePrompt,
 					variant,
@@ -792,31 +595,16 @@ export class FalZibLoraTrainingRunner {
 					triggerWord,
 					variant,
 				});
-				const result = await this.generateReferenceVariantWithGate({
-					personId: parsed.personId,
-					prompt,
-					sourceImageUrl: parsed.referencePhotoUrl,
-					variantIndex,
-				});
-				if (!result) {
-					droppedVariantCount += 1;
-					this.logger.info("fal-zib-lora.reference-dropped", {
-						personId: parsed.personId,
-						variantIndex,
-						reason: "identity-gate-failed",
-					});
-					continue;
-				}
-				generatedReferences.push({
-					caption,
-					score: result.score,
-					url: result.url,
-				});
+				const url = await generateReferenceImageFal(
+					this.apiKey,
+					parsed.referencePhotoUrl,
+					prompt
+				);
+				generatedReferences.push({ caption, url });
 				this.logger.info("fal-zib-lora.reference-generated", {
 					personId: parsed.personId,
 					index: generatedReferences.length,
 					total: REFERENCE_COUNT,
-					score: result.score,
 				});
 
 				await this.sendTrainingEvent({
@@ -847,7 +635,6 @@ export class FalZibLoraTrainingRunner {
 				personId: parsed.personId,
 				originalDuplicates: ORIGINAL_DATASET_COUNT,
 				syntheticVariants: generatedReferences.length,
-				droppedVariants: droppedVariantCount,
 			});
 
 			const refPhoto = await downloadImageAsset(parsed.referencePhotoUrl);
@@ -934,10 +721,8 @@ export class FalZibLoraTrainingRunner {
 					datasetZipSizeBytes: zipData.length,
 					debug: {
 						defaultCaption,
-						droppedVariantCount,
 						originalPhotoDuplicates: ORIGINAL_DATASET_COUNT,
 						outputName,
-						variantScores: generatedReferences.map((entry) => entry.score),
 					},
 					debugCorrelationId: parsed.debugCorrelationId,
 					lastEventAt: new Date().toISOString(),

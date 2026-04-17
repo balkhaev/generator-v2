@@ -7,10 +7,7 @@ import {
 import { createRedisIdempotencyLock, withIdempotency } from "@generator/queue";
 import { resolveS3StorageConfig } from "@generator/storage";
 
-import {
-	createGrokVisionFaceJudge,
-	FalZibLoraTrainingRunner,
-} from "@/providers/fal-zib-lora-training";
+import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
 import type { PersonLoraTrainingJobData } from "@/queue/person-lora-training";
 import { createPersonLoraTrainingWorker } from "@/queue/person-lora-training";
 
@@ -40,21 +37,9 @@ if (!(personsApiUrl || eventPublisher)) {
 	);
 }
 
-const xaiApiKey = env.XAI_API_KEY;
-const faceJudge = xaiApiKey
-	? createGrokVisionFaceJudge({ apiKey: xaiApiKey })
-	: null;
-
-if (!faceJudge) {
-	console.info(
-		"admin.worker: identity gate disabled (XAI_API_KEY not set); LoRA dataset will be assembled without face-similarity verification"
-	);
-}
-
 const falRunner = new FalZibLoraTrainingRunner({
 	apiKey: falKey,
 	eventPublisher,
-	faceJudge,
 	personsApiBaseUrl: personsApiUrl,
 	trainingControlToken,
 	s3Config,

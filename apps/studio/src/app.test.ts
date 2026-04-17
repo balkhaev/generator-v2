@@ -324,6 +324,131 @@ describe("studio backend", () => {
 		expect(calls).toEqual(["create:fal-zimage-turbo", "sync:job-1"]);
 	});
 
+	it("launches prompt-only video scenarios without an input image", async () => {
+		const repository = createMemoryRepository();
+		const receivedInputUrls: Array<string | undefined> = [];
+		const app = createApp({
+			assetReleaseReadService: createAssetReleaseReadServiceStub(),
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub({
+				createExecution(input) {
+					receivedInputUrls.push(input.inputImageUrl);
+					return Promise.resolve({
+						artifacts: [],
+						errorSummary: null,
+						id: "execution-video-1",
+						inputImageUrl: input.inputImageUrl ?? "",
+						providerEndpointId: "fal-ai/ltx-2.3/text-to-video",
+						providerJobId: "job-video-1",
+						status: "queued",
+						workflowKey: input.workflowKey,
+					});
+				},
+			}),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			repository,
+			s3Config: fakeS3Config,
+		});
+
+		const scenarioResponse = await app.request(
+			"http://localhost/api/scenarios",
+			{
+				body: JSON.stringify({
+					name: "Prompt-only video",
+					params: { duration: 6, fps: 25 },
+					prompt: "Generate a cinematic street clip",
+					workflowKey: "fal-ltx-2-3-text-to-video",
+				}),
+				headers: {
+					"content-type": "application/json",
+				},
+				method: "POST",
+			}
+		);
+		const { scenario } = (await scenarioResponse.json()) as {
+			scenario: StudioScenarioEntity;
+		};
+
+		const runResponse = await app.request("http://localhost/api/runs", {
+			body: JSON.stringify({
+				scenarioId: scenario.id,
+			}),
+			headers: {
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		expect(runResponse.status).toBe(201);
+		const { run } = (await runResponse.json()) as { run: StudioRunEntity };
+		expect(run.inputImageUrl).toBe("");
+		expect(run.providerJobId).toBe("job-video-1");
+		expect(receivedInputUrls).toEqual([undefined]);
+	});
+
+	it("rejects image-conditioned workflows without an input image", async () => {
+		const app = createApp({
+			assetReleaseReadService: createAssetReleaseReadServiceStub(),
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub(),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			repository: createMemoryRepository(),
+			s3Config: fakeS3Config,
+		});
+
+		const scenarioResponse = await app.request(
+			"http://localhost/api/scenarios",
+			{
+				body: JSON.stringify({
+					name: "Image-conditioned video",
+					params: {},
+					prompt: "Use the reference image",
+					workflowKey: "fal-flux2-dev-edit",
+				}),
+				headers: {
+					"content-type": "application/json",
+				},
+				method: "POST",
+			}
+		);
+		const { scenario } = (await scenarioResponse.json()) as {
+			scenario: StudioScenarioEntity;
+		};
+
+		const runResponse = await app.request("http://localhost/api/runs", {
+			body: JSON.stringify({
+				scenarioId: scenario.id,
+			}),
+			headers: {
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		expect(runResponse.status).toBe(400);
+		expect(await runResponse.json()).toEqual({
+			error: "Workflow fal-flux2-dev-edit requires an input image URL",
+		});
+	});
+
 	it("reads asset release routes from the local studio read-model", async () => {
 		const app = createApp({
 			assetReleaseReadService: createAssetReleaseReadServiceStub(),

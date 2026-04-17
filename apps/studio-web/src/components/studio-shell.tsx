@@ -15,6 +15,7 @@ import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import ComposeDialog from "@/components/compose/compose-dialog";
 import MediaStrip from "@/components/media-strip";
 import { ModeToggle } from "@/components/mode-toggle";
 import PreviewSurface, {
@@ -209,6 +210,7 @@ export default function StudioShell({
 	sessionName: string;
 }) {
 	const [snapshot, setSnapshot] = useState<AdminSnapshot>(initialSnapshot);
+	const [isComposeOpen, setIsComposeOpen] = useState(false);
 	const pathname = usePathname();
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -360,23 +362,24 @@ export default function StudioShell({
 		);
 	}
 
-	function handleScenarioSelect(scenarioId: string) {
-		router.push(
-			buildStudioHref(pathname, currentSearch, {
-				assetId: null,
-				runId: null,
-				scenarioId,
-			}),
-			{
-				scroll: false,
-			}
-		);
+	function handleCreateScenario() {
+		setIsComposeOpen(true);
 	}
 
-	function handleCreateScenario() {
-		router.push(buildStudioHref(pathname, currentSearch, { tab: "compose" }), {
-			scroll: false,
-		});
+	function handleScenarioCreated(nextSnapshot: AdminSnapshot) {
+		setSnapshot(nextSnapshot);
+		const created = nextSnapshot.scenarios[0];
+		if (created) {
+			router.push(
+				buildStudioHref(pathname, currentSearch, {
+					assetId: null,
+					runId: null,
+					scenarioId: created.id,
+					tab: "launch",
+				}),
+				{ scroll: false }
+			);
+		}
 	}
 
 	function getScenarioHref(scenarioId: string) {
@@ -420,7 +423,7 @@ export default function StudioShell({
 			inspector={
 				<ScenarioConsole
 					className="h-full"
-					onScenarioSelect={handleScenarioSelect}
+					onCreateScenario={handleCreateScenario}
 					onSnapshotChange={setSnapshot}
 					selectedScenarioId={selectedScenarioId}
 					snapshot={snapshot}
@@ -471,6 +474,12 @@ export default function StudioShell({
 			title={selectedScenarioCard?.name ?? "Studio"}
 			workspaceLabel="Studio"
 		>
+			<ComposeDialog
+				onOpenChange={setIsComposeOpen}
+				onScenarioCreated={handleScenarioCreated}
+				open={isComposeOpen}
+				snapshot={snapshot}
+			/>
 			<div className="flex h-full min-h-0 flex-col gap-2">
 				<PreviewSurface
 					asset={selectedMediaAsset}

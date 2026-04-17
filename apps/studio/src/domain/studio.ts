@@ -8,9 +8,10 @@ import type {
 	StudioRunRecord,
 	StudioScenarioRecord,
 } from "@generator/contracts/studio";
+import { getWorkflowDefinition } from "@generator/workflows";
 import { z } from "zod";
 
-import { NotFoundError } from "@/routes/utils";
+import { BadRequestError, NotFoundError } from "@/routes/utils";
 
 const studioScenarioParamsSchema = z
 	.record(z.string(), z.unknown())
@@ -31,7 +32,7 @@ export const updateStudioScenarioInputSchema = createStudioScenarioInputSchema
 	);
 
 export const createStudioRunInputSchema = z.object({
-	inputImageUrl: z.url("Input image URL must be a valid URL"),
+	inputImageUrl: z.url("Input image URL must be a valid URL").optional(),
 	scenarioId: z.string().trim().min(1, "Scenario id is required"),
 });
 
@@ -340,12 +341,18 @@ export class StudioService {
 		if (!scenario) {
 			throw new NotFoundError(`Scenario not found: ${parsed.scenarioId}`);
 		}
+		const workflow = getWorkflowDefinition(scenario.workflowKey);
+		if (workflow?.requiresInputImage && !parsed.inputImageUrl) {
+			throw new BadRequestError(
+				`Workflow ${scenario.workflowKey} requires an input image URL`
+			);
+		}
 
 		const createdRun = await this.repository.createRun({
 			errorSummary: null,
 			generatorRunId: null,
 			id: crypto.randomUUID(),
-			inputImageUrl: parsed.inputImageUrl,
+			inputImageUrl: parsed.inputImageUrl ?? "",
 			providerEndpointId: null,
 			providerJobId: null,
 			scenarioId: scenario.id,
@@ -366,7 +373,9 @@ export class StudioService {
 								: {}),
 						}
 					: undefined,
-				inputImageUrl: parsed.inputImageUrl,
+				...(parsed.inputImageUrl
+					? { inputImageUrl: parsed.inputImageUrl }
+					: {}),
 				params: scenario.params,
 				prompt: scenario.prompt,
 				workflowKey: scenario.workflowKey,

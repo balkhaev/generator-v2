@@ -146,6 +146,127 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the fal-wan-2-2 text-to-video payload", () => {
+		const workflow = getWorkflowDefinition("fal-wan-2-2-text-to-video");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					aspectRatio: "16:9",
+					framesPerSecond: 16,
+					guidanceScale: 3.5,
+					guidanceScale2: 4,
+					numFrames: 81,
+					numInferenceSteps: 27,
+					resolution: "720p",
+					shift: 5,
+				},
+				prompt: "a cinematic tracking shot across a rainy neon street",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/wan/v2.2-a14b/text-to-video",
+			aspect_ratio: "16:9",
+			frames_per_second: 16,
+			guidance_scale: 3.5,
+			guidance_scale_2: 4,
+			num_frames: 81,
+			num_inference_steps: 27,
+			prompt: "a cinematic tracking shot across a rainy neon street",
+			resolution: "720p",
+			shift: 5,
+			video_quality: "high",
+			video_write_mode: "balanced",
+		});
+	});
+
+	it("builds the fal-wan-2-2 image-to-video payload", () => {
+		const workflow = getWorkflowDefinition("fal-wan-2-2-image-to-video");
+
+		expect(
+			workflow?.buildProviderInput({
+				inputImageUrl: "https://storage.example.com/reference.png",
+				params: {
+					aspectRatio: "auto",
+					endImageUrl: "https://storage.example.com/end-frame.png",
+					framesPerSecond: 16,
+					guidanceScale: 3.5,
+					guidanceScale2: 3.5,
+					numFrames: 81,
+					numInferenceSteps: 27,
+					resolution: "720p",
+					shift: 5,
+				},
+				prompt: "the subject turns toward camera as the light changes",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/wan/v2.2-a14b/image-to-video",
+			aspect_ratio: "auto",
+			end_image_url: "https://storage.example.com/end-frame.png",
+			frames_per_second: 16,
+			guidance_scale: 3.5,
+			guidance_scale_2: 3.5,
+			image_url: "https://storage.example.com/reference.png",
+			num_frames: 81,
+			num_inference_steps: 27,
+			prompt: "the subject turns toward camera as the light changes",
+			resolution: "720p",
+			shift: 5,
+			video_quality: "high",
+			video_write_mode: "balanced",
+		});
+	});
+
+	it("builds the fal-ltx-2-3 text-to-video payload", () => {
+		const workflow = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					aspectRatio: "16:9",
+					duration: 6,
+					fps: 25,
+					resolution: "1080p",
+				},
+				prompt: "a fast handheld shot through a busy market",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/ltx-2.3/text-to-video",
+			aspect_ratio: "16:9",
+			duration: 6,
+			fps: 25,
+			generate_audio: true,
+			prompt: "a fast handheld shot through a busy market",
+			resolution: "1080p",
+		});
+	});
+
+	it("builds the fal-ltx-2-3 image-to-video payload", () => {
+		const workflow = getWorkflowDefinition("fal-ltx-2-3-image-to-video");
+
+		expect(
+			workflow?.buildProviderInput({
+				inputImageUrl: "https://storage.example.com/reference.png",
+				params: {
+					aspectRatio: "auto",
+					duration: 6,
+					endImageUrl: "",
+					fps: 25,
+					resolution: "1080p",
+				},
+				prompt: "animate the still image with a slow dolly push",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/ltx-2.3/image-to-video",
+			aspect_ratio: "auto",
+			duration: 6,
+			fps: 25,
+			generate_audio: true,
+			image_url: "https://storage.example.com/reference.png",
+			prompt: "animate the still image with a slow dolly push",
+			resolution: "1080p",
+		});
+	});
+
 	it("extracts image urls from fal response format", () => {
 		const workflow = getWorkflowDefinition("fal-flux-schnell");
 
@@ -161,6 +282,19 @@ describe("workflow registry", () => {
 				seed: 42,
 			})
 		).toEqual(["https://v3.fal.media/files/result.png"]);
+	});
+
+	it("extracts video urls from fal response format", () => {
+		const workflow = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
+
+		expect(
+			workflow?.extractArtifactUrls({
+				video: {
+					content_type: "video/mp4",
+					url: "https://v3b.fal.media/files/result.mp4",
+				},
+			})
+		).toEqual(["https://v3b.fal.media/files/result.mp4"]);
 	});
 
 	it("returns null for unknown workflow keys", () => {

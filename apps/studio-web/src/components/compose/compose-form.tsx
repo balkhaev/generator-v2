@@ -22,22 +22,26 @@ import {
 	Sparkles,
 	Wand2,
 } from "lucide-react";
-import { type FormEvent, useId, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 
 import LoraPicker from "./lora-picker";
 import ParameterField from "./parameter-field";
 
 const baseModelLabels: Record<string, string> = {
 	flux: "Flux",
+	ltx: "LTX",
 	other: "Other",
 	sdxl: "SDXL",
+	wan: "Wan",
 	"z-image": "Z-Image",
 };
 
 const baseModelTints: Record<string, string> = {
 	flux: "bg-violet-500/12 text-violet-700 dark:text-violet-300",
+	ltx: "bg-cyan-500/12 text-cyan-700 dark:text-cyan-300",
 	other: "bg-foreground/[0.06] text-muted-foreground",
 	sdxl: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
+	wan: "bg-rose-500/12 text-rose-700 dark:text-rose-300",
 	"z-image": "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
 };
 
@@ -128,9 +132,16 @@ function partitionParameters(parameters: WorkflowParameter[]) {
 		}
 
 		if (
+			parameter.key === "aspectRatio" ||
+			parameter.key === "duration" ||
+			parameter.key === "endImageUrl" ||
+			parameter.key === "fps" ||
+			parameter.key === "framesPerSecond" ||
 			parameter.key === "imageSize" ||
+			parameter.key === "numFrames" ||
 			parameter.key === "numImages" ||
-			parameter.key === "outputFormat"
+			parameter.key === "outputFormat" ||
+			parameter.key === "resolution"
 		) {
 			outputParameters.push(parameter);
 			continue;
@@ -245,7 +256,7 @@ function WorkflowCard({
 							)}
 						>
 							<ImageIcon className="size-2.5" />
-							img2img
+							image
 						</span>
 					) : null}
 					{usesLora ? (
@@ -341,9 +352,12 @@ interface ComposeFormProps {
 	adminLorasHref: string;
 	availableLoras: LoraRegistryEntry[];
 	form: ScenarioFormState;
+	formId?: string;
+	hideFooter?: boolean;
 	isSubmitting: boolean;
 	onFormChange: (form: ScenarioFormState) => void;
 	onSubmit: () => Promise<void> | void;
+	onValidityChange?: (input: { isReady: boolean; errors: string[] }) => void;
 	workflows: WorkflowDefinition[];
 }
 
@@ -351,9 +365,12 @@ export default function ComposeForm({
 	adminLorasHref,
 	availableLoras,
 	form,
+	formId,
+	hideFooter = false,
 	isSubmitting,
 	onFormChange,
 	onSubmit,
+	onValidityChange,
 	workflows,
 }: ComposeFormProps) {
 	const nameId = useId();
@@ -401,6 +418,10 @@ export default function ComposeForm({
 		[form.prompt]
 	);
 
+	useEffect(() => {
+		onValidityChange?.({ errors, isReady });
+	}, [errors, isReady, onValidityChange]);
+
 	function handleWorkflowSelect(workflow: WorkflowDefinition) {
 		const next = createScenarioFormState(workflow);
 		onFormChange({
@@ -437,7 +458,7 @@ export default function ComposeForm({
 	}
 
 	return (
-		<form className="grid gap-4 pb-20" onSubmit={handleSubmit}>
+		<form className="grid min-w-0 gap-4" id={formId} onSubmit={handleSubmit}>
 			<section className="grid gap-2">
 				<div className="flex items-center justify-between gap-2">
 					<SectionLabel>Workflow</SectionLabel>
@@ -622,27 +643,29 @@ export default function ComposeForm({
 				</section>
 			) : null}
 
-			<div className="sticky bottom-0 z-10 -mx-3 mt-2 -mb-3 border-foreground/8 border-t bg-background/95 px-3 py-2 backdrop-blur">
-				{errors.length > 0 ? (
-					<div className="mb-2 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
-						<AlertCircle className="mt-0.5 size-3 shrink-0" />
-						<span>{errors.join(" · ")}</span>
+			{hideFooter ? null : (
+				<div className="mt-2 border-foreground/8 border-t bg-background/95 pt-3">
+					{errors.length > 0 ? (
+						<div className="mb-2 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+							<AlertCircle className="mt-0.5 size-3 shrink-0" />
+							<span>{errors.join(" · ")}</span>
+						</div>
+					) : null}
+					<div className="flex items-center justify-between gap-2">
+						<p className="truncate text-[11px] text-muted-foreground">
+							{selectedWorkflow.name}
+						</p>
+						<Button disabled={!isReady || isSubmitting} size="sm" type="submit">
+							{isSubmitting ? (
+								<Loader2 className="size-3.5 animate-spin" />
+							) : (
+								<Plus className="size-3.5" />
+							)}
+							Save scenario
+						</Button>
 					</div>
-				) : null}
-				<div className="flex items-center justify-between gap-2">
-					<p className="text-[11px] text-muted-foreground">
-						{selectedWorkflow.name}
-					</p>
-					<Button disabled={!isReady || isSubmitting} size="sm" type="submit">
-						{isSubmitting ? (
-							<Loader2 className="size-3.5 animate-spin" />
-						) : (
-							<Plus className="size-3.5" />
-						)}
-						Save scenario
-					</Button>
 				</div>
-			</div>
+			)}
 		</form>
 	);
 }

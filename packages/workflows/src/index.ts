@@ -166,6 +166,59 @@ const falFluxLoraParamsSchema = z.object({
 	enableSafetyChecker: z.boolean().default(true),
 });
 
+const optionalUrlParamSchema = z.preprocess(
+	(value) =>
+		typeof value === "string" && value.trim() === "" ? undefined : value,
+	z.string().url().optional()
+);
+
+const falWan22TextToVideoParamsSchema = z.object({
+	negativePrompt: z.string().default(""),
+	numFrames: z.number().int().min(17).max(161).default(81),
+	framesPerSecond: z.number().int().min(4).max(60).default(16),
+	seed: z.number().int().nonnegative().optional(),
+	resolution: z.enum(["480p", "580p", "720p"]).default("720p"),
+	aspectRatio: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+	numInferenceSteps: z.number().int().min(1).max(50).default(27),
+	enableSafetyChecker: z.boolean().default(true),
+	enableOutputSafetyChecker: z.boolean().default(false),
+	enablePromptExpansion: z.boolean().default(false),
+	acceleration: z.enum(["none", "regular"]).default("regular"),
+	guidanceScale: z.number().min(0).max(20).default(3.5),
+	guidanceScale2: z.number().min(0).max(20).default(4),
+	shift: z.number().min(1).max(10).default(5),
+	interpolatorModel: z.enum(["none", "film", "rife"]).default("film"),
+	numInterpolatedFrames: z.number().int().min(0).max(4).default(1),
+	adjustFpsForInterpolation: z.boolean().default(true),
+	videoQuality: z.enum(["low", "medium", "high", "maximum"]).default("high"),
+	videoWriteMode: z.enum(["fast", "balanced", "small"]).default("balanced"),
+});
+
+const falWan22ImageToVideoParamsSchema = falWan22TextToVideoParamsSchema.extend(
+	{
+		aspectRatio: z.enum(["auto", "16:9", "9:16", "1:1"]).default("auto"),
+		guidanceScale2: z.number().min(0).max(20).default(3.5),
+		endImageUrl: optionalUrlParamSchema,
+	}
+);
+
+const falLtx23TextToVideoParamsSchema = z.object({
+	duration: z.union([z.literal(6), z.literal(8), z.literal(10)]).default(6),
+	resolution: z.enum(["1080p", "1440p", "2160p"]).default("1080p"),
+	aspectRatio: z.enum(["16:9", "9:16"]).default("16:9"),
+	fps: z
+		.union([z.literal(24), z.literal(25), z.literal(48), z.literal(50)])
+		.default(25),
+	generateAudio: z.boolean().default(true),
+});
+
+const falLtx23ImageToVideoParamsSchema = falLtx23TextToVideoParamsSchema.extend(
+	{
+		aspectRatio: z.enum(["auto", "16:9", "9:16"]).default("auto"),
+		endImageUrl: optionalUrlParamSchema,
+	}
+);
+
 const artifactDataUrlPattern = /^data:(image|video)\/[a-z0-9.+-]+;base64,/i;
 
 export interface WorkflowDefinition<
@@ -741,6 +794,319 @@ export const workflowRegistry = {
 		},
 		extractArtifactUrls: collectFalImageUrls,
 	},
+	"fal-wan-2-2-text-to-video": {
+		baseModel: "wan",
+		key: "fal-wan-2-2-text-to-video",
+		name: "Wan 2.2 A14B",
+		description:
+			"High-quality text-to-video generation using Wan 2.2 A14B on fal.ai.",
+		requiresInputImage: false,
+		parameterSchema: falWan22TextToVideoParamsSchema,
+		parameterFields: [
+			{
+				description: "Number of source frames to generate.",
+				key: "numFrames",
+				label: "Frames",
+				type: "number",
+			},
+			{
+				description: "Source frames per second before interpolation.",
+				key: "framesPerSecond",
+				label: "FPS",
+				type: "number",
+			},
+			{
+				description: "Output video resolution.",
+				enumValues: ["480p", "580p", "720p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description: "Output video aspect ratio.",
+				enumValues: ["16:9", "9:16", "1:1"],
+				key: "aspectRatio",
+				label: "Aspect ratio",
+				type: "text",
+			},
+			{
+				description: "Number of sampling steps.",
+				key: "numInferenceSteps",
+				label: "Steps",
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "Guidance scale",
+				type: "number",
+			},
+			{
+				description: "Second-stage guidance scale.",
+				key: "guidanceScale2",
+				label: "Guidance scale 2",
+				type: "number",
+			},
+			{
+				description: "Temporal shift value for video sampling.",
+				key: "shift",
+				label: "Shift",
+				type: "number",
+			},
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = falWan22TextToVideoParamsSchema.parse(params);
+			return {
+				__falModel: "fal-ai/wan/v2.2-a14b/text-to-video",
+				prompt,
+				negative_prompt: parsed.negativePrompt,
+				num_frames: parsed.numFrames,
+				frames_per_second: parsed.framesPerSecond,
+				resolution: parsed.resolution,
+				aspect_ratio: parsed.aspectRatio,
+				num_inference_steps: parsed.numInferenceSteps,
+				enable_safety_checker: parsed.enableSafetyChecker,
+				enable_output_safety_checker: parsed.enableOutputSafetyChecker,
+				enable_prompt_expansion: parsed.enablePromptExpansion,
+				acceleration: parsed.acceleration,
+				guidance_scale: parsed.guidanceScale,
+				guidance_scale_2: parsed.guidanceScale2,
+				shift: parsed.shift,
+				interpolator_model: parsed.interpolatorModel,
+				num_interpolated_frames: parsed.numInterpolatedFrames,
+				adjust_fps_for_interpolation: parsed.adjustFpsForInterpolation,
+				video_quality: parsed.videoQuality,
+				video_write_mode: parsed.videoWriteMode,
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"fal-wan-2-2-image-to-video": {
+		baseModel: "wan",
+		key: "fal-wan-2-2-image-to-video",
+		name: "Wan 2.2 A14B I2V",
+		description: "Image-to-video generation using Wan 2.2 A14B on fal.ai.",
+		requiresInputImage: true,
+		parameterSchema: falWan22ImageToVideoParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Optional ending frame URL for generating a transition video.",
+				key: "endImageUrl",
+				label: "End image URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Number of source frames to generate.",
+				key: "numFrames",
+				label: "Frames",
+				type: "number",
+			},
+			{
+				description: "Source frames per second before interpolation.",
+				key: "framesPerSecond",
+				label: "FPS",
+				type: "number",
+			},
+			{
+				description: "Output video resolution.",
+				enumValues: ["480p", "580p", "720p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description:
+					"Output video aspect ratio. Auto follows the uploaded input image.",
+				enumValues: ["auto", "16:9", "9:16", "1:1"],
+				key: "aspectRatio",
+				label: "Aspect ratio",
+				type: "text",
+			},
+			{
+				description: "Number of sampling steps.",
+				key: "numInferenceSteps",
+				label: "Steps",
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "Guidance scale",
+				type: "number",
+			},
+			{
+				description: "Second-stage guidance scale.",
+				key: "guidanceScale2",
+				label: "Guidance scale 2",
+				type: "number",
+			},
+			{
+				description: "Temporal shift value for video sampling.",
+				key: "shift",
+				label: "Shift",
+				type: "number",
+			},
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = falWan22ImageToVideoParamsSchema.parse(params);
+			return {
+				__falModel: "fal-ai/wan/v2.2-a14b/image-to-video",
+				image_url: inputImageUrl,
+				prompt,
+				negative_prompt: parsed.negativePrompt,
+				num_frames: parsed.numFrames,
+				frames_per_second: parsed.framesPerSecond,
+				resolution: parsed.resolution,
+				aspect_ratio: parsed.aspectRatio,
+				num_inference_steps: parsed.numInferenceSteps,
+				enable_safety_checker: parsed.enableSafetyChecker,
+				enable_output_safety_checker: parsed.enableOutputSafetyChecker,
+				enable_prompt_expansion: parsed.enablePromptExpansion,
+				acceleration: parsed.acceleration,
+				guidance_scale: parsed.guidanceScale,
+				guidance_scale_2: parsed.guidanceScale2,
+				shift: parsed.shift,
+				interpolator_model: parsed.interpolatorModel,
+				num_interpolated_frames: parsed.numInterpolatedFrames,
+				adjust_fps_for_interpolation: parsed.adjustFpsForInterpolation,
+				video_quality: parsed.videoQuality,
+				video_write_mode: parsed.videoWriteMode,
+				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"fal-ltx-2-3-text-to-video": {
+		baseModel: "ltx",
+		key: "fal-ltx-2-3-text-to-video",
+		name: "LTX 2.3",
+		description:
+			"Text-to-video generation using LTX 2.3 Pro by Lightricks on fal.ai.",
+		requiresInputImage: false,
+		parameterSchema: falLtx23TextToVideoParamsSchema,
+		parameterFields: [
+			{
+				description: "Generated clip length in seconds.",
+				enumValues: ["6", "8", "10"],
+				key: "duration",
+				label: "Duration",
+				type: "number",
+			},
+			{
+				description: "Output video resolution.",
+				enumValues: ["1080p", "1440p", "2160p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description: "Output video aspect ratio.",
+				enumValues: ["16:9", "9:16"],
+				key: "aspectRatio",
+				label: "Aspect ratio",
+				type: "text",
+			},
+			{
+				description: "Frames per second of the generated video.",
+				enumValues: ["24", "25", "48", "50"],
+				key: "fps",
+				label: "FPS",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = falLtx23TextToVideoParamsSchema.parse(params);
+			return {
+				__falModel: "fal-ai/ltx-2.3/text-to-video",
+				prompt,
+				duration: parsed.duration,
+				resolution: parsed.resolution,
+				aspect_ratio: parsed.aspectRatio,
+				fps: parsed.fps,
+				generate_audio: parsed.generateAudio,
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"fal-ltx-2-3-image-to-video": {
+		baseModel: "ltx",
+		key: "fal-ltx-2-3-image-to-video",
+		name: "LTX 2.3 I2V",
+		description:
+			"Image-to-video generation using LTX 2.3 Pro by Lightricks on fal.ai.",
+		requiresInputImage: true,
+		parameterSchema: falLtx23ImageToVideoParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Optional ending frame URL for generating a transition video.",
+				key: "endImageUrl",
+				label: "End image URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Generated clip length in seconds.",
+				enumValues: ["6", "8", "10"],
+				key: "duration",
+				label: "Duration",
+				type: "number",
+			},
+			{
+				description: "Output video resolution.",
+				enumValues: ["1080p", "1440p", "2160p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description:
+					"Output video aspect ratio. Auto follows the uploaded input image.",
+				enumValues: ["auto", "16:9", "9:16"],
+				key: "aspectRatio",
+				label: "Aspect ratio",
+				type: "text",
+			},
+			{
+				description: "Frames per second of the generated video.",
+				enumValues: ["24", "25", "48", "50"],
+				key: "fps",
+				label: "FPS",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = falLtx23ImageToVideoParamsSchema.parse(params);
+			return {
+				__falModel: "fal-ai/ltx-2.3/image-to-video",
+				image_url: inputImageUrl,
+				prompt,
+				duration: parsed.duration,
+				resolution: parsed.resolution,
+				aspect_ratio: parsed.aspectRatio,
+				fps: parsed.fps,
+				generate_audio: parsed.generateAudio,
+				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
 } satisfies Record<string, WorkflowDefinition>;
 
 export type WorkflowKey = keyof typeof workflowRegistry;
@@ -781,7 +1147,14 @@ function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
 			return { ...field, min: 1, max, step: 1, unit: "steps" };
 		}
 		case "guidanceScale":
+		case "guidanceScale2":
 			return { ...field, min: 1, max: 20, step: 0.1 };
+		case "shift":
+			return { ...field, min: 1, max: 10, step: 0.1 };
+		case "numFrames":
+			return { ...field, min: 17, max: 161, step: 1, unit: "frames" };
+		case "framesPerSecond":
+			return { ...field, min: 4, max: 60, step: 1, unit: "fps" };
 		case "numImages":
 			return { ...field, min: 1, max: 4, step: 1 };
 		case "loraScale":

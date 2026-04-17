@@ -1,26 +1,19 @@
 "use client";
 
-import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import { env } from "@generator/env/web";
 import { requestJson } from "@generator/http/client";
 import { normalizeBaseUrl } from "@generator/http/shared";
 import {
 	type AdminSnapshot,
-	createStudioScenario,
 	getStudioSnapshot,
 	type LaunchRunInput,
 	launchStudioRun,
-	type ScenarioFormState,
 	type ScenarioRecord,
 	type ScenarioRunRecord,
 	syncStudioRun,
 	type UploadedInputAsset,
 	uploadStudioInputImage,
 } from "@generator/studio-client/client";
-import {
-	buildCreateScenarioInput,
-	createScenarioFormState,
-} from "@generator/studio-client/shared";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
@@ -39,7 +32,6 @@ import {
 	ExternalLink,
 	ImageUp,
 	Loader2,
-	Package2,
 	Play,
 	Plus,
 	RefreshCw,
@@ -54,36 +46,23 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import ComposeForm from "@/components/compose/compose-form";
 import IconButton from "@/components/icon-button";
 import { getMediaType } from "@/components/preview-surface";
 
 interface ScenarioConsoleProps {
 	className?: string;
-	onScenarioSelect?: (scenarioId: string) => void;
+	onCreateScenario?: () => void;
 	onSnapshotChange?: (snapshot: AdminSnapshot) => void;
 	selectedScenarioId: string | null;
 	snapshot: AdminSnapshot;
 }
 
-type ConsoleTab = "compose" | "launch" | "runs";
+type ConsoleTab = "launch" | "runs";
 type RunFilter = "all" | "active" | "succeeded" | "failed";
 
 type RunDraft = LaunchRunInput & {
 	uploadStorage?: UploadedInputAsset["storage"] | null;
 };
-
-interface PresetReadiness {
-	assetCount: number;
-	description: string;
-	id: string;
-	matchedAssets: number;
-	missingAssets: number;
-	name: string;
-	sourceUrl: string;
-	status: "missing" | "partial" | "ready";
-	workflowKeys: readonly string[];
-}
 
 type LinkedPersonState = {
 	personSlug: string;
@@ -93,27 +72,6 @@ type LinkedPersonState = {
 const personsApiBaseUrl = normalizeBaseUrl(
 	env.NEXT_PUBLIC_PERSONS_API_URL ?? "http://localhost:3003"
 );
-
-const studioApiBaseUrl = normalizeBaseUrl(env.NEXT_PUBLIC_SERVER_URL);
-
-async function fetchStudioLoras(
-	baseModel?: string
-): Promise<LoraRegistryEntry[]> {
-	const params = new URLSearchParams();
-	if (baseModel) {
-		params.set("baseModel", baseModel);
-	}
-	const query = params.toString();
-	try {
-		const payload = await requestJson<{ loras: LoraRegistryEntry[] }>(
-			`${studioApiBaseUrl}/api/loras${query ? `?${query}` : ""}`,
-			{ cache: "no-store", credentials: "include" }
-		);
-		return payload.loras;
-	} catch {
-		return [];
-	}
-}
 
 async function findPersonSlugByOperatorRunId(operatorRunId: string) {
 	const payload = await requestJson<{ person: { slug: string } }>(
@@ -140,17 +98,8 @@ const runStatusDot: Record<ScenarioRunRecord["status"], string> = {
 	succeeded: "bg-emerald-500",
 };
 
-const presetStatusTone: Record<PresetReadiness["status"], string> = {
-	missing: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-	partial: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-	ready: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-};
-const adminWebUrl = env.NEXT_PUBLIC_ADMIN_URL ?? "http://localhost:3001";
-const trailingSlashesPattern = /\/+$/u;
-const adminLorasHref = `${adminWebUrl.replace(trailingSlashesPattern, "")}/loras`;
-
 function readConsoleTabParam(tab: string | null): ConsoleTab {
-	if (tab === "compose" || tab === "runs") {
+	if (tab === "runs") {
 		return tab;
 	}
 
@@ -168,14 +117,26 @@ function buildConsoleHref(
 }
 
 function formatScenarioDuration(params: ScenarioRecord["params"]) {
+	const duration =
+		typeof params?.duration === "number"
+			? params.duration
+			: Number(params?.duration);
+
+	if (Number.isFinite(duration) && duration > 0) {
+		return `${duration.toFixed(duration % 1 === 0 ? 0 : 1)}s`;
+	}
+
+	const frameRateValue =
+		params?.framesPerSecond ?? params?.frameRate ?? params?.fps;
 	const frameRate =
-		typeof params?.frameRate === "number"
-			? params.frameRate
-			: Number(params?.frameRate);
+		typeof frameRateValue === "number"
+			? frameRateValue
+			: Number(frameRateValue);
+	const numFramesValue = params?.numFrames;
 	const numFrames =
-		typeof params?.numFrames === "number"
-			? params.numFrames
-			: Number(params?.numFrames);
+		typeof numFramesValue === "number"
+			? numFramesValue
+			: Number(numFramesValue);
 
 	if (
 		Number.isFinite(frameRate) &&
@@ -276,41 +237,6 @@ function getStorageLabel(
 		default:
 			return null;
 	}
-}
-
-function buildPresetReadiness(snapshot: AdminSnapshot): PresetReadiness[] {
-	return snapshot.presets.map((preset) => {
-		const matchedAssets = preset.assets.filter((asset) => {
-			return snapshot.releases.some((release) => {
-				if (release.group !== asset.group) {
-					return false;
-				}
-
-				return release.items.some((item) => item.fileName === asset.fileName);
-			});
-		}).length;
-		const assetCount = preset.assets.length;
-		const missingAssets = Math.max(assetCount - matchedAssets, 0);
-		let status: PresetReadiness["status"] = "missing";
-
-		if (missingAssets === 0) {
-			status = "ready";
-		} else if (matchedAssets > 0) {
-			status = "partial";
-		}
-
-		return {
-			assetCount,
-			description: preset.description,
-			id: preset.id,
-			matchedAssets,
-			missingAssets,
-			name: preset.name,
-			sourceUrl: preset.sourceUrl,
-			status,
-			workflowKeys: preset.workflowKeys,
-		};
-	});
 }
 
 const previewableUrlPattern = /^(https?:\/\/.{3,}|data:\w+\/)/;
@@ -591,21 +517,16 @@ function ScenarioRunCard({
 
 export default function ScenarioConsole({
 	className,
-	onScenarioSelect,
+	onCreateScenario,
 	onSnapshotChange,
 	selectedScenarioId,
 	snapshot: initialSnapshot,
 }: ScenarioConsoleProps) {
 	const [error, setError] = useState<string | null>(null);
 	const [isRefreshing, setIsRefreshing] = useState(false);
-	const [isSavingScenario, setIsSavingScenario] = useState(false);
 	const [isUploadingImage, setIsUploadingImage] = useState(false);
 	const [runDrafts, setRunDrafts] = useState<Record<string, RunDraft>>({});
-	const [scenarioForm, setScenarioForm] = useState<ScenarioFormState | null>(
-		null
-	);
 	const [snapshot, setSnapshot] = useState<AdminSnapshot>(initialSnapshot);
-	const [availableLoras, setAvailableLoras] = useState<LoraRegistryEntry[]>([]);
 	const [linkedPerson, setLinkedPerson] = useState<LinkedPersonState>(null);
 	const [submittingRunId, setSubmittingRunId] = useState<string | null>(null);
 	const [syncingRunId, setSyncingRunId] = useState<string | null>(null);
@@ -648,47 +569,15 @@ export default function ScenarioConsole({
 	const selectedRunDraft = selectedScenario
 		? (runDrafts[selectedScenario.id] ?? createRunDraft(selectedScenario.id))
 		: null;
-
-	const selectedWorkflow = useMemo(() => {
-		if (!scenarioForm) {
-			return workflows[0] ?? null;
-		}
-
-		return (
-			workflows.find((workflow) => workflow.key === scenarioForm.workflowKey) ??
-			workflows[0] ??
-			null
-		);
-	}, [scenarioForm, workflows]);
-	const presetReadiness = useMemo(
-		() => buildPresetReadiness(snapshot),
-		[snapshot]
-	);
-	const suggestedPresets = useMemo(() => {
-		if (!selectedWorkflow) {
-			return presetReadiness;
-		}
-
-		return presetReadiness.filter((preset) =>
-			preset.workflowKeys.includes(selectedWorkflow.key)
-		);
-	}, [presetReadiness, selectedWorkflow]);
+	const selectedScenarioWorkflow = selectedScenario
+		? (workflows.find(
+				(workflow) => workflow.key === selectedScenario.workflowKey
+			) ?? null)
+		: null;
 
 	const activeRunCount = selectedScenarioRuns.filter(
 		(run) => run.status === "queued" || run.status === "running"
 	).length;
-
-	useEffect(() => {
-		let cancelled = false;
-		fetchStudioLoras(selectedWorkflow?.baseModel).then((items) => {
-			if (!cancelled) {
-				setAvailableLoras(items);
-			}
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [selectedWorkflow?.baseModel]);
 
 	useEffect(() => {
 		setSnapshot(initialSnapshot);
@@ -698,22 +587,6 @@ export default function ScenarioConsole({
 				? null
 				: "No workflows are available for the scenario console yet."
 		);
-		setScenarioForm((current) => {
-			if (!initialWorkflow) {
-				return null;
-			}
-
-			if (
-				current &&
-				initialSnapshot.workflows.some(
-					(workflow) => workflow.key === current.workflowKey
-				)
-			) {
-				return current;
-			}
-
-			return createScenarioFormState(initialWorkflow);
-		});
 		setRunDrafts((current) => {
 			const nextDrafts = { ...current };
 
@@ -749,10 +622,12 @@ export default function ScenarioConsole({
 
 			if (event.key === "l" || event.key === "L") {
 				nextTab = "launch";
-			} else if (event.key === "c" || event.key === "C") {
-				nextTab = "compose";
 			} else if (event.key === "r" || event.key === "R") {
 				nextTab = "runs";
+			} else if (event.key === "c" || event.key === "C") {
+				event.preventDefault();
+				onCreateScenario?.();
+				return;
 			}
 
 			if (!nextTab) {
@@ -769,7 +644,7 @@ export default function ScenarioConsole({
 		return () => {
 			window.removeEventListener("keydown", handleKeydown);
 		};
-	}, [currentSearch, pathname, router]);
+	}, [currentSearch, onCreateScenario, pathname, router]);
 
 	useEffect(() => {
 		const targetRunId = focusedRunId;
@@ -805,24 +680,6 @@ export default function ScenarioConsole({
 		};
 	}, [focusedRunId]);
 
-	useEffect(() => {
-		if (!selectedWorkflow) {
-			return;
-		}
-
-		setScenarioForm((current) => {
-			if (!current) {
-				return createScenarioFormState(selectedWorkflow);
-			}
-
-			if (current.workflowKey === selectedWorkflow.key) {
-				return current;
-			}
-
-			return createScenarioFormState(selectedWorkflow);
-		});
-	}, [selectedWorkflow]);
-
 	async function loadSnapshot({ silent = false }: { silent?: boolean } = {}) {
 		if (!silent) {
 			setIsRefreshing(true);
@@ -855,61 +712,14 @@ export default function ScenarioConsole({
 		}
 	}
 
-	async function handleCreateScenario() {
-		if (!(scenarioForm && selectedWorkflow)) {
-			toast.error("Scenario form is unavailable.");
-			return;
-		}
-
-		if (!(scenarioForm.name.trim() && scenarioForm.prompt.trim())) {
-			toast.error("Scenario name and prompt are required.");
-			return;
-		}
-
-		setIsSavingScenario(true);
-
-		try {
-			const result = await createStudioScenario(
-				buildCreateScenarioInput(selectedWorkflow, {
-					...scenarioForm,
-					name: scenarioForm.name.trim(),
-					prompt: scenarioForm.prompt.trim(),
-				})
-			);
-
-			setSnapshot((current) => {
-				const nextSnapshot = {
-					...current,
-					scenarios: [result.data, ...current.scenarios],
-				};
-				onSnapshotChange?.(nextSnapshot);
-				return nextSnapshot;
-			});
-			setRunDrafts((current) => ({
-				...current,
-				[result.data.id]: createRunDraft(result.data.id),
-			}));
-			onScenarioSelect?.(result.data.id);
-			setScenarioForm(createScenarioFormState(selectedWorkflow));
-			router.replace(buildConsoleHref(pathname, currentSearch, "launch"), {
-				scroll: false,
-			});
-			toast.success("Scenario saved.");
-		} catch (createError) {
-			toast.error(
-				createError instanceof Error
-					? createError.message
-					: "Unable to save scenario."
-			);
-		} finally {
-			setIsSavingScenario(false);
-		}
-	}
-
 	async function handleLaunchRun(scenario: ScenarioRecord) {
 		const draft = runDrafts[scenario.id] ?? createRunDraft(scenario.id);
+		const workflow =
+			workflows.find((item) => item.key === scenario.workflowKey) ?? null;
+		const requiresInputImage = Boolean(workflow?.requiresInputImage);
+		const inputImageUrl = draft.inputImageUrl?.trim() ?? "";
 
-		if (!draft.inputImageUrl.trim()) {
+		if (requiresInputImage && !inputImageUrl) {
 			toast.error("Upload an image or paste a URL first.");
 			return;
 		}
@@ -917,10 +727,11 @@ export default function ScenarioConsole({
 		setSubmittingRunId(scenario.id);
 
 		try {
-			const result = await launchStudioRun({
-				inputImageUrl: draft.inputImageUrl.trim(),
-				scenarioId: scenario.id,
-			});
+			const launchInput: LaunchRunInput = { scenarioId: scenario.id };
+			if (requiresInputImage) {
+				launchInput.inputImageUrl = inputImageUrl;
+			}
+			const result = await launchStudioRun(launchInput);
 
 			setSnapshot((current) => {
 				const nextSnapshot = {
@@ -1015,91 +826,18 @@ export default function ScenarioConsole({
 		}
 	}
 
-	function renderComposeTab() {
-		if (!(scenarioForm && selectedWorkflow)) {
-			return (
-				<div className="rounded-lg bg-rose-500/10 px-3 py-2 text-rose-700 text-xs dark:text-rose-300">
-					{error ?? "Scenario form is unavailable."}
-				</div>
-			);
-		}
-
-		return (
-			<div className="grid gap-3">
-				{suggestedPresets.length > 0 ? (
-					<details className="group rounded-lg bg-foreground/[0.03] open:bg-foreground/[0.05]">
-						<summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-[11px] text-muted-foreground transition hover:text-foreground">
-							<span className="inline-flex items-center gap-1.5">
-								<Package2 className="size-3" />
-								<span>Asset presets ({suggestedPresets.length})</span>
-							</span>
-							<ChevronDown className="size-3 transition-transform group-open:rotate-180" />
-						</summary>
-						<div className="grid gap-1.5 px-3 pb-3">
-							{suggestedPresets.slice(0, 3).map((preset) => (
-								<div
-									className="grid gap-1 rounded-md bg-background/40 px-2.5 py-2"
-									key={preset.id}
-								>
-									<div className="flex items-start justify-between gap-2">
-										<p className="min-w-0 truncate text-[11px]">
-											{preset.name}
-										</p>
-										<span
-											className={cn(
-												"shrink-0 rounded-full px-1.5 py-0.5 text-[10px]",
-												presetStatusTone[preset.status]
-											)}
-										>
-											{preset.matchedAssets}/{preset.assetCount}
-										</span>
-									</div>
-									<a
-										className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
-										href={preset.sourceUrl}
-										rel="noreferrer noopener"
-										target="_blank"
-									>
-										<ExternalLink className="size-2.5" />
-										Source
-									</a>
-								</div>
-							))}
-						</div>
-					</details>
-				) : null}
-
-				<ComposeForm
-					adminLorasHref={adminLorasHref}
-					availableLoras={availableLoras}
-					form={scenarioForm}
-					isSubmitting={isSavingScenario}
-					onFormChange={setScenarioForm}
-					onSubmit={handleCreateScenario}
-					workflows={workflows}
-				/>
-			</div>
-		);
-	}
-
 	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: launch tab layout
 	function renderLaunchTab() {
 		if (!selectedScenario) {
 			return (
 				<EmptyState
 					action={
-						<Button
-							onClick={() =>
-								router.replace(
-									buildConsoleHref(pathname, currentSearch, "compose"),
-									{ scroll: false }
-								)
-							}
-							size="sm"
-						>
-							<Plus className="size-3.5" />
-							Compose scenario
-						</Button>
+						onCreateScenario ? (
+							<Button onClick={onCreateScenario} size="sm">
+								<Plus className="size-3.5" />
+								Compose scenario
+							</Button>
+						) : null
 					}
 					hint="The launch panel stays pinned to the active scenario."
 					message="Create or select a scenario to launch."
@@ -1110,11 +848,16 @@ export default function ScenarioConsole({
 		const storageLabel = getStorageLabel(
 			selectedRunDraft?.uploadStorage ?? null
 		);
+		const requiresInputImage = Boolean(
+			selectedScenarioWorkflow?.requiresInputImage
+		);
 		const hasValidPreview = previewableUrlPattern.test(
 			selectedRunDraft?.inputImageUrl ?? ""
 		);
 		const isReadyToLaunch =
-			Boolean(selectedRunDraft?.inputImageUrl?.trim()) && !isUploadingImage;
+			(!requiresInputImage ||
+				Boolean(selectedRunDraft?.inputImageUrl?.trim())) &&
+			!isUploadingImage;
 
 		return (
 			<div className="grid gap-3">
@@ -1146,165 +889,167 @@ export default function ScenarioConsole({
 					</div>
 				</div>
 
-				<div className="grid gap-2">
-					<div className="flex items-center justify-between gap-2">
-						<SectionLabel>Input image</SectionLabel>
-						{storageLabel ? (
-							<span className="rounded-full bg-foreground/[0.05] px-2 py-0.5 text-[10px] text-muted-foreground uppercase tracking-wide">
-								{storageLabel}
-							</span>
-						) : null}
-					</div>
-					<input
-						accept="image/*"
-						className="sr-only"
-						id={fileInputId}
-						onChange={(event) => {
-							const file = event.target.files?.[0];
-
-							if (file) {
-								handleUploadFile(file).catch(() => undefined);
-							}
-
-							event.target.value = "";
-						}}
-						ref={fileInputRef}
-						type="file"
-					/>
-
-					{hasValidPreview ? (
-						// biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone for file input
-						<div
-							className="group relative overflow-hidden rounded-xl border border-foreground/8"
-							onDragOver={(event) => {
-								event.preventDefault();
-							}}
-							onDrop={(event) => {
-								event.preventDefault();
-								const file = event.dataTransfer.files?.[0];
+				{requiresInputImage ? (
+					<div className="grid gap-2">
+						<div className="flex items-center justify-between gap-2">
+							<SectionLabel>Input image</SectionLabel>
+							{storageLabel ? (
+								<span className="rounded-full bg-foreground/[0.05] px-2 py-0.5 text-[10px] text-muted-foreground uppercase tracking-wide">
+									{storageLabel}
+								</span>
+							) : null}
+						</div>
+						<input
+							accept="image/*"
+							className="sr-only"
+							id={fileInputId}
+							onChange={(event) => {
+								const file = event.target.files?.[0];
 
 								if (file) {
 									handleUploadFile(file).catch(() => undefined);
 								}
+
+								event.target.value = "";
 							}}
-						>
+							ref={fileInputRef}
+							type="file"
+						/>
+
+						{hasValidPreview ? (
+							// biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone for file input
 							<div
-								className="aspect-video bg-center bg-cover bg-muted/10 bg-no-repeat"
-								style={{
-									backgroundImage: `url("${selectedRunDraft?.inputImageUrl}")`,
+								className="group relative overflow-hidden rounded-xl border border-foreground/8"
+								onDragOver={(event) => {
+									event.preventDefault();
 								}}
-							/>
-							<div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-1.5 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-2 pt-8 pb-2">
+								onDrop={(event) => {
+									event.preventDefault();
+									const file = event.dataTransfer.files?.[0];
+
+									if (file) {
+										handleUploadFile(file).catch(() => undefined);
+									}
+								}}
+							>
+								<div
+									className="aspect-video bg-center bg-cover bg-muted/10 bg-no-repeat"
+									style={{
+										backgroundImage: `url("${selectedRunDraft?.inputImageUrl}")`,
+									}}
+								/>
+								<div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-1.5 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-2 pt-8 pb-2">
+									<button
+										className="rounded-lg bg-white/15 px-2.5 py-1 text-[11px] text-white backdrop-blur-sm transition hover:bg-white/25"
+										onClick={() => fileInputRef.current?.click()}
+										type="button"
+									>
+										<Upload className="mr-1 inline size-3" />
+										Replace
+									</button>
+									<button
+										aria-label="Clear input image"
+										className="inline-flex size-7 items-center justify-center rounded-lg bg-white/15 text-white backdrop-blur-sm transition hover:bg-rose-500/60"
+										onClick={() => {
+											setRunDrafts((current) => ({
+												...current,
+												[selectedScenario.id]: {
+													...(current[selectedScenario.id] ??
+														createRunDraft(selectedScenario.id)),
+													inputImageUrl: "",
+													scenarioId: selectedScenario.id,
+													uploadStorage: null,
+												},
+											}));
+										}}
+										type="button"
+									>
+										<Trash2 className="size-3" />
+									</button>
+								</div>
+							</div>
+						) : (
+							// biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone for file input
+							<div
+								className="grid gap-3 rounded-xl border border-foreground/10 border-dashed px-3 py-4 transition hover:border-foreground/20 hover:bg-muted/5"
+								onDragOver={(event) => {
+									event.preventDefault();
+								}}
+								onDrop={(event) => {
+									event.preventDefault();
+									const file = event.dataTransfer.files?.[0];
+
+									if (file) {
+										handleUploadFile(file).catch(() => undefined);
+									}
+								}}
+							>
 								<button
-									className="rounded-lg bg-white/15 px-2.5 py-1 text-[11px] text-white backdrop-blur-sm transition hover:bg-white/25"
+									className="flex items-center gap-2.5 text-left"
 									onClick={() => fileInputRef.current?.click()}
 									type="button"
 								>
-									<Upload className="mr-1 inline size-3" />
-									Replace
+									<div className="flex size-9 items-center justify-center rounded-lg bg-muted/15 dark:bg-muted/10">
+										{isUploadingImage ? (
+											<Loader2 className="size-4 animate-spin" />
+										) : (
+											<ImageUp className="size-4 text-muted-foreground" />
+										)}
+									</div>
+									<div className="min-w-0">
+										<p className="text-xs">Upload or drop image</p>
+										<p className="text-[11px] text-muted-foreground">
+											PNG, JPG, WEBP, GIF, AVIF
+										</p>
+									</div>
 								</button>
-								<button
-									aria-label="Clear input image"
-									className="inline-flex size-7 items-center justify-center rounded-lg bg-white/15 text-white backdrop-blur-sm transition hover:bg-rose-500/60"
-									onClick={() => {
+
+								{isUploadingImage ? (
+									<div className="grid gap-1">
+										<div className="h-1 overflow-hidden rounded-full bg-foreground/8">
+											<div
+												className="h-full rounded-full bg-foreground transition-[width]"
+												style={{ width: `${uploadProgressPct}%` }}
+											/>
+										</div>
+										<p className="text-[11px] text-muted-foreground">
+											{uploadProgressPct}%
+										</p>
+									</div>
+								) : (
+									<div className="flex items-center gap-2">
+										<div className="h-px flex-1 bg-foreground/8" />
+										<span className="text-[11px] text-muted-foreground">
+											or paste URL
+										</span>
+										<div className="h-px flex-1 bg-foreground/8" />
+									</div>
+								)}
+
+								<Input
+									onChange={(event) => {
+										const value = event.target.value;
+
 										setRunDrafts((current) => ({
 											...current,
 											[selectedScenario.id]: {
 												...(current[selectedScenario.id] ??
 													createRunDraft(selectedScenario.id)),
-												inputImageUrl: "",
+												inputImageUrl: value,
 												scenarioId: selectedScenario.id,
 												uploadStorage: null,
 											},
 										}));
 									}}
-									type="button"
-								>
-									<Trash2 className="size-3" />
-								</button>
+									placeholder="https://..."
+									value={selectedRunDraft?.inputImageUrl ?? ""}
+								/>
 							</div>
-						</div>
-					) : (
-						// biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone for file input
-						<div
-							className="grid gap-3 rounded-xl border border-foreground/10 border-dashed px-3 py-4 transition hover:border-foreground/20 hover:bg-muted/5"
-							onDragOver={(event) => {
-								event.preventDefault();
-							}}
-							onDrop={(event) => {
-								event.preventDefault();
-								const file = event.dataTransfer.files?.[0];
+						)}
+					</div>
+				) : null}
 
-								if (file) {
-									handleUploadFile(file).catch(() => undefined);
-								}
-							}}
-						>
-							<button
-								className="flex items-center gap-2.5 text-left"
-								onClick={() => fileInputRef.current?.click()}
-								type="button"
-							>
-								<div className="flex size-9 items-center justify-center rounded-lg bg-muted/15 dark:bg-muted/10">
-									{isUploadingImage ? (
-										<Loader2 className="size-4 animate-spin" />
-									) : (
-										<ImageUp className="size-4 text-muted-foreground" />
-									)}
-								</div>
-								<div className="min-w-0">
-									<p className="text-xs">Upload or drop image</p>
-									<p className="text-[11px] text-muted-foreground">
-										PNG, JPG, WEBP, GIF, AVIF
-									</p>
-								</div>
-							</button>
-
-							{isUploadingImage ? (
-								<div className="grid gap-1">
-									<div className="h-1 overflow-hidden rounded-full bg-foreground/8">
-										<div
-											className="h-full rounded-full bg-foreground transition-[width]"
-											style={{ width: `${uploadProgressPct}%` }}
-										/>
-									</div>
-									<p className="text-[11px] text-muted-foreground">
-										{uploadProgressPct}%
-									</p>
-								</div>
-							) : (
-								<div className="flex items-center gap-2">
-									<div className="h-px flex-1 bg-foreground/8" />
-									<span className="text-[11px] text-muted-foreground">
-										or paste URL
-									</span>
-									<div className="h-px flex-1 bg-foreground/8" />
-								</div>
-							)}
-
-							<Input
-								onChange={(event) => {
-									const value = event.target.value;
-
-									setRunDrafts((current) => ({
-										...current,
-										[selectedScenario.id]: {
-											...(current[selectedScenario.id] ??
-												createRunDraft(selectedScenario.id)),
-											inputImageUrl: value,
-											scenarioId: selectedScenario.id,
-											uploadStorage: null,
-										},
-									}));
-								}}
-								placeholder="https://..."
-								value={selectedRunDraft?.inputImageUrl ?? ""}
-							/>
-						</div>
-					)}
-				</div>
-
-				{recentReferences.length > 0 ? (
+				{requiresInputImage && recentReferences.length > 0 ? (
 					<div className="grid gap-1.5">
 						<SectionLabel>Recent inputs</SectionLabel>
 						<RecentInputPicker
@@ -1427,17 +1172,7 @@ export default function ScenarioConsole({
 		);
 	}
 
-	const content = (() => {
-		if (activeTab === "compose") {
-			return renderComposeTab();
-		}
-
-		if (activeTab === "launch") {
-			return renderLaunchTab();
-		}
-
-		return renderRunsTab();
-	})();
+	const content = activeTab === "launch" ? renderLaunchTab() : renderRunsTab();
 
 	const tabs: {
 		badge?: number;
@@ -1448,7 +1183,6 @@ export default function ScenarioConsole({
 		shortcut: string;
 	}[] = [
 		{ icon: Sparkles, id: "launch", label: "Launch", shortcut: "L" },
-		{ icon: Plus, id: "compose", label: "Compose", shortcut: "C" },
 		{
 			badge: selectedScenarioRuns.length,
 			dot: activeRunCount > 0,
@@ -1460,9 +1194,11 @@ export default function ScenarioConsole({
 	];
 
 	return (
-		<section className={cn("studio-surface flex min-h-0 flex-col", className)}>
+		<section
+			className={cn("studio-surface flex min-h-0 min-w-0 flex-col", className)}
+		>
 			<div className="flex items-center justify-between gap-2 px-3 py-2.5">
-				<div className="flex items-center gap-2">
+				<div className="flex min-w-0 items-center gap-2">
 					<SectionLabel>Dock</SectionLabel>
 					{activeRunCount > 0 ? (
 						<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
@@ -1472,19 +1208,27 @@ export default function ScenarioConsole({
 					) : null}
 				</div>
 
-				<IconButton
-					hint="Refresh snapshot"
-					label="Refresh snapshot"
-					onClick={() => {
-						loadSnapshot({ silent: false }).catch(() => undefined);
-					}}
-				>
-					{isRefreshing ? (
-						<Loader2 className="size-3.5 animate-spin" />
-					) : (
-						<RefreshCw className="size-3.5" />
-					)}
-				</IconButton>
+				<div className="flex items-center gap-1">
+					{onCreateScenario ? (
+						<Button onClick={onCreateScenario} size="xs" variant="outline">
+							<Plus className="size-3" />
+							Compose
+						</Button>
+					) : null}
+					<IconButton
+						hint="Refresh snapshot"
+						label="Refresh snapshot"
+						onClick={() => {
+							loadSnapshot({ silent: false }).catch(() => undefined);
+						}}
+					>
+						{isRefreshing ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<RefreshCw className="size-3.5" />
+						)}
+					</IconButton>
+				</div>
 			</div>
 
 			<ScenarioInfoHeader scenario={selectedScenario} />
@@ -1536,7 +1280,9 @@ export default function ScenarioConsole({
 				})}
 			</nav>
 
-			<div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">{content}</div>
+			<div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3">
+				{content}
+			</div>
 
 			{error ? (
 				<div className="rounded-b-lg bg-rose-500/10 px-3 py-2 text-rose-700 text-xs dark:text-rose-300">

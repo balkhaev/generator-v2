@@ -269,6 +269,10 @@ export function buildCreateScenarioInput(
 	for (const parameter of workflow.parameters) {
 		const rawValue = form.params[parameter.key]?.trim() ?? "";
 
+		if (parameter.optional && rawValue === "") {
+			continue;
+		}
+
 		if (parameter.type === "number") {
 			if (rawValue === "") {
 				continue;

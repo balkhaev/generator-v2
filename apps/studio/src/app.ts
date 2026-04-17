@@ -70,13 +70,20 @@ interface WorkflowDefinition {
 	name: string;
 	parameters: Array<{
 		defaultValue: string;
+		enumValues?: readonly string[];
 		helperText: string;
 		key: string;
 		kind?: string;
 		label: string;
+		max?: number;
+		min?: number;
+		optional?: boolean;
+		step?: number;
 		type: string;
+		unit?: string;
 	}>;
 	promptHint: string;
+	requiresInputImage: boolean;
 	summary: string;
 }
 
@@ -146,13 +153,20 @@ function normalizeWorkflowDefinition(
 		name: workflow.name,
 		parameters: (workflow.parameterFields ?? []).map((parameter) => ({
 			defaultValue: stringifyParamValue(workflow.defaults?.[parameter.key]),
+			...(parameter.enumValues ? { enumValues: parameter.enumValues } : {}),
 			helperText: parameter.description,
 			key: parameter.key,
 			...(parameter.kind ? { kind: parameter.kind } : {}),
 			label: parameter.label,
+			...(parameter.max === undefined ? {} : { max: parameter.max }),
+			...(parameter.min === undefined ? {} : { min: parameter.min }),
+			...(parameter.optional ? { optional: parameter.optional } : {}),
+			...(parameter.step === undefined ? {} : { step: parameter.step }),
 			type: parameter.type,
+			...(parameter.unit ? { unit: parameter.unit } : {}),
 		})),
 		promptHint: createPromptHint(workflow.name),
+		requiresInputImage: Boolean(workflow.requiresInputImage),
 		summary: workflow.description,
 	};
 }

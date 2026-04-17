@@ -44,7 +44,7 @@ export interface StudioRunRecord {
 }
 
 export interface CreateStudioRunInput {
-	inputImageUrl: string;
+	inputImageUrl?: string;
 	scenarioId: string;
 }
 

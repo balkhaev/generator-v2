@@ -1,27 +1,84 @@
 import { describe, expect, it } from "bun:test";
+import type { S3StorageConfig } from "@generator/storage";
+
 import { createStorageAdapter } from "@/providers/storage";
 
+const ownedBucketErrorPattern = /must be hosted in our S3/u;
+const unsupportedSchemeErrorPattern = /must use http\(s\) or data: scheme/u;
+
+const config: S3StorageConfig = {
+	accessKeyId: "test",
+	bucket: "generator",
+	endpoint: "https://hel1.example.com",
+	publicBaseUrl: "https://cdn.example.com/generator",
+	region: "hel1",
+	secretAccessKey: "test",
+};
+
+function createTestAdapter() {
+	const writes: Array<{ body: unknown; key: string }> = [];
+	const adapter = createStorageAdapter({
+		artifactPersister: {
+			isOwnedAssetUrl(url) {
+				return url.startsWith(`${config.publicBaseUrl}/`);
+			},
+			persistArtifactUrl({ url }) {
+				if (url.startsWith("data:") || url.startsWith(config.publicBaseUrl)) {
+					return Promise.resolve(url);
+				}
+				const persisted = `${config.publicBaseUrl}/persisted/${encodeURIComponent(url)}`;
+				writes.push({ body: url, key: persisted });
+				return Promise.resolve(persisted);
+			},
+			persistArtifactUrls({ urls }) {
+				return Promise.all(
+					urls.map((url) => this.persistArtifactUrl({ executionId: "x", url }))
+				);
+			},
+		},
+		config,
+	});
+	return { adapter, writes };
+}
+
 describe("storage adapter", () => {
-	it("preserves data urls for inline artifacts", () => {
-		const adapter = createStorageAdapter({
-			inputBaseUrl: "https://assets.example.com/input",
-			outputBaseUrl: "https://assets.example.com/output",
-		});
-
-		const dataUrl =
-			"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
-
-		expect(adapter.normalizeOutputUrl(dataUrl)).toBe(dataUrl);
+	it("accepts data URLs as input image", () => {
+		const { adapter } = createTestAdapter();
+		const dataUrl = "data:image/svg+xml;base64,abc";
+		expect(adapter.normalizeInputImageUrl(dataUrl)).toBe(dataUrl);
 	});
 
-	it("prefixes relative output paths with the configured base url", () => {
-		const adapter = createStorageAdapter({
-			inputBaseUrl: "https://assets.example.com/input",
-			outputBaseUrl: "https://assets.example.com/output",
-		});
+	it("accepts owned-bucket URLs as input image", () => {
+		const { adapter } = createTestAdapter();
+		const owned = `${config.publicBaseUrl}/studio-inputs/foo.png`;
+		expect(adapter.normalizeInputImageUrl(owned)).toBe(owned);
+	});
 
-		expect(adapter.normalizeOutputUrl("runs/demo/result.gif")).toBe(
-			"https://assets.example.com/output/runs/demo/result.gif"
-		);
+	it("rejects external HTTP(S) input image URLs", () => {
+		const { adapter } = createTestAdapter();
+		expect(() =>
+			adapter.normalizeInputImageUrl("https://v3.fal.media/files/abc.png")
+		).toThrow(ownedBucketErrorPattern);
+	});
+
+	it("rejects unsupported schemes", () => {
+		const { adapter } = createTestAdapter();
+		expect(() =>
+			adapter.normalizeInputImageUrl("ftp://example.com/x.png")
+		).toThrow(unsupportedSchemeErrorPattern);
+	});
+
+	it("delegates artifact persistence to the persister", async () => {
+		const { adapter } = createTestAdapter();
+		const persisted = await adapter.persistArtifactUrls({
+			executionId: "exec-1",
+			urls: [
+				"https://v3.fal.media/files/a.png",
+				`${config.publicBaseUrl}/already-here.png`,
+			],
+		});
+		expect(persisted).toHaveLength(2);
+		expect(persisted[0]).toContain(`${config.publicBaseUrl}/persisted/`);
+		expect(persisted[1]).toBe(`${config.publicBaseUrl}/already-here.png`);
 	});
 });

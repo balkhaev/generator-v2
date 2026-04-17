@@ -1,50 +1,32 @@
-import { getPublicAssetBaseUrl, getS3StorageEnv } from "@generator/env/server";
-
-const trailingSlashesPattern = /\/+$/u;
-const leadingSlashesPattern = /^\/+/u;
+import {
+	buildPublicAssetUrl,
+	createS3Client,
+	resolveS3StorageConfig,
+} from "@generator/storage";
 
 type PipelineStorageObject = ArrayBuffer | Blob | Uint8Array | string;
 
-function resolvePublicBaseUrl(config: ReturnType<typeof getS3StorageEnv>) {
-	const explicitBaseUrl = getPublicAssetBaseUrl();
-	if (explicitBaseUrl) {
-		return explicitBaseUrl;
-	}
-
-	return `${config.S3_ENDPOINT.replace(trailingSlashesPattern, "")}/${config.S3_BUCKET}`;
-}
-
 export function createPipelineStorage() {
-	const config = getS3StorageEnv();
-	const client = new globalThis.Bun.S3Client({
-		accessKeyId: config.S3_ACCESS_KEY_ID,
-		bucket: config.S3_BUCKET,
-		endpoint: config.S3_ENDPOINT,
-		region: config.S3_REGION,
-		secretAccessKey: config.S3_SECRET_ACCESS_KEY,
-	});
-	const publicBaseUrl = resolvePublicBaseUrl(config);
+	const config = resolveS3StorageConfig();
+	const client = createS3Client(config);
 
 	return {
 		buildPublicUrl(key: string) {
-			return new URL(
-				key.replace(leadingSlashesPattern, ""),
-				`${publicBaseUrl}/`
-			).toString();
+			return buildPublicAssetUrl(config, key);
 		},
 		getBucket() {
-			return config.S3_BUCKET;
+			return config.bucket;
 		},
 		getEndpoint() {
-			return config.S3_ENDPOINT;
+			return config.endpoint;
 		},
 		getRegion() {
-			return config.S3_REGION;
+			return config.region;
 		},
 		getCredentials() {
 			return {
-				accessKeyId: config.S3_ACCESS_KEY_ID,
-				secretAccessKey: config.S3_SECRET_ACCESS_KEY,
+				accessKeyId: config.accessKeyId,
+				secretAccessKey: config.secretAccessKey,
 			};
 		},
 		async writeObject(key: string, body: PipelineStorageObject) {

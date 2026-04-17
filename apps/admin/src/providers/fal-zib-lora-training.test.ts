@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
+import { inferImageFileExtension } from "@generator/storage";
+
 import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
-import { inferImageFileExtension } from "@/providers/lora-training-assets";
 
 describe("FalZibLoraTrainingRunner", () => {
 	const originalFetch = globalThis.fetch;

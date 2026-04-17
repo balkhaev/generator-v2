@@ -1,14 +1,14 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { env } from "@generator/env/server";
 import type { EventPublisher } from "@generator/events";
-import { z } from "zod";
 import {
 	buildZipFromBuffers,
 	downloadImageAsset,
 	persistLoraWeightsToS3,
-	type S3Config,
+	type S3StorageConfig,
 	uploadZipToS3,
-} from "@/providers/lora-training-assets";
+} from "@generator/storage";
+import { z } from "zod";
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -285,7 +285,7 @@ export class FalZibLoraTrainingRunner {
 	private readonly apiKey: string;
 	private readonly personsApiBaseUrl?: string;
 	private readonly trainingControlToken: string;
-	private readonly s3Config?: S3Config;
+	private readonly s3Config?: S3StorageConfig;
 	private readonly logger: Pick<Console, "info" | "error">;
 	private readonly eventPublisher: EventPublisher | null;
 
@@ -294,7 +294,7 @@ export class FalZibLoraTrainingRunner {
 		eventPublisher?: EventPublisher | null;
 		personsApiBaseUrl?: string;
 		trainingControlToken: string;
-		s3Config?: S3Config;
+		s3Config?: S3StorageConfig;
 		logger?: Pick<Console, "info" | "error">;
 	}) {
 		this.apiKey = options.apiKey;

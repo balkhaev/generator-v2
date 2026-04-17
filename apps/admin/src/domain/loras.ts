@@ -5,8 +5,10 @@ import type {
 	LoraRegistryEntry,
 	UpdateLoraInput,
 } from "@generator/contracts/loras";
-import type { S3Config } from "@/providers/lora-training-assets";
-import { cacheExternalLoraToS3 } from "@/providers/lora-training-assets";
+import {
+	cacheExternalLoraToS3,
+	type S3StorageConfig,
+} from "@generator/storage";
 import type { LoraRepository } from "@/repositories/loras";
 
 const slugAllowedCharsPattern = /[^a-z0-9]+/g;
@@ -22,16 +24,16 @@ export function slugify(value: string): string {
 interface LoraServiceDeps {
 	cacheLora?: (
 		sourceUrl: string,
-		s3Config: S3Config
+		s3Config: S3StorageConfig
 	) => Promise<{ key: string; sizeBytes: number; url: string }>;
 	generateId?: () => string;
 	repository: LoraRepository;
-	s3Config?: S3Config;
+	s3Config?: S3StorageConfig;
 }
 
 export class LoraRegistryService {
 	private readonly repository: LoraRepository;
-	private readonly s3Config?: S3Config;
+	private readonly s3Config?: S3StorageConfig;
 	private readonly cacheLora: NonNullable<LoraServiceDeps["cacheLora"]>;
 	private readonly generateId: () => string;
 

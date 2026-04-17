@@ -22,6 +22,7 @@
     "@generator/generator-client-server": "workspace:*",
     "@generator/http": "workspace:*",
     "@generator/queue": "workspace:*",
+    "@generator/storage": "workspace:*",
     "@generator/workflows": "workspace:*",
     "zod": "catalog:",
     "hono": "^4.8.2"

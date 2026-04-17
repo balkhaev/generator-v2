@@ -1,19 +1,18 @@
 import { env } from "@generator/env/server";
-import { Hono } from "hono";
-
-import type { LoraRegistryService } from "@/domain/loras";
-import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
 import {
 	cacheExternalLoraToS3,
-	type S3Config,
-} from "@/providers/lora-training-assets";
+	type S3StorageConfig,
+} from "@generator/storage";
+import { Hono } from "hono";
+import type { LoraRegistryService } from "@/domain/loras";
+import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
 import { resolveLoraListQuery } from "@/routes/loras";
 
 const bearerPrefixPattern = /^Bearer\s+/iu;
 
 export function createInternalRoutes(
 	service: PersonLoraTrainingControl,
-	s3Config?: S3Config,
+	s3Config?: S3StorageConfig,
 	loraRegistry?: LoraRegistryService
 ) {
 	const app = new Hono();

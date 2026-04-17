@@ -181,6 +181,33 @@ export class ExecutionService {
 		});
 	}
 
+	private async persistJobArtifacts(input: {
+		executionId: string;
+		rawUrls: string[];
+	}): Promise<
+		{ ok: true; urls: string[] } | { ok: false; errorSummary: string }
+	> {
+		try {
+			const urls = await this.storageAdapter.persistArtifactUrls({
+				executionId: input.executionId,
+				urls: input.rawUrls,
+			});
+			return { ok: true, urls };
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "unknown persistence error";
+			this.logger.error("generator.execution.persist-artifacts-failed", {
+				error: message,
+				executionId: input.executionId,
+				rawUrlCount: input.rawUrls.length,
+			});
+			return {
+				errorSummary: `Failed to persist artifacts to S3: ${message}`,
+				ok: false,
+			};
+		}
+	}
+
 	listWorkflows() {
 		return listWorkflows();
 	}
@@ -306,9 +333,11 @@ export class ExecutionService {
 			parsed.providerJobId,
 			parsed.providerEndpointId
 		);
-		const artifacts = workflow
-			.extractArtifactUrls(job.output)
-			.map((url) => this.storageAdapter.normalizeOutputUrl(url));
+		const rawArtifactUrls = workflow.extractArtifactUrls(job.output);
+		const artifacts = await this.storageAdapter.persistArtifactUrls({
+			executionId: parsed.providerJobId,
+			urls: rawArtifactUrls,
+		});
 
 		this.logger.info("generator.execution.status", {
 			debugCorrelationId: context?.debugCorrelationId ?? null,
@@ -420,13 +449,27 @@ export class ExecutionService {
 				submission.jobId,
 				submission.endpointId
 			);
-			const artifacts = workflow.extractArtifactUrls(job.output).map((url) => ({
-				url: this.storageAdapter.normalizeOutputUrl(url),
-			}));
+			const persistedArtifacts = await this.persistJobArtifacts({
+				executionId: execution.id,
+				rawUrls: workflow.extractArtifactUrls(job.output),
+			});
+			if (!persistedArtifacts.ok) {
+				const failed = await this.repository.updateExecution(execution.id, {
+					artifacts: [],
+					errorSummary: persistedArtifacts.errorSummary,
+					providerEndpointId: submission.endpointId,
+					providerJobId: submission.jobId,
+					status: "failed",
+				});
+				if (failed) {
+					await this.dispatchExecutionCallback(failed);
+				}
+				return;
+			}
 			const finalExecution = await this.repository.updateExecution(
 				execution.id,
 				{
-					artifacts,
+					artifacts: persistedArtifacts.urls.map((url) => ({ url })),
 					errorSummary: job.errorSummary,
 					providerEndpointId: submission.endpointId,
 					providerJobId: submission.jobId,
@@ -485,9 +528,22 @@ export class ExecutionService {
 		const now = Date.now();
 		const queuedForMs = now - execution.updatedAt.getTime();
 		const totalLifetimeMs = now - execution.createdAt.getTime();
-		const nextArtifacts = workflow
-			.extractArtifactUrls(job.output)
-			.map((url) => ({ url: this.storageAdapter.normalizeOutputUrl(url) }));
+		const persisted = await this.persistJobArtifacts({
+			executionId: execution.id,
+			rawUrls: workflow.extractArtifactUrls(job.output),
+		});
+		if (!persisted.ok) {
+			const failed = await this.repository.updateExecution(execution.id, {
+				artifacts: [],
+				errorSummary: persisted.errorSummary,
+				status: "failed",
+			});
+			if (failed) {
+				await this.dispatchExecutionCallback(failed);
+			}
+			return;
+		}
+		const nextArtifacts = persisted.urls.map((url) => ({ url }));
 		const artifactsChanged =
 			execution.artifacts.length !== nextArtifacts.length ||
 			execution.artifacts.some((a, i) => a.url !== nextArtifacts[i]?.url);

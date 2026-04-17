@@ -35,18 +35,37 @@ const eventConsumer = kafkaConfig
 	: null;
 
 let isShuttingDown = false;
+let resolveShutdown: (() => void) | null = null;
+const shutdownComplete = new Promise<void>((resolve) => {
+	resolveShutdown = resolve;
+});
 
-const shutdown = () => {
+const shutdown = async () => {
+	if (isShuttingDown) {
+		return;
+	}
 	isShuttingDown = true;
-	eventConsumer?.close().catch((error) => {
+	try {
+		await eventConsumer?.close();
+	} catch (error) {
 		console.error("studio.events.shutdown.error", {
+			message: error instanceof Error ? error.message : "unknown",
+		});
+	} finally {
+		resolveShutdown?.();
+	}
+};
+
+const handleSignal = () => {
+	shutdown().catch((error) => {
+		console.error("studio.shutdown.error", {
 			message: error instanceof Error ? error.message : "unknown",
 		});
 	});
 };
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", handleSignal);
+process.on("SIGINT", handleSignal);
 
 do {
 	try {
@@ -60,3 +79,5 @@ do {
 		await sleep(RECONCILE_INTERVAL_MS);
 	}
 } while (RECONCILE_WATCH && !isShuttingDown);
+
+await shutdownComplete;

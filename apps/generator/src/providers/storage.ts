@@ -1,68 +1,89 @@
-import { env } from "@generator/env/server";
+import {
+	type ArtifactPersister,
+	createArtifactPersister,
+	resolveS3StorageConfig,
+	type S3StorageConfig,
+} from "@generator/storage";
 
-const supportedInputSchemes = ["http:", "https:"];
-const supportedOutputSchemes = ["http:", "https:", "data:"];
-const leadingSlashesPattern = /^\/+/u;
+const dataUrlScheme = "data:";
 
-const DEFAULT_INPUT_BASE_URL = "https://assets.example.com/input";
-const DEFAULT_OUTPUT_BASE_URL = "https://assets.example.com/output";
-
-interface StorageConfig {
-	inputBaseUrl: string;
-	outputBaseUrl: string;
+export interface StorageAdapter {
+	/** Exposes the underlying persister for tests / migration tools. */
+	readonly artifactPersister: ArtifactPersister;
+	/**
+	 * Validates an external input image URL. Accepts:
+	 *   - `data:` URLs (inline previews / placeholders);
+	 *   - URLs that already live in our owned S3 bucket
+	 *     (i.e. `${publicBaseUrl}/...`).
+	 * Anything else is rejected so callers are forced to upload assets to our
+	 * S3 (`/api/input-assets` in studio, persons internal flows, etc.) before
+	 * passing them into the generator.
+	 */
+	normalizeInputImageUrl(url: string): string;
+	/**
+	 * Persists every artifact URL to our S3, returning the list of canonical
+	 * URLs in the same order. Already-owned URLs and `data:` URLs are returned
+	 * unchanged. External `http(s)` URLs (e.g. `https://*.fal.media/...`) are
+	 * downloaded and re-uploaded into `${publicBaseUrl}/<keyPrefix>/...`.
+	 */
+	persistArtifactUrls(input: {
+		executionId: string;
+		urls: string[];
+	}): Promise<string[]>;
 }
 
-export type StorageAdapter = ReturnType<typeof createStorageAdapter>;
+export interface CreateStorageAdapterOptions {
+	artifactPersister?: ArtifactPersister;
+	config?: S3StorageConfig;
+	logger?: Pick<Console, "info" | "warn" | "error">;
+}
 
-export function createStorageAdapter(config?: Partial<StorageConfig>) {
-	const resolveConfig = (): StorageConfig => {
-		if (config?.inputBaseUrl && config?.outputBaseUrl) {
-			return {
-				inputBaseUrl: config.inputBaseUrl,
-				outputBaseUrl: config.outputBaseUrl,
-			};
-		}
-
-		return {
-			inputBaseUrl:
-				config?.inputBaseUrl ??
-				env.COMFY_INPUT_BASE_URL ??
-				DEFAULT_INPUT_BASE_URL,
-			outputBaseUrl:
-				config?.outputBaseUrl ??
-				env.COMFY_OUTPUT_BASE_URL ??
-				DEFAULT_OUTPUT_BASE_URL,
-		};
-	};
+export function createStorageAdapter(
+	options: CreateStorageAdapterOptions = {}
+): StorageAdapter {
+	const config = options.config ?? resolveS3StorageConfig();
+	const persister =
+		options.artifactPersister ??
+		createArtifactPersister({
+			config,
+			logger: options.logger,
+		});
 
 	return {
-		normalizeInputImageUrl(inputImageUrl: string) {
-			const parsed = new URL(inputImageUrl);
-			if (!supportedInputSchemes.includes(parsed.protocol)) {
-				throw new Error("Input image must use http or https");
+		artifactPersister: persister,
+		normalizeInputImageUrl(url) {
+			const trimmed = url.trim();
+			if (!trimmed) {
+				throw new Error("Input image URL is required");
 			}
-			return parsed.toString();
-		},
-		normalizeOutputUrl(outputUrl: string) {
-			if (URL.canParse(outputUrl)) {
-				const parsed = new URL(outputUrl);
-				if (supportedOutputSchemes.includes(parsed.protocol)) {
-					return parsed.toString();
-				}
+			if (trimmed.startsWith(dataUrlScheme)) {
+				return trimmed;
 			}
 
-			const { outputBaseUrl } = resolveConfig();
-			return new URL(
-				outputUrl.replace(leadingSlashesPattern, ""),
-				`${outputBaseUrl}/`
-			).toString();
+			let parsed: URL;
+			try {
+				parsed = new URL(trimmed);
+			} catch {
+				throw new Error(`Input image URL is not a valid URL: ${trimmed}`);
+			}
+
+			if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+				throw new Error(
+					`Input image URL must use http(s) or data: scheme, got ${parsed.protocol}`
+				);
+			}
+
+			if (!persister.isOwnedAssetUrl(parsed.toString())) {
+				throw new Error(
+					`Input image URL must be hosted in our S3 (${config.publicBaseUrl}); ` +
+						`got ${parsed.toString()}. Upload it via /api/input-assets first.`
+				);
+			}
+
+			return parsed.toString();
 		},
-		createInputAssetKey(filename: string) {
-			const { inputBaseUrl } = resolveConfig();
-			return new URL(
-				filename.replace(leadingSlashesPattern, ""),
-				`${inputBaseUrl}/`
-			).toString();
+		persistArtifactUrls(input) {
+			return persister.persistArtifactUrls(input);
 		},
 	};
 }

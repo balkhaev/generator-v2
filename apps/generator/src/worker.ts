@@ -1,5 +1,6 @@
 import { env, getKafkaEventBusConfig } from "@generator/env/server";
 import { createKafkaEventPublisher } from "@generator/events";
+import { resolveS3StorageConfig } from "@generator/storage";
 
 import { ExecutionService } from "@/domain/executions";
 import { createFalClient } from "@/providers/fal";
@@ -22,6 +23,12 @@ if (!falKey) {
 	throw new Error("FAL_KEY is required for the generator worker");
 }
 
+const s3Config = resolveS3StorageConfig();
+const storageAdapter = createStorageAdapter({
+	config: s3Config,
+	logger: console,
+});
+
 const inferenceClient = createInferenceRouter({
 	fal: createFalClient({ apiKey: falKey }),
 });
@@ -30,7 +37,7 @@ const service = new ExecutionService(
 	createDrizzleExecutionRepository(),
 	createGeneratorExecutionQueueClient(redisUrl),
 	inferenceClient,
-	createStorageAdapter(),
+	storageAdapter,
 	console,
 	eventPublisher
 );

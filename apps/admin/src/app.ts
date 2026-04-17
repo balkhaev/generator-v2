@@ -13,15 +13,14 @@ import {
 	DEBUG_CORRELATION_HEADER,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
+import type { S3StorageConfig } from "@generator/storage";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-
 import type { AssetReleasePresetService } from "@/domain/asset-release-presets";
 import type { AssetReleaseService } from "@/domain/asset-releases";
 import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
-import type { S3Config } from "@/providers/lora-training-assets";
 import { createAssetReleasePresetRoutes } from "@/routes/asset-release-presets";
 import { createAssetReleaseRoutes } from "@/routes/asset-releases";
 import { createInternalRoutes } from "@/routes/internal";
@@ -46,7 +45,7 @@ interface AppOptions {
 	loadSetupStatus: () => Promise<AdminSetupStatus>;
 	loggerImpl?: Pick<Console, "info" | "error">;
 	loraRegistryService?: LoraRegistryService;
-	s3Config?: S3Config;
+	s3Config?: S3StorageConfig;
 	studioBaseUrl: string;
 }
 

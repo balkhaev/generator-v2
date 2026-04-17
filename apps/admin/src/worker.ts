@@ -1,18 +1,13 @@
-import {
-	env,
-	getKafkaEventBusConfig,
-	normalizeS3RuntimeEnv,
-} from "@generator/env/server";
+import { env, getKafkaEventBusConfig } from "@generator/env/server";
 import {
 	createKafkaEventConsumer,
 	createKafkaEventPublisher,
 	eventTopics,
 } from "@generator/events";
+import { resolveS3StorageConfig } from "@generator/storage";
 
 import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
 import { createPersonLoraTrainingWorker } from "@/queue/person-lora-training";
-
-const trailingSlashesPattern = /\/+$/u;
 
 const redisUrl = env.REDIS_URL;
 const personsApiUrl = env.PERSONS_API_URL;
@@ -29,30 +24,7 @@ if (!falKey) {
 
 const trainingControlToken = env.TRAINING_CONTROL_TOKEN;
 
-const s3Env = normalizeS3RuntimeEnv(process.env);
-const s3Bucket = s3Env.S3_BUCKET?.trim();
-const s3Endpoint = s3Env.S3_ENDPOINT;
-const s3AccessKey = s3Env.S3_ACCESS_KEY_ID?.trim();
-const s3SecretKey = s3Env.S3_SECRET_ACCESS_KEY?.trim();
-const s3Config =
-	s3Bucket && s3Endpoint && s3AccessKey && s3SecretKey
-		? {
-				bucket: s3Bucket,
-				endpoint: s3Endpoint,
-				accessKey: s3AccessKey,
-				secretKey: s3SecretKey,
-				region: s3Env.S3_REGION?.trim() ?? "us-east-1",
-				publicUrl:
-					s3Env.S3_PUBLIC_URL?.trim() ??
-					`${s3Endpoint.replace(trailingSlashesPattern, "")}/${s3Bucket}`,
-			}
-		: undefined;
-
-if (!s3Config) {
-	throw new Error(
-		"S3_BUCKET, S3_ENDPOINT, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required for the admin training worker"
-	);
-}
+const s3Config = resolveS3StorageConfig();
 
 if (!(personsApiUrl || eventPublisher)) {
 	throw new Error(

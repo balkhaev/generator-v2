@@ -18,6 +18,7 @@ import {
 	DEBUG_CORRELATION_HEADER,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
+import type { S3ClientLike, S3StorageConfig } from "@generator/storage";
 import { listWorkflows } from "@generator/workflows";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -59,6 +60,8 @@ interface AppOptions {
 	) => Promise<{ session: unknown; user: unknown } | null>;
 	loggerImpl?: Pick<Console, "info" | "error" | "warn">;
 	repository: StudioRepository;
+	s3Client?: S3ClientLike;
+	s3Config: S3StorageConfig;
 }
 
 interface WorkflowDefinition {
@@ -287,7 +290,11 @@ export function createApp(options: AppOptions) {
 	}
 	app.route(
 		"/api/input-assets",
-		createInputAssetRoutes({ logger: options.loggerImpl })
+		createInputAssetRoutes({
+			logger: options.loggerImpl,
+			s3Client: options.s3Client,
+			s3Config: options.s3Config,
+		})
 	);
 	app.get("/api/asset-releases", async (c) => {
 		const limit = Number(c.req.query("limit") ?? 6);

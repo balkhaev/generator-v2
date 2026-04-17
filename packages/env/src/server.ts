@@ -4,7 +4,14 @@ import { z } from "zod";
 
 const s3EndpointHasHttpSchemePattern = /^https?:\/\//iu;
 
-/** Accepts Hetzner-style `S3_ACCESS_KEY` / `S3_SECRET_KEY` and bare host endpoints. */
+/**
+ * Normalizes S3-related env vars into a canonical shape:
+ *   - Adds `https://` prefix to bare host `S3_ENDPOINT` values
+ *   - Maps Hetzner-style `S3_ACCESS_KEY` / `S3_SECRET_KEY` aliases onto the
+ *     canonical `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` names
+ *   - Maps legacy `S3_PUBLIC_URL` / `ASSET_PUBLIC_BASE_URL` onto the canonical
+ *     `S3_PUBLIC_BASE_URL`
+ */
 export function normalizeS3RuntimeEnv(
 	runtimeEnv: Record<string, string | undefined>
 ): Record<string, string | undefined> {
@@ -26,6 +33,14 @@ export function normalizeS3RuntimeEnv(
 		out.S3_SECRET_ACCESS_KEY?.trim() || out.S3_SECRET_KEY?.trim();
 	if (secretAccessKey) {
 		out.S3_SECRET_ACCESS_KEY = secretAccessKey;
+	}
+
+	const publicBaseUrl =
+		out.S3_PUBLIC_BASE_URL?.trim() ||
+		out.S3_PUBLIC_URL?.trim() ||
+		out.ASSET_PUBLIC_BASE_URL?.trim();
+	if (publicBaseUrl) {
+		out.S3_PUBLIC_BASE_URL = publicBaseUrl;
 	}
 
 	return out;
@@ -106,10 +121,8 @@ const serverSchema = {
 	FAL_KEY: z.string().min(1).optional(),
 	XAI_API_KEY: z.string().min(1).optional(),
 
-	// Public asset URLs
-	ASSET_PUBLIC_BASE_URL: optionalUrlSchema,
-	COMFY_INPUT_BASE_URL: optionalUrlSchema,
-	COMFY_OUTPUT_BASE_URL: optionalUrlSchema,
+	// Public asset URLs (S3_PUBLIC_BASE_URL is canonical; S3_PUBLIC_URL and
+	// ASSET_PUBLIC_BASE_URL are accepted as aliases via normalizeS3RuntimeEnv).
 	S3_PUBLIC_BASE_URL: optionalUrlSchema,
 
 	// S3 storage
@@ -272,19 +285,6 @@ export function getKafkaEventBusConfig(clientIdSuffix: string) {
 				: undefined,
 		ssl: env.KAFKA_SSL,
 	};
-}
-
-/**
- * Базовый URL публичных ассетов; fallback на legacy-переменные сохранён для
- * плавной миграции. Возвращает undefined, если ни одна переменная не задана.
- */
-export function getPublicAssetBaseUrl(): string | undefined {
-	return (
-		env.ASSET_PUBLIC_BASE_URL ??
-		env.COMFY_INPUT_BASE_URL ??
-		env.S3_PUBLIC_BASE_URL ??
-		undefined
-	);
 }
 
 const s3StorageEnvSchema = z.object({

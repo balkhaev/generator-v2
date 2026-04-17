@@ -21,6 +21,7 @@
     "@generator/events": "workspace:*",
     "@generator/generator-client-server": "workspace:*",
     "@generator/http": "workspace:*",
+    "@generator/storage": "workspace:*",
     "@generator/workflows": "workspace:*",
     "hono": "^4.8.2"
   },

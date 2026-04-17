@@ -11,6 +11,7 @@ import {
 	getTrainingControlToken,
 } from "@generator/env/server";
 import { createGeneratorExecutionClient } from "@generator/generator-client-server";
+import { resolveS3StorageConfig } from "@generator/storage";
 import { createApp } from "@/app";
 import { createAdminLoraClient } from "@/clients/admin-loras";
 import { createDrizzleStudioRepository } from "@/repositories/studio";
@@ -37,6 +38,7 @@ const app = createApp({
 	getSession: getRequestSession,
 	loggerImpl: console,
 	repository,
+	s3Config: resolveS3StorageConfig(process.env),
 });
 
 ensureDevUser();

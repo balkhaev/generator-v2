@@ -1,4 +1,4 @@
-import { getS3StorageEnv } from "@generator/env/server";
+import { createS3Client, resolveS3StorageConfig } from "@generator/storage";
 
 import type {
 	AssetStorage,
@@ -6,16 +6,8 @@ import type {
 } from "@/domain/asset-releases";
 
 export function createAssetStorage() {
-	const config = getS3StorageEnv();
-	const client = new globalThis.Bun.S3Client({
-		accessKeyId: config.S3_ACCESS_KEY_ID,
-		bucket: config.S3_BUCKET,
-		endpoint: config.S3_ENDPOINT,
-		region: config.S3_REGION,
-		secretAccessKey: config.S3_SECRET_ACCESS_KEY,
-	});
-
-	return new BunS3AssetStorage(client);
+	const config = resolveS3StorageConfig();
+	return new BunS3AssetStorage(createS3Client(config));
 }
 
 class BunS3AssetStorage implements AssetStorage {

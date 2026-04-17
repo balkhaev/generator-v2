@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import type { LoraRegistryEntry } from "@generator/contracts/loras";
+import type { S3StorageConfig } from "@generator/storage";
 import { LoraRegistryService, slugify } from "@/domain/loras";
 import type {
 	CreateLoraRecordInput,
@@ -8,18 +9,14 @@ import type {
 	UpdateLoraRecordInput,
 } from "@/repositories/loras";
 
-const fakeS3Config = {
+const fakeS3Config: S3StorageConfig = {
+	accessKeyId: "ak",
 	bucket: "test",
 	endpoint: "https://s3.test",
-	region: "us-east-1",
-	accessKeyId: "ak",
-	secretAccessKey: "sk",
 	publicBaseUrl: "https://cdn.test",
-} as unknown as Parameters<
-	LoraRegistryService["createFromUrl"]
->[0] extends unknown
-	? import("@/providers/lora-training-assets").S3Config
-	: never;
+	region: "us-east-1",
+	secretAccessKey: "sk",
+};
 
 function createInMemoryRepo(): LoraRepository & {
 	rows: Map<string, LoraRegistryEntry>;

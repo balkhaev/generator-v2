@@ -1,6 +1,17 @@
 import { describe, expect, it } from "bun:test";
+import type { S3StorageConfig } from "@generator/storage";
 
 import { createApp } from "@/app";
+
+const fakeS3Config: S3StorageConfig = {
+	accessKeyId: "test-key",
+	bucket: "test-bucket",
+	endpoint: "https://s3.example.com",
+	publicBaseUrl: "https://cdn.example.com",
+	region: "us-east-1",
+	secretAccessKey: "test-secret",
+};
+
 import { AssetReleaseReadService } from "@/domain/asset-releases-read";
 import type {
 	StudioArtifactEntity,
@@ -196,6 +207,7 @@ describe("studio backend", () => {
 				return Promise.resolve(null);
 			},
 			repository: createMemoryRepository(),
+			s3Config: fakeS3Config,
 		});
 
 		const response = await app.request("http://localhost/api/scenarios");
@@ -260,6 +272,7 @@ describe("studio backend", () => {
 				});
 			},
 			repository,
+			s3Config: fakeS3Config,
 		});
 
 		const scenarioResponse = await app.request(
@@ -327,6 +340,7 @@ describe("studio backend", () => {
 				});
 			},
 			repository: createMemoryRepository(),
+			s3Config: fakeS3Config,
 		});
 
 		const response = await app.request(
@@ -353,6 +367,7 @@ describe("studio backend", () => {
 				});
 			},
 			repository: createMemoryRepository(),
+			s3Config: fakeS3Config,
 		});
 
 		const response = await app.request(
@@ -370,7 +385,17 @@ describe("studio backend", () => {
 		]);
 	});
 
-	it("uploads input images for local studio launches", async () => {
+	it("uploads input images directly to the configured S3 bucket", async () => {
+		const writes: Array<{ key: string; size: number }> = [];
+		const fakeS3Client = {
+			file() {
+				throw new Error("not used");
+			},
+			write(key: string, body: Blob | File) {
+				writes.push({ key, size: body.size });
+				return Promise.resolve(body.size);
+			},
+		};
 		const app = createApp({
 			assetReleaseReadService: createAssetReleaseReadServiceStub(),
 			authHandler() {
@@ -386,6 +411,8 @@ describe("studio backend", () => {
 				});
 			},
 			repository: createMemoryRepository(),
+			s3Client: fakeS3Client as never,
+			s3Config: fakeS3Config,
 		});
 		const formData = new FormData();
 
@@ -406,14 +433,11 @@ describe("studio backend", () => {
 		const { upload } = (await uploadResponse.json()) as {
 			upload: { storage: string; url: string };
 		};
-		expect(upload.storage).toBe("local");
-		expect(upload.url).toContain("/api/input-assets/");
-
-		const fileResponse = await app.request(upload.url);
-
-		expect(fileResponse.status).toBe(200);
-		expect(fileResponse.headers.get("content-type")).toBe("image/png");
-		expect(await fileResponse.text()).toBe("studio-image");
+		expect(upload.storage).toBe("s3");
+		expect(upload.url.startsWith(`${fakeS3Config.publicBaseUrl}/`)).toBe(true);
+		expect(upload.url).toContain("studio-inputs/");
+		expect(writes).toHaveLength(1);
+		expect(writes[0]?.key.startsWith("studio-inputs/")).toBe(true);
 	});
 
 	it("returns a studio-native aggregate snapshot", async () => {
@@ -454,6 +478,7 @@ describe("studio backend", () => {
 				});
 			},
 			repository,
+			s3Config: fakeS3Config,
 		});
 
 		const response = await app.request("http://localhost/api/studio-snapshot");

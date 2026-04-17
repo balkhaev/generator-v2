@@ -3,6 +3,28 @@ import { GENERATOR_INTERNAL_TOKEN_HEADER } from "@generator/http/shared";
 
 import { createApp } from "@/app";
 import type { ExecutionEntity, ExecutionRepository } from "@/domain/executions";
+import type { StorageAdapter } from "@/providers/storage";
+
+function createTestStorageAdapter(): StorageAdapter {
+	const persister = {
+		isOwnedAssetUrl: () => true,
+		persistArtifactUrl({ url }: { url: string }) {
+			return Promise.resolve(url);
+		},
+		persistArtifactUrls({ urls }: { urls: string[] }) {
+			return Promise.resolve(urls);
+		},
+	};
+	return {
+		artifactPersister: persister,
+		normalizeInputImageUrl(url: string) {
+			return url;
+		},
+		persistArtifactUrls({ urls }) {
+			return Promise.resolve(urls);
+		},
+	};
+}
 
 function createMemoryExecutionRepository(): ExecutionRepository {
 	const executions = new Map<string, ExecutionEntity>();
@@ -70,17 +92,7 @@ describe("generator api", () => {
 						});
 					},
 				},
-				storageAdapter: {
-					createInputAssetKey(filename) {
-						return filename;
-					},
-					normalizeInputImageUrl(inputImageUrl) {
-						return inputImageUrl;
-					},
-					normalizeOutputUrl(outputUrl) {
-						return outputUrl;
-					},
-				},
+				storageAdapter: createTestStorageAdapter(),
 			});
 
 			const response = await app.request("http://localhost/api/executions", {
@@ -156,17 +168,7 @@ describe("generator api", () => {
 				},
 			},
 			inferenceClient,
-			{
-				createInputAssetKey(filename) {
-					return `https://assets.example.com/${filename}`;
-				},
-				normalizeInputImageUrl(inputImageUrl) {
-					return inputImageUrl;
-				},
-				normalizeOutputUrl(outputUrl) {
-					return outputUrl;
-				},
-			}
+			createTestStorageAdapter()
 		);
 		const app = createApp({
 			corsOrigin: "http://localhost:3001",
@@ -180,17 +182,7 @@ describe("generator api", () => {
 			},
 			executionRepository: repository,
 			inferenceClient,
-			storageAdapter: {
-				createInputAssetKey(filename) {
-					return `https://assets.example.com/${filename}`;
-				},
-				normalizeInputImageUrl(inputImageUrl) {
-					return inputImageUrl;
-				},
-				normalizeOutputUrl(outputUrl) {
-					return outputUrl;
-				},
-			},
+			storageAdapter: createTestStorageAdapter(),
 		});
 
 		const createResponse = await app.request(
@@ -292,17 +284,7 @@ describe("generator api", () => {
 				},
 			},
 			inferenceClient,
-			{
-				createInputAssetKey(filename) {
-					return filename;
-				},
-				normalizeInputImageUrl(inputImageUrl) {
-					return inputImageUrl;
-				},
-				normalizeOutputUrl(outputUrl) {
-					return outputUrl;
-				},
-			}
+			createTestStorageAdapter()
 		);
 		const app = createApp({
 			executionQueue: {
@@ -315,17 +297,7 @@ describe("generator api", () => {
 			},
 			executionRepository: repository,
 			inferenceClient,
-			storageAdapter: {
-				createInputAssetKey(filename) {
-					return filename;
-				},
-				normalizeInputImageUrl(inputImageUrl) {
-					return inputImageUrl;
-				},
-				normalizeOutputUrl(outputUrl) {
-					return outputUrl;
-				},
-			},
+			storageAdapter: createTestStorageAdapter(),
 		});
 
 		const createResponse = await app.request(
@@ -379,17 +351,7 @@ describe("generator api", () => {
 					throw new Error("not used");
 				},
 			},
-			storageAdapter: {
-				createInputAssetKey(filename) {
-					return filename;
-				},
-				normalizeInputImageUrl(inputImageUrl) {
-					return inputImageUrl;
-				},
-				normalizeOutputUrl(outputUrl) {
-					return outputUrl;
-				},
-			},
+			storageAdapter: createTestStorageAdapter(),
 		});
 
 		const response = await app.request("http://localhost/api/executions", {
@@ -452,17 +414,7 @@ describe("generator api", () => {
 				},
 			},
 			inferenceClient,
-			{
-				createInputAssetKey(filename) {
-					return filename;
-				},
-				normalizeInputImageUrl(inputImageUrl) {
-					return inputImageUrl;
-				},
-				normalizeOutputUrl(outputUrl) {
-					return outputUrl;
-				},
-			}
+			createTestStorageAdapter()
 		);
 		const app = createApp({
 			executionQueue: {
@@ -475,17 +427,7 @@ describe("generator api", () => {
 			},
 			executionRepository: repository,
 			inferenceClient,
-			storageAdapter: {
-				createInputAssetKey(filename) {
-					return filename;
-				},
-				normalizeInputImageUrl(inputImageUrl) {
-					return inputImageUrl;
-				},
-				normalizeOutputUrl(outputUrl) {
-					return outputUrl;
-				},
-			},
+			storageAdapter: createTestStorageAdapter(),
 		});
 
 		const createResponse = await app.request(
@@ -629,17 +571,7 @@ describe("generator api", () => {
 				},
 			},
 			inferenceClient,
-			{
-				createInputAssetKey(filename) {
-					return filename;
-				},
-				normalizeInputImageUrl(inputImageUrl) {
-					return inputImageUrl;
-				},
-				normalizeOutputUrl(outputUrl) {
-					return outputUrl;
-				},
-			}
+			createTestStorageAdapter()
 		);
 
 		await service.processExecutionSyncJob({ executionId: staleExecutionId });
@@ -721,17 +653,7 @@ describe("generator api", () => {
 					return Promise.reject(new Error("submit should not be called"));
 				},
 			},
-			{
-				createInputAssetKey(filename) {
-					return filename;
-				},
-				normalizeInputImageUrl(inputImageUrl) {
-					return inputImageUrl;
-				},
-				normalizeOutputUrl(outputUrl) {
-					return outputUrl;
-				},
-			}
+			createTestStorageAdapter()
 		);
 
 		await service.processExecutionSyncJob({ executionId: staleExecutionId });

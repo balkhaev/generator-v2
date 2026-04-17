@@ -29,6 +29,8 @@ function createStubInferenceClient(): InferenceClient {
 	};
 }
 
+import { tryResolveS3StorageConfig } from "@generator/storage";
+
 import { createStorageAdapter, type StorageAdapter } from "@/providers/storage";
 import {
 	createGeneratorExecutionQueueClient,
@@ -47,7 +49,7 @@ interface AppOptions {
 		request: Request
 	) => Promise<{ session: unknown; user: unknown } | null>;
 	inferenceClient?: InferenceClient;
-	loggerImpl?: Pick<Console, "info" | "error">;
+	loggerImpl?: Pick<Console, "info" | "error" | "warn">;
 	redisUrl?: string;
 	storageAdapter?: StorageAdapter;
 }
@@ -62,7 +64,18 @@ export function createApp(options: AppOptions) {
 	// и кэшируется при первом доступе. Централизация сохраняется на уровне
 	// входных точек (index.ts/worker.ts); здесь нужен доступ без валидации.
 	const internalToken = process.env.GENERATOR_INTERNAL_TOKEN?.trim();
-	const storageAdapter = options.storageAdapter ?? createStorageAdapter();
+	const storageAdapter =
+		options.storageAdapter ??
+		(() => {
+			const config = tryResolveS3StorageConfig();
+			if (!config) {
+				throw new Error(
+					"S3 storage is required for the generator service. Set S3_BUCKET, S3_ENDPOINT, " +
+						"S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY (and S3_PUBLIC_BASE_URL when not derivable)."
+				);
+			}
+			return createStorageAdapter({ config, logger: options.loggerImpl });
+		})();
 	const falKey = process.env.FAL_KEY;
 
 	const falClient = falKey ? createFalClient({ apiKey: falKey }) : undefined;

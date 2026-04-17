@@ -5,8 +5,11 @@
     "": {
       "name": "generator",
       "dependencies": {
+        "@generator/db": "workspace:*",
         "@generator/env": "workspace:*",
+        "@generator/storage": "workspace:*",
         "dotenv": "catalog:",
+        "drizzle-orm": "^0.45.1",
         "zod": "catalog:",
       },
       "devDependencies": {
@@ -31,6 +34,7 @@
         "@generator/generator-client-server": "workspace:*",
         "@generator/http": "workspace:*",
         "@generator/queue": "workspace:*",
+        "@generator/storage": "workspace:*",
         "@generator/workflows": "workspace:*",
         "hono": "^4.8.2",
         "zod": "catalog:",
@@ -84,6 +88,7 @@
         "@generator/events": "workspace:*",
         "@generator/http": "workspace:*",
         "@generator/queue": "workspace:*",
+        "@generator/storage": "workspace:*",
         "@generator/workflows": "workspace:*",
         "hono": "^4.8.2",
         "zod": "catalog:",
@@ -175,6 +180,7 @@
         "@generator/events": "workspace:*",
         "@generator/generator-client-server": "workspace:*",
         "@generator/http": "workspace:*",
+        "@generator/storage": "workspace:*",
         "@generator/workflows": "workspace:*",
         "hono": "^4.8.2",
       },
@@ -355,6 +361,18 @@
       "dependencies": {
         "bullmq": "^5.73.0",
         "ioredis": "^5.10.1",
+      },
+      "devDependencies": {
+        "@generator/config": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "^5",
+      },
+    },
+    "packages/storage": {
+      "name": "@generator/storage",
+      "version": "0.0.0",
+      "dependencies": {
+        "@generator/env": "workspace:*",
       },
       "devDependencies": {
         "@generator/config": "workspace:*",
@@ -635,6 +653,8 @@
     "@generator/http": ["@generator/http@workspace:packages/http"],
 
     "@generator/queue": ["@generator/queue@workspace:packages/queue"],
+
+    "@generator/storage": ["@generator/storage@workspace:packages/storage"],
 
     "@generator/studio-client": ["@generator/studio-client@workspace:packages/studio-client"],
 

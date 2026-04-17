@@ -177,55 +177,35 @@ async function downloadRemoteAsset(url: string): Promise<{
 	});
 }
 
+function createS3Client(s3Config: S3Config): Bun.S3Client {
+	return new globalThis.Bun.S3Client({
+		accessKeyId: s3Config.accessKey,
+		bucket: s3Config.bucket,
+		endpoint: s3Config.endpoint,
+		region: s3Config.region,
+		secretAccessKey: s3Config.secretKey,
+	});
+}
+
 async function uploadObjectToS3(
 	input: {
 		contentType: string;
 		data: Uint8Array;
 		key: string;
-		tmpPrefix: string;
 	},
 	s3Config: S3Config
 ): Promise<{ key: string; sizeBytes: number; url: string }> {
-	const { writeFile, unlink } = await import("node:fs/promises");
-	const { join } = await import("node:path");
-	const { tmpdir } = await import("node:os");
-	const { execSync } = await import("node:child_process");
+	const client = createS3Client(s3Config);
 
-	const tmpPath = join(tmpdir(), `${input.tmpPrefix}-${Date.now()}`);
+	await retry(() =>
+		client.write(input.key, input.data, { type: input.contentType })
+	);
 
-	try {
-		await writeFile(tmpPath, input.data);
-
-		const uploadUrl = `${s3Config.endpoint}/${s3Config.bucket}/${input.key}`;
-		const cmd = [
-			"curl",
-			"-sf",
-			"--max-time",
-			"300",
-			"-X",
-			"PUT",
-			"-H",
-			`Content-Type: ${input.contentType}`,
-			"--aws-sigv4",
-			`aws:amz:${s3Config.region}:s3`,
-			"--user",
-			`${s3Config.accessKey}:${s3Config.secretKey}`,
-			"-T",
-			tmpPath,
-			uploadUrl,
-		]
-			.map((arg) => `'${arg.replace(/'/g, "'\\''")}'`)
-			.join(" ");
-
-		execSync(cmd, { timeout: 300_000 });
-		return {
-			key: input.key,
-			sizeBytes: input.data.length,
-			url: `${s3Config.publicUrl}/${input.key}`,
-		};
-	} finally {
-		unlink(tmpPath).catch(() => undefined);
-	}
+	return {
+		key: input.key,
+		sizeBytes: input.data.length,
+		url: `${s3Config.publicUrl}/${input.key}`,
+	};
 }
 
 export async function uploadZipToS3(
@@ -238,7 +218,6 @@ export async function uploadZipToS3(
 			contentType: "application/zip",
 			data: zipData,
 			key: `datasets/${filename}`,
-			tmpPrefix: "fal-dataset",
 		},
 		s3Config
 	);
@@ -264,7 +243,6 @@ export async function cacheExternalLoraToS3(
 			contentType: asset.contentType || "application/octet-stream",
 			data: asset.data,
 			key: `loras/external/${filename}`,
-			tmpPrefix: "external-lora",
 		},
 		s3Config
 	);
@@ -283,7 +261,6 @@ export async function persistLoraWeightsToS3(
 			contentType: asset.contentType || "application/octet-stream",
 			data: asset.data,
 			key: `loras/${input.filename}`,
-			tmpPrefix: "fal-lora",
 		},
 		s3Config
 	);

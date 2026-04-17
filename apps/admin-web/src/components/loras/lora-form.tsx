@@ -1,6 +1,10 @@
 "use client";
 
-import type { LoraBaseModel } from "@generator/contracts/loras";
+import type {
+	LoraBaseModel,
+	LoraSourcePreview,
+	LoraSourcePreviewVariant,
+} from "@generator/contracts/loras";
 import { LORA_BASE_MODELS } from "@generator/contracts/loras";
 import { Button } from "@generator/ui/components/button";
 import {
@@ -15,8 +19,13 @@ import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { formatBytes } from "@generator/ui/lib/format";
 import { Eye, Loader2, Plus } from "lucide-react";
-import Image from "next/image";
-import { type FormEvent, useState } from "react";
+import {
+	type FormEvent,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import { toast } from "sonner";
 
 import { useCreateLora, usePreviewLoraSource } from "@/hooks/use-admin-loras";
@@ -30,19 +39,242 @@ const baseModelLabels: Record<LoraBaseModel, string> = {
 
 const selectClassName =
 	"flex h-9 w-full rounded-md border border-foreground/10 bg-transparent px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
+const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
+const videoUrlPattern = /\.(mp4|webm)(\?|$)/iu;
+
+function isCivitaiUrl(value: string): boolean {
+	try {
+		return civitaiHostPattern.test(new URL(value).hostname);
+	} catch {
+		return false;
+	}
+}
+
+function inferMediaType(url: string | undefined) {
+	return url && videoUrlPattern.test(url) ? "video" : "image";
+}
+
+function PreviewMedia({
+	alt,
+	mediaType,
+	mediaUrl,
+}: {
+	alt: string;
+	mediaType: "image" | "video";
+	mediaUrl: string;
+}) {
+	return (
+		<div className="relative aspect-square overflow-hidden rounded-md bg-muted">
+			{mediaType === "video" ? (
+				<video
+					aria-label={alt}
+					autoPlay
+					className="size-full object-cover"
+					loop
+					muted
+					playsInline
+					src={mediaUrl}
+				/>
+			) : (
+				// biome-ignore lint/performance/noImgElement: Civitai media can be video or image, so this renderer bypasses Next image optimization.
+				<img
+					alt={alt}
+					className="size-full object-cover"
+					height={96}
+					src={mediaUrl}
+					width={96}
+				/>
+			)}
+		</div>
+	);
+}
+
+function PreviewCard({
+	activeVariant,
+	onVersionChange,
+	preview,
+	selectedVersionId,
+}: {
+	activeVariant: LoraSourcePreviewVariant | null;
+	onVersionChange: (versionId: number) => void;
+	preview: LoraSourcePreview;
+	selectedVersionId: number | null;
+}) {
+	const mediaUrl =
+		activeVariant?.mediaUrl ??
+		preview.previewMediaUrl ??
+		preview.previewImageUrl;
+	const mediaType =
+		activeVariant?.mediaType ??
+		preview.previewMediaType ??
+		inferMediaType(mediaUrl);
+	const baseModel = activeVariant?.baseModel ?? preview.baseModel;
+	const description = activeVariant?.description ?? preview.description;
+	const fileName = activeVariant?.fileName ?? preview.fileName;
+	const sizeBytes = activeVariant?.sizeBytes ?? preview.sizeBytes;
+	const trainedWords = activeVariant?.trainedWords ?? preview.trainedWords;
+	const versionName = activeVariant?.versionName ?? preview.versionName;
+
+	return (
+		<div className="grid gap-3 rounded-md border border-foreground/10 bg-muted/20 p-3 md:col-span-2 md:grid-cols-[96px_minmax(0,1fr)] dark:bg-muted/10">
+			{mediaUrl ? (
+				<PreviewMedia
+					alt={preview.name ?? "Civitai LoRA preview"}
+					mediaType={mediaType}
+					mediaUrl={mediaUrl}
+				/>
+			) : null}
+			<div className="grid min-w-0 gap-2">
+				{preview.variants && preview.variants.length > 1 ? (
+					<div className="grid gap-1">
+						<Label htmlFor="lora-source-version">Version</Label>
+						<select
+							className={selectClassName}
+							id="lora-source-version"
+							onChange={(event) => onVersionChange(Number(event.target.value))}
+							value={selectedVersionId ?? ""}
+						>
+							{preview.variants.map((variant) => (
+								<option key={variant.versionId} value={variant.versionId}>
+									{[
+										variant.versionName,
+										variant.baseModel,
+										variant.fileName,
+										variant.sizeBytes
+											? formatBytes(variant.sizeBytes)
+											: undefined,
+									]
+										.filter(Boolean)
+										.join(" / ")}
+								</option>
+							))}
+						</select>
+					</div>
+				) : null}
+				<div className="grid gap-1">
+					<p className="truncate font-medium text-sm">
+						{preview.name ?? "Unnamed Civitai LoRA"}
+					</p>
+					<p className="text-muted-foreground text-xs">
+						{[
+							versionName,
+							baseModel,
+							fileName,
+							sizeBytes ? formatBytes(sizeBytes) : undefined,
+						]
+							.filter(Boolean)
+							.join(" / ")}
+					</p>
+				</div>
+				{trainedWords && trainedWords.length > 0 ? (
+					<div className="flex flex-wrap gap-1">
+						{trainedWords.map((word) => (
+							<span
+								className="rounded border border-foreground/10 px-1.5 py-0.5 text-[11px]"
+								key={word}
+							>
+								{word}
+							</span>
+						))}
+					</div>
+				) : null}
+				{description ? (
+					<p className="line-clamp-3 text-muted-foreground text-xs">
+						{description}
+					</p>
+				) : null}
+			</div>
+		</div>
+	);
+}
 
 export default function LoraForm() {
 	const create = useCreateLora();
-	const preview = usePreviewLoraSource();
+	const {
+		data: previewData,
+		isPending: isPreviewPending,
+		mutateAsync: previewSource,
+		reset: resetPreview,
+	} = usePreviewLoraSource();
 	const [name, setName] = useState("");
 	const [sourceUrl, setSourceUrl] = useState("");
+	const [selectedVersionId, setSelectedVersionId] = useState<number | null>(
+		null
+	);
 	const [baseModel, setBaseModel] = useState<LoraBaseModel>("z-image");
 	const [defaultWeight, setDefaultWeight] = useState("1");
 	const [description, setDescription] = useState("");
+	const trimmedSourceUrl = sourceUrl.trim();
+	const activeVariant = useMemo(
+		() =>
+			previewData?.variants?.find(
+				(variant) => variant.versionId === selectedVersionId
+			) ?? null,
+		[previewData?.variants, selectedVersionId]
+	);
+	const applyPreviewFields = useCallback(
+		(result: {
+			baseModel?: LoraBaseModel;
+			description?: string;
+			name?: string;
+			sourceVersionId?: number;
+			variants?: { versionId: number }[];
+		}) => {
+			if (result.name) {
+				setName((current) => current || result.name || "");
+			}
+			if (result.baseModel) {
+				setBaseModel(result.baseModel);
+			}
+			if (result.description) {
+				setDescription((current) => current || result.description || "");
+			}
+			setSelectedVersionId(
+				result.sourceVersionId ?? result.variants?.[0]?.versionId ?? null
+			);
+		},
+		[]
+	);
+
+	const loadPreview = useCallback(
+		async (options: { silent?: boolean; versionId?: number } = {}) => {
+			if (!trimmedSourceUrl) {
+				toast.error("Source URL is required");
+				return;
+			}
+			try {
+				const result = await previewSource({
+					sourceUrl: trimmedSourceUrl,
+					sourceVersionId: options.versionId,
+				});
+				applyPreviewFields(result);
+				if (!options.silent) {
+					toast.success("Civitai preview loaded");
+				}
+			} catch (error) {
+				toast.error(
+					error instanceof Error ? error.message : "Failed to preview LoRA"
+				);
+			}
+		},
+		[applyPreviewFields, previewSource, trimmedSourceUrl]
+	);
+
+	useEffect(() => {
+		if (!isCivitaiUrl(trimmedSourceUrl)) {
+			setSelectedVersionId(null);
+			resetPreview();
+			return;
+		}
+		const timeout = setTimeout(() => {
+			loadPreview({ silent: true });
+		}, 500);
+		return () => clearTimeout(timeout);
+	}, [loadPreview, resetPreview, trimmedSourceUrl]);
 
 	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		if (!sourceUrl) {
+		if (!trimmedSourceUrl) {
 			toast.error("Source URL is required");
 			return;
 		}
@@ -50,7 +282,8 @@ export default function LoraForm() {
 			const weight = Number(defaultWeight);
 			const lora = await create.mutateAsync({
 				name: name.trim() || undefined,
-				sourceUrl: sourceUrl.trim(),
+				sourceUrl: trimmedSourceUrl,
+				sourceVersionId: selectedVersionId ?? undefined,
 				baseModel,
 				defaultWeight: Number.isFinite(weight) ? weight : 1,
 				description: description.trim() || undefined,
@@ -67,29 +300,19 @@ export default function LoraForm() {
 		}
 	}
 
-	async function handlePreview() {
-		if (!sourceUrl) {
-			toast.error("Source URL is required");
+	function handleVersionChange(versionId: number) {
+		setSelectedVersionId(versionId);
+		const variant = previewData?.variants?.find(
+			(item) => item.versionId === versionId
+		);
+		if (!variant) {
 			return;
 		}
-		try {
-			const result = await preview.mutateAsync({
-				sourceUrl: sourceUrl.trim(),
-			});
-			if (result.name && !name) {
-				setName(result.name);
-			}
-			if (result.baseModel) {
-				setBaseModel(result.baseModel);
-			}
-			if (result.description && !description) {
-				setDescription(result.description);
-			}
-			toast.success("Civitai preview loaded");
-		} catch (error) {
-			toast.error(
-				error instanceof Error ? error.message : "Failed to preview LoRA"
-			);
+		if (variant.baseModel) {
+			setBaseModel(variant.baseModel);
+		}
+		if (variant.description) {
+			setDescription((current) => current || variant.description || "");
 		}
 	}
 
@@ -130,12 +353,14 @@ export default function LoraForm() {
 								value={sourceUrl}
 							/>
 							<Button
-								disabled={preview.isPending}
-								onClick={handlePreview}
+								disabled={isPreviewPending}
+								onClick={() =>
+									loadPreview({ versionId: selectedVersionId ?? undefined })
+								}
 								type="button"
 								variant="outline"
 							>
-								{preview.isPending ? (
+								{isPreviewPending ? (
 									<Loader2 className="animate-spin" data-icon="inline-start" />
 								) : (
 									<Eye data-icon="inline-start" />
@@ -144,57 +369,13 @@ export default function LoraForm() {
 							</Button>
 						</div>
 					</div>
-					{preview.data ? (
-						<div className="grid gap-3 rounded-md border border-foreground/10 bg-muted/20 p-3 md:col-span-2 md:grid-cols-[96px_minmax(0,1fr)] dark:bg-muted/10">
-							{preview.data.previewImageUrl ? (
-								<div className="relative aspect-square overflow-hidden rounded-md bg-muted">
-									<Image
-										alt={preview.data.name ?? "Civitai LoRA preview"}
-										className="object-cover"
-										fill
-										sizes="96px"
-										src={preview.data.previewImageUrl}
-									/>
-								</div>
-							) : null}
-							<div className="grid min-w-0 gap-2">
-								<div className="grid gap-1">
-									<p className="truncate font-medium text-sm">
-										{preview.data.name ?? "Unnamed Civitai LoRA"}
-									</p>
-									<p className="text-muted-foreground text-xs">
-										{[
-											preview.data.versionName,
-											preview.data.baseModel,
-											preview.data.fileName,
-											preview.data.sizeBytes
-												? formatBytes(preview.data.sizeBytes)
-												: undefined,
-										]
-											.filter(Boolean)
-											.join(" / ")}
-									</p>
-								</div>
-								{preview.data.trainedWords &&
-								preview.data.trainedWords.length > 0 ? (
-									<div className="flex flex-wrap gap-1">
-										{preview.data.trainedWords.map((word) => (
-											<span
-												className="rounded border border-foreground/10 px-1.5 py-0.5 text-[11px]"
-												key={word}
-											>
-												{word}
-											</span>
-										))}
-									</div>
-								) : null}
-								{preview.data.description ? (
-									<p className="line-clamp-3 text-muted-foreground text-xs">
-										{preview.data.description}
-									</p>
-								) : null}
-							</div>
-						</div>
+					{previewData ? (
+						<PreviewCard
+							activeVariant={activeVariant}
+							onVersionChange={handleVersionChange}
+							preview={previewData}
+							selectedVersionId={selectedVersionId}
+						/>
 					) : null}
 					<div className="grid gap-1.5">
 						<Label htmlFor="lora-name">Name</Label>

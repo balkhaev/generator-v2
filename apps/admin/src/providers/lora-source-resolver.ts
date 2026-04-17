@@ -1,13 +1,16 @@
 import type {
 	CreateLoraFromUrlInput,
 	LoraBaseModel,
+	LoraPreviewMediaType,
 	LoraSourcePreview,
+	LoraSourcePreviewVariant,
 	LoraSourceProvider,
 } from "@generator/contracts/loras";
 
 const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
 const huggingFaceHostPattern = /(^|\.)huggingface\.co$/iu;
 const htmlTagPattern = /<[^>]*>/gu;
+const mediaVideoExtensionPattern = /\.(mp4|webm)(\?|$)/iu;
 const safetensorsExtensionPattern = /\.safetensors$/iu;
 const whitespacePattern = /\s+/gu;
 
@@ -26,10 +29,14 @@ export interface ResolvedLoraSource {
 	fileName?: string;
 	name?: string;
 	previewImageUrl?: string;
+	previewMediaType?: LoraPreviewMediaType;
+	previewMediaUrl?: string;
 	provider: ResolvedLoraSourceProvider;
 	sizeBytes?: number;
 	sourceUrl: string;
+	sourceVersionId?: number;
 	trainedWords?: string[];
+	variants?: LoraSourcePreviewVariant[];
 	versionName?: string;
 }
 
@@ -78,6 +85,7 @@ interface CivitaiModelVersion {
 
 interface CivitaiImage {
 	nsfw?: boolean | string;
+	type?: string;
 	url?: string;
 }
 
@@ -180,6 +188,7 @@ function parseCivitaiImage(value: unknown): CivitaiImage | null {
 			typeof record.nsfw === "boolean" || typeof record.nsfw === "string"
 				? record.nsfw
 				: undefined,
+		type: asString(record.type),
 		url: asString(record.url),
 	};
 }
@@ -325,6 +334,13 @@ function getCivitaiModelVersionId(url: URL): number | undefined {
 	return;
 }
 
+function resolveCivitaiModelVersionId(
+	input: CreateLoraFromUrlInput,
+	url: URL
+): number | undefined {
+	return input.sourceVersionId ?? getCivitaiModelVersionId(url);
+}
+
 function selectCivitaiVersion(
 	model: CivitaiModel,
 	modelVersionId: number | undefined
@@ -365,12 +381,23 @@ function selectCivitaiFile(version: CivitaiModelVersion): CivitaiFile | null {
 	);
 }
 
-function selectPreviewImage(version: CivitaiModelVersion): string | undefined {
+function selectPreviewMedia(
+	version: CivitaiModelVersion
+): { type: LoraPreviewMediaType; url: string } | undefined {
 	const images = version.images ?? [];
-	return (
-		images.find((image) => image.nsfw === false && image.url)?.url ??
-		images.find((image) => image.url)?.url
-	);
+	const image =
+		images.find((item) => item.nsfw === false && item.url) ??
+		images.find((item) => item.url);
+	if (!image?.url) {
+		return;
+	}
+	return {
+		type:
+			image.type === "video" || mediaVideoExtensionPattern.test(image.url)
+				? "video"
+				: "image",
+		url: image.url,
+	};
 }
 
 function sizeKbToBytes(sizeKb: number | undefined): number | undefined {
@@ -395,6 +422,64 @@ function buildCivitaiDescription(input: {
 
 function buildCivitaiApiUrl(sourceUrl: URL, path: string): string {
 	return `${sourceUrl.origin}${path}`;
+}
+
+function buildCivitaiVariant(
+	version: CivitaiModelVersion
+): LoraSourcePreviewVariant | null {
+	const file = selectCivitaiFile(version);
+	const downloadUrl = file?.downloadUrl ?? version.downloadUrl;
+	if (!downloadUrl) {
+		return null;
+	}
+	const media = selectPreviewMedia(version);
+	return {
+		baseModel: mapCivitaiBaseModel(version.baseModel),
+		description: buildCivitaiDescription({
+			trainedWords: version.trainedWords,
+			versionDescription: version.description,
+		}),
+		downloadUrl,
+		fileName: file?.name,
+		mediaType: media?.type,
+		mediaUrl: media?.url,
+		sizeBytes: sizeKbToBytes(file?.sizeKb),
+		trainedWords: version.trainedWords,
+		versionId: version.id,
+		versionName: version.name,
+	};
+}
+
+function buildResolvedCivitaiSource(input: {
+	downloadHeaders: HeaderRecord;
+	input: CreateLoraFromUrlInput;
+	modelDescription?: null | string;
+	modelName: string;
+	variant: LoraSourcePreviewVariant;
+	variants?: LoraSourcePreviewVariant[];
+}): ResolvedLoraSource {
+	return {
+		baseModel: input.variant.baseModel,
+		description: appendDescription(
+			input.variant.description,
+			stripHtml(input.modelDescription)
+		),
+		downloadHeaders: input.downloadHeaders,
+		downloadUrl: input.variant.downloadUrl,
+		fileName: input.variant.fileName,
+		name: input.modelName,
+		previewImageUrl:
+			input.variant.mediaType === "image" ? input.variant.mediaUrl : undefined,
+		previewMediaType: input.variant.mediaType,
+		previewMediaUrl: input.variant.mediaUrl,
+		provider: "civitai",
+		sizeBytes: input.variant.sizeBytes,
+		sourceUrl: input.input.sourceUrl.trim(),
+		sourceVersionId: input.variant.versionId,
+		trainedWords: input.variant.trainedWords,
+		variants: input.variants,
+		versionName: input.variant.versionName,
+	};
 }
 
 function buildHuggingFaceFileUrl(input: {
@@ -481,7 +566,7 @@ export function createLoraSourceResolver(
 			{ "user-agent": "admin-lora-import/1.0" },
 			buildAuthHeaders(options.civitaiApiKey)
 		);
-		const modelVersionId = getCivitaiModelVersionId(url);
+		const modelVersionId = resolveCivitaiModelVersionId(input, url);
 		const modelId = getCivitaiModelId(url);
 
 		if (modelId) {
@@ -492,29 +577,25 @@ export function createLoraSourceResolver(
 				)
 			);
 			const version = selectCivitaiVersion(model, modelVersionId);
-			const file = selectCivitaiFile(version);
-			const downloadUrl = file?.downloadUrl ?? version.downloadUrl;
-			if (!downloadUrl) {
+			const variants = (model.modelVersions ?? [])
+				.map(buildCivitaiVariant)
+				.filter((variant): variant is LoraSourcePreviewVariant =>
+					Boolean(variant)
+				);
+			const variant =
+				variants.find((item) => item.versionId === version.id) ??
+				buildCivitaiVariant(version);
+			if (!variant) {
 				throw new Error(`Civitai model "${model.name}" has no download URL.`);
 			}
-			return {
-				baseModel: mapCivitaiBaseModel(version.baseModel),
-				description: buildCivitaiDescription({
-					modelDescription: model.description,
-					trainedWords: version.trainedWords,
-					versionDescription: version.description,
-				}),
+			return buildResolvedCivitaiSource({
 				downloadHeaders,
-				downloadUrl,
-				fileName: file?.name,
-				name: model.name,
-				previewImageUrl: selectPreviewImage(version),
-				provider: "civitai",
-				sizeBytes: sizeKbToBytes(file?.sizeKb),
-				sourceUrl: input.sourceUrl.trim(),
-				trainedWords: version.trainedWords,
-				versionName: version.name,
-			};
+				input,
+				modelDescription: model.description,
+				modelName: model.name,
+				variant,
+				variants,
+			});
 		}
 
 		if (modelVersionId) {
@@ -529,25 +610,18 @@ export function createLoraSourceResolver(
 					`Civitai model "${version.model.name ?? version.name}" is ${version.model.type}, not LoRA.`
 				);
 			}
-			const file = selectCivitaiFile(version);
-			const downloadUrl = file?.downloadUrl ?? version.downloadUrl ?? url.href;
-			return {
-				baseModel: mapCivitaiBaseModel(version.baseModel),
-				description: buildCivitaiDescription({
-					trainedWords: version.trainedWords,
-					versionDescription: version.description,
-				}),
-				downloadHeaders,
-				downloadUrl,
-				fileName: file?.name,
-				name: version.model?.name ?? version.name,
-				previewImageUrl: selectPreviewImage(version),
-				provider: "civitai",
-				sizeBytes: sizeKbToBytes(file?.sizeKb),
-				sourceUrl: input.sourceUrl.trim(),
-				trainedWords: version.trainedWords,
+			const variant = buildCivitaiVariant(version) ?? {
+				downloadUrl: url.href,
+				versionId: version.id,
 				versionName: version.name,
 			};
+			return buildResolvedCivitaiSource({
+				downloadHeaders,
+				input,
+				modelName: version.model?.name ?? version.name,
+				variant,
+				variants: [variant],
+			});
 		}
 
 		return {
@@ -625,11 +699,15 @@ export function toLoraSourcePreview(
 		downloadUrl: source.downloadUrl,
 		fileName: source.fileName,
 		name: source.name,
+		previewMediaType: source.previewMediaType,
+		previewMediaUrl: source.previewMediaUrl,
 		previewImageUrl: source.previewImageUrl,
 		provider: source.provider,
 		sizeBytes: source.sizeBytes,
 		sourceUrl: source.sourceUrl,
+		sourceVersionId: source.sourceVersionId,
 		trainedWords: source.trainedWords,
+		variants: source.variants,
 		versionName: source.versionName,
 	};
 }

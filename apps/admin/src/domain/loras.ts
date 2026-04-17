@@ -102,6 +102,7 @@ export class LoraRegistryService {
 			sourceProvider: input.sourceProvider ?? "auto",
 			sourceRevision: input.sourceRevision,
 			sourceUrl: input.sourceUrl,
+			sourceVersionId: input.sourceVersionId,
 		});
 		if (source.provider !== "civitai") {
 			throw new Error("Only Civitai LoRA preview is supported.");

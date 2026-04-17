@@ -37,6 +37,7 @@ export interface CreateLoraFromUrlInput {
 	sourceProvider?: LoraSourceProvider;
 	sourceRevision?: string;
 	sourceUrl: string;
+	sourceVersionId?: number;
 }
 
 export interface PreviewLoraSourceInput {
@@ -44,6 +45,22 @@ export interface PreviewLoraSourceInput {
 	sourceProvider?: LoraSourceProvider;
 	sourceRevision?: string;
 	sourceUrl: string;
+	sourceVersionId?: number;
+}
+
+export type LoraPreviewMediaType = "image" | "video";
+
+export interface LoraSourcePreviewVariant {
+	baseModel?: LoraBaseModel;
+	description?: string;
+	downloadUrl: string;
+	fileName?: string;
+	mediaType?: LoraPreviewMediaType;
+	mediaUrl?: string;
+	sizeBytes?: number;
+	trainedWords?: string[];
+	versionId: number;
+	versionName: string;
 }
 
 export interface LoraSourcePreview {
@@ -53,10 +70,14 @@ export interface LoraSourcePreview {
 	fileName?: string;
 	name?: string;
 	previewImageUrl?: string;
+	previewMediaType?: LoraPreviewMediaType;
+	previewMediaUrl?: string;
 	provider: Exclude<LoraSourceProvider, "auto">;
 	sizeBytes?: number;
 	sourceUrl: string;
+	sourceVersionId?: number;
 	trainedWords?: string[];
+	variants?: LoraSourcePreviewVariant[];
 	versionName?: string;
 }
 

@@ -50,6 +50,12 @@ function parseSourceProvider(
 		: undefined;
 }
 
+function parsePositiveNumber(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isInteger(value) && value > 0
+		? value
+		: undefined;
+}
+
 function resolveListQuery(c: {
 	req: { query(key: string): string | undefined };
 }): ListLorasQuery {
@@ -96,6 +102,7 @@ function parseCreateBody(body: unknown): CreateLoraFromUrlInput {
 			typeof payload.sourceRevision === "string"
 				? payload.sourceRevision
 				: undefined,
+		sourceVersionId: parsePositiveNumber(payload.sourceVersionId),
 	};
 }
 
@@ -124,6 +131,7 @@ function parsePreviewBody(body: unknown): PreviewLoraSourceInput {
 				? payload.sourceRevision
 				: undefined,
 		sourceUrl,
+		sourceVersionId: parsePositiveNumber(payload.sourceVersionId),
 	};
 }
 

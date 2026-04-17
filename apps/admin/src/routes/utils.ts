@@ -1,5 +1,15 @@
 import { ZodError } from "zod";
 
+function getErrorMessage(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message || error.name || "Unexpected request error";
+	}
+	if (typeof error === "string") {
+		return error || "Unexpected request error";
+	}
+	return "Unexpected request error";
+}
+
 export function toErrorResponse(error: unknown) {
 	if (error instanceof ZodError) {
 		return {
@@ -13,8 +23,7 @@ export function toErrorResponse(error: unknown) {
 
 	return {
 		body: {
-			error:
-				error instanceof Error ? error.message : "Unexpected request error",
+			error: getErrorMessage(error),
 		},
 		status: 400,
 	};

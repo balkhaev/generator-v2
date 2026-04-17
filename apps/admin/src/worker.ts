@@ -7,12 +7,21 @@ import {
 import { createRedisIdempotencyLock, withIdempotency } from "@generator/queue";
 import { resolveS3StorageConfig } from "@generator/storage";
 
+import { createPersonsApiClient } from "@/clients/persons-api";
 import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
 import type { PersonLoraTrainingJobData } from "@/queue/person-lora-training";
 import { createPersonLoraTrainingWorker } from "@/queue/person-lora-training";
+import { recoverInterruptedTrainings } from "@/recovery/training-recovery";
 
 const TRAINING_LOCK_TTL_SECONDS = 24 * 60 * 60;
 const TRAINING_LOCK_PREFIX = "admin:person-lora-training";
+/**
+ * Recovery locks must outlive the worst-case fal training poll (90 min) so a
+ * second replica that boots while another worker is still resuming the same
+ * run does not fork the resume.
+ */
+const RECOVERY_LOCK_TTL_SECONDS = 95 * 60;
+const RECOVERY_LOCK_PREFIX = "admin:training-recovery";
 
 const redisUrl = env.REDIS_URL;
 const personsApiUrl = env.PERSONS_API_URL;
@@ -40,10 +49,10 @@ if (!(personsApiUrl || eventPublisher)) {
 const falRunner = new FalZibLoraTrainingRunner({
 	apiKey: falKey,
 	eventPublisher,
-	personsApiBaseUrl: personsApiUrl,
-	trainingControlToken,
-	s3Config,
 	logger: console,
+	personsApiBaseUrl: personsApiUrl,
+	s3Config,
+	trainingControlToken,
 });
 
 const trainingLock = createRedisIdempotencyLock({
@@ -51,6 +60,22 @@ const trainingLock = createRedisIdempotencyLock({
 	redisUrl,
 	ttlSeconds: TRAINING_LOCK_TTL_SECONDS,
 });
+
+const recoveryLock = createRedisIdempotencyLock({
+	keyPrefix: RECOVERY_LOCK_PREFIX,
+	redisUrl,
+	ttlSeconds: RECOVERY_LOCK_TTL_SECONDS,
+});
+
+/**
+ * Tracks training runs currently being processed by this worker so we can
+ * release their idempotency locks during graceful shutdown. Without this, a
+ * mid-poll SIGTERM (e.g. deploy) would leave the lock held for 24h, blocking
+ * any retry until expiry — which is exactly the bug the recovery sweep also
+ * addresses, but releasing here lets BullMQ retry kick in immediately on the
+ * NEXT replica without waiting for the boot-time sweep.
+ */
+const activeTrainingRunIds = new Set<string>();
 
 const runTrainingOnce = async (
 	source: "bullmq" | "kafka",
@@ -60,12 +85,17 @@ const runTrainingOnce = async (
 		trainingLock,
 		data.trainingRunId,
 		async () => {
+			activeTrainingRunIds.add(data.trainingRunId);
 			console.info("admin.worker: starting training", {
 				personId: data.personId,
 				source,
 				trainingRunId: data.trainingRunId,
 			});
-			await falRunner.run(data);
+			try {
+				await falRunner.run(data);
+			} finally {
+				activeTrainingRunIds.delete(data.trainingRunId);
+			}
 		}
 	);
 
@@ -104,6 +134,26 @@ const eventConsumer = kafkaConfig
 		})
 	: null;
 
+if (personsApiUrl) {
+	const personsApiClient = createPersonsApiClient({
+		baseUrl: personsApiUrl,
+		bearerToken: trainingControlToken,
+	});
+
+	recoverInterruptedTrainings({
+		client: personsApiClient,
+		logger: console,
+		recoveryLock,
+		runner: falRunner,
+	}).catch((error: unknown) => {
+		console.error("admin.recovery.boot-sweep-failed", {
+			message: error instanceof Error ? error.message : "unknown",
+		});
+	});
+} else {
+	console.info("admin.worker: PERSONS_API_URL is not set, recovery disabled");
+}
+
 await new Promise<void>((resolve) => {
 	let isShuttingDown = false;
 
@@ -116,7 +166,19 @@ await new Promise<void>((resolve) => {
 		await queueWorker.close();
 		await eventConsumer?.close();
 		await eventPublisher?.close();
+		const releaseSnapshot = Array.from(activeTrainingRunIds);
+		await Promise.all(
+			releaseSnapshot.map((trainingRunId) =>
+				trainingLock.release(trainingRunId).catch((error: unknown) => {
+					console.warn("admin.worker.shutdown.release-failed", {
+						message: error instanceof Error ? error.message : "unknown",
+						trainingRunId,
+					});
+				})
+			)
+		);
 		await trainingLock.close();
+		await recoveryLock.close();
 		resolve();
 	};
 

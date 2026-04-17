@@ -214,6 +214,23 @@ export async function cancelPersonLoraTraining(personId: string) {
 	return payload.person;
 }
 
+export async function enhancePersonsPrompt(prompt: string): Promise<string> {
+	const payload = await requestJson<{ enhanced?: unknown }>(
+		`${API_BASE_URL}/api/enhance-prompt`,
+		{
+			method: "POST",
+			body: JSON.stringify({ prompt }),
+			headers: { "content-type": "application/json" },
+		}
+	);
+
+	if (typeof payload.enhanced !== "string" || payload.enhanced.trim() === "") {
+		throw new Error("Enhance response did not contain enhanced text.");
+	}
+
+	return payload.enhanced;
+}
+
 export async function fetchLoras(
 	baseModel?: LoraBaseModel
 ): Promise<LoraRegistryEntry[]> {

@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@generator/ui/lib/utils";
+import { ImageIcon } from "lucide-react";
 
 interface AspectOption {
 	hint: string;
@@ -12,7 +13,7 @@ interface AspectOption {
 const KNOWN_ASPECT_OPTIONS: Record<string, AspectOption> = {
 	auto: {
 		hint: "Match input image",
-		label: "Auto",
+		label: "Match input",
 		ratio: { height: 4, width: 4 },
 		value: "auto",
 	},
@@ -51,6 +52,42 @@ const KNOWN_ASPECT_OPTIONS: Record<string, AspectOption> = {
 		label: "1:1 HD",
 		ratio: { height: 1, width: 1 },
 		value: "square_hd",
+	},
+	"16:9": {
+		hint: "16:9 cinematic",
+		label: "16:9",
+		ratio: { height: 9, width: 16 },
+		value: "16:9",
+	},
+	"9:16": {
+		hint: "9:16 vertical",
+		label: "9:16",
+		ratio: { height: 16, width: 9 },
+		value: "9:16",
+	},
+	"1:1": {
+		hint: "1:1 square",
+		label: "1:1",
+		ratio: { height: 1, width: 1 },
+		value: "1:1",
+	},
+	"4:3": {
+		hint: "4:3 landscape",
+		label: "4:3",
+		ratio: { height: 3, width: 4 },
+		value: "4:3",
+	},
+	"3:4": {
+		hint: "3:4 portrait",
+		label: "3:4",
+		ratio: { height: 4, width: 3 },
+		value: "3:4",
+	},
+	"21:9": {
+		hint: "21:9 ultrawide",
+		label: "21:9",
+		ratio: { height: 9, width: 21 },
+		value: "21:9",
 	},
 };
 
@@ -108,18 +145,27 @@ export default function AspectPicker({
 							value={option.value}
 						/>
 						<div className="flex h-7 w-7 items-center justify-center">
-							<div
-								className={cn(
-									"rounded-sm border",
-									isActive
-										? "border-foreground bg-foreground/15"
-										: "border-foreground/30"
-								)}
-								style={{
-									height: `${heightPct}%`,
-									width: `${widthPct}%`,
-								}}
-							/>
+							{option.value === "auto" ? (
+								<ImageIcon
+									className={cn(
+										"size-4",
+										isActive ? "text-foreground" : "text-muted-foreground"
+									)}
+								/>
+							) : (
+								<div
+									className={cn(
+										"rounded-sm border",
+										isActive
+											? "border-foreground bg-foreground/15"
+											: "border-foreground/30"
+									)}
+									style={{
+										height: `${heightPct}%`,
+										width: `${widthPct}%`,
+									}}
+								/>
+							)}
 						</div>
 						<span className="font-medium">{option.label}</span>
 					</label>

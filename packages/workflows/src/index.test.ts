@@ -109,6 +109,45 @@ describe("fal workflow registry", () => {
 		});
 	});
 
+	it("defaults fal-flux2-dev-edit imageSize to auto", () => {
+		const workflow = getWorkflowDefinition("fal-flux2-dev-edit");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			imageSize: "auto",
+		});
+	});
+
+	it("defaults fal-zimage-turbo-image-to-image-lora imageSize to auto", () => {
+		const workflow = getWorkflowDefinition(
+			"fal-zimage-turbo-image-to-image-lora"
+		);
+		expect(
+			workflow?.parameterSchema.parse({
+				loraUrl: "https://example.com/lora.safetensors",
+			})
+		).toMatchObject({
+			imageSize: "auto",
+		});
+	});
+
+	it("exposes auto imageSize in enrich for i2i image workflows", () => {
+		const workflows = listWorkflows();
+		const editWorkflow = workflows.find(
+			(workflow) => workflow.key === "fal-flux2-dev-edit"
+		);
+		const imageSize = editWorkflow?.parameterFields.find(
+			(field) => field.key === "imageSize"
+		);
+		expect(imageSize?.enumValues).toContain("auto");
+
+		const i2iLora = workflows.find(
+			(workflow) => workflow.key === "fal-zimage-turbo-image-to-image-lora"
+		);
+		const i2iImageSize = i2iLora?.parameterFields.find(
+			(field) => field.key === "imageSize"
+		);
+		expect(i2iImageSize?.enumValues).toContain("auto");
+	});
+
 	it("returns null for removed replicate workflows", () => {
 		expect(getWorkflowDefinition("ltx-2.3-i2v")).toBeNull();
 		expect(getWorkflowDefinition("lustify-apex-avatar")).toBeNull();

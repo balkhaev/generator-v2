@@ -188,6 +188,33 @@ export const startFalZibLoraTrainingSchema = z.object({
 
 type StartInput = z.infer<typeof startFalZibLoraTrainingSchema>;
 
+/**
+ * Schema for resuming a training run that already passed `submit fal training`
+ * but whose worker process died before publishing the final `ready` event.
+ *
+ * All required fields can be sourced from `metadata.training` on the persons
+ * record after the original worker reported `phase: polling-training` (and
+ * therefore wrote `providerJobId`, `trainingStartedAt`, etc.).
+ */
+export const resumeFalZibLoraTrainingSchema = z.object({
+	datasetUrl: z.string().min(1).nullable().optional(),
+	debugCorrelationId: z.string().trim().min(1).optional(),
+	genderHint: z.string().trim().min(1).nullable().optional(),
+	outputName: z.string().trim().min(1),
+	personId: z.string().trim().min(1),
+	personSlug: z.string().trim().min(1),
+	providerJobId: z.string().trim().min(1),
+	referenceImageCount: z.number().int().nonnegative(),
+	referenceImageTargetCount: z.number().int().positive(),
+	referenceImageUrls: z.array(z.string()).default([]),
+	trainingRunId: z.string().trim().min(1),
+	trainingStartedAt: z.string().min(1),
+	trainingSteps: z.number().int().positive(),
+	triggerWord: z.string().trim().min(1),
+});
+
+type ResumeInput = z.input<typeof resumeFalZibLoraTrainingSchema>;
+
 type TrainingEventStatus =
 	| "queued"
 	| "generating"
@@ -797,130 +824,25 @@ export class FalZibLoraTrainingRunner {
 				},
 			});
 
-			const trainingResult = await falPollUntilDone(
-				this.apiKey,
-				trainingSubmit,
-				trainingModel,
-				DEFAULT_TRAINING_TIMEOUT_MS,
-				DEFAULT_TRAINING_POLL_MS,
-				{
-					onStatus: async (status) => {
-						await this.sendTrainingEvent({
-							personId: parsed.personId,
-							event: {
-								debugCorrelationId: parsed.debugCorrelationId,
-								lastEventAt: new Date().toISOString(),
-								phase: "polling-training",
-								progressPct: 76,
-								provider: "fal",
-								providerJobId: trainingSubmit.request_id,
-								providerRequestId: trainingSubmit.request_id,
-								providerStatus: status.status,
-								status: "training",
-								trainingElapsedMs: status.elapsedMs,
-								trainingRunId: parsed.trainingRunId,
-								trainingStartedAt,
-								trainingSteps,
-								triggerWord,
-							},
-						});
-					},
-				}
-			);
-
-			const diffusersLoraFile = trainingResult.diffusers_lora_file as
-				| { url?: string }
-				| undefined;
-			const loraUrl = diffusersLoraFile?.url;
-			if (!loraUrl) {
-				throw new Error(
-					"ZIB LoRA training completed but no weights URL was returned"
-				);
-			}
-
-			this.logger.info("fal-zib-lora.training-completed", {
+			await this.pollTrainingAndPublish({
+				datasetUrl,
+				debugCorrelationId: parsed.debugCorrelationId,
+				genderHint,
+				outputName,
 				personId: parsed.personId,
-				loraUrl,
-			});
-
-			if (!this.s3Config) {
-				throw new Error("S3 config is required to persist LoRA weights");
-			}
-
-			await this.sendTrainingEvent({
-				personId: parsed.personId,
-				event: {
-					debug: {
-						providerLoraUrl: loraUrl,
-					},
-					debugCorrelationId: parsed.debugCorrelationId,
-					lastEventAt: new Date().toISOString(),
-					phase: "publishing-lora",
-					progressPct: 92,
-					provider: "fal",
-					providerJobId: trainingSubmit.request_id,
-					providerRequestId: trainingSubmit.request_id,
-					providerStatus: "COMPLETED",
-					status: "publishing",
-					trainingElapsedMs: Date.now() - trainingStartedMs,
-					trainingRunId: parsed.trainingRunId,
-					trainingStartedAt,
-					trainingSteps,
-					triggerWord,
-				},
-			});
-
-			const persistedLora = await persistLoraWeightsToS3(
-				{
-					filename: `${sanitizeSegment(outputName)}-${parsed.trainingRunId.slice(0, 8)}.safetensors`,
-					sourceUrl: loraUrl,
-				},
-				this.s3Config
-			);
-
-			this.logger.info("fal-zib-lora.lora-persisted", {
-				personId: parsed.personId,
-				sizeBytes: persistedLora.sizeBytes,
-				url: persistedLora.url,
-			});
-
-			await this.sendTrainingEvent({
-				personId: parsed.personId,
-				event: {
-					completedAt: new Date().toISOString(),
-					datasetUrl,
-					debug: {
-						genderHint,
-						loraStorageKey: persistedLora.key,
-						loraStorageSizeBytes: persistedLora.sizeBytes,
-						persistedLoraUrl: persistedLora.url,
-						providerLoraUrl: loraUrl,
-						trainingResult,
-					},
-					debugCorrelationId: parsed.debugCorrelationId,
-					lastEventAt: new Date().toISOString(),
-					loraUrl: persistedLora.url,
-					phase: "ready",
-					progressPct: 100,
-					provider: "fal",
-					providerJobId: trainingSubmit.request_id,
-					providerRequestId: trainingSubmit.request_id,
-					providerStatus: "COMPLETED",
-					referenceImageCount:
-						generatedReferences.length + ORIGINAL_DATASET_COUNT,
-					referenceImageTargetCount: TOTAL_DATASET_COUNT,
-					referenceImageUrls: [
-						parsed.referencePhotoUrl,
-						...generatedReferences.map((entry) => entry.url),
-					],
-					status: "ready",
-					trainingElapsedMs: Date.now() - trainingStartedMs,
-					trainingRunId: parsed.trainingRunId,
-					trainingStartedAt,
-					trainingSteps,
-					triggerWord,
-					uploadMethod: "s3",
-				},
+				providerJobId: trainingSubmit.request_id,
+				referenceImageCount:
+					generatedReferences.length + ORIGINAL_DATASET_COUNT,
+				referenceImageTargetCount: TOTAL_DATASET_COUNT,
+				referenceImageUrls: [
+					parsed.referencePhotoUrl,
+					...generatedReferences.map((entry) => entry.url),
+				],
+				trainingRunId: parsed.trainingRunId,
+				trainingStartedAt,
+				trainingStartedMs,
+				trainingSteps,
+				triggerWord,
 			});
 		} catch (error) {
 			const errorSummary =
@@ -945,5 +867,232 @@ export class FalZibLoraTrainingRunner {
 			});
 			throw error;
 		}
+	}
+
+	/**
+	 * Resume a training run that crashed AFTER the fal training job was
+	 * submitted. We don't redo dataset generation or re-submit the job — we
+	 * simply attach to the existing fal `request_id` and finish the workflow
+	 * (poll → cache weights → publish ready).
+	 *
+	 * Safe to call concurrently with the original worker thanks to
+	 * `applyLoraTrainingEvent`'s `currentTrainingRunId === callbackTrainingRunId`
+	 * guard, but the recovery driver should still serialise via an idempotency
+	 * lock to avoid wasting fal status calls.
+	 */
+	async resumeFromProviderJob(input: ResumeInput) {
+		const parsed = resumeFalZibLoraTrainingSchema.parse(input);
+		const trainingStartedMs = Date.parse(parsed.trainingStartedAt);
+		if (!Number.isFinite(trainingStartedMs)) {
+			throw new Error(
+				`Invalid trainingStartedAt for resume: ${parsed.trainingStartedAt}`
+			);
+		}
+
+		this.logger.info("fal-zib-lora.resume", {
+			personId: parsed.personId,
+			providerJobId: parsed.providerJobId,
+			trainingRunId: parsed.trainingRunId,
+		});
+
+		try {
+			await this.pollTrainingAndPublish({
+				datasetUrl: parsed.datasetUrl ?? null,
+				debugCorrelationId: parsed.debugCorrelationId,
+				extraReadyDebug: {
+					recovered: true,
+					recoveredAt: new Date().toISOString(),
+				},
+				genderHint: parsed.genderHint ?? null,
+				outputName: parsed.outputName,
+				personId: parsed.personId,
+				providerJobId: parsed.providerJobId,
+				referenceImageCount: parsed.referenceImageCount,
+				referenceImageTargetCount: parsed.referenceImageTargetCount,
+				referenceImageUrls: parsed.referenceImageUrls ?? [],
+				trainingRunId: parsed.trainingRunId,
+				trainingStartedAt: parsed.trainingStartedAt,
+				trainingStartedMs,
+				trainingSteps: parsed.trainingSteps,
+				triggerWord: parsed.triggerWord,
+			});
+		} catch (error) {
+			const errorSummary =
+				error instanceof Error
+					? error.message
+					: "Fal ZIB LoRA training resume failed";
+			this.logger.error("fal-zib-lora.resume-failed", {
+				personId: parsed.personId,
+				error: errorSummary,
+				providerJobId: parsed.providerJobId,
+				trainingRunId: parsed.trainingRunId,
+			});
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debug: {
+						recovered: true,
+						recoveredAt: new Date().toISOString(),
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					errorSummary,
+					failedAt: new Date().toISOString(),
+					lastEventAt: new Date().toISOString(),
+					phase: "failed",
+					provider: "fal",
+					providerJobId: parsed.providerJobId,
+					status: "failed",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord: parsed.triggerWord,
+				},
+			});
+			throw error;
+		}
+	}
+
+	private async pollTrainingAndPublish(input: {
+		datasetUrl?: string | null;
+		debugCorrelationId?: string;
+		extraReadyDebug?: Record<string, unknown>;
+		genderHint: string | null;
+		outputName: string;
+		personId: string;
+		providerJobId: string;
+		referenceImageCount: number;
+		referenceImageTargetCount: number;
+		referenceImageUrls: string[];
+		trainingRunId: string;
+		trainingStartedAt: string;
+		trainingStartedMs: number;
+		trainingSteps: number;
+		triggerWord: string;
+	}) {
+		const trainingModel = "fal-ai/z-image-trainer";
+		const submit: FalSubmitResult = {
+			request_id: input.providerJobId,
+			response_url: `${FAL_QUEUE_BASE}/${trainingModel}/requests/${input.providerJobId}`,
+			status_url: `${FAL_QUEUE_BASE}/${trainingModel}/requests/${input.providerJobId}/status`,
+		};
+
+		const trainingResult = await falPollUntilDone(
+			this.apiKey,
+			submit,
+			trainingModel,
+			DEFAULT_TRAINING_TIMEOUT_MS,
+			DEFAULT_TRAINING_POLL_MS,
+			{
+				onStatus: async (status) => {
+					await this.sendTrainingEvent({
+						personId: input.personId,
+						event: {
+							debugCorrelationId: input.debugCorrelationId,
+							lastEventAt: new Date().toISOString(),
+							phase: "polling-training",
+							progressPct: 76,
+							provider: "fal",
+							providerJobId: input.providerJobId,
+							providerRequestId: input.providerJobId,
+							providerStatus: status.status,
+							status: "training",
+							trainingElapsedMs: status.elapsedMs,
+							trainingRunId: input.trainingRunId,
+							trainingStartedAt: input.trainingStartedAt,
+							trainingSteps: input.trainingSteps,
+							triggerWord: input.triggerWord,
+						},
+					});
+				},
+			}
+		);
+
+		const diffusersLoraFile = trainingResult.diffusers_lora_file as
+			| { url?: string }
+			| undefined;
+		const loraUrl = diffusersLoraFile?.url;
+		if (!loraUrl) {
+			throw new Error(
+				"ZIB LoRA training completed but no weights URL was returned"
+			);
+		}
+
+		this.logger.info("fal-zib-lora.training-completed", {
+			loraUrl,
+			personId: input.personId,
+		});
+
+		if (!this.s3Config) {
+			throw new Error("S3 config is required to persist LoRA weights");
+		}
+
+		await this.sendTrainingEvent({
+			personId: input.personId,
+			event: {
+				debug: { providerLoraUrl: loraUrl },
+				debugCorrelationId: input.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				phase: "publishing-lora",
+				progressPct: 92,
+				provider: "fal",
+				providerJobId: input.providerJobId,
+				providerRequestId: input.providerJobId,
+				providerStatus: "COMPLETED",
+				status: "publishing",
+				trainingElapsedMs: Date.now() - input.trainingStartedMs,
+				trainingRunId: input.trainingRunId,
+				trainingStartedAt: input.trainingStartedAt,
+				trainingSteps: input.trainingSteps,
+				triggerWord: input.triggerWord,
+			},
+		});
+
+		const persistedLora = await persistLoraWeightsToS3(
+			{
+				filename: `${sanitizeSegment(input.outputName)}-${input.trainingRunId.slice(0, 8)}.safetensors`,
+				sourceUrl: loraUrl,
+			},
+			this.s3Config
+		);
+
+		this.logger.info("fal-zib-lora.lora-persisted", {
+			personId: input.personId,
+			sizeBytes: persistedLora.sizeBytes,
+			url: persistedLora.url,
+		});
+
+		await this.sendTrainingEvent({
+			personId: input.personId,
+			event: {
+				completedAt: new Date().toISOString(),
+				datasetUrl: input.datasetUrl ?? undefined,
+				debug: {
+					...(input.extraReadyDebug ?? {}),
+					genderHint: input.genderHint,
+					loraStorageKey: persistedLora.key,
+					loraStorageSizeBytes: persistedLora.sizeBytes,
+					persistedLoraUrl: persistedLora.url,
+					providerLoraUrl: loraUrl,
+					trainingResult,
+				},
+				debugCorrelationId: input.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				loraUrl: persistedLora.url,
+				phase: "ready",
+				progressPct: 100,
+				provider: "fal",
+				providerJobId: input.providerJobId,
+				providerRequestId: input.providerJobId,
+				providerStatus: "COMPLETED",
+				referenceImageCount: input.referenceImageCount,
+				referenceImageTargetCount: input.referenceImageTargetCount,
+				referenceImageUrls: input.referenceImageUrls,
+				status: "ready",
+				trainingElapsedMs: Date.now() - input.trainingStartedMs,
+				trainingRunId: input.trainingRunId,
+				trainingStartedAt: input.trainingStartedAt,
+				trainingSteps: input.trainingSteps,
+				triggerWord: input.triggerWord,
+				uploadMethod: "s3",
+			},
+		});
 	}
 }

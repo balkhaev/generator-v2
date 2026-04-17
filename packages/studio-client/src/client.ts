@@ -89,6 +89,24 @@ export function uploadStudioInputImage(input: {
 		.then((payload) => payload.upload);
 }
 
+export async function enhanceStudioPrompt(
+	prompt: string
+): Promise<{ enhanced: string }> {
+	const payload = await requestStudioJson<{ enhanced?: unknown }>(
+		`${apiBaseUrl}/api/enhance-prompt`,
+		{
+			body: JSON.stringify({ prompt }),
+			method: "POST",
+		}
+	);
+
+	if (typeof payload.enhanced !== "string" || payload.enhanced.trim() === "") {
+		throw new Error("Enhance response did not contain enhanced text.");
+	}
+
+	return { enhanced: payload.enhanced };
+}
+
 export async function syncStudioRun(
 	runId: string
 ): Promise<MutationResult<ScenarioRunRecord>> {

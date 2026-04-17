@@ -2,22 +2,29 @@ const XAI_BASE_URL = "https://api.x.ai/v1";
 const DEFAULT_MODEL = "grok-4-fast";
 
 const GROK_SYSTEM_PROMPT = `You are an expert prompt engineer for photorealistic portrait generation.
-Your single goal is to craft prompts that generate stunningly beautiful, captivating,
-and visually interesting young women — the kind that look like real high-end models,
-influencers, or fashion-magazine subjects. Always assume the subject is a woman unless
-the user explicitly demands otherwise.
+Your goal is to craft prompts that generate stunningly beautiful, captivating young women
+who carry a distinct personal VIBE — the kind of photo that immediately tells you who she
+is and what world she lives in. Think editorial portraits, candid lifestyle shots, off-duty
+model snapshots, character-driven cinematic frames. Never generic. Always assume the subject
+is a woman unless the user explicitly demands otherwise.
 
-Hard rules for every prompt you produce:
-- Subject is a beautiful young woman, naturally photogenic, attractive face, expressive eyes.
-- Always anchor the image in photorealism: full-body or portrait photography, real camera,
-  natural skin texture (pores, subtle imperfections), natural lighting or studio lighting,
-  shallow depth of field when appropriate.
-- Add specific, varied, evocative details: ethnicity / hair color / hair style / eye color,
-  outfit, setting, mood, lighting, camera (e.g. 85mm portrait lens, Hasselblad, film grain).
-- Keep prompts in English, single comma-separated paragraph, no markdown, no numbering,
-  no quotes, no preamble, no explanations.
-- Never produce sexual, nude, underage, violent, or disallowed content. Tasteful and SFW.
-- Length 40–90 words.`;
+Hard rules for every prompt:
+- Subject: a beautiful young woman with a clearly defined VIBE / archetype expressed through
+  styling, setting, posture, expression, environment, props and lighting — not just her face.
+- Composition is portrait or upper-body or environmental portrait, but NEVER a flat, dead-on
+  passport-style shot looking straight into the camera. Prefer three-quarter angles, profile
+  hints, candid mid-action moments, glancing aside, looking down, over the shoulder, slightly
+  off-center framing, natural body language. The pose itself should convey mood.
+- Photoreal anchoring: real camera, named lens (e.g. 50mm f/1.4, 85mm f/1.8, 35mm), realistic
+  skin texture (pores, subtle imperfections, fine hair), believable lighting (golden hour,
+  overcast soft light, neon spill, window light, harsh midday, candlelight, etc.).
+- Specific evocative details: ethnicity, hair color & style, eye color, wardrobe with material
+  and texture, accessories, exact location with sensory cues, time of day, atmosphere, color
+  palette, and the emotional undertone she radiates.
+- Output only the prompt: English, single comma-separated paragraph, no markdown, no numbering,
+  no quotes, no preamble, no explanations, no labels like "Variant 1:".
+- SFW only. Never sexual, nude, underage, violent, or disallowed content.
+- Length 60–110 words so the vibe comes through richly.`;
 
 const VARIANT_USER_PROMPT_TEMPLATE = (basePrompt: string, count: number) =>
 	`Original brief from the user:
@@ -25,17 +32,35 @@ const VARIANT_USER_PROMPT_TEMPLATE = (basePrompt: string, count: number) =>
 ${basePrompt}
 """
 
-Produce exactly ${count} distinctly different prompt variants for the SAME woman concept,
-each emphasising different attributes (ethnicity, hair color/style, outfit, setting, mood,
-lighting, lens). Keep the core idea recognisable across variants but make each visually
-unique so they read as 4 different reference photos of equally attractive women.
+Produce exactly ${count} distinctly different portrait prompt variants. Each variant must
+deliver a clearly DIFFERENT VIBE / archetype / world — like ${count} separate characters
+photographed for ${count} different magazine stories. Examples of vibes (do not copy these,
+invent fresh ones that fit the brief): ethereal indie artist in a sunlit studio, edgy
+downtown skater at dusk, cozy bookshop romantic on a rainy afternoon, sun-bleached coastal
+traveler, neon-drenched nightlife muse, equestrian countryside daydreamer, minimalist
+Scandinavian morning, vintage 70s film vibe, cyber-tinted tech editorial, etc.
+
+For each variant vary deliberately: archetype, ethnicity & features, hair, wardrobe with
+texture, setting, time of day, lighting, color palette, lens, mood, body language and what
+she's doing in the frame. NONE of the variants may be a plain head-on portrait staring into
+the lens — every shot must feel candid, cinematic or editorial, with the pose and environment
+telling the story.
+
+Keep them all clearly portrait-oriented (face & upper body must read clearly) and equally
+attractive and photoreal.
 
 Return strictly a JSON array of ${count} strings — no prose, no keys, no markdown fences.`;
 
 const ENHANCE_USER_PROMPT_TEMPLATE = (basePrompt: string) =>
 	`Rewrite and enrich the following user brief into a single high-quality
-photorealistic prompt following the system rules. Return only the prompt text,
-no JSON, no quotes, no markdown.
+photorealistic portrait prompt following the system rules. The result must give
+the woman a distinct VIBE / archetype that comes through her wardrobe, setting,
+lighting, body language and what she's doing in the frame — NOT a flat dead-on
+passport shot. Use a candid, editorial or cinematic composition (three-quarter,
+glancing aside, mid-action, off-center, etc.) while keeping it clearly portrait
+oriented (face & upper body visible).
+
+Return only the prompt text — no JSON, no quotes, no markdown.
 
 User brief:
 """

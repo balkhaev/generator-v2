@@ -7,6 +7,12 @@ import {
 } from "@generator/debug-tools/shared";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
+import {
+	type EachMessagePayload,
+	Kafka,
+	logLevel,
+	type SASLOptions,
+} from "kafkajs";
 
 import { getTestUser, upsertTestUser } from "@/test-users";
 
@@ -31,6 +37,10 @@ interface AppOptions {
 }
 
 const supportedServices = new Set(getDefaultServiceNames());
+const DEFAULT_KAFKA_TIMEOUT_MS = 5000;
+const MAX_KAFKA_TIMEOUT_MS = 30_000;
+const DEFAULT_KAFKA_SAMPLE_LIMIT = 10;
+const MAX_KAFKA_SAMPLE_LIMIT = 100;
 
 const toolDefinitions = [
 	{
@@ -172,6 +182,96 @@ const toolDefinitions = [
 		},
 		name: "test_user_get",
 	},
+	{
+		description:
+			"Describe the configured Kafka cluster, brokers, controller, and topic count.",
+		inputSchema: {
+			properties: {},
+			type: "object",
+		},
+		name: "kafka_cluster_info",
+	},
+	{
+		description:
+			"List Kafka topics, optionally including internal topics and partition metadata.",
+		inputSchema: {
+			properties: {
+				includeInternal: {
+					type: "boolean",
+				},
+				includeMetadata: {
+					type: "boolean",
+				},
+				search: {
+					type: "string",
+				},
+			},
+			type: "object",
+		},
+		name: "kafka_topics_list",
+	},
+	{
+		description: "Fetch partition offsets for a Kafka topic.",
+		inputSchema: {
+			properties: {
+				topic: {
+					type: "string",
+				},
+			},
+			required: ["topic"],
+			type: "object",
+		},
+		name: "kafka_topic_offsets",
+	},
+	{
+		description: "List Kafka consumer groups.",
+		inputSchema: {
+			properties: {
+				search: {
+					type: "string",
+				},
+			},
+			type: "object",
+		},
+		name: "kafka_consumer_groups_list",
+	},
+	{
+		description:
+			"Describe one Kafka consumer group, including members and committed offsets with lag.",
+		inputSchema: {
+			properties: {
+				groupId: {
+					type: "string",
+				},
+			},
+			required: ["groupId"],
+			type: "object",
+		},
+		name: "kafka_consumer_group_describe",
+	},
+	{
+		description:
+			"Consume a small sample from a Kafka topic with an isolated MCP consumer group.",
+		inputSchema: {
+			properties: {
+				fromBeginning: {
+					type: "boolean",
+				},
+				limit: {
+					type: "number",
+				},
+				timeoutMs: {
+					type: "number",
+				},
+				topic: {
+					type: "string",
+				},
+			},
+			required: ["topic"],
+			type: "object",
+		},
+		name: "kafka_topic_sample",
+	},
 ] as const;
 
 function createToolResult(payload: unknown, isError = false) {
@@ -237,6 +337,337 @@ function parseOptionalBoolean(value: unknown) {
 	return typeof value === "boolean" ? value : undefined;
 }
 
+function parseOptionalNumber(value: unknown) {
+	return typeof value === "number" && Number.isFinite(value)
+		? value
+		: undefined;
+}
+
+function parseKafkaBrokers() {
+	return (process.env.KAFKA_BROKERS ?? "")
+		.split(",")
+		.map((broker) => broker.trim())
+		.filter((broker) => broker.length > 0);
+}
+
+function createKafkaSasl(): SASLOptions | undefined {
+	const username = process.env.KAFKA_SASL_USERNAME?.trim();
+	const password = process.env.KAFKA_SASL_PASSWORD?.trim();
+	if (!(username && password)) {
+		return undefined;
+	}
+
+	const mechanism = process.env.KAFKA_SASL_MECHANISM?.trim() || "plain";
+	if (
+		mechanism !== "plain" &&
+		mechanism !== "scram-sha-256" &&
+		mechanism !== "scram-sha-512"
+	) {
+		throw new Error(`Unsupported KAFKA_SASL_MECHANISM: ${mechanism}`);
+	}
+
+	return {
+		mechanism,
+		password,
+		username,
+	};
+}
+
+function createKafkaClient() {
+	const brokers = parseKafkaBrokers();
+	if (brokers.length === 0) {
+		throw new Error("KAFKA_BROKERS is required for Kafka MCP tools");
+	}
+
+	return new Kafka({
+		brokers,
+		clientId: process.env.KAFKA_CLIENT_ID ?? "generator-debug-mcp",
+		logLevel: logLevel.ERROR,
+		sasl: createKafkaSasl(),
+		ssl: process.env.KAFKA_SSL === "true",
+	});
+}
+
+async function withKafkaAdmin<T>(
+	callback: (admin: ReturnType<Kafka["admin"]>) => Promise<T>
+) {
+	const admin = createKafkaClient().admin();
+	await admin.connect();
+	try {
+		return await callback(admin);
+	} finally {
+		await admin.disconnect();
+	}
+}
+
+function clampInteger(
+	value: number | undefined,
+	fallback: number,
+	max: number
+) {
+	if (value === undefined) {
+		return fallback;
+	}
+
+	return Math.max(1, Math.min(max, Math.trunc(value)));
+}
+
+function subtractOffsets(latest: string | undefined, committed: string) {
+	if (!(latest && committed !== "-1")) {
+		return null;
+	}
+
+	return (BigInt(latest) - BigInt(committed)).toString();
+}
+
+function topicMatches(topic: string, search: string | undefined) {
+	return !search || topic.toLowerCase().includes(search.toLowerCase());
+}
+
+function serializeKafkaMessage(payload: EachMessagePayload) {
+	const headers: Record<string, string> = {};
+	for (const [key, value] of Object.entries(payload.message.headers ?? {})) {
+		if (value) {
+			headers[key] = value.toString();
+		}
+	}
+
+	return {
+		headers,
+		key: payload.message.key?.toString() ?? null,
+		offset: payload.message.offset,
+		partition: payload.partition,
+		timestamp: payload.message.timestamp,
+		topic: payload.topic,
+		value: payload.message.value?.toString() ?? null,
+	};
+}
+
+function getGroupOffsetsWithLag(groupId: string, topics?: string[]) {
+	return withKafkaAdmin(async (admin) => {
+		const committedOffsets = await admin.fetchOffsets({
+			groupId,
+			...(topics ? { topics } : {}),
+		});
+		const latestOffsetsByTopic = new Map<string, Map<number, string>>();
+
+		for (const topicOffsets of committedOffsets) {
+			const latestOffsets = await admin.fetchTopicOffsets(topicOffsets.topic);
+			latestOffsetsByTopic.set(
+				topicOffsets.topic,
+				new Map(
+					latestOffsets.map((entry) => [
+						entry.partition,
+						entry.high ?? entry.offset,
+					])
+				)
+			);
+		}
+
+		return committedOffsets.map((topicOffsets) => ({
+			partitions: topicOffsets.partitions.map((partitionOffset) => {
+				const latestOffset = latestOffsetsByTopic
+					.get(topicOffsets.topic)
+					?.get(partitionOffset.partition);
+				return {
+					...partitionOffset,
+					lag: subtractOffsets(latestOffset, partitionOffset.offset),
+					latestOffset: latestOffset ?? null,
+				};
+			}),
+			topic: topicOffsets.topic,
+		}));
+	});
+}
+
+async function sampleKafkaTopic(input: {
+	fromBeginning?: boolean;
+	limit?: number;
+	timeoutMs?: number;
+	topic: string;
+}) {
+	const limit = clampInteger(
+		input.limit,
+		DEFAULT_KAFKA_SAMPLE_LIMIT,
+		MAX_KAFKA_SAMPLE_LIMIT
+	);
+	const timeoutMs = clampInteger(
+		input.timeoutMs,
+		DEFAULT_KAFKA_TIMEOUT_MS,
+		MAX_KAFKA_TIMEOUT_MS
+	);
+	const consumer = createKafkaClient().consumer({
+		groupId: `generator-debug-mcp-${crypto.randomUUID()}`,
+	});
+	const messages: ReturnType<typeof serializeKafkaMessage>[] = [];
+	let timeout: ReturnType<typeof setTimeout> | null = null;
+
+	await consumer.connect();
+	try {
+		await consumer.subscribe({
+			fromBeginning: input.fromBeginning ?? false,
+			topic: input.topic,
+		});
+
+		await new Promise<void>((resolve, reject) => {
+			timeout = setTimeout(resolve, timeoutMs);
+			consumer
+				.run({
+					autoCommit: false,
+					eachMessage: (payload) => {
+						messages.push(serializeKafkaMessage(payload));
+						if (messages.length >= limit && timeout) {
+							clearTimeout(timeout);
+							timeout = null;
+							resolve();
+						}
+						return Promise.resolve();
+					},
+				})
+				.catch(reject);
+		});
+	} finally {
+		if (timeout) {
+			clearTimeout(timeout);
+		}
+		await consumer.disconnect();
+	}
+
+	return {
+		fromBeginning: input.fromBeginning ?? false,
+		limit,
+		messages,
+		timeoutMs,
+		topic: input.topic,
+	};
+}
+
+async function handleKafkaToolCall(
+	name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	try {
+		switch (name) {
+			case "kafka_cluster_info":
+				return createOkResponse(
+					id,
+					createToolResult(
+						await withKafkaAdmin(async (admin) => {
+							const [cluster, topics] = await Promise.all([
+								admin.describeCluster(),
+								admin.listTopics(),
+							]);
+							return {
+								...cluster,
+								brokersConfigured: parseKafkaBrokers(),
+								topicCount: topics.length,
+							};
+						})
+					)
+				);
+			case "kafka_topics_list":
+				return createOkResponse(
+					id,
+					createToolResult(
+						await withKafkaAdmin(async (admin) => {
+							const includeInternal =
+								parseOptionalBoolean(argumentsPayload.includeInternal) ?? false;
+							const includeMetadata =
+								parseOptionalBoolean(argumentsPayload.includeMetadata) ?? false;
+							const search = parseOptionalString(argumentsPayload.search);
+							const topics = (await admin.listTopics())
+								.filter((topic) => includeInternal || !topic.startsWith("__"))
+								.filter((topic) => topicMatches(topic, search))
+								.sort();
+							if (!includeMetadata) {
+								return { topics };
+							}
+							const metadata = await admin.fetchTopicMetadata({ topics });
+							return { metadata: metadata.topics, topics };
+						})
+					)
+				);
+			case "kafka_topic_offsets": {
+				const topic = parseOptionalString(argumentsPayload.topic);
+				if (!topic) {
+					return createErrorResponse(id, "topic is required");
+				}
+				return createOkResponse(
+					id,
+					createToolResult({
+						offsets: await withKafkaAdmin((admin) =>
+							admin.fetchTopicOffsets(topic)
+						),
+						topic,
+					})
+				);
+			}
+			case "kafka_consumer_groups_list":
+				return createOkResponse(
+					id,
+					createToolResult(
+						await withKafkaAdmin(async (admin) => {
+							const search = parseOptionalString(argumentsPayload.search);
+							const result = await admin.listGroups();
+							return {
+								groups: result.groups.filter((group) =>
+									topicMatches(group.groupId, search)
+								),
+							};
+						})
+					)
+				);
+			case "kafka_consumer_group_describe": {
+				const groupId = parseOptionalString(argumentsPayload.groupId);
+				if (!groupId) {
+					return createErrorResponse(id, "groupId is required");
+				}
+				const [description, offsets] = await Promise.all([
+					withKafkaAdmin((admin) => admin.describeGroups([groupId])),
+					getGroupOffsetsWithLag(groupId),
+				]);
+				return createOkResponse(
+					id,
+					createToolResult({ description, groupId, offsets })
+				);
+			}
+			case "kafka_topic_sample": {
+				const topic = parseOptionalString(argumentsPayload.topic);
+				if (!topic) {
+					return createErrorResponse(id, "topic is required");
+				}
+				return createOkResponse(
+					id,
+					createToolResult(
+						await sampleKafkaTopic({
+							fromBeginning: parseOptionalBoolean(
+								argumentsPayload.fromBeginning
+							),
+							limit: parseOptionalNumber(argumentsPayload.limit),
+							timeoutMs: parseOptionalNumber(argumentsPayload.timeoutMs),
+							topic,
+						})
+					)
+				);
+			}
+			default:
+				return createErrorResponse(id, `Unknown Kafka tool: ${name}`);
+		}
+	} catch (error) {
+		return createOkResponse(
+			id,
+			createToolResult(
+				{
+					error: error instanceof Error ? error.message : "Kafka tool failed",
+					tool: name,
+				},
+				true
+			)
+		);
+	}
+}
+
 function postJson(path: string, payload: unknown) {
 	return fetchServiceSnapshot("generator", path, {
 		body: JSON.stringify(payload),
@@ -255,6 +686,10 @@ async function handleToolCall(message: JsonRpcRequest) {
 
 	if (!name) {
 		return createErrorResponse(id, "Tool name is required");
+	}
+
+	if (name.startsWith("kafka_")) {
+		return handleKafkaToolCall(name, argumentsPayload, id);
 	}
 
 	switch (name) {

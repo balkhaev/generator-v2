@@ -60,6 +60,7 @@ The repo now includes project-level MCP configuration so coding agents can attac
 - `.mcp.json` exposes the shared `generator-debug` and `balkhaev-coolify` MCP servers for agents that read root MCP config.
 - `.vscode/mcp.json` exposes the same servers for VS Code-compatible agent tooling.
 - Set `GENERATOR_DEBUG_MCP_TOKEN`, `BALKHAEV_COOLIFY_BASE_URL`, and `BALKHAEV_COOLIFY_ACCESS_TOKEN` in your local environment before starting your agent/editor.
+- The deployed `generator-debug` MCP also exposes Kafka inspection tools when `KAFKA_BROKERS` is configured on the MCP app. Current Kafka tools cover cluster info, topic listing, topic offsets, consumer groups, group lag, and small message samples.
 
 Current endpoints:
 

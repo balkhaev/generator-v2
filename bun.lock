@@ -102,6 +102,7 @@
         "@generator/db": "workspace:*",
         "@generator/debug-tools": "workspace:*",
         "hono": "^4.8.2",
+        "kafkajs": "^2.2.4",
         "zod": "catalog:",
       },
       "devDependencies": {

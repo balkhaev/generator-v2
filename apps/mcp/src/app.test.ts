@@ -41,6 +41,8 @@ describe("mcp app", () => {
 		};
 		const toolNames = payload.result.tools.map((tool) => tool.name);
 		expect(toolNames).toContain("service_request");
+		expect(toolNames).toContain("kafka_cluster_info");
+		expect(toolNames).toContain("kafka_topic_sample");
 		expect(toolNames).toContain("test_user_upsert");
 		expect(toolNames).toContain("test_user_get");
 	});

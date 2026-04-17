@@ -1,9 +1,6 @@
 "use client";
 
-import type {
-	LoraBaseModel,
-	LoraSourceProvider,
-} from "@generator/contracts/loras";
+import type { LoraBaseModel } from "@generator/contracts/loras";
 import { LORA_BASE_MODELS } from "@generator/contracts/loras";
 import { Button } from "@generator/ui/components/button";
 import {
@@ -31,20 +28,6 @@ const baseModelLabels: Record<LoraBaseModel, string> = {
 	other: "Other",
 };
 
-const sourceProviderLabels: Record<LoraSourceProvider, string> = {
-	auto: "Auto",
-	civitai: "Civitai",
-	direct: "Direct URL",
-	huggingface: "Hugging Face",
-};
-
-const sourceProviderHints: Record<LoraSourceProvider, string> = {
-	auto: "Detects Civitai, Hugging Face, or direct file URLs.",
-	civitai: "Accepts Civitai model, model-version, or download URLs.",
-	direct: "Downloads the URL exactly as provided.",
-	huggingface: "Accepts a Hugging Face file URL, or repo URL plus file path.",
-};
-
 const selectClassName =
 	"flex h-9 w-full rounded-md border border-foreground/10 bg-transparent px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
 
@@ -53,15 +36,9 @@ export default function LoraForm() {
 	const preview = usePreviewLoraSource();
 	const [name, setName] = useState("");
 	const [sourceUrl, setSourceUrl] = useState("");
-	const [sourceProvider, setSourceProvider] =
-		useState<LoraSourceProvider>("auto");
-	const [sourceFilePath, setSourceFilePath] = useState("");
-	const [sourceRevision, setSourceRevision] = useState("");
 	const [baseModel, setBaseModel] = useState<LoraBaseModel>("z-image");
 	const [defaultWeight, setDefaultWeight] = useState("1");
 	const [description, setDescription] = useState("");
-	const sourceSupportsPreview =
-		sourceProvider === "auto" || sourceProvider === "civitai";
 
 	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -74,9 +51,6 @@ export default function LoraForm() {
 			const lora = await create.mutateAsync({
 				name: name.trim() || undefined,
 				sourceUrl: sourceUrl.trim(),
-				sourceProvider,
-				sourceFilePath: sourceFilePath.trim() || undefined,
-				sourceRevision: sourceRevision.trim() || undefined,
 				baseModel,
 				defaultWeight: Number.isFinite(weight) ? weight : 1,
 				description: description.trim() || undefined,
@@ -84,8 +58,6 @@ export default function LoraForm() {
 			toast.success(`Added LoRA "${lora.name}"`);
 			setName("");
 			setSourceUrl("");
-			setSourceFilePath("");
-			setSourceRevision("");
 			setDescription("");
 			setDefaultWeight("1");
 		} catch (error) {
@@ -102,7 +74,6 @@ export default function LoraForm() {
 		}
 		try {
 			const result = await preview.mutateAsync({
-				sourceProvider,
 				sourceUrl: sourceUrl.trim(),
 			});
 			if (result.name && !name) {
@@ -133,26 +104,6 @@ export default function LoraForm() {
 			<form onSubmit={handleSubmit}>
 				<CardContent className="grid gap-3 md:grid-cols-2">
 					<div className="grid gap-1.5">
-						<Label htmlFor="lora-source-provider">Source</Label>
-						<select
-							className={selectClassName}
-							id="lora-source-provider"
-							onChange={(event) =>
-								setSourceProvider(event.target.value as LoraSourceProvider)
-							}
-							value={sourceProvider}
-						>
-							{Object.entries(sourceProviderLabels).map(([provider, label]) => (
-								<option key={provider} value={provider}>
-									{label}
-								</option>
-							))}
-						</select>
-						<p className="text-muted-foreground text-xs">
-							{sourceProviderHints[sourceProvider]}
-						</p>
-					</div>
-					<div className="grid gap-1.5">
 						<Label htmlFor="lora-base-model">Base model</Label>
 						<select
 							className={selectClassName}
@@ -175,11 +126,11 @@ export default function LoraForm() {
 							<Input
 								id="lora-source-url"
 								onChange={(event) => setSourceUrl(event.target.value)}
-								placeholder="https://civitai.com/models/... or https://huggingface.co/org/repo"
+								placeholder="https://civitai.red/models/... or https://huggingface.co/org/repo/blob/main/lora.safetensors"
 								value={sourceUrl}
 							/>
 							<Button
-								disabled={preview.isPending || !sourceSupportsPreview}
+								disabled={preview.isPending}
 								onClick={handlePreview}
 								type="button"
 								variant="outline"
@@ -244,28 +195,6 @@ export default function LoraForm() {
 								) : null}
 							</div>
 						</div>
-					) : null}
-					{sourceProvider === "huggingface" ? (
-						<>
-							<div className="grid gap-1.5">
-								<Label htmlFor="lora-source-file-path">HF file path</Label>
-								<Input
-									id="lora-source-file-path"
-									onChange={(event) => setSourceFilePath(event.target.value)}
-									placeholder="loras/style.safetensors"
-									value={sourceFilePath}
-								/>
-							</div>
-							<div className="grid gap-1.5">
-								<Label htmlFor="lora-source-revision">HF revision</Label>
-								<Input
-									id="lora-source-revision"
-									onChange={(event) => setSourceRevision(event.target.value)}
-									placeholder="main"
-									value={sourceRevision}
-								/>
-							</div>
-						</>
 					) : null}
 					<div className="grid gap-1.5">
 						<Label htmlFor="lora-name">Name</Label>

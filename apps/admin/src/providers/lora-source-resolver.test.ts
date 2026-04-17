@@ -53,10 +53,10 @@ describe("createLoraSourceResolver", () => {
 
 		const source = await resolver.resolve({
 			baseModel: "other",
-			sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+			sourceUrl: "https://civitai.red/models/9?modelVersionId=123",
 		});
 
-		expect(requests[0]?.url).toBe("https://civitai.com/api/v1/models/9");
+		expect(requests[0]?.url).toBe("https://civitai.red/api/v1/models/9");
 		expect(requests[0]?.headers.get("authorization")).toBe(
 			"Bearer civitai-token"
 		);

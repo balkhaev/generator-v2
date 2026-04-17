@@ -12,7 +12,7 @@ type Db = typeof db;
 
 type LoraRow = typeof lora.$inferSelect;
 
-const civitaiHostPattern = /(^|\.)civitai\.com$/iu;
+const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
 const huggingFaceHostPattern = /(^|\.)huggingface\.co$/iu;
 
 function deriveSourceProvider(

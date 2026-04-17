@@ -5,7 +5,7 @@ import type {
 	LoraSourceProvider,
 } from "@generator/contracts/loras";
 
-const civitaiHostPattern = /(^|\.)civitai\.com$/iu;
+const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
 const huggingFaceHostPattern = /(^|\.)huggingface\.co$/iu;
 const htmlTagPattern = /<[^>]*>/gu;
 const safetensorsExtensionPattern = /\.safetensors$/iu;
@@ -393,6 +393,10 @@ function buildCivitaiDescription(input: {
 	);
 }
 
+function buildCivitaiApiUrl(sourceUrl: URL, path: string): string {
+	return `${sourceUrl.origin}${path}`;
+}
+
 function buildHuggingFaceFileUrl(input: {
 	filePath: string;
 	repoId: string;
@@ -483,7 +487,7 @@ export function createLoraSourceResolver(
 		if (modelId) {
 			const model = parseCivitaiModel(
 				await fetchJson(
-					`https://civitai.com/api/v1/models/${modelId}`,
+					buildCivitaiApiUrl(url, `/api/v1/models/${modelId}`),
 					requestHeaders
 				)
 			);
@@ -516,7 +520,7 @@ export function createLoraSourceResolver(
 		if (modelVersionId) {
 			const version = parseCivitaiModelVersionResponse(
 				await fetchJson(
-					`https://civitai.com/api/v1/model-versions/${modelVersionId}`,
+					buildCivitaiApiUrl(url, `/api/v1/model-versions/${modelVersionId}`),
 					requestHeaders
 				)
 			);
@@ -591,7 +595,9 @@ export function createLoraSourceResolver(
 			const provider = resolveProvider(input.sourceProvider, url);
 			if (provider === "civitai") {
 				if (!isCivitaiHost(url)) {
-					throw new Error("Civitai imports require a civitai.com URL.");
+					throw new Error(
+						"Civitai imports require a civitai.com or civitai.red URL."
+					);
 				}
 				return await resolveCivitai(input, url);
 			}

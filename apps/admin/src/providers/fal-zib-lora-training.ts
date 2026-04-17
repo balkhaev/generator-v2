@@ -19,31 +19,145 @@ const DEFAULT_DATASET_POLL_MS = 5000;
 const DEFAULT_DATASET_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 2000;
-const REFERENCE_COUNT = 19;
 const FLUX_REFERENCE_EDIT_MODEL = "fal-ai/flux-2/edit";
 const fileExtensionPattern = /\.[^.]+$/u;
 
-const REFERENCE_VARIANT_SUFFIXES = [
-	"same subject, front-facing editorial portrait, soft daylight, neutral backdrop",
-	"same subject, three-quarter portrait, warm studio key light, realistic skin detail",
-	"same subject, close-up beauty portrait, diffused window light, shallow depth of field",
-	"same subject, medium shot portrait, clean white cyc wall, fashion studio lighting",
-	"same subject, outdoor portrait, golden hour sun, subtle breeze in hair",
-	"same subject, street portrait, overcast daylight, muted urban background",
-	"same subject, cinematic portrait, rim light, dark neutral background",
-	"same subject, smiling portrait, bright commercial lighting, clean framing",
-	"same subject, moody portrait, single overhead spotlight, deep shadow on one side",
-	"same subject, high-key portrait, pure white background, soft even lighting",
-	"same subject, natural portrait, dappled sunlight through foliage, relaxed pose",
-	"same subject, editorial close-up, dramatic side light, catchlight in eyes",
-	"same subject, glamour portrait, backlit hair glow, soft focus edges",
-	"same subject, casual portrait, coffee shop interior, ambient warm tones",
-	"same subject, professional headshot, solid grey background, centered framing",
-	"same subject, artistic portrait, blue hour twilight, soft cool tones",
-	"same subject, lifestyle portrait, airy minimalist interior, natural window light",
-	"same subject, dramatic portrait, chiaroscuro lighting, strong jaw shadow",
-	"same subject, soft portrait, overcast flat lighting, pastel toned background",
+interface ReferenceVariant {
+	caption: string;
+	prompt: string;
+}
+
+/**
+ * Diverse training set covering multiple framings, angles, poses, expressions,
+ * lighting setups, environments and outfits. Variety matters more than
+ * count for LoRA identity training: the model should learn the face, not a
+ * pose or wardrobe. Captions describe everything except identity so the
+ * trainer attributes those features to the prompt rather than the trigger.
+ */
+const REFERENCE_DATASET_VARIANTS: readonly ReferenceVariant[] = [
+	{
+		caption:
+			"close-up beauty headshot, soft north-window light, neutral grey backdrop, eyes to camera, relaxed expression",
+		prompt:
+			"close-up beauty headshot, soft diffused north-window light, neutral grey backdrop, eyes to camera, relaxed neutral expression",
+	},
+	{
+		caption:
+			"three-quarter portrait, golden hour sunlight, blurred park greenery in background, gentle smile, casual cotton t-shirt",
+		prompt:
+			"three-quarter outdoor portrait, warm golden hour sunlight, blurred park greenery in the background, gentle smile, casual cotton t-shirt",
+	},
+	{
+		caption:
+			"full-body environmental shot, modern urban sidewalk, overcast soft daylight, walking pose, denim jacket and jeans",
+		prompt:
+			"full-body environmental shot, modern urban sidewalk, overcast soft daylight, mid-stride walking pose, denim jacket and dark jeans",
+	},
+	{
+		caption:
+			"profile side portrait, hard studio rim light, dark seamless background, looking off to the left, calm expression",
+		prompt:
+			"strict side profile portrait, hard rim light from behind, dark seamless studio background, looking off to the left, calm expression",
+	},
+	{
+		caption:
+			"candid laughing portrait, sunny summer park, dappled afternoon light through leaves, head slightly tilted back, white linen shirt",
+		prompt:
+			"candid laughing portrait, sunny summer park, dappled afternoon sunlight through leaves, head slightly tilted back, plain white linen shirt",
+	},
+	{
+		caption:
+			"dramatic chiaroscuro headshot, single hard key light from upper left, deep black background, serious expression, half face in shadow",
+		prompt:
+			"dramatic chiaroscuro headshot, single hard key light from upper left, deep black background, serious expression, half of face in shadow",
+	},
+	{
+		caption:
+			"low-angle medium shot looking up, glass office building behind, blue hour twilight, confident posture, charcoal blazer",
+		prompt:
+			"low-angle medium shot looking up at subject, modern glass office building in background, blue hour twilight, confident upright posture, charcoal blazer",
+	},
+	{
+		caption:
+			"cinematic medium shot, rainy night city street, neon signage reflections on wet pavement, contemplative expression, dark hooded jacket",
+		prompt:
+			"cinematic medium shot, rainy night city street with neon signage reflections on wet pavement, contemplative expression, dark hooded jacket, color grade with teal and magenta accents",
+	},
+	{
+		caption:
+			"editorial fashion half-body, clean white cyclorama, soft beauty dish lighting, hand on hip, structured beige blazer",
+		prompt:
+			"editorial fashion half-body shot, clean white cyclorama studio, soft beauty dish lighting from front, hand resting on hip, structured beige blazer",
+	},
+	{
+		caption:
+			"relaxed seated portrait, cozy living room couch, warm lamp ambient light, holding a ceramic mug, oversized knit sweater",
+		prompt:
+			"relaxed seated portrait on a cozy living room couch, warm lamp ambient light, hands cradling a ceramic mug, oversized cream knit sweater",
+	},
+	{
+		caption:
+			"windswept beach portrait at sunset, warm orange sky, hair blown to one side, calm expression, casual linen shirt",
+		prompt:
+			"windswept three-quarter portrait on a beach at sunset, warm orange and pink sky, hair blowing across one side of face, calm expression, casual linen shirt",
+	},
+	{
+		caption:
+			"bookstore aisle medium shot, warm tungsten interior lighting, head turned to camera, slight curious smile, simple sweater and round glasses",
+		prompt:
+			"medium shot in a bookstore aisle between tall shelves, warm tungsten interior lighting, head turned toward camera, slight curious smile, simple sweater and thin round glasses",
+	},
+	{
+		caption:
+			"moody overhead spotlight portrait, single hard top light, deep shadow under chin, downcast eyes, monochromatic black tank top",
+		prompt:
+			"moody overhead spotlight portrait, single hard top light, deep shadow under the chin, downcast eyes, simple monochromatic black tank top",
+	},
+	{
+		caption:
+			"high-key bathroom mirror portrait, fresh morning daylight, natural skin without makeup, slight smile, plain white tee",
+		prompt:
+			"high-key bathroom mirror portrait, fresh morning daylight, natural untouched skin, no visible makeup, slight smile, plain white t-shirt",
+	},
+	{
+		caption:
+			"autumn park three-quarter shot, soft overcast light, golden fallen leaves on the ground, knit scarf, warm earthy palette",
+		prompt:
+			"three-quarter shot in an autumn park, soft overcast diffuse light, blurred golden leaves on the ground, woolen knit scarf, warm earthy color palette",
+	},
+	{
+		caption:
+			"extreme close-up showing skin texture and freckles, soft window light from the right, faint smirk, plain background",
+		prompt:
+			"extreme close-up of the face showing realistic skin texture and pores, soft north window light from camera-right, faint smirk, plain out-of-focus neutral background",
+	},
+	{
+		caption:
+			"nighttime street portrait, glowing neon shop signs, magenta and teal color cast, hands in pockets, black leather jacket",
+		prompt:
+			"nighttime street portrait, glowing neon shop signs in the background, magenta and teal color cast on subject, hands tucked into pockets, black leather jacket",
+	},
+	{
+		caption:
+			"high-angle top-down headshot, lying on grass, soft natural midday light, calm expression, hair fanned out around the head",
+		prompt:
+			"high-angle top-down headshot, subject lying on a patch of fresh grass, soft natural midday light, calm expression with eyes to camera, hair fanned out around the head",
+	},
+	{
+		caption:
+			"professional corporate headshot, solid medium grey background, soft front clamshell lighting, friendly closed-mouth smile, dark navy collared shirt",
+		prompt:
+			"professional corporate headshot, solid medium grey backdrop, soft frontal clamshell lighting, friendly closed-mouth smile, dark navy collared shirt",
+	},
+	{
+		caption:
+			"environmental cafe portrait, large window soft daylight, wooden interior bokeh, hands resting on table, beige cardigan",
+		prompt:
+			"environmental cafe portrait, soft daylight from a large window, warm wooden interior bokeh, hands resting on a small table, beige cardigan over a simple top",
+	},
 ] as const;
+
+const REFERENCE_COUNT = REFERENCE_DATASET_VARIANTS.length;
 
 export const startFalZibLoraTrainingSchema = z.object({
 	debugCorrelationId: z.string().trim().min(1).optional(),
@@ -93,17 +207,44 @@ function inferGenderHint(description?: string): string | null {
 	return null;
 }
 
-function buildReferencePrompt(input: {
-	description?: string;
-	personName: string;
+const IDENTITY_PRESERVATION_HINT =
+	"identical facial features and identity to the reference image, photorealistic, natural skin, accurate likeness";
+
+/**
+ * Build the prompt for the reference image generator. The pixel-perfect
+ * identity comes from the reference image itself (passed as image_urls), so
+ * we intentionally avoid mixing in the user-provided description (which usually
+ * also contains outfit and scene details) to keep variant diversity high.
+ */
+function buildVariantPrompt(input: {
 	referencePrompt?: string;
+	variant: ReferenceVariant;
 }) {
-	return (
-		input.referencePrompt?.trim() ||
-		(input.description?.trim().length
-			? `portrait photo of ${input.personName}, ${input.description}`
-			: `portrait photo of ${input.personName}, preserve the same identity and facial features`)
-	);
+	const identityHint = input.referencePrompt?.trim().length
+		? `${input.referencePrompt.trim()}, ${IDENTITY_PRESERVATION_HINT}`
+		: IDENTITY_PRESERVATION_HINT;
+	return `${input.variant.prompt}, ${identityHint}`;
+}
+
+function buildVariantCaption(input: {
+	genderHint: string | null;
+	triggerWord: string;
+	variant: ReferenceVariant;
+}) {
+	const subject = input.genderHint
+		? `${input.triggerWord} ${input.genderHint}`
+		: input.triggerWord;
+	return `a photo of ${subject}, ${input.variant.caption}`;
+}
+
+function buildReferencePhotoCaption(input: {
+	genderHint: string | null;
+	triggerWord: string;
+}) {
+	const subject = input.genderHint
+		? `${input.triggerWord} ${input.genderHint}`
+		: input.triggerWord;
+	return `a photo of ${subject}, candid reference photograph`;
 }
 
 function clampProgressPct(value: number) {
@@ -384,11 +525,6 @@ export class FalZibLoraTrainingRunner {
 			const outputName =
 				parsed.outputName ??
 				`${sanitizeSegment(parsed.personSlug)}-zib-lora-${Date.now()}`;
-			const baseReferencePrompt = buildReferencePrompt({
-				description: parsed.description,
-				personName: parsed.personName,
-				referencePrompt: parsed.referencePrompt,
-			});
 
 			this.logger.info("fal-zib-lora.generating-references", {
 				personId: parsed.personId,
@@ -399,8 +535,8 @@ export class FalZibLoraTrainingRunner {
 				personId: parsed.personId,
 				event: {
 					debug: {
-						baseReferencePrompt,
 						referenceModel: FLUX_REFERENCE_EDIT_MODEL,
+						referenceVariantCount: REFERENCE_COUNT,
 						sourceReferencePhotoUrl: parsed.referencePhotoUrl,
 						trainingModel: "fal-ai/z-image-trainer",
 					},
@@ -417,21 +553,26 @@ export class FalZibLoraTrainingRunner {
 				},
 			});
 
-			const referenceImageUrls: string[] = [];
-			for (const suffix of REFERENCE_VARIANT_SUFFIXES.slice(
-				0,
-				REFERENCE_COUNT
-			)) {
-				const prompt = `${baseReferencePrompt}, ${suffix}`;
+			const generatedReferences: Array<{ caption: string; url: string }> = [];
+			for (const variant of REFERENCE_DATASET_VARIANTS) {
+				const prompt = buildVariantPrompt({
+					referencePrompt: parsed.referencePrompt,
+					variant,
+				});
+				const caption = buildVariantCaption({
+					genderHint,
+					triggerWord,
+					variant,
+				});
 				const url = await generateReferenceImageFal(
 					this.apiKey,
 					parsed.referencePhotoUrl,
 					prompt
 				);
-				referenceImageUrls.push(url);
+				generatedReferences.push({ caption, url });
 				this.logger.info("fal-zib-lora.reference-generated", {
 					personId: parsed.personId,
-					index: referenceImageUrls.length,
+					index: generatedReferences.length,
 					total: REFERENCE_COUNT,
 				});
 
@@ -441,13 +582,15 @@ export class FalZibLoraTrainingRunner {
 						debugCorrelationId: parsed.debugCorrelationId,
 						lastEventAt: new Date().toISOString(),
 						phase: "generating-references",
-						progressPct: buildGeneratingProgress(referenceImageUrls.length + 1),
+						progressPct: buildGeneratingProgress(
+							generatedReferences.length + 1
+						),
 						provider: "fal",
-						referenceImageCount: referenceImageUrls.length + 1,
+						referenceImageCount: generatedReferences.length + 1,
 						referenceImageTargetCount: REFERENCE_COUNT + 1,
 						referenceImageUrls: [
 							parsed.referencePhotoUrl,
-							...referenceImageUrls,
+							...generatedReferences.map((entry) => entry.url),
 						],
 						status: "generating",
 						trainingRunId: parsed.trainingRunId,
@@ -458,36 +601,38 @@ export class FalZibLoraTrainingRunner {
 
 			this.logger.info("fal-zib-lora.downloading-dataset", {
 				personId: parsed.personId,
-				imageCount: referenceImageUrls.length + 1,
+				imageCount: generatedReferences.length + 1,
 			});
 
 			const refPhoto = await downloadImageAsset(parsed.referencePhotoUrl);
+			const referencePhotoCaption = buildReferencePhotoCaption({
+				genderHint,
+				triggerWord,
+			});
 			const generatedImages = await Promise.all(
-				referenceImageUrls.map(async (url, index) => {
-					const image = await downloadImageAsset(url);
+				generatedReferences.map(async (entry, index) => {
+					const image = await downloadImageAsset(entry.url);
 					return {
-						name: `${String(index + 1).padStart(3, "0")}${image.extension}`,
+						caption: entry.caption,
 						data: image.data,
+						name: `${String(index + 1).padStart(3, "0")}${image.extension}`,
 					};
 				})
 			);
 
-			const captionContent = genderHint
-				? `a photo of ${triggerWord} ${genderHint}, portrait`
-				: `a photo of ${triggerWord}, portrait`;
 			const zipFiles: Array<{ name: string; data: Uint8Array }> = [
 				{ name: `000${refPhoto.extension}`, data: refPhoto.data },
 				{
 					name: "000.txt",
-					data: new TextEncoder().encode(captionContent),
+					data: new TextEncoder().encode(referencePhotoCaption),
 				},
 			];
 
 			for (const img of generatedImages) {
-				zipFiles.push(img);
+				zipFiles.push({ name: img.name, data: img.data });
 				zipFiles.push({
 					name: img.name.replace(fileExtensionPattern, ".txt"),
-					data: new TextEncoder().encode(captionContent),
+					data: new TextEncoder().encode(img.caption),
 				});
 			}
 
@@ -505,7 +650,7 @@ export class FalZibLoraTrainingRunner {
 					phase: "uploading-dataset",
 					progressPct: 62,
 					provider: "fal",
-					referenceImageCount: referenceImageUrls.length + 1,
+					referenceImageCount: generatedReferences.length + 1,
 					referenceImageTargetCount: REFERENCE_COUNT + 1,
 					status: "generating",
 					trainingRunId: parsed.trainingRunId,
@@ -532,7 +677,7 @@ export class FalZibLoraTrainingRunner {
 					datasetUrl,
 					datasetZipSizeBytes: zipData.length,
 					debug: {
-						defaultCaption: captionContent,
+						defaultCaption: referencePhotoCaption,
 						outputName,
 					},
 					debugCorrelationId: parsed.debugCorrelationId,
@@ -540,9 +685,12 @@ export class FalZibLoraTrainingRunner {
 					phase: "starting-training",
 					progressPct: 70,
 					provider: "fal",
-					referenceImageCount: referenceImageUrls.length + 1,
+					referenceImageCount: generatedReferences.length + 1,
 					referenceImageTargetCount: REFERENCE_COUNT + 1,
-					referenceImageUrls: [parsed.referencePhotoUrl, ...referenceImageUrls],
+					referenceImageUrls: [
+						parsed.referencePhotoUrl,
+						...generatedReferences.map((entry) => entry.url),
+					],
 					status: "training",
 					trainingRunId: parsed.trainingRunId,
 					trainingStartedAt: new Date().toISOString(),
@@ -566,7 +714,7 @@ export class FalZibLoraTrainingRunner {
 			const trainingSubmit = await falSubmit(this.apiKey, trainingModel, {
 				image_data_url: datasetUrl,
 				steps: trainingSteps,
-				default_caption: captionContent,
+				default_caption: referencePhotoCaption,
 				learning_rate: 0.0001,
 				training_type: "content",
 			});
@@ -713,9 +861,12 @@ export class FalZibLoraTrainingRunner {
 					providerJobId: trainingSubmit.request_id,
 					providerRequestId: trainingSubmit.request_id,
 					providerStatus: "COMPLETED",
-					referenceImageCount: referenceImageUrls.length + 1,
+					referenceImageCount: generatedReferences.length + 1,
 					referenceImageTargetCount: REFERENCE_COUNT + 1,
-					referenceImageUrls: [parsed.referencePhotoUrl, ...referenceImageUrls],
+					referenceImageUrls: [
+						parsed.referencePhotoUrl,
+						...generatedReferences.map((entry) => entry.url),
+					],
 					status: "ready",
 					trainingElapsedMs: Date.now() - trainingStartedMs,
 					trainingRunId: parsed.trainingRunId,

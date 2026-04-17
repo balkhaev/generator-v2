@@ -1184,7 +1184,7 @@ function DatasetGallery({
 				</div>
 			) : null}
 			{items.length > 0 ? (
-				<div className="grid grid-cols-4 gap-2 sm:grid-cols-5 xl:grid-cols-6">
+				<div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
 					{items.map((item, i) => (
 						<div className="group relative" key={item.url}>
 							<button
@@ -1197,14 +1197,14 @@ function DatasetGallery({
 									alt={`Reference ${i + 1}`}
 									className="object-cover"
 									fill
-									sizes="(max-width: 768px) 25vw, 120px"
+									sizes="(max-width: 768px) 33vw, 160px"
 									src={item.url}
 								/>
 							</button>
 							{item.generationId ? (
 								<button
 									aria-label={`Delete reference ${i + 1}`}
-									className="absolute top-1.5 right-1.5 inline-flex size-7 items-center justify-center rounded-full bg-background/85 text-muted-foreground opacity-0 shadow-sm ring-1 ring-border/50 transition hover:bg-rose-500/10 hover:text-rose-600 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-70 group-hover:opacity-100 dark:hover:text-rose-400"
+									className="absolute top-1.5 right-1.5 inline-flex size-7 items-center justify-center rounded-full bg-background/85 text-muted-foreground shadow-sm ring-1 ring-border/50 transition hover:bg-rose-500/10 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-70 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 dark:hover:text-rose-400"
 									disabled={pendingDeleteId === item.generationId}
 									onClick={() => {
 										if (item.generationId) {
@@ -1335,7 +1335,7 @@ function PersonDetailView({
 	).filter((a): a is typeof a & { href: string } => typeof a.href === "string");
 
 	return (
-		<div className="grid h-full min-h-0 gap-6 overflow-y-auto">
+		<div className="grid h-full min-h-0 gap-6 overflow-y-auto pr-1">
 			{lightbox ? (
 				<Lightbox
 					images={lightbox.images}
@@ -1347,69 +1347,59 @@ function PersonDetailView({
 				/>
 			) : null}
 
-			{/* Header */}
-			<div className="flex items-start gap-4">
-				<Link
-					className="mt-1 inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border/60 text-muted-foreground transition hover:border-border hover:text-foreground"
-					href={CAST_HREF}
-				>
-					<ArrowLeft className="size-3.5" />
-				</Link>
-				<div className="min-w-0 flex-1">
-					<h2 className="truncate font-semibold text-xl tracking-tight">
-						{person.name}
-					</h2>
+			{/* Hero + Assets */}
+			<div className="grid gap-5 sm:grid-cols-[180px_minmax(0,1fr)] md:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)]">
+				<div className="relative w-full max-w-[260px] sm:max-w-none">
+					<Link
+						aria-label="Back to cast"
+						className="absolute top-2 left-2 z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-background/80 text-foreground/70 shadow-sm ring-1 ring-border/40 backdrop-blur transition hover:bg-background hover:text-foreground"
+						href={CAST_HREF}
+					>
+						<ArrowLeft className="size-3.5" />
+					</Link>
+					<button
+						aria-label={`View ${person.name} reference photo`}
+						className="group relative block aspect-[3/4] w-full overflow-hidden rounded-2xl shadow-black/5 shadow-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:shadow-black/20"
+						onClick={openReferenceLightbox}
+						type="button"
+					>
+						<Image
+							alt={person.name}
+							className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
+							fill
+							priority
+							sizes="(max-width: 640px) 260px, (max-width: 1280px) 220px, 260px"
+							src={person.referencePhotoUrl}
+						/>
+						<div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+					</button>
+				</div>
+
+				<div className="grid min-w-0 content-start gap-4">
 					{person.description ? (
-						<p className="mt-1 line-clamp-2 text-muted-foreground text-sm leading-relaxed">
+						<p className="line-clamp-3 text-muted-foreground text-sm leading-relaxed">
 							{person.description}
 						</p>
 					) : null}
-				</div>
-			</div>
 
-			{/* Hero + Assets */}
-			<div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
-				<button
-					aria-label={`View ${person.name} reference photo`}
-					className="group relative aspect-[3/4] overflow-hidden rounded-2xl shadow-black/5 shadow-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:shadow-black/20"
-					onClick={openReferenceLightbox}
-					type="button"
-				>
-					<Image
-						alt={person.name}
-						className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
-						fill
-						priority
-						sizes="(max-width: 1024px) 100vw, 280px"
-						src={person.referencePhotoUrl}
-					/>
-					<div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-				</button>
-
-				<div className="grid content-start gap-4">
 					{assets.length > 0 ? (
-						<div className="grid gap-1.5">
-							<span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider">
-								Assets
-							</span>
-							<div className="flex flex-wrap gap-1.5">
-								{assets.map((asset) => (
-									<a
-										className="inline-flex items-center gap-1.5 rounded-full border border-border/50 bg-background/80 px-3 py-1.5 text-xs transition hover:border-border hover:bg-muted/30"
-										href={asset.href}
-										key={asset.label}
-										rel="noreferrer noopener"
-										target="_blank"
-									>
-										<asset.icon
-											className="size-3 text-muted-foreground/60"
-											strokeWidth={1.5}
-										/>
-										{asset.label}
-										<ArrowUpRight className="size-3 text-muted-foreground/40" />
-									</a>
-								))}
-							</div>
+						<div className="flex flex-wrap gap-1.5">
+							{assets.map((asset) => (
+								<a
+									className="inline-flex items-center gap-1.5 rounded-full border border-border/50 bg-background/80 px-3 py-1.5 text-xs transition hover:border-border hover:bg-muted/30"
+									href={asset.href}
+									key={asset.label}
+									rel="noreferrer noopener"
+									target="_blank"
+								>
+									<asset.icon
+										className="size-3 text-muted-foreground/60"
+										strokeWidth={1.5}
+									/>
+									{asset.label}
+									<ArrowUpRight className="size-3 text-muted-foreground/40" />
+								</a>
+							))}
 						</div>
 					) : null}
 
@@ -1424,7 +1414,7 @@ function PersonDetailView({
 			</div>
 
 			{/* Tabs */}
-			<div className="grid gap-4">
+			<div className="grid min-w-0 gap-4">
 				<div className="flex gap-6 border-border/40 border-b">
 					<button
 						className={cn(
@@ -1463,7 +1453,7 @@ function PersonDetailView({
 				</div>
 
 				{activeTab === "generations" && generations.length > 0 ? (
-					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+					<div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
 						{generations.map((generation) => (
 							<GenerationCard
 								generation={generation}

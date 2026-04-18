@@ -1,15 +1,71 @@
 import { cn } from "@generator/ui/lib/utils";
 import type { LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
+import type { WorkspaceAccent } from "../lib/workspace-nav";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 
 export interface WorkspaceNavItem {
+	accent?: WorkspaceAccent;
 	current?: boolean;
 	href: string;
 	icon: LucideIcon;
 	label: string;
 	shortLabel: string;
+}
+
+interface WorkspaceNavCssVars extends CSSProperties {
+	"--workspace-accent"?: string;
+	"--workspace-accent-dark"?: string;
+	"--workspace-accent-foreground"?: string;
+}
+
+function buildAccentStyle(
+	accent: WorkspaceAccent | undefined
+): WorkspaceNavCssVars | undefined {
+	if (!accent) {
+		return;
+	}
+	const { chroma, foreground, hue, lightness, lightnessDark } = accent;
+	return {
+		"--workspace-accent": `oklch(${lightness} ${chroma} ${hue})`,
+		"--workspace-accent-dark": `oklch(${lightnessDark} ${chroma} ${hue})`,
+		"--workspace-accent-foreground": foreground,
+	};
+}
+
+const navItemBase =
+	"group relative flex size-9 items-center justify-center rounded-lg transition-all duration-150 ease-out";
+
+function resolveNavItemClassName({
+	current,
+	hasAccent,
+}: {
+	current: boolean;
+	hasAccent: boolean;
+}) {
+	if (current && hasAccent) {
+		return cn(
+			navItemBase,
+			"bg-[var(--workspace-accent)] text-[var(--workspace-accent-foreground)] shadow-[0_4px_18px_-6px_var(--workspace-accent)] dark:bg-[var(--workspace-accent-dark)] dark:shadow-[0_4px_18px_-6px_var(--workspace-accent-dark)]"
+		);
+	}
+	if (current) {
+		return cn(
+			navItemBase,
+			"bg-foreground text-background shadow-black/8 shadow-sm"
+		);
+	}
+	if (hasAccent) {
+		return cn(
+			navItemBase,
+			"text-muted-foreground/70 hover:bg-[color-mix(in_srgb,var(--workspace-accent)_18%,transparent)] hover:text-[var(--workspace-accent)] dark:hover:bg-[color-mix(in_srgb,var(--workspace-accent-dark)_22%,transparent)] dark:hover:text-[var(--workspace-accent-dark)]"
+		);
+	}
+	return cn(
+		navItemBase,
+		"text-muted-foreground/70 hover:bg-foreground/5 hover:text-foreground"
+	);
 }
 
 const statusToneClassNames = {
@@ -131,33 +187,43 @@ export default function WorkspaceShell({
 					aria-label="Workspace navigation"
 					className="flex gap-1 xl:flex-col"
 				>
-					{navigation.map(({ current, href, icon: Icon, label }) => (
-						<Tooltip key={href}>
-							<TooltipTrigger
-								render={
-									<a
-										aria-current={current ? "page" : undefined}
-										aria-label={label}
-										className={cn(
-											"group flex size-9 items-center justify-center rounded-lg transition-all duration-150 ease-out",
-											current
-												? "bg-foreground text-background shadow-black/8 shadow-sm"
-												: "text-muted-foreground/70 hover:bg-foreground/5 hover:text-foreground"
-										)}
-										href={href}
-									>
-										<Icon
-											aria-hidden="true"
-											className="size-[18px]"
-											strokeWidth={current ? 2 : 1.5}
-										/>
-										<span className="sr-only">{label}</span>
-									</a>
-								}
-							/>
-							<TooltipContent side="right">{label}</TooltipContent>
-						</Tooltip>
-					))}
+					{navigation.map(({ accent, current, href, icon: Icon, label }) => {
+						const accentStyle = buildAccentStyle(accent);
+						const hasAccent = accentStyle !== undefined;
+						const navItemClassName = resolveNavItemClassName({
+							current: Boolean(current),
+							hasAccent,
+						});
+						return (
+							<Tooltip key={href}>
+								<TooltipTrigger
+									render={
+										<a
+											aria-current={current ? "page" : undefined}
+											aria-label={label}
+											className={navItemClassName}
+											href={href}
+											style={accentStyle}
+										>
+											<Icon
+												aria-hidden="true"
+												className="size-[18px]"
+												strokeWidth={current ? 2 : 1.5}
+											/>
+											{hasAccent && !current ? (
+												<span
+													aria-hidden="true"
+													className="absolute bottom-1 left-1/2 size-1 -translate-x-1/2 rounded-full bg-[var(--workspace-accent)] opacity-60 transition-opacity duration-150 group-hover:opacity-100 dark:bg-[var(--workspace-accent-dark)]"
+												/>
+											) : null}
+											<span className="sr-only">{label}</span>
+										</a>
+									}
+								/>
+								<TooltipContent side="right">{label}</TooltipContent>
+							</Tooltip>
+						);
+					})}
 				</nav>
 
 				{railFooter ? (

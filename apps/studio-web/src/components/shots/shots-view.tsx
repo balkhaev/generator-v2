@@ -23,7 +23,7 @@ import {
 	Trash2,
 	Video,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { ModeToggle } from "@/components/mode-toggle";
@@ -104,6 +104,12 @@ export default function ShotsView({
 }) {
 	const adminUrl = env.NEXT_PUBLIC_ADMIN_URL ?? "http://localhost:3001";
 	const personsUrl = env.NEXT_PUBLIC_PERSONS_URL ?? "http://localhost:3004";
+	useEffect(() => {
+		document.body.classList.add("shots-route");
+		return () => {
+			document.body.classList.remove("shots-route");
+		};
+	}, []);
 	const [filter, setFilter] = useState<FeedFilter>("all");
 	const [searchQuery, setSearchQuery] = useState("");
 	const [studioShots, setStudioShots] = useState(shots);

@@ -78,12 +78,20 @@ export function useStudioMedia({
 			: selectedScenarioAssets[selectedMediaIndex];
 
 	useEffect(() => {
+		// Не подставляем asset id в URL автоматически: иначе после каждого клика
+		// по сценарию (handlePickScenario чистит ?asset) этот эффект делал бы
+		// второй router.replace, и Next.js soft-navigation проигрывался дважды
+		// — отсюда мерцание всего экрана при переключении.
+		// Чистим URL только если в нём остался ссылающийся в никуда asset id.
+		if (requestedAssetId === null) {
+			return;
+		}
 		if (requestedAssetId === selectedMediaId) {
 			return;
 		}
 		navigate(
 			urlBuilder({
-				assetId: selectedMediaId,
+				assetId: null,
 				runId: isPersonMode ? null : requestedRunId,
 			})
 		);

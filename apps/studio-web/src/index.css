@@ -30,6 +30,29 @@
 	--studio-shadow: 0 18px 56px color-mix(in srgb, black 32%, transparent);
 }
 
+body.shots-route {
+	--studio-wash: color-mix(
+		in oklch,
+		var(--background) 90%,
+		oklch(0.72 0.12 320)
+	);
+	--studio-line: color-mix(in oklch, var(--border) 76%, oklch(0.74 0.08 320));
+	--studio-glow: color-mix(in oklch, var(--primary) 28%, oklch(0.7 0.16 320));
+	--studio-panel: color-mix(in oklch, var(--card) 94%, oklch(0.95 0.02 320));
+}
+
+body.shots-route.dark,
+.dark body.shots-route {
+	--studio-wash: color-mix(
+		in oklch,
+		var(--background) 92%,
+		oklch(0.3 0.08 320)
+	);
+	--studio-line: color-mix(in oklch, var(--border) 86%, oklch(0.5 0.08 320));
+	--studio-glow: color-mix(in oklch, var(--primary) 32%, oklch(0.76 0.16 320));
+	--studio-panel: color-mix(in oklch, var(--card) 95%, oklch(0.24 0.03 320));
+}
+
 body {
 	background:
 		radial-gradient(

@@ -46,6 +46,7 @@ import { useShotSaving } from "@/components/use-shot-saving";
 import { useStudioMedia } from "@/components/use-studio-media";
 import { useStudioSelection } from "@/components/use-studio-selection";
 import UserMenu from "@/components/user-menu";
+import { getPersonById } from "@/lib/persons-api";
 
 function buildStudioHref(
 	pathname: string,
@@ -499,7 +500,19 @@ export default function StudioShell({
 		urlBuilder: mediaUrlBuilder,
 	});
 
+	const handlePersonGenerationImported = useCallback(
+		(personId: string) => {
+			getPersonById(personId)
+				.then((person) => {
+					handlePersonRefreshed(person);
+				})
+				.catch(() => undefined);
+		},
+		[handlePersonRefreshed]
+	);
+
 	const { savingShotAssetId, saveShot } = useShotSaving({
+		onPersonGenerationImported: handlePersonGenerationImported,
 		runs: snapshot.runs,
 		setSnapshot,
 	});
@@ -655,12 +668,26 @@ export default function StudioShell({
 		if (!selectedMediaAsset) {
 			return false;
 		}
+		const run = snapshot.runs.find(
+			(entry) => entry.id === selectedMediaAsset.runId
+		);
+		if (run?.inputPersonId) {
+			const person = persons.find((entry) => entry.id === run.inputPersonId);
+			return Boolean(
+				person?.generations.some(
+					(generation) =>
+						generation.operatorRunId === run.id &&
+						(generation.previewUrl === selectedMediaAsset.url ||
+							generation.sourceUrl === selectedMediaAsset.url)
+				)
+			);
+		}
 		return snapshot.shots.some(
 			(shot) =>
 				shot.runId === selectedMediaAsset.runId &&
 				shot.artifactUrl === selectedMediaAsset.url
 		);
-	}, [selectedMediaAsset, snapshot.shots]);
+	}, [persons, selectedMediaAsset, snapshot.runs, snapshot.shots]);
 
 	const statusLabel = isPersonMode
 		? "person · LoRA"

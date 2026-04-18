@@ -1,7 +1,7 @@
 "use client";
 
 import type { PersonRecord } from "@generator/contracts/persons";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getPersonById, listPersons } from "@/lib/persons-api";
 
@@ -14,14 +14,28 @@ import { getPersonById, listPersons } from "@/lib/persons-api";
  */
 export function usePersonSelection(requestedPersonId: string | null) {
 	const [persons, setPersons] = useState<PersonRecord[]>([]);
-	const [personDetail, setPersonDetail] = useState<PersonRecord | null>(null);
+	const [fetchedPerson, setFetchedPerson] = useState<PersonRecord | null>(null);
 
 	const selectedPersonId =
 		(requestedPersonId &&
-		(personDetail?.id === requestedPersonId ||
+		(fetchedPerson?.id === requestedPersonId ||
 			persons.some((person) => person.id === requestedPersonId))
 			? requestedPersonId
 			: null) ?? null;
+
+	// Берём данные персоны синхронно: сперва свежий fetch, иначе кеш из списка.
+	// Без этого при переходе scenario → person один кадр рендерится
+	// в scenario-режиме (personDetail ещё null), пока не отработает effect —
+	// и пользователь видит мерцание интерфейса.
+	const personDetail = useMemo<PersonRecord | null>(() => {
+		if (!selectedPersonId) {
+			return null;
+		}
+		if (fetchedPerson?.id === selectedPersonId) {
+			return fetchedPerson;
+		}
+		return persons.find((person) => person.id === selectedPersonId) ?? null;
+	}, [fetchedPerson, persons, selectedPersonId]);
 
 	useEffect(() => {
 		listPersons()
@@ -35,12 +49,7 @@ export function usePersonSelection(requestedPersonId: string | null) {
 
 	useEffect(() => {
 		if (!selectedPersonId) {
-			setPersonDetail(null);
 			return;
-		}
-		const cached = persons.find((person) => person.id === selectedPersonId);
-		if (cached) {
-			setPersonDetail(cached);
 		}
 		let cancelled = false;
 		getPersonById(selectedPersonId)
@@ -48,16 +57,16 @@ export function usePersonSelection(requestedPersonId: string | null) {
 				if (cancelled) {
 					return;
 				}
-				setPersonDetail(person);
+				setFetchedPerson(person);
 			})
 			.catch(() => undefined);
 		return () => {
 			cancelled = true;
 		};
-	}, [persons, selectedPersonId]);
+	}, [selectedPersonId]);
 
 	function handlePersonRefreshed(person: PersonRecord) {
-		setPersonDetail(person);
+		setFetchedPerson(person);
 		setPersons((current) => {
 			const exists = current.some((entry) => entry.id === person.id);
 			return exists

@@ -139,8 +139,24 @@ export default function ComposeDialog({
 		let cancelled = false;
 		fetchStudioLoras(selectedWorkflow?.baseModel).then((result) => {
 			if (cancelled) {
+				// eslint-disable-next-line no-console
+				console.info(
+					"[compose] cancelled setState " +
+						JSON.stringify({
+							baseModel: selectedWorkflow?.baseModel,
+							count: result.loras.length,
+						})
+				);
 				return;
 			}
+			// eslint-disable-next-line no-console
+			console.info(
+				"[compose] applying setState " +
+					JSON.stringify({
+						baseModel: selectedWorkflow?.baseModel,
+						count: result.loras.length,
+					})
+			);
 			setAvailableLoras(result.loras);
 			setLorasError(result.error);
 		});

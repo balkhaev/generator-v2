@@ -19,10 +19,13 @@ import {
 } from "@/domain/worker-settings-store";
 import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
 import { RunpodAiToolkitLoraTrainingRunner } from "@/providers/runpod-ai-toolkit-lora-training";
+import { RunpodPodClient } from "@/providers/runpod-pod-client";
+import { RunpodPodLoraTrainingRunner } from "@/providers/runpod-pod-lora-training";
 import type { PersonLoraTrainingJobData } from "@/queue/person-lora-training";
 import { createPersonLoraTrainingWorker } from "@/queue/person-lora-training";
 import { recoverInterruptedTrainings } from "@/recovery/training-recovery";
 
+const TRAILING_FILENAME_PATTERN = /[^/]*$/u;
 const TRAINING_LOCK_TTL_SECONDS = 24 * 60 * 60;
 const TRAINING_LOCK_PREFIX = "admin:person-lora-training";
 /**
@@ -68,20 +71,25 @@ const falRunner = new FalZibLoraTrainingRunner({
 });
 
 /**
- * Экспериментальный RunPod ai-toolkit runner. Создаём всегда, когда есть
- * креды, чтобы UI-свитчер из admin-web мог переключать провайдер в runtime
- * без рестарта воркера. Если кредов нет — runner не будет создан и любая
- * попытка переключиться через UI отвергнется на стороне API.
+ * Экспериментальные RunPod runner-ы. Создаём всегда, когда есть креды, чтобы
+ * UI-свитчер мог переключать провайдер в runtime без рестарта. Какой именно
+ * runner используется (serverless vs pod) — определяется RUNPOD_TRAINING_MODE.
+ *
+ * - serverless: бьёт в наш custom RunPod Serverless endpoint (handler.py)
+ * - pod (default): поднимает on-demand GPU pod из готового pytorch-образа,
+ *   бутстрап ставит ostris/ai-toolkit и гоняет тренировку (см.
+ *   tools/runpod-ai-toolkit/pod-bootstrap.sh).
  */
 const runpodApiKey = env.RUNPOD_API_KEY;
-const runpodEndpointId = env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID;
-const runpodRunner =
-	runpodApiKey && runpodEndpointId
+const runpodMode = env.RUNPOD_TRAINING_MODE;
+
+const runpodServerlessRunner =
+	runpodApiKey && env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID
 		? new RunpodAiToolkitLoraTrainingRunner({
 				apiBaseUrl: env.RUNPOD_API_BASE_URL,
 				apiKey: runpodApiKey,
 				baseModel: env.RUNPOD_AI_TOOLKIT_BASE_MODEL,
-				endpointId: runpodEndpointId,
+				endpointId: env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID,
 				eventPublisher,
 				falApiKeyForDataset: falKey,
 				logger: console,
@@ -92,6 +100,54 @@ const runpodRunner =
 				trainingTimeoutMs: env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS,
 			})
 		: null;
+
+const runpodPodRunner =
+	runpodApiKey && env.RUNPOD_POD_BOOTSTRAP_URL && s3Config
+		? new RunpodPodLoraTrainingRunner({
+				baseModel: env.RUNPOD_AI_TOOLKIT_BASE_MODEL,
+				bootstrapUrl: env.RUNPOD_POD_BOOTSTRAP_URL,
+				cloudType: env.RUNPOD_POD_CLOUD_TYPE,
+				containerDiskInGb: env.RUNPOD_POD_CONTAINER_DISK_GB,
+				eventPublisher,
+				falApiKeyForDataset: falKey,
+				gpuTypeIds: env.RUNPOD_POD_GPU_TYPE_IDS.split(",")
+					.map((id) => id.trim())
+					.filter((id) => id.length > 0),
+				hfToken: env.HF_TOKEN ?? env.HUGGINGFACE_TOKEN,
+				imageName: env.RUNPOD_POD_IMAGE_NAME,
+				logger: console,
+				networkVolumeId: env.RUNPOD_POD_NETWORK_VOLUME_ID,
+				personsApiBaseUrl: personsApiUrl,
+				podClient: new RunpodPodClient({
+					apiKey: runpodApiKey,
+					baseUrl: env.RUNPOD_REST_API_BASE_URL,
+				}),
+				podRunnerUrl: deriveSiblingUrl(
+					env.RUNPOD_POD_BOOTSTRAP_URL,
+					"pod_runner.py"
+				),
+				pollMs: env.RUNPOD_AI_TOOLKIT_POLL_MS,
+				s3Config,
+				trainingControlToken,
+				trainingTimeoutMs: env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS,
+				volumeInGb: env.RUNPOD_POD_VOLUME_GB,
+			})
+		: null;
+
+const runpodRunner =
+	runpodMode === "pod" ? runpodPodRunner : runpodServerlessRunner;
+
+function deriveSiblingUrl(baseUrl: string, siblingFilename: string): string {
+	try {
+		const url = new URL(baseUrl);
+		const segments = url.pathname.split("/");
+		segments[segments.length - 1] = siblingFilename;
+		url.pathname = segments.join("/");
+		return url.toString();
+	} catch {
+		return baseUrl.replace(TRAILING_FILENAME_PATTERN, siblingFilename);
+	}
+}
 
 const trainingProviderSettings = createRedisTrainingProviderSettings({
 	defaultProvider: defaultTrainingProvider,
@@ -112,8 +168,14 @@ const stopHeartbeat = startWorkerSettingsHeartbeat({
 		availability: resolveTrainingProviderAvailability(env),
 		runpod: {
 			baseModel: env.RUNPOD_AI_TOOLKIT_BASE_MODEL,
+			bootstrapUrl: env.RUNPOD_POD_BOOTSTRAP_URL ?? null,
 			endpointConfigured: Boolean(env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID),
 			endpointId: env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID ?? null,
+			mode: env.RUNPOD_TRAINING_MODE,
+			podGpuTypeIds: env.RUNPOD_POD_GPU_TYPE_IDS.split(",")
+				.map((id) => id.trim())
+				.filter((id) => id.length > 0),
+			podImageName: env.RUNPOD_POD_IMAGE_NAME,
 			pollMs: env.RUNPOD_AI_TOOLKIT_POLL_MS,
 			timeoutMs: env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS,
 		},
@@ -194,7 +256,7 @@ const runTrainingOnce = async (
 };
 
 console.info(
-	`admin.worker: ready (default training provider: ${defaultTrainingProvider}, runpod ${runpodRunner ? "enabled" : "disabled"}, dataset upload: S3)`
+	`admin.worker: ready (default training provider: ${defaultTrainingProvider}, runpod ${runpodRunner ? `enabled (mode=${runpodMode})` : "disabled"}, dataset upload: S3)`
 );
 
 const queueWorker = createPersonLoraTrainingWorker({

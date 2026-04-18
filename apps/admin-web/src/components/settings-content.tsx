@@ -10,6 +10,7 @@ import { DatasetBuilderCard } from "@/components/settings/dataset-builder-card";
 import { GeneratorRuntimeCard } from "@/components/settings/generator-runtime-card";
 import { PersonsDefaultsCard } from "@/components/settings/persons-defaults-card";
 import { TrainingProviderCard } from "@/components/settings/training-provider-card";
+import { WorkerHealthCard } from "@/components/settings/worker-health-card";
 import { useAdminSettings } from "@/hooks/use-admin-settings";
 
 export default function SettingsContent({
@@ -47,7 +48,9 @@ export default function SettingsContent({
 						<TrainingProviderCard
 							runpod={snapshot.runpodTraining}
 							settings={snapshot.trainingProvider}
+							workerHealth={snapshot.workerHealth}
 						/>
+						<WorkerHealthCard health={snapshot.workerHealth} />
 						<DatasetBuilderCard settings={snapshot.datasetBuilder} />
 						<PersonsDefaultsCard defaults={snapshot.personsDefaults} />
 						<GeneratorRuntimeCard settings={snapshot.generatorRuntime} />

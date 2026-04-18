@@ -2,6 +2,13 @@
 
 Цель: дать один воспроизводимый контур дебага для `provider -> generator-api -> admin-api -> studio/persons -> output artifacts`, чтобы агент мог дойти от симптома до корня без ручного перебора.
 
+Контур построен на двух слоях MCP, и система должна сама себя дебажить через них:
+
+- **Project MCP** (`apps/mcp` HTTP + `packages/debug-tools` stdio) — «как должно быть»: контракты, локальный репро, test users, Kafka, execution sync.
+- **Coolify MCP** (`user-balkhaev-coolify`) — «что реально крутится в проде»: апы, контейнеры, логи (`application_logs`, `deployment` logs), env, restart/redeploy.
+
+Self-debug loop: `coolify.find_issues` → `coolify.diagnose_app` / `application_logs` → `project.service_request` для репро → фикс кода/env → `coolify.deploy` или `coolify.env_vars` + `control` → повторная проверка `application_logs` + `find_issues` + `service_health`. Подробно — в скиле `.agents/skills/mcp-debug/SKILL.md`.
+
 ## Уже есть в репо
 
 Сильные стороны текущей базы:

@@ -195,8 +195,12 @@ export interface DatasetBuilderSettings {
 
 export interface RunpodTrainingSettings {
 	baseModel: string;
+	bootstrapUrl: string | null;
 	endpointConfigured: boolean;
 	endpointId: string | null;
+	mode: "serverless" | "pod";
+	podGpuTypeIds: string[];
+	podImageName: string | null;
 	pollMs: number;
 	timeoutMs: number;
 }

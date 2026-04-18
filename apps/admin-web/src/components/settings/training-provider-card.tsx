@@ -1,24 +1,25 @@
 "use client";
 
 import type {
+	AdminWorkerHealthStatus,
 	RunpodTrainingSettings,
 	TrainingProviderName,
 	TrainingProviderSettingsSnapshot,
 } from "@generator/contracts/admin";
 import { cn } from "@generator/ui/lib/utils";
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { SettingsCard, SettingsRow } from "@/components/settings/settings-card";
 import { useUpdateTrainingProvider } from "@/hooks/use-training-provider";
 
 const PROVIDER_LABELS: Record<TrainingProviderName, string> = {
 	fal: "fal.ai (z-image-trainer)",
-	runpod: "RunPod (ai-toolkit serverless)",
+	runpod: "RunPod (ai-toolkit)",
 };
 
 const PROVIDER_DESCRIPTIONS: Record<TrainingProviderName, string> = {
 	fal: "Production-grade fal-ai/z-image-trainer pipeline. Fastest and most stable.",
 	runpod:
-		"Experimental ai-toolkit pipeline on a custom RunPod serverless endpoint. Allows broader base models.",
+		"Experimental ai-toolkit pipeline on RunPod. Mode (pod/serverless) is controlled by RUNPOD_TRAINING_MODE env.",
 };
 
 const PROVIDERS: TrainingProviderName[] = ["fal", "runpod"];
@@ -26,11 +27,13 @@ const PROVIDERS: TrainingProviderName[] = ["fal", "runpod"];
 interface TrainingProviderCardProps {
 	runpod: RunpodTrainingSettings;
 	settings: TrainingProviderSettingsSnapshot;
+	workerHealth?: AdminWorkerHealthStatus;
 }
 
 export function TrainingProviderCard({
 	runpod,
 	settings,
+	workerHealth,
 }: TrainingProviderCardProps) {
 	const mutation = useUpdateTrainingProvider();
 	const availabilityByProvider = new Map(
@@ -113,20 +116,60 @@ export function TrainingProviderCard({
 				</div>
 			) : null}
 
+			{workerHealth && workerHealth.source === "gateway-fallback" ? (
+				<div className="mt-3 inline-flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-amber-700 text-xs dark:text-amber-400">
+					<AlertTriangle className="mt-0.5 size-3 shrink-0" />
+					<span>
+						No worker heartbeat — availability is computed from the gateway env
+						(which usually has no training secrets). If the worker is healthy,
+						providers may actually be configured. Check the worker logs.
+					</span>
+				</div>
+			) : null}
+
 			<div className="mt-4 grid gap-0">
 				<div className="font-mono text-[10px] text-muted-foreground/70 uppercase tracking-[0.2em]">
-					RunPod endpoint
+					RunPod runtime
 				</div>
 				<SettingsRow
-					hint="From RUNPOD_AI_TOOLKIT_ENDPOINT_ID"
-					label="Endpoint ID"
-					value={runpod.endpointId ?? "— not set —"}
+					hint="From RUNPOD_TRAINING_MODE (controls which runner the worker uses)"
+					label="Mode"
+					value={runpod.mode === "pod" ? "pod (on-demand GPU)" : "serverless"}
 				/>
 				<SettingsRow
 					hint="From RUNPOD_AI_TOOLKIT_BASE_MODEL"
 					label="Base model"
 					value={runpod.baseModel}
 				/>
+				{runpod.mode === "pod" ? (
+					<>
+						<SettingsRow
+							hint="From RUNPOD_POD_IMAGE_NAME"
+							label="Pod image"
+							value={runpod.podImageName ?? "— not set —"}
+						/>
+						<SettingsRow
+							hint="From RUNPOD_POD_GPU_TYPE_IDS (comma-separated, ranked)"
+							label="GPU pool"
+							value={
+								runpod.podGpuTypeIds.length > 0
+									? runpod.podGpuTypeIds.join(", ")
+									: "— not set —"
+							}
+						/>
+						<SettingsRow
+							hint="From RUNPOD_POD_BOOTSTRAP_URL (must point to pod-bootstrap.sh in our S3 / public mirror)"
+							label="Bootstrap URL"
+							value={runpod.bootstrapUrl ?? "— not set —"}
+						/>
+					</>
+				) : (
+					<SettingsRow
+						hint="From RUNPOD_AI_TOOLKIT_ENDPOINT_ID"
+						label="Endpoint ID"
+						value={runpod.endpointId ?? "— not set —"}
+					/>
+				)}
 				<SettingsRow
 					hint="From RUNPOD_AI_TOOLKIT_POLL_MS"
 					label="Poll interval"

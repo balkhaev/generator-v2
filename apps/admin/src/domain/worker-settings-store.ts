@@ -35,8 +35,12 @@ export interface WorkerSettingsSnapshot {
 	publishedAt: string;
 	runpod: {
 		baseModel: string | null;
+		bootstrapUrl: string | null;
 		endpointConfigured: boolean;
 		endpointId: string | null;
+		mode: "serverless" | "pod" | null;
+		podGpuTypeIds: string[] | null;
+		podImageName: string | null;
 		pollMs: number | null;
 		timeoutMs: number | null;
 	};
@@ -132,8 +136,19 @@ function parseSnapshot(raw: string): WorkerSettingsSnapshot | null {
 			publishedAt: value.publishedAt,
 			runpod: {
 				baseModel: runpod.baseModel ?? null,
+				bootstrapUrl: runpod.bootstrapUrl ?? null,
 				endpointConfigured: Boolean(runpod.endpointConfigured),
 				endpointId: runpod.endpointId ?? null,
+				mode:
+					runpod.mode === "serverless" || runpod.mode === "pod"
+						? runpod.mode
+						: null,
+				podGpuTypeIds: Array.isArray(runpod.podGpuTypeIds)
+					? (runpod.podGpuTypeIds.filter(
+							(value) => typeof value === "string"
+						) as string[])
+					: null,
+				podImageName: runpod.podImageName ?? null,
 				pollMs: runpod.pollMs ?? null,
 				timeoutMs: runpod.timeoutMs ?? null,
 			},

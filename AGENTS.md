@@ -1,20 +1,31 @@
 # Project Agent Guide
 
-## Debug Through MCP First
+## Self-Debug Through MCP
 
-В этом репо есть собственные MCP-серверы, которые покрывают весь дебаг-контур:
+Система должна сама себя дебажить через MCP. У агента два слоя инструментов:
 
-- `apps/mcp` — HTTP MCP (`POST /mcp`, bearer `MCP_AUTH_TOKEN`, порт `3010`). Тулы: health/`service_request`, generator workflows + execution submit/sync, test users (`test_user_upsert`/`test_user_get`), Kafka (cluster/topics/offsets/consumer groups/sample).
-- `packages/debug-tools` — stdio MCP + bundle CLI (`bun --cwd packages/debug-tools run mcp` / `… run bundle`). Health/admin dashboard/studio snapshot/generator execution/`collect_debug_bundle`.
+1. **Project MCP** — `apps/mcp` (HTTP `POST /mcp`, bearer `MCP_AUTH_TOKEN`, порт `3010`) + `packages/debug-tools` (stdio + bundle CLI). Тулы: health/`service_request`, generator workflows + execution submit/sync, test users (`test_user_upsert`/`test_user_get`), Kafka (cluster/topics/offsets/consumer groups/sample), `collect_debug_bundle`.
+2. **Coolify MCP** (`user-balkhaev-coolify`) — прод: `find_issues`, `get_infrastructure_overview`, `list_applications`, `diagnose_app`, `application_logs`, `diagnose_server`, `server_resources`, `deployment` (get/list/cancel), `deploy`, `redeploy_project`, `restart_project_apps`, `control`, `env_vars`, `bulk_env_update`.
 
-Правила для агента:
+Project MCP знает «как должно быть», Coolify — «что реально крутится». Дебаг = свести две картины.
 
-1. Любой дебаг (упавший API, сломанная инференс-цепочка, странный auth, лаг в Kafka, тест-юзер для e2e) — **сначала через MCP-tool**. Никаких разовых `curl`, `psql`, `kafkacat`, `node -e` если уже есть тул.
-2. Если нужного тула нет — **расширяй MCP**, а не обходи его. Пошаговая инструкция (схема в `toolDefinitions`, хендлер, парсинг через хелперы, `createToolResult`, тест в `apps/mcp/src/app.test.ts`, `bun x ultracite fix`, `bun --cwd apps/mcp run check-types && bun test apps/mcp`) — в скиле `mcp-debug`.
-3. После добавления нового тула обнови `docs/debugging-toolchain.md`, чтобы следующий агент его нашёл.
-4. Корреляция между сервисами — через `x-debug-correlation-id`. При вызове `service_request` подставляй свой ID и грепай его в логах.
+Канонический self-debug loop (подробно в скиле `mcp-debug`):
 
-Подробнее: скилы `mcp-debug` (общая политика и расширение), `backend-debug` (admin/generator/studio/persons), `inference-debug` (workflow → артефакт), `docs/debugging-toolchain.md`.
+1. **Снять прод** — `coolify.find_issues` → `coolify.diagnose_app` → `coolify.application_logs` (`lines: 500` для редких ошибок); для упавшей сборки — `coolify.deployment list_for_app` → `deployment get`.
+2. **Сравнить с эталоном** — повторить путь запроса локально через `project.service_request` (с `x-debug-correlation-id`); для inference — `generator_execution_submit`; для auth — `test_user_upsert`; для шины — `kafka_consumer_group_describe`.
+3. **Развести причину** — код / env / инфраструктура. Env diff: `coolify.env_vars action: "list"` против локального `.env`.
+4. **Применить фикс** — код через PR + `coolify.deploy` / `redeploy_project`; env через `coolify.env_vars` или `bulk_env_update` + `coolify.control restart`.
+5. **Подтвердить** — `coolify.application_logs` после рестарта (нет паттерна ошибки) + `coolify.find_issues` (запись по сервису исчезла) + `project.service_health`.
+6. **Закрепить** — если симптом ловили вручную или склеивали несколько `application_logs`, оформи это новым tool в project MCP (composite/обёрточный над Coolify API), чтобы следующий агент нашёл за один вызов.
+
+Правила:
+
+- Никаких ручных `curl`, `psql`, `kafkacat`, `ssh`, `docker logs`, прямого деплоя через панельку Coolify — всё через MCP, чтобы каждый шаг был воспроизводим следующим агентом.
+- Если нужного тула нет — **расширяй MCP**. Project MCP правится в `apps/mcp/src/app.ts` (схема в `toolDefinitions`, хендлер, парсинг через хелперы, `createToolResult`, тест в `apps/mcp/src/app.test.ts`, `bun x ultracite fix`, `bun --cwd apps/mcp run check-types && bun test apps/mcp`). Coolify «расширяется» обёрточным tool в `apps/mcp` (домен `coolify_*`), который ходит в Coolify API и возвращает агрегированный ответ.
+- После добавления нового тула обнови `docs/debugging-toolchain.md`.
+- Корреляция между сервисами — через `x-debug-correlation-id`.
+
+Подробнее: скилы `mcp-debug` (политика, self-debug loop, расширение), `backend-debug` (admin/generator/studio/persons), `inference-debug` (workflow → артефакт), `docs/debugging-toolchain.md`.
 
 ---
 

@@ -30,4 +30,5 @@ export {
 	uploadObjectToS3,
 	uploadZipToS3,
 } from "./lora-cache";
+export { createPresignedPutUrl } from "./presign";
 export { buildZipFromBuffers } from "./zip";

@@ -41,6 +41,10 @@ interface AdminSettingsEnvSnapshot {
 	RUNPOD_AI_TOOLKIT_ENDPOINT_ID?: string | null;
 	RUNPOD_AI_TOOLKIT_POLL_MS?: number | null;
 	RUNPOD_AI_TOOLKIT_TIMEOUT_MS?: number | null;
+	RUNPOD_POD_BOOTSTRAP_URL?: string | null;
+	RUNPOD_POD_GPU_TYPE_IDS?: string | null;
+	RUNPOD_POD_IMAGE_NAME?: string | null;
+	RUNPOD_TRAINING_MODE?: "serverless" | "pod" | null;
 }
 
 export interface BuildAdminSettingsSnapshotInput {
@@ -135,8 +139,25 @@ export function buildAdminSettingsSnapshot(
 		},
 		runpodTraining: {
 			baseModel: runpodBaseModel,
+			bootstrapUrl:
+				workerSnapshot?.runpod.bootstrapUrl ??
+				input.env.RUNPOD_POD_BOOTSTRAP_URL ??
+				null,
 			endpointConfigured: Boolean(runpodEndpoint),
 			endpointId: runpodEndpoint,
+			mode:
+				workerSnapshot?.runpod.mode ?? input.env.RUNPOD_TRAINING_MODE ?? "pod",
+			podGpuTypeIds:
+				workerSnapshot?.runpod.podGpuTypeIds ??
+				(input.env.RUNPOD_POD_GPU_TYPE_IDS
+					? input.env.RUNPOD_POD_GPU_TYPE_IDS.split(",")
+							.map((id) => id.trim())
+							.filter((id) => id.length > 0)
+					: []),
+			podImageName:
+				workerSnapshot?.runpod.podImageName ??
+				input.env.RUNPOD_POD_IMAGE_NAME ??
+				null,
 			pollMs: runpodPollMs,
 			timeoutMs: runpodTimeoutMs,
 		},

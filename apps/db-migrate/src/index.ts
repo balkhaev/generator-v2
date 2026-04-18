@@ -73,6 +73,71 @@ app.get("/api/ready", (c) => {
 
 app.get("/api/status", (c) => c.json(status));
 
+// Удалить N последних записей из drizzle.__drizzle_migrations и
+// перезапустить миграции. Нужен в редких случаях, когда journal.json
+// содержит записи с `when` меньше последнего применённого `created_at`,
+// и drizzle migrator из-за этого молча пропускает свежие миграции.
+// После удаления последних N записей drizzle переприменит соответствующие
+// миграции (поэтому они должны быть идемпотентными или ещё не применёнными).
+// Защищён MIGRATE_TRIGGER_TOKEN.
+app.post("/api/repair-journal", async (c) => {
+	if (triggerToken) {
+		const header = c.req.header("authorization") ?? "";
+		const provided = header.replace(BEARER_PREFIX_RE, "");
+		if (provided !== triggerToken) {
+			return c.json({ error: "unauthorized" }, 401);
+		}
+	}
+	const body = (await c.req.json().catch(() => ({}))) as {
+		drop_last_n?: number;
+	};
+	const dropLastN = Math.max(
+		1,
+		Math.min(10, Math.floor(Number(body.drop_last_n ?? 1)))
+	);
+	const databaseUrl = process.env.DATABASE_URL;
+	if (!databaseUrl) {
+		return c.json({ error: "DATABASE_URL is not set" }, 500);
+	}
+	const pool = new Pool({
+		connectionString: databaseUrl,
+		max: 1,
+		connectionTimeoutMillis: 5000,
+		idleTimeoutMillis: 1000,
+	});
+	let removed: { hash: string; created_at: string }[] = [];
+	try {
+		const result = await pool.query<{ hash: string; created_at: string }>(
+			`delete from drizzle.__drizzle_migrations
+			 where id in (
+				 select id from drizzle.__drizzle_migrations
+				 order by created_at desc
+				 limit $1
+			 )
+			 returning hash, created_at::text`,
+			[dropLastN]
+		);
+		removed = result.rows;
+	} catch (error) {
+		await pool.end();
+		return c.json(
+			{ error: error instanceof Error ? error.message : String(error) },
+			500
+		);
+	}
+	await pool.end();
+	if (status.state === "running") {
+		return c.json(
+			{ error: "migrations are already running, retry later", removed, status },
+			409
+		);
+	}
+	performMigrations().catch(() => {
+		// Ошибка уже залогирована и сохранена в status.
+	});
+	return c.json({ accepted: true, removed, status }, 202);
+});
+
 // Диагностический snapshot текущего состояния БД с точки зрения этого
 // контейнера: какая host:port:db, какие миграции зарегистрированы в
 // drizzle.__drizzle_migrations, какие колонки реально есть в studio_run.

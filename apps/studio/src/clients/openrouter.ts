@@ -61,11 +61,10 @@ function cleanPromptOutput(value: string) {
 }
 
 /**
- * Most common cause in practice: a reasoning model (e.g. qwen/qwen3.5-9b)
- * burns the entire OPENROUTER_MAX_TOKENS budget on hidden chain-of-thought
- * and returns finish_reason="length" with content=null. Surface that
- * diagnostically so the operator can pick a different model in the admin UI
- * instead of seeing an opaque 502.
+ * Diagnose 200-with-empty-content responses. Even with reasoning disabled
+ * (see callChatCompletions) some providers can still return null content on
+ * length cutoffs, refusals, or routing failures — surface enough context to
+ * debug from logs without re-running the request.
  */
 function buildEmptyContentMessage(
 	model: string,
@@ -76,18 +75,15 @@ function buildEmptyContentMessage(
 	const provider = payload.provider ?? "unknown";
 	const reasoningTokens =
 		payload.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
-	const completionTokens = payload.usage?.completion_tokens ?? 0;
-	const exhaustedReasoning =
-		reasoningTokens > 0 && completionTokens >= OPENROUTER_MAX_TOKENS;
-	const reasoningHint = exhaustedReasoning
-		? ` Model "${model}" appears to be a reasoning model and exhausted ` +
-			`the ${OPENROUTER_MAX_TOKENS}-token budget on hidden reasoning ` +
-			`(reasoning_tokens=${reasoningTokens}). Pick a non-reasoning ` +
-			"model in admin → settings → prompt enhance."
-		: "";
+	const reasoningHint =
+		reasoningTokens > 0
+			? " (provider ignored reasoning.enabled=false and burned " +
+				`${reasoningTokens} reasoning tokens — try a different provider ` +
+				"route or another model in admin → settings → prompt enhance)"
+			: "";
 	return (
 		`OpenRouter returned empty content (model=${model}, ` +
-		`provider=${provider}, finish_reason=${finishReason}).${reasoningHint}`
+		`provider=${provider}, finish_reason=${finishReason})${reasoningHint}`
 	);
 }
 
@@ -133,6 +129,13 @@ export function createStudioOpenRouterClient(
 					max_tokens: OPENROUTER_MAX_TOKENS,
 					messages,
 					model,
+					// Prompt-enhance is a short rewrite; we never want hidden
+					// chain-of-thought eating the entire OPENROUTER_MAX_TOKENS
+					// budget (Qwen3.5, GPT-5, o-series and friends will happily
+					// burn 600+ reasoning tokens and return content=null with
+					// finish_reason="length"). Non-reasoning models simply
+					// ignore this field.
+					reasoning: { enabled: false },
 					temperature: 0.85,
 				}),
 				headers,

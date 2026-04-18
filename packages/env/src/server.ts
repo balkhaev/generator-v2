@@ -66,6 +66,25 @@ export function normalizeS3RuntimeEnv(
 	return out;
 }
 
+/**
+ * Resolves xAI / Grok API key aliases so every service reads a single
+ * `XAI_API_KEY` after normalization (Coolify often uses different names).
+ */
+export function normalizeServerRuntimeEnv(
+	runtimeEnv: Record<string, string | undefined>
+): Record<string, string | undefined> {
+	const out = normalizeS3RuntimeEnv(runtimeEnv);
+	const xaiKey =
+		out.XAI_API_KEY?.trim() ||
+		out.GROK_API_KEY?.trim() ||
+		out.XAI_KEY?.trim() ||
+		out.XAI_API_TOKEN?.trim();
+	if (xaiKey) {
+		out.XAI_API_KEY = xaiKey;
+	}
+	return out;
+}
+
 const optionalUrlSchema = z.preprocess((value) => {
 	if (typeof value !== "string") {
 		return value;
@@ -143,6 +162,10 @@ const serverSchema = {
 	HF_TOKEN: z.string().min(1).optional(),
 	HUGGINGFACE_TOKEN: z.string().min(1).optional(),
 	XAI_API_KEY: z.string().min(1).optional(),
+	/** Aliases merged into `XAI_API_KEY` by {@link normalizeServerRuntimeEnv}. */
+	GROK_API_KEY: z.string().min(1).optional(),
+	XAI_KEY: z.string().min(1).optional(),
+	XAI_API_TOKEN: z.string().min(1).optional(),
 
 	// LoRA training provider selection.
 	// "fal" — текущий fal-ai/z-image-trainer пайплайн.
@@ -235,7 +258,7 @@ function createServerEnv(
 ) {
 	return createEnv({
 		server: serverSchema,
-		runtimeEnv: normalizeS3RuntimeEnv(runtimeEnv),
+		runtimeEnv: normalizeServerRuntimeEnv(runtimeEnv),
 		emptyStringAsUndefined: true,
 	});
 }

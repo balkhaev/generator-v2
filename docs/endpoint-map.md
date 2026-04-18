@@ -13,18 +13,12 @@ Keep:
 - `POST /api/executions`
 - `GET /api/executions/:executionId`
 - `POST /api/executions/sync`
-- `GET /api/asset-release-presets`
-- `POST /api/asset-release-presets/:presetId/provision`
-- `GET /api/asset-releases`
-- `POST /api/asset-releases`
-- `GET /api/asset-releases/:releaseId`
 
 Usage:
 
 - `persons` and `studio` create executions with `POST /api/executions` and read state via `GET /api/executions/:executionId`.
 - `POST /api/executions/sync` remains for advanced/manual provider sync paths such as direct execution imports.
 - `generator` may push terminal execution updates to internal callback routes in domain services.
-- `admin-web` talks to `asset-release-presets` and `asset-releases`.
 - `persons-web` should never call `generator` directly.
 
 ### `apps/persons`
@@ -69,7 +63,6 @@ Uses:
 Does not need:
 
 - direct access to `generator`
-- direct access to asset release endpoints
 - direct execution import controls for the main happy path
 
 ### `apps/admin-web`
@@ -78,11 +71,10 @@ Operational UI.
 
 Uses:
 
-- `GET /api/asset-release-presets`
-- `POST /api/asset-release-presets/:presetId/provision`
-- `GET /api/asset-releases`
-- `POST /api/asset-releases`
-- `GET /api/asset-releases/:releaseId`
+- `GET /api/admin/dashboard`
+- `GET /api/admin/users`
+- `GET /api/admin/settings`
+- gateway routes for `persons`, `studio`, `generator` proxied behind the admin auth.
 
 ## Legacy Surface
 

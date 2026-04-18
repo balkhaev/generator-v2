@@ -1,4 +1,3 @@
-import type { AssetReleasePreset, AssetReleaseSnapshot } from "./admin";
 import type {
 	RunStatus,
 	ScenarioParamValue,
@@ -88,8 +87,6 @@ export interface StudioWorkflowSummary extends WorkflowSummary {
 }
 
 export interface StudioSnapshot {
-	presets: AssetReleasePreset[];
-	releases: AssetReleaseSnapshot[];
 	runs: StudioRunRecord[];
 	scenarios: StudioScenarioRecord[];
 	shots: StudioShotRecord[];

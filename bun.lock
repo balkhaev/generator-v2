@@ -25,7 +25,6 @@
     "apps/admin": {
       "name": "admin",
       "dependencies": {
-        "@generator/asset-release-presets": "workspace:*",
         "@generator/auth": "workspace:*",
         "@generator/contracts": "workspace:*",
         "@generator/db": "workspace:*",
@@ -174,7 +173,6 @@
     "apps/studio": {
       "name": "studio",
       "dependencies": {
-        "@generator/asset-release-presets": "workspace:*",
         "@generator/auth": "workspace:*",
         "@generator/contracts": "workspace:*",
         "@generator/db": "workspace:*",
@@ -222,17 +220,6 @@
         "@types/react": "catalog:",
         "@types/react-dom": "catalog:",
         "tailwindcss": "catalog:",
-        "typescript": "^5",
-      },
-    },
-    "packages/asset-release-presets": {
-      "name": "@generator/asset-release-presets",
-      "version": "0.0.0",
-      "dependencies": {
-        "@generator/contracts": "workspace:*",
-      },
-      "devDependencies": {
-        "@generator/config": "workspace:*",
         "typescript": "^5",
       },
     },
@@ -633,8 +620,6 @@
     "@floating-ui/react-dom": ["@floating-ui/react-dom@2.1.8", "", { "dependencies": { "@floating-ui/dom": "^1.7.6" }, "peerDependencies": { "react": ">=16.8.0", "react-dom": ">=16.8.0" } }, "sha512-cC52bHwM/n/CxS87FH0yWdngEZrjdtLW/qVruo68qg+prK7ZQ4YGdut2GyDVpoGeAYe/h899rVeOVm6Oi40k2A=="],
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
-
-    "@generator/asset-release-presets": ["@generator/asset-release-presets@workspace:packages/asset-release-presets"],
 
     "@generator/auth": ["@generator/auth@workspace:packages/auth"],
 

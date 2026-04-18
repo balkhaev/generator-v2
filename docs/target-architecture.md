@@ -101,7 +101,6 @@
 - Better Auth
 - admin-only orchestration
 - topology management
-- asset release management
 - internal gateway/use-case composition
 
 Не должен становиться общим местом для доменных write-моделей.
@@ -233,7 +232,6 @@ packages/
 ### `admin-api` DB
 
 - auth tables
-- asset release tables
 - topology/config tables
 
 ### `studio-api` DB

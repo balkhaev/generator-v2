@@ -15,9 +15,6 @@ import { createKafkaEventPublisher } from "@generator/events";
 import { tryResolveS3StorageConfig } from "@generator/storage";
 import { createApp } from "@/app";
 import { getAdminDashboardSnapshot } from "@/dashboard";
-import { AssetReleasePresetService } from "@/domain/asset-release-presets";
-import type { AssetStorage } from "@/domain/asset-releases";
-import { AssetReleaseService } from "@/domain/asset-releases";
 import { LoraRegistryService } from "@/domain/loras";
 import { PersonLoraTrainingControlService } from "@/domain/person-lora-training-control";
 import { resolveTrainingProviderAvailability } from "@/domain/training-provider-availability";
@@ -26,7 +23,6 @@ import { UsersService } from "@/domain/users";
 import { createRedisWorkerSettingsReader } from "@/domain/worker-settings-store";
 import { createLoraSourceResolver } from "@/providers/lora-source-resolver";
 import { createPersonLoraTrainingQueueClient } from "@/queue/person-lora-training";
-import { createDrizzleAssetReleaseRepository } from "@/repositories/asset-releases";
 import { createDrizzleLoraRepository } from "@/repositories/loras";
 import { createDrizzleUserRepository } from "@/repositories/users";
 
@@ -36,30 +32,6 @@ const redisUrl = env.REDIS_URL;
 const studioBaseUrl = getStudioApiUrl();
 const internalTrainingControlService = new PersonLoraTrainingControlService(
 	createPersonLoraTrainingQueueClient(redisUrl)
-);
-
-const noopStorage: AssetStorage = {
-	readJson() {
-		return Promise.resolve(null);
-	},
-	async writeJson() {
-		await Promise.resolve();
-	},
-	async writeObject() {
-		await Promise.resolve();
-	},
-};
-
-const assetReleaseRepository = createDrizzleAssetReleaseRepository();
-const assetReleaseService = new AssetReleaseService(
-	assetReleaseRepository,
-	noopStorage,
-	{ launchJob: async () => ({ podId: "noop" }) },
-	"local",
-	[]
-);
-const assetReleasePresetService = new AssetReleasePresetService(
-	assetReleaseService
 );
 
 const s3Config = tryResolveS3StorageConfig() ?? undefined;
@@ -109,8 +81,6 @@ const usersService = new UsersService({
 });
 
 const app = createApp({
-	assetReleasePresetService,
-	assetReleaseService,
 	authHandler: handleAuthRequest,
 	corsOrigins: getRequiredCorsOrigins(),
 	generatorBaseUrl,

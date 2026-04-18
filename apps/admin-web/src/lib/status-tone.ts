@@ -37,39 +37,3 @@ export function trainingStatusTone(
 			return "neutral";
 	}
 }
-
-export function releaseStatusTone(
-	status: "ready" | "degraded" | "failed" | "distributing"
-): StatusBadgeTone {
-	switch (status) {
-		case "ready":
-			return "success";
-		case "failed":
-			return "danger";
-		case "degraded":
-			return "warning";
-		case "distributing":
-			return "info";
-		default:
-			return "neutral";
-	}
-}
-
-export function jobStatusTone(
-	status: "queued" | "syncing" | "verifying" | "succeeded" | "failed"
-): StatusBadgeTone {
-	switch (status) {
-		case "succeeded":
-			return "success";
-		case "failed":
-			return "danger";
-		case "syncing":
-			return "warning";
-		case "verifying":
-			return "accent";
-		case "queued":
-			return "info";
-		default:
-			return "neutral";
-	}
-}

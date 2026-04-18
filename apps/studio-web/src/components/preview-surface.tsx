@@ -7,6 +7,7 @@ import {
 } from "@generator/ui/components/tooltip";
 import { cn } from "@generator/ui/lib/utils";
 import {
+	Bookmark,
 	ChevronLeft,
 	ChevronRight,
 	Copy,
@@ -14,9 +15,11 @@ import {
 	ExternalLink,
 	Film,
 	ImageIcon,
+	Loader2,
 	Maximize2,
 	MonitorPlay,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -103,14 +106,20 @@ function renderAssetPreview(asset: StudioMediaAsset) {
 export default function PreviewSurface({
 	asset,
 	currentIndex,
+	emptyState,
+	isSavingShot,
 	onNext,
 	onPrevious,
+	onSaveShot,
 	totalAssets,
 }: {
 	asset: StudioMediaAsset | null;
 	currentIndex: number;
+	emptyState?: ReactNode;
+	isSavingShot?: boolean;
 	onNext?: () => void;
 	onPrevious?: () => void;
+	onSaveShot?: (asset: StudioMediaAsset) => void;
 	totalAssets: number;
 }) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
@@ -194,21 +203,23 @@ export default function PreviewSurface({
 			ref={containerRef}
 		>
 			{isEmpty ? (
-				<div className="studio-aurora flex h-full items-center justify-center">
-					<div className="grid max-w-xs gap-3 text-center">
-						<div className="mx-auto flex size-10 items-center justify-center rounded-xl bg-muted/15 dark:bg-muted/10">
-							<MonitorPlay
-								className="size-5 text-muted-foreground/60"
-								strokeWidth={1.5}
-							/>
+				(emptyState ?? (
+					<div className="studio-aurora flex h-full items-center justify-center">
+						<div className="grid max-w-xs gap-3 text-center">
+							<div className="mx-auto flex size-10 items-center justify-center rounded-xl bg-muted/15 dark:bg-muted/10">
+								<MonitorPlay
+									className="size-5 text-muted-foreground/60"
+									strokeWidth={1.5}
+								/>
+							</div>
+							<p className="text-muted-foreground text-sm">No media selected</p>
+							<p className="text-muted-foreground/60 text-xs leading-relaxed">
+								Upload a source image and queue a run to see results here. Use
+								the dock below to compose and launch.
+							</p>
 						</div>
-						<p className="text-muted-foreground text-sm">No media selected</p>
-						<p className="text-muted-foreground/60 text-xs leading-relaxed">
-							Upload a source image and queue a run to see results here. Use the
-							dock on the right to compose and launch.
-						</p>
 					</div>
-				</div>
+				))
 			) : (
 				<>
 					<div className="relative flex h-full items-center justify-center overflow-hidden">
@@ -262,6 +273,20 @@ export default function PreviewSurface({
 					</div>
 
 					<div className="absolute top-2 right-2 flex items-center gap-1 rounded-lg bg-background/70 px-1 py-1 backdrop-blur-md">
+						{onSaveShot && asset.mediaKind === "output" ? (
+							<IconButton
+								disabled={isSavingShot}
+								hint="Save as shot"
+								label="Save as shot"
+								onClick={() => onSaveShot(asset)}
+							>
+								{isSavingShot ? (
+									<Loader2 className="size-3.5 animate-spin" />
+								) : (
+									<Bookmark className="size-3.5" />
+								)}
+							</IconButton>
+						) : null}
 						<IconButton
 							hint="Copy URL"
 							label="Copy media URL"

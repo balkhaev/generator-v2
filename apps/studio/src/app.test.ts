@@ -12,7 +12,6 @@ const fakeS3Config: S3StorageConfig = {
 	secretAccessKey: "test-secret",
 };
 
-import { AssetReleaseReadService } from "@/domain/asset-releases-read";
 import type {
 	StudioArtifactEntity,
 	StudioExecutionClient,
@@ -202,21 +201,9 @@ function createExecutionClientStub(
 	};
 }
 
-function createAssetReleaseReadServiceStub() {
-	return new AssetReleaseReadService({
-		getAssetReleaseById() {
-			return Promise.resolve(null);
-		},
-		listAssetReleases() {
-			return Promise.resolve([]);
-		},
-	});
-}
-
 describe("studio backend", () => {
 	it("rejects protected routes when session is missing", async () => {
 		const app = createApp({
-			assetReleaseReadService: createAssetReleaseReadServiceStub(),
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -238,7 +225,6 @@ describe("studio backend", () => {
 		const repository = createMemoryRepository();
 		const calls: string[] = [];
 		const app = createApp({
-			assetReleaseReadService: createAssetReleaseReadServiceStub(),
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -348,7 +334,6 @@ describe("studio backend", () => {
 		const repository = createMemoryRepository();
 		const receivedInputUrls: Array<string | undefined> = [];
 		const app = createApp({
-			assetReleaseReadService: createAssetReleaseReadServiceStub(),
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -417,7 +402,6 @@ describe("studio backend", () => {
 
 	it("rejects image-conditioned workflows without an input image", async () => {
 		const app = createApp({
-			assetReleaseReadService: createAssetReleaseReadServiceStub(),
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -469,67 +453,6 @@ describe("studio backend", () => {
 		});
 	});
 
-	it("reads asset release routes from the local studio read-model", async () => {
-		const app = createApp({
-			assetReleaseReadService: createAssetReleaseReadServiceStub(),
-			authHandler() {
-				return new Response("auth", { status: 200 });
-			},
-			corsOrigins: ["http://localhost:3002"],
-			executionClient: createExecutionClientStub(),
-			generatorBaseUrl: "http://generator.internal",
-			getSession() {
-				return Promise.resolve({
-					session: { id: "session-1" },
-					user: { id: "user-1" },
-				});
-			},
-			repository: createMemoryRepository(),
-			s3Config: fakeS3Config,
-		});
-
-		const response = await app.request(
-			"http://localhost/api/asset-releases?limit=5"
-		);
-
-		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ releases: [] });
-	});
-
-	it("reads asset release presets from the local studio read-model", async () => {
-		const app = createApp({
-			assetReleaseReadService: createAssetReleaseReadServiceStub(),
-			authHandler() {
-				return new Response("auth", { status: 200 });
-			},
-			corsOrigins: ["http://localhost:3002"],
-			executionClient: createExecutionClientStub(),
-			generatorBaseUrl: "http://generator.internal",
-			getSession() {
-				return Promise.resolve({
-					session: { id: "session-1" },
-					user: { id: "user-1" },
-				});
-			},
-			repository: createMemoryRepository(),
-			s3Config: fakeS3Config,
-		});
-
-		const response = await app.request(
-			"http://localhost/api/asset-release-presets"
-		);
-
-		expect(response.status).toBe(200);
-		const payload = (await response.json()) as {
-			presets: Array<{ id: string }>;
-		};
-		expect(payload.presets.map((preset) => preset.id)).toEqual([
-			"flux2dev",
-			"lustify-apex-avatar",
-			"redzit-1.5-avatar",
-		]);
-	});
-
 	it("uploads input images directly to the configured S3 bucket", async () => {
 		const writes: Array<{ key: string; size: number }> = [];
 		const fakeS3Client = {
@@ -542,7 +465,6 @@ describe("studio backend", () => {
 			},
 		};
 		const app = createApp({
-			assetReleaseReadService: createAssetReleaseReadServiceStub(),
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -587,7 +509,6 @@ describe("studio backend", () => {
 
 	it("returns a studio-native aggregate snapshot", async () => {
 		const repository = createMemoryRepository();
-		const assetReleaseReadService = createAssetReleaseReadServiceStub();
 		await repository.createScenario({
 			generatorScenarioId: null,
 			id: "scenario-1",
@@ -611,7 +532,6 @@ describe("studio backend", () => {
 		});
 
 		const app = createApp({
-			assetReleaseReadService,
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -632,16 +552,10 @@ describe("studio backend", () => {
 
 		expect(response.status).toBe(200);
 		const snapshot = (await response.json()) as {
-			presets: Array<{ id: string }>;
 			runs: Array<{ scenarioName: string }>;
 			scenarios: Array<{ name: string }>;
 			workflows: Array<{ key: string }>;
 		};
-		expect(snapshot.presets.map((preset) => preset.id)).toEqual([
-			"flux2dev",
-			"lustify-apex-avatar",
-			"redzit-1.5-avatar",
-		]);
 		expect(snapshot.scenarios[0]?.name).toBe("Snapshot scenario");
 		expect(snapshot.runs[0]?.scenarioName).toBe("Snapshot scenario");
 		expect(snapshot.workflows.some((w) => w.key === "fal-zimage-turbo")).toBe(

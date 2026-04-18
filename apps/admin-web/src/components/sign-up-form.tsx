@@ -64,7 +64,7 @@ export default function SignUpForm({
 			subtitle={
 				setupRequired
 					? "Create the first admin account to unlock the control room."
-					: "Create an account for infra, queue, and asset release access."
+					: "Create an account for infra, queue, and worker control access."
 			}
 			title={
 				setupRequired

@@ -2,17 +2,6 @@ import { getDatabaseUrl } from "@generator/env/server";
 import { drizzle } from "drizzle-orm/node-postgres";
 
 import {
-	assetRelease,
-	assetReleaseGroupEnum,
-	assetReleaseItem,
-	assetReleaseItemRelations,
-	assetReleaseRelations,
-	assetReleaseStatusEnum,
-	volumeDistributionJob,
-	volumeDistributionJobRelations,
-	volumeDistributionStatusEnum,
-} from "./schema/assets";
-import {
 	account,
 	accountRelations,
 	session,
@@ -49,12 +38,6 @@ import {
 const schema = {
 	account,
 	accountRelations,
-	assetRelease,
-	assetReleaseGroupEnum,
-	assetReleaseItem,
-	assetReleaseItemRelations,
-	assetReleaseRelations,
-	assetReleaseStatusEnum,
 	generatorExecution,
 	generatorExecutionStatusEnum,
 	lora,
@@ -79,9 +62,6 @@ const schema = {
 	user,
 	userRelations,
 	verification,
-	volumeDistributionJob,
-	volumeDistributionJobRelations,
-	volumeDistributionStatusEnum,
 };
 
 export function createDb(connectionString: string) {

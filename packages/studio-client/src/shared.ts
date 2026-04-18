@@ -1,8 +1,4 @@
 import type {
-	AssetReleasePreset,
-	AssetReleaseSnapshot,
-} from "@generator/contracts/admin";
-import type {
 	WorkflowSummary as ServerWorkflowSummary,
 	WorkflowBaseModel,
 	WorkflowParameterKind,
@@ -90,8 +86,6 @@ export interface ScenarioShotRecord {
 }
 
 export interface AdminSnapshot {
-	presets: AssetReleasePreset[];
-	releases: AssetReleaseSnapshot[];
 	runs: ScenarioRunRecord[];
 	scenarios: ScenarioRecord[];
 	shots: ScenarioShotRecord[];
@@ -346,8 +340,6 @@ export function buildCreateScenarioInput(
 }
 
 export function normalizeStudioSnapshot(params: {
-	presetsPayload: unknown;
-	releasesPayload: unknown;
 	runsPayload: unknown;
 	scenariosPayload: unknown;
 	shotsPayload?: unknown;
@@ -364,14 +356,6 @@ export function normalizeStudioSnapshot(params: {
 	);
 
 	return {
-		presets: extractCollection<AssetReleasePreset>(
-			params.presetsPayload,
-			"presets"
-		),
-		releases: extractCollection<AssetReleaseSnapshot>(
-			params.releasesPayload,
-			"releases"
-		),
 		runs: sortByNewest(
 			extractCollection<ServerRunRecord>(params.runsPayload, "runs").map(
 				(run) => normalizeRunRecord(run, scenarioNames)

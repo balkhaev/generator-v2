@@ -13,7 +13,6 @@
     "start:repair": "bun run dist/worker.mjs"
   },
   "dependencies": {
-    "@generator/asset-release-presets": "workspace:*",
     "@generator/auth": "workspace:*",
     "@generator/contracts": "workspace:*",
     "@generator/db": "workspace:*",

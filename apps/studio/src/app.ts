@@ -1,17 +1,9 @@
-import {
-	listAssetReleasePresets,
-	toAssetReleasePresetSummary,
-} from "@generator/asset-release-presets";
 import type { AuthVariables } from "@generator/auth/middleware";
 import {
 	createAuthHandler,
 	createSessionMiddleware,
 } from "@generator/auth/middleware";
 import { createPublicPathMatcher } from "@generator/auth/public-paths";
-import type {
-	AssetReleasePreset,
-	AssetReleaseSnapshot,
-} from "@generator/contracts/admin";
 import type { WorkflowSummary as ServerWorkflowSummary } from "@generator/contracts/generator";
 import type { StudioShotRecord } from "@generator/contracts/studio";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
@@ -27,11 +19,8 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
 import type { StudioGrokClient } from "@/clients/grok";
-import { AssetReleaseReadService } from "@/domain/asset-releases-read";
 import type { StudioExecutionClient, StudioRepository } from "@/domain/studio";
 import { StudioService } from "@/domain/studio";
-import { createDrizzleAssetReleaseReadRepository } from "@/repositories/asset-releases-read";
-import { createAssetReleasePresetRoutes } from "@/routes/asset-release-presets";
 import { createEnhanceRoutes } from "@/routes/enhance";
 import { createInputAssetRoutes } from "@/routes/input-assets";
 import { createInternalRoutes } from "@/routes/internal";
@@ -45,7 +34,6 @@ interface AppVariables extends AuthVariables {
 }
 
 interface AppOptions {
-	assetReleaseReadService?: AssetReleaseReadService;
 	authHandler: (request: Request) => Response | Promise<Response>;
 	callbackConfig?: {
 		token: string;
@@ -93,8 +81,6 @@ interface WorkflowDefinition {
 }
 
 interface StudioSnapshotResponse {
-	presets: AssetReleasePreset[];
-	releases: AssetReleaseSnapshot[];
 	runs: Array<{
 		artifactUrls: string[];
 		createdAt?: string;
@@ -114,7 +100,6 @@ interface StudioSnapshotResponse {
 	scenarios: Awaited<ReturnType<StudioService["listScenarios"]>>;
 	shots: Array<StudioShotRecord & { scenarioName: string }>;
 	source: "server";
-	warnings: string[];
 	workflows: WorkflowDefinition[];
 }
 
@@ -194,20 +179,9 @@ function normalizeWorkflowDefinition(
 }
 
 async function createStudioSnapshot(
-	assetReleaseReadService: AssetReleaseReadService,
 	service: StudioService
 ): Promise<StudioSnapshotResponse> {
-	const [releasesResult, scenarios, runs, shots] = await Promise.all([
-		assetReleaseReadService
-			.listReleases(6)
-			.then((payload) => ({ payload, warning: null }))
-			.catch((error) => ({
-				payload: [] as AssetReleaseSnapshot[],
-				warning:
-					error instanceof Error
-						? `Asset releases unavailable: ${error.message}`
-						: "Asset releases unavailable.",
-			})),
+	const [scenarios, runs, shots] = await Promise.all([
 		service.listScenarios(),
 		service.listRuns(),
 		service.listShots().catch(() => [] as StudioShotRecord[]),
@@ -215,13 +189,8 @@ async function createStudioSnapshot(
 	const scenarioNames = new Map(
 		scenarios.map((scenario) => [scenario.id, scenario.name])
 	);
-	const warnings = [releasesResult.warning].filter(
-		(warning): warning is string => Boolean(warning)
-	);
 
 	return {
-		presets: listAssetReleasePresets().map(toAssetReleasePresetSummary),
-		releases: releasesResult.payload,
 		runs: runs.map((run) => ({
 			artifactUrls: (run.artifacts ?? [])
 				.flatMap((artifact) => artifact.url ?? [])
@@ -246,7 +215,6 @@ async function createStudioSnapshot(
 			scenarioName: scenarioNames.get(shot.scenarioId) ?? "Unknown scenario",
 		})),
 		source: "server",
-		warnings,
 		workflows: listWorkflows().map((workflow) =>
 			normalizeWorkflowDefinition(workflow as ServerWorkflowSummary)
 		),
@@ -261,9 +229,6 @@ export function createApp(options: AppOptions) {
 		options.loggerImpl,
 		options.callbackConfig
 	);
-	const assetReleaseReadService =
-		options.assetReleaseReadService ??
-		new AssetReleaseReadService(createDrizzleAssetReleaseReadRepository());
 	const fetchImpl = options.fetchImpl ?? fetch;
 
 	app.use(logger());
@@ -308,7 +273,7 @@ export function createApp(options: AppOptions) {
 		})
 	);
 	app.get("/api/studio-snapshot", async (c) =>
-		c.json(await createStudioSnapshot(assetReleaseReadService, service))
+		c.json(await createStudioSnapshot(service))
 	);
 	app.get("/api/workflows", (c) =>
 		c.json({
@@ -344,15 +309,6 @@ export function createApp(options: AppOptions) {
 			s3Config: options.s3Config,
 		})
 	);
-	app.get("/api/asset-releases", async (c) => {
-		const limit = Number(c.req.query("limit") ?? 6);
-		const releases = await assetReleaseReadService.listReleases(
-			Number.isFinite(limit) ? Math.max(1, Math.min(limit, 20)) : 6
-		);
-		return c.json({ releases });
-	});
-	app.route("/api/asset-release-presets", createAssetReleasePresetRoutes());
-
 	app.onError((error, c) => {
 		c.header(DEBUG_CORRELATION_HEADER, c.get("debugCorrelationId"));
 		options.loggerImpl?.error("studio.error", error);

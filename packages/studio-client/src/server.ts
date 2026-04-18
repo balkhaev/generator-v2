@@ -15,8 +15,6 @@ export async function getStudioSnapshotForRequest(
 	>(`${normalizedBaseUrl}/api/studio-snapshot`, requestHeaders);
 
 	return {
-		presets: snapshot.presets ?? [],
-		releases: snapshot.releases ?? [],
 		runs: snapshot.runs ?? [],
 		scenarios: snapshot.scenarios ?? [],
 		shots: snapshot.shots ?? [],

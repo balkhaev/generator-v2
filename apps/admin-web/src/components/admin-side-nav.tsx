@@ -10,7 +10,6 @@ import {
 	Boxes,
 	GraduationCap,
 	type LucideIcon,
-	PackageOpen,
 	Settings,
 	Sparkles,
 	Tags,
@@ -58,12 +57,6 @@ const ITEMS: AdminSideNavItem[] = [
 		icon: Tags,
 		label: "LoRAs",
 		description: "Shared registry",
-	},
-	{
-		href: "/releases" as Route,
-		icon: PackageOpen,
-		label: "Releases",
-		description: "S3 rollouts",
 	},
 	{
 		href: "/users" as Route,

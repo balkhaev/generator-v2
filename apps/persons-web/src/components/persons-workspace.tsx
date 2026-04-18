@@ -2284,6 +2284,7 @@ export default function PersonsWorkspace({
 			navigation={createWorkspaceNavigation("persons", {
 				admin: adminUrl,
 				persons: "/",
+				shots: `${studioUrl}/shots`,
 				studio: studioUrl,
 			})}
 			status={

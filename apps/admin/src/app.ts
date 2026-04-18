@@ -17,8 +17,6 @@ import type { S3StorageConfig } from "@generator/storage";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import type { AssetReleasePresetService } from "@/domain/asset-release-presets";
-import type { AssetReleaseService } from "@/domain/asset-releases";
 import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
 import type { TrainingProviderSettings } from "@/domain/training-provider-settings";
@@ -28,8 +26,6 @@ import {
 	type AdminSettingsEnvResolver,
 	createAdminSettingsRoutes,
 } from "@/routes/admin-settings";
-import { createAssetReleasePresetRoutes } from "@/routes/asset-release-presets";
-import { createAssetReleaseRoutes } from "@/routes/asset-releases";
 import { createInternalRoutes } from "@/routes/internal";
 import { createAdminLoraRoutes } from "@/routes/loras";
 import {
@@ -44,8 +40,6 @@ interface AppVariables extends AuthVariables {
 
 interface AppOptions {
 	adminSettingsEnvResolver?: AdminSettingsEnvResolver;
-	assetReleasePresetService?: AssetReleasePresetService;
-	assetReleaseService?: AssetReleaseService;
 	authHandler: (request: Request) => Response | Promise<Response>;
 	corsOrigins: string[];
 	fetchImpl?: FetchLike;
@@ -140,20 +134,6 @@ export function createApp(options: AppOptions) {
 	app.get("/api/dashboard", async (c) =>
 		c.json(await options.loadDashboardSnapshot())
 	);
-
-	if (options.assetReleaseService) {
-		app.route(
-			"/api/asset-releases",
-			createAssetReleaseRoutes(options.assetReleaseService)
-		);
-	}
-
-	if (options.assetReleasePresetService) {
-		app.route(
-			"/api/asset-release-presets",
-			createAssetReleasePresetRoutes(options.assetReleasePresetService)
-		);
-	}
 
 	if (options.internalTrainingControlService) {
 		app.route(

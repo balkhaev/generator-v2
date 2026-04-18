@@ -5,6 +5,7 @@ import {
 	type AdminSnapshot,
 	type ScenarioRecord,
 	type ScenarioRunRecord,
+	saveStudioShot,
 	syncStudioRun,
 } from "@generator/studio-client/client";
 import WorkspaceShell, {
@@ -14,7 +15,9 @@ import { createWorkspaceNavigation } from "@generator/ui/lib/workspace-nav";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
+import BottomDock from "@/components/bottom-dock";
 import ComposeDialog from "@/components/compose/compose-dialog";
 import MediaStrip from "@/components/media-strip";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -29,6 +32,7 @@ import ScenarioRail, {
 } from "@/components/scenario-rail";
 import { useRunAutoSync } from "@/components/use-run-auto-sync";
 import UserMenu from "@/components/user-menu";
+import { importGenerationToPerson } from "@/lib/persons-api";
 
 function buildStudioHref(
 	pathname: string,
@@ -326,6 +330,55 @@ export default function StudioShell({
 			? null
 			: selectedScenarioAssets[selectedMediaIndex];
 
+	const [savingShotAssetId, setSavingShotAssetId] = useState<string | null>(
+		null
+	);
+
+	const handleSaveShot = useCallback(
+		async (asset: StudioMediaAsset) => {
+			const run = snapshot.runs.find((entry) => entry.id === asset.runId);
+			if (!run) {
+				toast.error("Source run no longer available.");
+				return;
+			}
+			setSavingShotAssetId(asset.id);
+			try {
+				if (run.inputPersonId) {
+					if (!run.providerJobId) {
+						toast.error("Run is not finished yet.");
+						return;
+					}
+					await importGenerationToPerson(run.inputPersonId, {
+						prompt: run.scenarioName,
+						providerEndpointId: run.providerEndpointId ?? undefined,
+						providerJobId: run.providerJobId,
+						title: `${run.scenarioName} · ${asset.label}`,
+						workflowKey: run.workflowKey,
+					});
+					toast.success("Saved to person.");
+				} else {
+					const result = await saveStudioShot({
+						artifactKind: asset.mediaType,
+						artifactUrl: asset.url,
+						runId: asset.runId,
+					});
+					setSnapshot((current) => ({
+						...current,
+						shots: [result.data, ...current.shots],
+					}));
+					toast.success("Shot saved.");
+				}
+			} catch (error) {
+				toast.error(
+					error instanceof Error ? error.message : "Unable to save shot."
+				);
+			} finally {
+				setSavingShotAssetId(null);
+			}
+		},
+		[snapshot.runs]
+	);
+
 	const handleSyncRun = useCallback(async (runId: string) => {
 		try {
 			const result = await syncStudioRun(runId);
@@ -412,21 +465,30 @@ export default function StudioShell({
 					<UserMenu email={sessionEmail} name={sessionName} />
 				</>
 			}
+			bottomDock={
+				<BottomDock
+					hint={
+						selectedScenarioCard
+							? selectedScenarioCard.name
+							: "Select a scenario to launch a run"
+					}
+					title="Console"
+				>
+					<ScenarioConsole
+						className="h-full"
+						onCreateScenario={handleCreateScenario}
+						onSnapshotChange={setSnapshot}
+						selectedScenarioId={selectedScenarioId}
+						snapshot={snapshot}
+					/>
+				</BottomDock>
+			}
 			context={
 				<ScenarioRail
 					getHref={getScenarioHref}
 					onCreateScenario={handleCreateScenario}
 					scenarios={scenarioCards}
 					selectedScenarioId={selectedScenarioId}
-				/>
-			}
-			inspector={
-				<ScenarioConsole
-					className="h-full"
-					onCreateScenario={handleCreateScenario}
-					onSnapshotChange={setSnapshot}
-					selectedScenarioId={selectedScenarioId}
-					snapshot={snapshot}
 				/>
 			}
 			navigation={createWorkspaceNavigation("studio", {
@@ -485,6 +547,11 @@ export default function StudioShell({
 				<PreviewSurface
 					asset={selectedMediaAsset}
 					currentIndex={selectedMediaIndex}
+					isSavingShot={
+						selectedMediaAsset
+							? savingShotAssetId === selectedMediaAsset.id
+							: false
+					}
 					onNext={
 						selectedMediaIndex < selectedScenarioAssets.length - 1
 							? () => navigateToMedia(selectedMediaIndex + 1)
@@ -495,6 +562,9 @@ export default function StudioShell({
 							? () => navigateToMedia(selectedMediaIndex - 1)
 							: undefined
 					}
+					onSaveShot={(asset) => {
+						handleSaveShot(asset).catch(() => undefined);
+					}}
 					totalAssets={selectedScenarioAssets.length}
 				/>
 				<MediaStrip

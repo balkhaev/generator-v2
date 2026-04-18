@@ -18,6 +18,8 @@ import type { AssetStorage } from "@/domain/asset-releases";
 import { AssetReleaseService } from "@/domain/asset-releases";
 import { LoraRegistryService } from "@/domain/loras";
 import { PersonLoraTrainingControlService } from "@/domain/person-lora-training-control";
+import { resolveTrainingProviderAvailability } from "@/domain/training-provider-availability";
+import { createRedisTrainingProviderSettings } from "@/domain/training-provider-settings";
 import { createLoraSourceResolver } from "@/providers/lora-source-resolver";
 import { createPersonLoraTrainingQueueClient } from "@/queue/person-lora-training";
 import { createDrizzleAssetReleaseRepository } from "@/repositories/asset-releases";
@@ -57,6 +59,11 @@ const assetReleasePresetService = new AssetReleasePresetService(
 
 const s3Config = tryResolveS3StorageConfig() ?? undefined;
 
+const trainingProviderSettings = createRedisTrainingProviderSettings({
+	defaultProvider: env.TRAINING_PROVIDER,
+	redisUrl,
+});
+
 const loraRegistryService = new LoraRegistryService({
 	repository: createDrizzleLoraRepository(),
 	resolveSource: createLoraSourceResolver({
@@ -87,6 +94,10 @@ const app = createApp({
 	loraRegistryService,
 	s3Config,
 	studioBaseUrl,
+	trainingProviderAvailability: {
+		resolve: () => resolveTrainingProviderAvailability(env),
+	},
+	trainingProviderSettings,
 });
 
 ensureDevUser();

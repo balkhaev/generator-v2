@@ -8,7 +8,12 @@ import { createRedisIdempotencyLock, withIdempotency } from "@generator/queue";
 import { resolveS3StorageConfig } from "@generator/storage";
 
 import { createPersonsApiClient } from "@/clients/persons-api";
+import {
+	createRedisTrainingProviderSettings,
+	type TrainingProviderName,
+} from "@/domain/training-provider-settings";
 import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
+import { RunpodAiToolkitLoraTrainingRunner } from "@/providers/runpod-ai-toolkit-lora-training";
 import type { PersonLoraTrainingJobData } from "@/queue/person-lora-training";
 import { createPersonLoraTrainingWorker } from "@/queue/person-lora-training";
 import { recoverInterruptedTrainings } from "@/recovery/training-recovery";
@@ -46,6 +51,8 @@ if (!(personsApiUrl || eventPublisher)) {
 	);
 }
 
+const defaultTrainingProvider = env.TRAINING_PROVIDER;
+
 const falRunner = new FalZibLoraTrainingRunner({
 	apiKey: falKey,
 	eventPublisher,
@@ -54,6 +61,53 @@ const falRunner = new FalZibLoraTrainingRunner({
 	s3Config,
 	trainingControlToken,
 });
+
+/**
+ * Экспериментальный RunPod ai-toolkit runner. Создаём всегда, когда есть
+ * креды, чтобы UI-свитчер из admin-web мог переключать провайдер в runtime
+ * без рестарта воркера. Если кредов нет — runner не будет создан и любая
+ * попытка переключиться через UI отвергнется на стороне API.
+ */
+const runpodApiKey = env.RUNPOD_API_KEY;
+const runpodEndpointId = env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID;
+const runpodRunner =
+	runpodApiKey && runpodEndpointId
+		? new RunpodAiToolkitLoraTrainingRunner({
+				apiBaseUrl: env.RUNPOD_API_BASE_URL,
+				apiKey: runpodApiKey,
+				baseModel: env.RUNPOD_AI_TOOLKIT_BASE_MODEL,
+				endpointId: runpodEndpointId,
+				eventPublisher,
+				falApiKeyForDataset: falKey,
+				logger: console,
+				personsApiBaseUrl: personsApiUrl,
+				pollMs: env.RUNPOD_AI_TOOLKIT_POLL_MS,
+				s3Config,
+				trainingControlToken,
+				trainingTimeoutMs: env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS,
+			})
+		: null;
+
+const trainingProviderSettings = createRedisTrainingProviderSettings({
+	defaultProvider: defaultTrainingProvider,
+	redisUrl,
+});
+
+const selectActiveRunner = async () => {
+	const requested = await trainingProviderSettings.getProvider();
+	if (requested === "runpod") {
+		if (runpodRunner) {
+			return {
+				provider: "runpod" as TrainingProviderName,
+				runner: runpodRunner,
+			};
+		}
+		console.warn(
+			"admin.worker: TRAINING_PROVIDER=runpod requested but RunPod creds are missing, falling back to fal"
+		);
+	}
+	return { provider: "fal" as TrainingProviderName, runner: falRunner };
+};
 
 const trainingLock = createRedisIdempotencyLock({
 	keyPrefix: TRAINING_LOCK_PREFIX,
@@ -86,13 +140,15 @@ const runTrainingOnce = async (
 		data.trainingRunId,
 		async () => {
 			activeTrainingRunIds.add(data.trainingRunId);
+			const selected = await selectActiveRunner();
 			console.info("admin.worker: starting training", {
 				personId: data.personId,
+				provider: selected.provider,
 				source,
 				trainingRunId: data.trainingRunId,
 			});
 			try {
-				await falRunner.run(data);
+				await selected.runner.run(data);
 			} finally {
 				activeTrainingRunIds.delete(data.trainingRunId);
 			}
@@ -109,7 +165,7 @@ const runTrainingOnce = async (
 };
 
 console.info(
-	"admin.worker: ready (training provider: fal, dataset upload: S3)"
+	`admin.worker: ready (default training provider: ${defaultTrainingProvider}, runpod ${runpodRunner ? "enabled" : "disabled"}, dataset upload: S3)`
 );
 
 const queueWorker = createPersonLoraTrainingWorker({
@@ -179,6 +235,7 @@ await new Promise<void>((resolve) => {
 		);
 		await trainingLock.close();
 		await recoveryLock.close();
+		await trainingProviderSettings.close();
 		resolve();
 	};
 

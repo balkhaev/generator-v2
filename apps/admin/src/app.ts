@@ -21,10 +21,15 @@ import type { AssetReleasePresetService } from "@/domain/asset-release-presets";
 import type { AssetReleaseService } from "@/domain/asset-releases";
 import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
+import type { TrainingProviderSettings } from "@/domain/training-provider-settings";
 import { createAssetReleasePresetRoutes } from "@/routes/asset-release-presets";
 import { createAssetReleaseRoutes } from "@/routes/asset-releases";
 import { createInternalRoutes } from "@/routes/internal";
 import { createAdminLoraRoutes } from "@/routes/loras";
+import {
+	createTrainingProviderRoutes,
+	type TrainingProviderAvailabilityResolver,
+} from "@/routes/training-provider";
 
 interface AppVariables extends AuthVariables {
 	debugCorrelationId: string;
@@ -47,6 +52,8 @@ interface AppOptions {
 	loraRegistryService?: LoraRegistryService;
 	s3Config?: S3StorageConfig;
 	studioBaseUrl: string;
+	trainingProviderAvailability?: TrainingProviderAvailabilityResolver;
+	trainingProviderSettings?: TrainingProviderSettings;
 }
 
 const isPublicApiPath = createPublicPathMatcher({
@@ -134,6 +141,19 @@ export function createApp(options: AppOptions) {
 		app.route(
 			"/api/admin/loras",
 			createAdminLoraRoutes(options.loraRegistryService)
+		);
+	}
+
+	if (
+		options.trainingProviderSettings &&
+		options.trainingProviderAvailability
+	) {
+		app.route(
+			"/api/admin/training-provider",
+			createTrainingProviderRoutes({
+				availability: options.trainingProviderAvailability,
+				settings: options.trainingProviderSettings,
+			})
 		);
 	}
 

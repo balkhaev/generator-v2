@@ -134,3 +134,16 @@ export interface AdminDashboardSnapshot {
 export interface AdminSetupStatus {
 	setupRequired: boolean;
 }
+
+export type TrainingProviderName = "fal" | "runpod";
+
+export interface TrainingProviderAvailability {
+	configured: boolean;
+	missing: string[];
+	provider: TrainingProviderName;
+}
+
+export interface TrainingProviderSettingsSnapshot {
+	availability: TrainingProviderAvailability[];
+	provider: TrainingProviderName;
+}

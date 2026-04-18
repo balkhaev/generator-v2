@@ -254,6 +254,13 @@ function StudioSubtitleBar({
 
 function buildMediaAssets(runs: ScenarioRunRecord[]): StudioMediaAsset[] {
 	return runs.flatMap((run) => {
+		// Failed runs только засоряют ленту превью: их выход — пусто, а вход
+		// (reference image / first frame) уже виден в композере и не помогает
+		// разобраться, почему run упал. Дебаг таких ранов — на странице run debug.
+		if (run.status === "failed") {
+			return [];
+		}
+
 		const assets: StudioMediaAsset[] = [];
 
 		for (const [index, url] of run.artifactUrls.entries()) {

@@ -40,7 +40,7 @@ export default function MediaStrip({
 										aria-current={isActive ? "true" : undefined}
 										aria-label={asset.label}
 										className={cn(
-											"group relative flex h-16 w-20 shrink-0 flex-col items-stretch overflow-hidden rounded-lg transition",
+											"group relative flex aspect-[9/16] h-24 shrink-0 flex-col items-stretch overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "ring-1 ring-foreground/[0.06] hover:ring-foreground/30 dark:ring-foreground/[0.1]"

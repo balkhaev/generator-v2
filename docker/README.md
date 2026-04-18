@@ -145,6 +145,8 @@ docker run -d --name admin-web \
 - `GET /api/status` отдаёт детали последней попытки: `state` (`pending|running|succeeded|failed`), `startedAt`, `completedAt`, `durationMs`, `error`.
 - `GET /api/ready` возвращает 200 при `succeeded`, 503 при `failed/running/pending`.
 - `POST /api/migrate` повторно прогоняет миграции без редеплоя контейнера. Защищается опциональным `MIGRATE_TRIGGER_TOKEN` (Bearer).
+- `GET /api/db-info` (Bearer) — диагностический snapshot: к какому хосту подключён сервис, что лежит в `drizzle.__drizzle_migrations`, какие колонки есть у `studio_run`. Нужен для разбора инцидентов «миграции вроде применились, а колонок нет».
+- `POST /api/repair-journal` (Bearer, body `{"drop_last_n": 1}`) — точечная починка журнала: удаляет N последних записей из `drizzle.__drizzle_migrations` и перезапускает `runMigrations()`. Нужен в редких ситуациях, когда `journal.json` содержит миграции с `when` меньше последнего применённого `created_at` — drizzle migrator silently их пропускает. Действие деструктивное: удалённые миграции должны быть либо идемпотентными, либо ещё ни разу не применёнными в этой БД.
 
 Минимальный набор переменных окружения:
 
@@ -165,6 +167,16 @@ Workflow деплоя со схема-меняющими PR:
 1. Деплой `db-migrate` — он применяет миграции и переходит в healthy.
 2. Деплой остальных API/worker сервисов с тем же commit SHA.
 3. Если миграции упали — `db-migrate` всё равно остаётся live; смотри `GET /api/status` и логи.
+
+### Подводный камень: timestamps в `meta/_journal.json`
+
+Drizzle migrator применяет миграцию только если её `when` (folder timestamp в journal) больше последнего `created_at` в `drizzle.__drizzle_migrations`. Если в журнале появляется миграция с **намеренно завышенным** `when` (например, ручной round-timestamp типа `1776600000000`), все последующие миграции с меньшим `when` будут **молча** пропущены — `runMigrations()` отчитается об успехе за десятки миллисекунд, но новых колонок не будет.
+
+Именно так на проде в апреле 2026 пропустились `0007_amused_franklin_richards` и `0008_drop_asset_release_tables`: у них `when` оказался меньше, чем у вручную помеченного `0006_unify_lora_workflow_keys` (`1776600000000`).
+
+Профилактика:
+- НЕ редактируйте `when` в `meta/_journal.json` руками. Дайте `drizzle-kit generate` поставить `Date.now()`.
+- Если уже случилось: использовать `POST /api/repair-journal` чтобы удалить «пробку» из журнала и переприменить пропущенные миграции (см. описание выше). Для диагностики — `GET /api/db-info`.
 
 ### Fallback: миграции на entrypoint API
 

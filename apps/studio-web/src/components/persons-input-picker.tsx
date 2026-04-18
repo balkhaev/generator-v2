@@ -59,6 +59,11 @@ const tabs: { icon: typeof Upload; id: PickerTab; label: string }[] = [
 
 const previewableUrlPattern = /^(https?:\/\/.{3,}|data:\w+\/)/;
 
+/** LoRA dataset prep photos — same rule as persons-web Cast detail. */
+function isPersonDatasetGeneration(generation: PersonGenerationRecord) {
+	return generation.metadata?.isDatasetPhoto === true;
+}
+
 interface RecentReference {
 	id: string;
 	label: string;
@@ -232,7 +237,9 @@ export default function PersonsInputPicker({
 			setPersonDetail(fresh);
 			const newReady = fresh.generations.find(
 				(generation) =>
-					!knownIds.has(generation.id) && generation.status === "ready"
+					!knownIds.has(generation.id) &&
+					generation.status === "ready" &&
+					!isPersonDatasetGeneration(generation)
 			);
 			if (newReady) {
 				setIsGenerating(false);
@@ -551,12 +558,19 @@ export default function PersonsInputPicker({
 		if (!personDetail) {
 			return null;
 		}
-		const readyGenerations = personDetail.generations.filter(
+		const studioGenerations = personDetail.generations.filter(
+			(generation) => !isPersonDatasetGeneration(generation)
+		);
+		const readyGenerations = studioGenerations.filter(
 			(generation) =>
 				generation.status === "ready" &&
 				(generation.previewUrl ?? generation.sourceUrl)
 		);
 		const hasLora = Boolean(personDetail.loraUrl);
+		const generationsEmptyHint =
+			studioGenerations.length === 0
+				? "No generations yet."
+				: "No ready generations yet.";
 
 		return (
 			<div className="grid gap-3 rounded-xl bg-muted/8 p-3 dark:bg-muted/4">
@@ -618,7 +632,7 @@ export default function PersonsInputPicker({
 					</div>
 				) : (
 					<p className="rounded-lg bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground dark:bg-muted/5">
-						No ready generations yet.
+						{generationsEmptyHint}
 					</p>
 				)}
 

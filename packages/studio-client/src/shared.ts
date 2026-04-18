@@ -305,6 +305,29 @@ export function createScenarioFormState(
 	};
 }
 
+export function buildScenarioFormStateFromRecord(
+	scenario: ScenarioRecord,
+	workflow: WorkflowDefinition
+): ScenarioFormState {
+	const baseParams = Object.fromEntries(
+		workflow.parameters.map((parameter) => [
+			parameter.key,
+			parameter.defaultValue,
+		])
+	);
+
+	for (const [key, value] of Object.entries(scenario.params ?? {})) {
+		baseParams[key] = stringifyParamValue(value);
+	}
+
+	return {
+		name: scenario.name,
+		params: baseParams,
+		prompt: scenario.prompt,
+		workflowKey: workflow.key,
+	};
+}
+
 export function buildCreateScenarioInput(
 	workflow: WorkflowDefinition,
 	form: ScenarioFormState

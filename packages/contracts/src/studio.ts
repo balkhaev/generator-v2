@@ -62,6 +62,12 @@ export interface CreateStudioRunInput {
 	inputPersonId?: string | null;
 	/** Подставить loraUrl этой персоны в params (нужен PERSONS_API_URL на studio-api). */
 	loraPersonId?: string | null;
+	/**
+	 * Разовый override промта сценария на этот run (например, результат
+	 * vision-enhance под конкретное input image). Если пустой — используем
+	 * scenario.prompt как обычно.
+	 */
+	promptOverride?: string;
 	scenarioId: string;
 }
 

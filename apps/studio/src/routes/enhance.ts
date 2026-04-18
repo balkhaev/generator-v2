@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { StudioGrokClient } from "@/clients/grok";
 
 const enhanceRequestSchema = z.object({
+	imageUrl: z.url("Image URL must be a valid URL").optional(),
 	prompt: z.string().min(1).max(2000),
 });
 
@@ -34,8 +35,16 @@ export function createEnhanceRoutes(client: StudioGrokClient | undefined) {
 		}
 
 		try {
-			const enhanced = await client.enhancePrompt(parsed.data.prompt);
-			return c.json({ enhanced });
+			const enhanced = parsed.data.imageUrl
+				? await client.enhancePromptWithImage(
+						parsed.data.prompt,
+						parsed.data.imageUrl
+					)
+				: await client.enhancePrompt(parsed.data.prompt);
+			return c.json({
+				enhanced,
+				mode: parsed.data.imageUrl ? "vision" : "text",
+			});
 		} catch (error) {
 			return c.json(
 				{

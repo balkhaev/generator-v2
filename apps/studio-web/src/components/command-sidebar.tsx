@@ -6,7 +6,7 @@ import { requestJson } from "@generator/http/client";
 import { normalizeBaseUrl } from "@generator/http/shared";
 import {
 	type AdminSnapshot,
-	getStudioSnapshot,
+	enhanceStudioPrompt,
 	type LaunchRunInput,
 	launchStudioRun,
 	type ScenarioRecord,
@@ -16,6 +16,7 @@ import {
 } from "@generator/studio-client/client";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
+import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
 import { Input } from "@generator/ui/components/input";
 import {
 	Popover,
@@ -39,17 +40,19 @@ import {
 	ExternalLink,
 	Layers,
 	Loader2,
+	Pencil,
 	Play,
 	Plus,
-	RefreshCw,
+	RotateCcw,
 	Search,
+	Trash2,
 	UserRound,
 	UsersRound,
 } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import IconButton from "@/components/icon-button";
@@ -62,6 +65,8 @@ interface CommandSidebarProps {
 	className?: string;
 	getScenarioHref: (scenarioId: string) => Route;
 	onCreateScenario?: () => void;
+	onDeleteScenario?: (scenarioId: string) => void | Promise<void>;
+	onEditScenario?: (scenarioId: string) => void;
 	onSnapshotChange?: (snapshot: AdminSnapshot) => void;
 	scenarioCards: ScenarioCardData[];
 	selectedScenarioId: string | null;
@@ -170,6 +175,37 @@ function createRunDraft(scenarioId: string): RunDraft {
 	};
 }
 
+function buildLaunchInput({
+	draft,
+	inputImageUrl,
+	requiresInputImage,
+	scenario,
+}: {
+	draft: RunDraft;
+	inputImageUrl: string;
+	requiresInputImage: boolean;
+	scenario: ScenarioRecord;
+}): LaunchRunInput {
+	const launchInput: LaunchRunInput = { scenarioId: scenario.id };
+	if (requiresInputImage) {
+		launchInput.inputImageUrl = inputImageUrl;
+	}
+	if (draft.inputPersonId) {
+		launchInput.inputPersonId = draft.inputPersonId;
+	}
+	if (draft.inputPersonGenerationId) {
+		launchInput.inputPersonGenerationId = draft.inputPersonGenerationId;
+	}
+	if (draft.loraPersonId) {
+		launchInput.loraPersonId = draft.loraPersonId;
+	}
+	const promptOverride = draft.promptOverride?.trim();
+	if (promptOverride && promptOverride !== scenario.prompt) {
+		launchInput.promptOverride = promptOverride;
+	}
+	return launchInput;
+}
+
 function workflowSupportsPersonLora(workflow: WorkflowDefinition | null) {
 	return Boolean(
 		workflow?.parameters.some((parameter) => parameter.key === "loraUrl")
@@ -261,19 +297,84 @@ function StatusPill({ status }: { status: ScenarioRunRecord["status"] }) {
 	);
 }
 
+function ScenarioSwitcherItemActions({
+	isActive,
+	onDelete,
+	onEdit,
+	scenario,
+}: {
+	isActive: boolean;
+	onDelete?: (scenarioId: string) => void;
+	onEdit?: (scenarioId: string) => void;
+	scenario: ScenarioCardData;
+}) {
+	if (!(onEdit || onDelete)) {
+		return null;
+	}
+
+	return (
+		<div className="absolute top-1 right-1 hidden items-center gap-0.5 group-focus-within/scenario:flex group-hover/scenario:flex">
+			{onEdit ? (
+				<button
+					aria-label={`Edit ${scenario.name}`}
+					className={cn(
+						"inline-flex size-6 items-center justify-center rounded-md transition",
+						isActive
+							? "text-background/80 hover:bg-background/10"
+							: "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+					)}
+					onClick={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						onEdit(scenario.id);
+					}}
+					title="Edit scenario"
+					type="button"
+				>
+					<Pencil className="size-3" />
+				</button>
+			) : null}
+			{onDelete ? (
+				<button
+					aria-label={`Delete ${scenario.name}`}
+					className={cn(
+						"inline-flex size-6 items-center justify-center rounded-md transition",
+						isActive
+							? "text-background/80 hover:bg-rose-500/20"
+							: "text-muted-foreground hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400"
+					)}
+					onClick={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						onDelete(scenario.id);
+					}}
+					title="Delete scenario"
+					type="button"
+				>
+					<Trash2 className="size-3" />
+				</button>
+			) : null}
+		</div>
+	);
+}
+
 function ScenarioSwitcherItem({
 	getScenarioHref,
 	isActive,
+	onDelete,
+	onEdit,
 	onPick,
 	scenario,
 }: {
 	getScenarioHref: (scenarioId: string) => Route;
 	isActive: boolean;
+	onDelete?: (scenarioId: string) => void;
+	onEdit?: (scenarioId: string) => void;
 	onPick: (scenarioId: string) => void;
 	scenario: ScenarioCardData;
 }) {
 	return (
-		<li>
+		<li className="group/scenario relative">
 			<a
 				aria-current={isActive ? "true" : undefined}
 				className={cn(
@@ -285,32 +386,13 @@ function ScenarioSwitcherItem({
 				href={getScenarioHref(scenario.id)}
 				onClick={() => onPick(scenario.id)}
 			>
-				<div className="relative size-8 shrink-0 overflow-hidden rounded-md bg-muted/20 dark:bg-muted/10">
-					{scenario.thumbnailUrl ? (
-						<div
-							aria-hidden="true"
-							className="absolute inset-0 bg-center bg-cover"
-							style={{
-								backgroundImage: `url("${scenario.thumbnailUrl}")`,
-							}}
-						/>
-					) : (
-						<Layers
-							aria-hidden="true"
-							className={cn(
-								"absolute top-1/2 left-1/2 size-3 -translate-x-1/2 -translate-y-1/2",
-								isActive ? "text-background/40" : "text-muted-foreground/40"
-							)}
-						/>
+				<span
+					aria-hidden="true"
+					className={cn(
+						"mt-1 size-2 shrink-0 rounded-full",
+						scenarioStatusDot[scenario.status]
 					)}
-					<span
-						aria-hidden="true"
-						className={cn(
-							"absolute right-0.5 bottom-0.5 size-1.5 rounded-full ring-1 ring-background",
-							scenarioStatusDot[scenario.status]
-						)}
-					/>
-				</div>
+				/>
 				<div className="min-w-0 flex-1">
 					<p
 						className={cn(
@@ -346,6 +428,12 @@ function ScenarioSwitcherItem({
 					</div>
 				</div>
 			</a>
+			<ScenarioSwitcherItemActions
+				isActive={isActive}
+				onDelete={onDelete}
+				onEdit={onEdit}
+				scenario={scenario}
+			/>
 		</li>
 	);
 }
@@ -444,6 +532,8 @@ function ScenarioSwitcher({
 	castLoraSlot,
 	getScenarioHref,
 	onCreateScenario,
+	onDeleteScenario,
+	onEditScenario,
 	onSelect,
 	personLoraSelected,
 	scenarios,
@@ -452,6 +542,8 @@ function ScenarioSwitcher({
 	castLoraSlot: React.ReactNode;
 	getScenarioHref: (scenarioId: string) => Route;
 	onCreateScenario?: () => void;
+	onDeleteScenario?: (scenarioId: string) => void;
+	onEditScenario?: (scenarioId: string) => void;
 	onSelect: (scenarioId: string) => void;
 	personLoraSelected: PersonRecord | null;
 	scenarios: ScenarioCardData[];
@@ -488,31 +580,20 @@ function ScenarioSwitcher({
 							className="group flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-muted/15"
 							type="button"
 						>
-							<div className="relative size-8 shrink-0 overflow-hidden rounded-md bg-muted/20 dark:bg-muted/10">
-								{selected?.thumbnailUrl ? (
-									<div
-										aria-hidden="true"
-										className="absolute inset-0 bg-center bg-cover"
-										style={{
-											backgroundImage: `url("${selected.thumbnailUrl}")`,
-										}}
-									/>
-								) : (
-									<Layers
-										aria-hidden="true"
-										className="absolute top-1/2 left-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/50"
-									/>
-								)}
-								{selected ? (
-									<span
-										aria-hidden="true"
-										className={cn(
-											"absolute right-0.5 bottom-0.5 size-1.5 rounded-full ring-1 ring-background",
-											scenarioStatusDot[selected.status]
-										)}
-									/>
-								) : null}
-							</div>
+							{selected ? (
+								<span
+									aria-hidden="true"
+									className={cn(
+										"size-2 shrink-0 rounded-full",
+										scenarioStatusDot[selected.status]
+									)}
+								/>
+							) : (
+								<Layers
+									aria-hidden="true"
+									className="size-3.5 shrink-0 text-muted-foreground/60"
+								/>
+							)}
 							<div className="min-w-0 flex-1">
 								<p className="truncate font-medium text-xs leading-tight">
 									{selected?.name ?? "Pick scenario"}
@@ -580,6 +661,22 @@ function ScenarioSwitcher({
 										getScenarioHref={getScenarioHref}
 										isActive={scenario.id === selectedScenarioId}
 										key={scenario.id}
+										onDelete={
+											onDeleteScenario
+												? (id) => {
+														setOpen(false);
+														onDeleteScenario(id);
+													}
+												: undefined
+										}
+										onEdit={
+											onEditScenario
+												? (id) => {
+														setOpen(false);
+														onEditScenario(id);
+													}
+												: undefined
+										}
 										onPick={(id) => {
 											onSelect(id);
 											setOpen(false);
@@ -610,6 +707,24 @@ function ScenarioSwitcher({
 					) : null}
 				</PopoverContent>
 			</Popover>
+			{selected && onEditScenario ? (
+				<IconButton
+					hint="Edit scenario"
+					label="Edit scenario"
+					onClick={() => onEditScenario(selected.id)}
+				>
+					<Pencil className="size-3.5" />
+				</IconButton>
+			) : null}
+			{selected && onDeleteScenario ? (
+				<IconButton
+					hint="Delete scenario"
+					label="Delete scenario"
+					onClick={() => onDeleteScenario(selected.id)}
+				>
+					<Trash2 className="size-3.5" />
+				</IconButton>
+			) : null}
 			{onCreateScenario ? (
 				<IconButton
 					hint="Compose new scenario"
@@ -787,6 +902,102 @@ function RunCard({
 	);
 }
 
+function PromptOverrideEditor({
+	draft,
+	onDraftChange,
+	scenario,
+}: {
+	draft: RunDraft | null;
+	onDraftChange: (next: RunDraft) => void;
+	scenario: ScenarioRecord;
+}) {
+	const overrideValue = draft?.promptOverride;
+	const promptValue = overrideValue ?? scenario.prompt;
+	const hasOverride =
+		typeof overrideValue === "string" && overrideValue !== scenario.prompt;
+	const hasInputImage = Boolean(draft?.inputImageUrl?.trim());
+
+	function setPrompt(next: string) {
+		onDraftChange({
+			...(draft ?? createRunDraft(scenario.id)),
+			promptOverride: next === scenario.prompt ? undefined : next,
+			scenarioId: scenario.id,
+		});
+	}
+
+	function resetOverride() {
+		onDraftChange({
+			...(draft ?? createRunDraft(scenario.id)),
+			promptOverride: undefined,
+			scenarioId: scenario.id,
+		});
+	}
+
+	if (!scenario.prompt) {
+		return (
+			<p className="text-[11px] text-muted-foreground italic">
+				No prompt set. Open Compose to add one.
+			</p>
+		);
+	}
+
+	return (
+		<div className="grid min-w-0 gap-1">
+			<div className="flex items-center justify-between gap-2">
+				<span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+					Prompt for this run
+				</span>
+				<div className="flex items-center gap-1">
+					{hasOverride ? (
+						<button
+							className="inline-flex items-center gap-1 text-[10px] text-muted-foreground underline transition hover:text-foreground"
+							onClick={resetOverride}
+							type="button"
+						>
+							<RotateCcw className="size-2.5" />
+							Reset
+						</button>
+					) : null}
+					<EnhancePromptButton
+						className="h-6 px-2 text-[10px]"
+						enhance={async (value) => {
+							const result = await enhanceStudioPrompt(value, {
+								imageUrl: draft?.inputImageUrl ?? null,
+							});
+							if (result.mode === "vision") {
+								toast.success("Prompt rewritten for this image");
+							} else {
+								toast.success("Prompt enhanced with Grok");
+							}
+							return result.enhanced;
+						}}
+						label={hasInputImage ? "Enhance for image" : "Enhance"}
+						onEnhanced={(enhanced) => setPrompt(enhanced)}
+						onError={(message) => toast.error(message)}
+						prompt={promptValue}
+						tooltip={
+							hasInputImage
+								? "Rewrite this prompt grounded in the input image (Grok vision)"
+								: "Rewrite this prompt with Grok"
+						}
+					/>
+				</div>
+			</div>
+			<textarea
+				className="min-h-16 w-full resize-y rounded-lg border border-input bg-background/45 px-2 py-1.5 text-[11px] leading-snug outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
+				onChange={(event) => setPrompt(event.target.value)}
+				placeholder={scenario.prompt}
+				value={promptValue}
+			/>
+			{hasOverride ? (
+				<p className="text-[10px] text-amber-600 dark:text-amber-400">
+					Using a per-run prompt override. Reset to use scenario default.
+				</p>
+			) : null}
+		</div>
+	);
+}
+
 function LaunchSection({
 	activeRunCount,
 	draft,
@@ -813,7 +1024,7 @@ function LaunchSection({
 	storageLabel: string | null;
 }) {
 	return (
-		<section className="grid gap-2 border-foreground/6 border-b px-3 py-2.5 dark:border-foreground/10">
+		<section className="grid min-w-0 gap-2 border-foreground/6 border-b px-3 py-2.5 dark:border-foreground/10">
 			<div className="flex items-center justify-between gap-2">
 				<SectionLabel>Launch</SectionLabel>
 				<div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
@@ -837,25 +1048,6 @@ function LaunchSection({
 				</p>
 			) : null}
 
-			{scenario.prompt ? (
-				<Tooltip>
-					<TooltipTrigger
-						render={
-							<p className="line-clamp-2 cursor-help text-[11px] leading-snug">
-								{scenario.prompt}
-							</p>
-						}
-					/>
-					<TooltipContent className="max-w-sm leading-relaxed">
-						{scenario.prompt}
-					</TooltipContent>
-				</Tooltip>
-			) : (
-				<p className="text-[11px] text-muted-foreground italic">
-					No prompt set. Open Compose to add one.
-				</p>
-			)}
-
 			{requiresInputImage ? (
 				<PersonsInputPicker
 					currentUrl={draft?.inputImageUrl ?? ""}
@@ -874,6 +1066,12 @@ function LaunchSection({
 					storageLabel={storageLabel}
 				/>
 			) : null}
+
+			<PromptOverrideEditor
+				draft={draft}
+				onDraftChange={onDraftChange}
+				scenario={scenario}
+			/>
 
 			<Button
 				disabled={!isReadyToLaunch || isSubmitting}
@@ -1019,6 +1217,8 @@ export default function CommandSidebar({
 	className,
 	getScenarioHref,
 	onCreateScenario,
+	onDeleteScenario,
+	onEditScenario,
 	onSnapshotChange,
 	scenarioCards,
 	selectedScenarioId,
@@ -1030,7 +1230,6 @@ export default function CommandSidebar({
 	const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
 	const [linkedPerson, setLinkedPerson] = useState<LinkedPersonState>(null);
 	const [runFilter, setRunFilter] = useState<RunFilter>("all");
-	const [isRefreshing, setIsRefreshing] = useState(false);
 	const [studioPersons, setStudioPersons] = useState<PersonRecord[]>([]);
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -1148,21 +1347,6 @@ export default function CommandSidebar({
 		});
 	}, [selectedScenarioId, selectedScenarioWorkflow]);
 
-	const refreshSnapshot = useCallback(async () => {
-		setIsRefreshing(true);
-		try {
-			const next = await getStudioSnapshot();
-			setSnapshot(next);
-			onSnapshotChange?.(next);
-		} catch (error) {
-			toast.error(
-				error instanceof Error ? error.message : "Unable to refresh."
-			);
-		} finally {
-			setIsRefreshing(false);
-		}
-	}, [onSnapshotChange]);
-
 	async function handleCopyRunId(runId: string) {
 		try {
 			await copyValueToClipboard(runId);
@@ -1189,19 +1373,12 @@ export default function CommandSidebar({
 
 		setSubmittingRunId(scenario.id);
 		try {
-			const launchInput: LaunchRunInput = { scenarioId: scenario.id };
-			if (requiresInputImage) {
-				launchInput.inputImageUrl = inputImageUrl;
-			}
-			if (draft.inputPersonId) {
-				launchInput.inputPersonId = draft.inputPersonId;
-			}
-			if (draft.inputPersonGenerationId) {
-				launchInput.inputPersonGenerationId = draft.inputPersonGenerationId;
-			}
-			if (draft.loraPersonId) {
-				launchInput.loraPersonId = draft.loraPersonId;
-			}
+			const launchInput = buildLaunchInput({
+				draft,
+				inputImageUrl,
+				requiresInputImage,
+				scenario,
+			});
 			const result = await launchStudioRun(launchInput);
 			setSnapshot((current) => {
 				const next = {
@@ -1217,6 +1394,7 @@ export default function CommandSidebar({
 					...createRunDraft(scenario.id),
 					inputImageUrl: result.data.inputImageUrl,
 					loraPersonId: draft.loraPersonId ?? null,
+					promptOverride: undefined,
 				},
 			}));
 			toast.success("Run queued.");
@@ -1287,25 +1465,14 @@ export default function CommandSidebar({
 							}
 							getScenarioHref={getScenarioHref}
 							onCreateScenario={onCreateScenario}
+							onDeleteScenario={onDeleteScenario}
+							onEditScenario={onEditScenario}
 							onSelect={selectScenario}
 							personLoraSelected={selectedPersonLora}
 							scenarios={scenarioCards}
 							selectedScenarioId={selectedScenarioId}
 						/>
 					</div>
-					<IconButton
-						hint="Refresh snapshot"
-						label="Refresh snapshot"
-						onClick={() => {
-							refreshSnapshot().catch(() => undefined);
-						}}
-					>
-						{isRefreshing ? (
-							<Loader2 className="size-3.5 animate-spin" />
-						) : (
-							<RefreshCw className="size-3.5" />
-						)}
-					</IconButton>
 				</div>
 			</header>
 

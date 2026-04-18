@@ -41,6 +41,7 @@ export const createStudioRunInputSchema = z.object({
 	inputPersonGenerationId: z.string().trim().min(1).optional().nullable(),
 	inputPersonId: z.string().trim().min(1).optional().nullable(),
 	loraPersonId: z.string().trim().min(1).optional().nullable(),
+	promptOverride: z.string().trim().min(1).max(4000).optional(),
 	scenarioId: z.string().trim().min(1, "Scenario id is required"),
 });
 
@@ -568,7 +569,7 @@ export class StudioService {
 						? { inputImageUrl: parsed.inputImageUrl }
 						: {}),
 					params: mergedExecutionParams,
-					prompt: scenario.prompt,
+					prompt: parsed.promptOverride ?? scenario.prompt,
 					workflowKey: scenario.workflowKey,
 				},
 				{ debugCorrelationId: options?.debugCorrelationId }

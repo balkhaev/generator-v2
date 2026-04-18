@@ -8,9 +8,12 @@ import {
 	type AdminSnapshot,
 	createStudioScenario,
 	type ScenarioFormState,
+	type ScenarioRecord,
+	updateStudioScenario,
 } from "@generator/studio-client/client";
 import {
 	buildCreateScenarioInput,
+	buildScenarioFormStateFromRecord,
 	createScenarioFormState,
 } from "@generator/studio-client/shared";
 import { Button } from "@generator/ui/components/button";
@@ -23,15 +26,17 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@generator/ui/components/dialog";
-import { AlertCircle, Loader2, Plus } from "lucide-react";
+import { AlertCircle, Loader2, Plus, Save } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import ComposeForm from "./compose-form";
 
 interface ComposeDialogProps {
+	editingScenario?: ScenarioRecord | null;
 	onOpenChange: (open: boolean) => void;
 	onScenarioCreated?: (snapshot: AdminSnapshot) => void;
+	onScenarioUpdated?: (snapshot: AdminSnapshot, scenarioId: string) => void;
 	open: boolean;
 	snapshot: AdminSnapshot;
 }
@@ -64,17 +69,33 @@ async function fetchStudioLoras(baseModel?: string): Promise<{
 }
 
 export default function ComposeDialog({
+	editingScenario,
 	onOpenChange,
 	onScenarioCreated,
+	onScenarioUpdated,
 	open,
 	snapshot,
 }: ComposeDialogProps) {
 	const formId = useId();
 	const workflows = snapshot.workflows;
-	const initialWorkflow = workflows[0] ?? null;
-	const [form, setForm] = useState<ScenarioFormState | null>(() =>
-		initialWorkflow ? createScenarioFormState(initialWorkflow) : null
-	);
+	const isEditing = Boolean(editingScenario);
+	const initialWorkflow = useMemo(() => {
+		if (editingScenario) {
+			const matched = workflows.find(
+				(workflow) => workflow.key === editingScenario.workflowKey
+			);
+			if (matched) {
+				return matched;
+			}
+		}
+		return workflows[0] ?? null;
+	}, [editingScenario, workflows]);
+	const [form, setForm] = useState<ScenarioFormState | null>(() => {
+		if (editingScenario && initialWorkflow) {
+			return buildScenarioFormStateFromRecord(editingScenario, initialWorkflow);
+		}
+		return initialWorkflow ? createScenarioFormState(initialWorkflow) : null;
+	});
 	const [availableLoras, setAvailableLoras] = useState<LoraRegistryEntry[]>([]);
 	const [lorasError, setLorasError] = useState<string | null>(null);
 	const [isSaving, setIsSaving] = useState(false);
@@ -99,6 +120,13 @@ export default function ComposeDialog({
 			return;
 		}
 
+		if (editingScenario && initialWorkflow) {
+			setForm(
+				buildScenarioFormStateFromRecord(editingScenario, initialWorkflow)
+			);
+			return;
+		}
+
 		setForm((current) => {
 			if (current) {
 				return current;
@@ -106,7 +134,7 @@ export default function ComposeDialog({
 
 			return initialWorkflow ? createScenarioFormState(initialWorkflow) : null;
 		});
-	}, [initialWorkflow, open]);
+	}, [editingScenario, initialWorkflow, open]);
 
 	useEffect(() => {
 		if (!open) {
@@ -144,17 +172,30 @@ export default function ComposeDialog({
 			return;
 		}
 
+		const payload = buildCreateScenarioInput(selectedWorkflow, {
+			...form,
+			name: form.name.trim(),
+			prompt: form.prompt.trim(),
+		});
+
 		setIsSaving(true);
 
 		try {
-			const result = await createStudioScenario(
-				buildCreateScenarioInput(selectedWorkflow, {
-					...form,
-					name: form.name.trim(),
-					prompt: form.prompt.trim(),
-				})
-			);
+			if (editingScenario) {
+				const result = await updateStudioScenario(editingScenario.id, payload);
+				const nextSnapshot: AdminSnapshot = {
+					...snapshot,
+					scenarios: snapshot.scenarios.map((scenario) =>
+						scenario.id === editingScenario.id ? result.data : scenario
+					),
+				};
+				onScenarioUpdated?.(nextSnapshot, editingScenario.id);
+				toast.success("Scenario updated.");
+				onOpenChange(false);
+				return;
+			}
 
+			const result = await createStudioScenario(payload);
 			const nextSnapshot: AdminSnapshot = {
 				...snapshot,
 				scenarios: [result.data, ...snapshot.scenarios],
@@ -163,10 +204,10 @@ export default function ComposeDialog({
 			toast.success("Scenario saved.");
 			onOpenChange(false);
 			setForm(createScenarioFormState(selectedWorkflow));
-		} catch (createError) {
+		} catch (saveError) {
 			toast.error(
-				createError instanceof Error
-					? createError.message
+				saveError instanceof Error
+					? saveError.message
 					: "Unable to save scenario."
 			);
 		} finally {
@@ -175,14 +216,19 @@ export default function ComposeDialog({
 	}
 
 	const hasWorkflows = workflows.length > 0;
+	const SubmitIcon = isEditing ? Save : Plus;
 
 	return (
 		<Dialog onOpenChange={onOpenChange} open={open}>
 			<DialogContent className="flex max-h-[90vh] w-[min(46rem,100vw-2rem)] max-w-[46rem] flex-col gap-0 p-0">
 				<DialogHeader>
-					<DialogTitle>Compose scenario</DialogTitle>
+					<DialogTitle>
+						{isEditing ? "Edit scenario" : "Compose scenario"}
+					</DialogTitle>
 					<DialogDescription>
-						Pick a workflow, write a prompt and tune parameters before saving.
+						{isEditing
+							? "Tweak the prompt or parameters and save your changes."
+							: "Pick a workflow, write a prompt and tune parameters before saving."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -241,9 +287,9 @@ export default function ComposeDialog({
 							{isSaving ? (
 								<Loader2 className="size-3.5 animate-spin" />
 							) : (
-								<Plus className="size-3.5" />
+								<SubmitIcon className="size-3.5" />
 							)}
-							Save scenario
+							{isEditing ? "Save changes" : "Save scenario"}
 						</Button>
 					</div>
 				</DialogFooter>

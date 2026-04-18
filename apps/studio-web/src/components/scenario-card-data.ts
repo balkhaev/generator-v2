@@ -12,7 +12,6 @@ export interface ScenarioCardData {
 	prompt: string;
 	runCount: number;
 	status: ScenarioRailStatus;
-	thumbnailUrl: string | null;
 	updatedAt: string | null;
 	workflowKey: string;
 }

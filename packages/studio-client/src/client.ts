@@ -62,6 +62,42 @@ export async function createStudioScenario(
 	};
 }
 
+export async function updateStudioScenario(
+	scenarioId: string,
+	input: Partial<CreateScenarioInput>
+): Promise<MutationResult<ScenarioRecord>> {
+	const payload = await requestStudioJson<unknown>(
+		`${apiBaseUrl}/api/scenarios/${encodeURIComponent(scenarioId)}`,
+		{
+			body: JSON.stringify(input),
+			method: "PATCH",
+		}
+	);
+
+	return {
+		data: extractStudioScenario(payload),
+		source: "server",
+	};
+}
+
+export async function deleteStudioScenario(scenarioId: string): Promise<void> {
+	const response = await fetch(
+		`${apiBaseUrl}/api/scenarios/${encodeURIComponent(scenarioId)}`,
+		{
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
+			method: "DELETE",
+		}
+	);
+
+	if (!response.ok) {
+		const message = await response.text();
+		throw new Error(
+			message || `Unable to delete scenario (${response.status})`
+		);
+	}
+}
+
 export async function launchStudioRun(
 	input: LaunchRunInput
 ): Promise<MutationResult<ScenarioRunRecord>> {
@@ -105,21 +141,28 @@ export function uploadStudioInputImage(input: {
 }
 
 export async function enhanceStudioPrompt(
-	prompt: string
-): Promise<{ enhanced: string }> {
-	const payload = await requestStudioJson<{ enhanced?: unknown }>(
-		`${apiBaseUrl}/api/enhance-prompt`,
-		{
-			body: JSON.stringify({ prompt }),
-			method: "POST",
-		}
-	);
+	prompt: string,
+	options?: { imageUrl?: string | null }
+): Promise<{ enhanced: string; mode: "text" | "vision" }> {
+	const imageUrl = options?.imageUrl?.trim();
+	const body: Record<string, unknown> = { prompt };
+	if (imageUrl) {
+		body.imageUrl = imageUrl;
+	}
+	const payload = await requestStudioJson<{
+		enhanced?: unknown;
+		mode?: unknown;
+	}>(`${apiBaseUrl}/api/enhance-prompt`, {
+		body: JSON.stringify(body),
+		method: "POST",
+	});
 
 	if (typeof payload.enhanced !== "string" || payload.enhanced.trim() === "") {
 		throw new Error("Enhance response did not contain enhanced text.");
 	}
 
-	return { enhanced: payload.enhanced };
+	const mode = payload.mode === "vision" ? "vision" : "text";
+	return { enhanced: payload.enhanced, mode };
 }
 
 export async function saveStudioShot(

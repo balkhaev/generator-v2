@@ -3,15 +3,27 @@
 import { env } from "@generator/env/web";
 import {
 	type AdminSnapshot,
+	deleteStudioScenario,
 	type ScenarioRecord,
 	type ScenarioRunRecord,
 	saveStudioShot,
 	syncStudioRun,
 } from "@generator/studio-client/client";
+import { Button } from "@generator/ui/components/button";
+import {
+	Dialog,
+	DialogBody,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@generator/ui/components/dialog";
 import WorkspaceShell, {
 	WorkspaceStatus,
 } from "@generator/ui/components/workspace-shell";
 import { createWorkspaceNavigation } from "@generator/ui/lib/workspace-nav";
+import { Loader2, Trash2 } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -116,34 +128,6 @@ function getScenarioStatus(runs: ScenarioRunRecord[]): ScenarioRailStatus {
 	}
 }
 
-function pickScenarioThumbnail(runs: ScenarioRunRecord[], scenarioId: string) {
-	for (const run of runs) {
-		if (run.scenarioId !== scenarioId) {
-			continue;
-		}
-
-		const firstOutput = run.artifactUrls.find(
-			(url) => getMediaType(url) === "image"
-		);
-
-		if (firstOutput) {
-			return firstOutput;
-		}
-	}
-
-	for (const run of runs) {
-		if (run.scenarioId !== scenarioId) {
-			continue;
-		}
-
-		if (run.inputImageUrl) {
-			return run.inputImageUrl;
-		}
-	}
-
-	return null;
-}
-
 function buildScenarioCards(
 	scenarios: ScenarioRecord[],
 	runs: ScenarioRunRecord[]
@@ -158,7 +142,6 @@ function buildScenarioCards(
 			prompt: scenario.prompt,
 			runCount: scenarioRuns.length,
 			status: getScenarioStatus(scenarioRuns),
-			thumbnailUrl: pickScenarioThumbnail(runs, scenario.id),
 			updatedAt: scenario.updatedAt ?? scenario.createdAt ?? null,
 			workflowKey: scenario.workflowKey,
 		};
@@ -252,6 +235,71 @@ function StudioSubtitleBar({
 	);
 }
 
+function DeleteScenarioDialog({
+	isDeleting,
+	onCancel,
+	onConfirm,
+	scenario,
+}: {
+	isDeleting: boolean;
+	onCancel: () => void;
+	onConfirm: () => void;
+	scenario: ScenarioRecord | null;
+}) {
+	return (
+		<Dialog
+			onOpenChange={(nextOpen) => {
+				if (!(nextOpen || isDeleting)) {
+					onCancel();
+				}
+			}}
+			open={scenario !== null}
+		>
+			<DialogContent className="max-w-md">
+				<DialogHeader>
+					<DialogTitle>
+						Delete &ldquo;{scenario?.name ?? "scenario"}&rdquo;?
+					</DialogTitle>
+					<DialogDescription>
+						The scenario will be removed from the list. Past runs and saved
+						shots stay intact, but you will not be able to launch new runs from
+						this template.
+					</DialogDescription>
+				</DialogHeader>
+				<DialogBody>
+					<p className="text-muted-foreground text-xs">
+						If you only need to tweak parameters or the prompt, use{" "}
+						<span className="font-medium">Edit</span> instead.
+					</p>
+				</DialogBody>
+				<DialogFooter>
+					<Button
+						disabled={isDeleting}
+						onClick={onCancel}
+						size="sm"
+						variant="outline"
+					>
+						Cancel
+					</Button>
+					<Button
+						className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+						disabled={isDeleting}
+						onClick={onConfirm}
+						size="sm"
+					>
+						{isDeleting ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<Trash2 className="size-3.5" />
+						)}
+						Delete scenario
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
 function buildMediaAssets(runs: ScenarioRunRecord[]): StudioMediaAsset[] {
 	return runs.flatMap((run) => {
 		// Failed runs только засоряют ленту превью: их выход — пусто, а вход
@@ -308,6 +356,13 @@ export default function StudioShell({
 }) {
 	const [snapshot, setSnapshot] = useState<AdminSnapshot>(initialSnapshot);
 	const [isComposeOpen, setIsComposeOpen] = useState(false);
+	const [editingScenarioId, setEditingScenarioId] = useState<string | null>(
+		null
+	);
+	const [pendingDeleteScenarioId, setPendingDeleteScenarioId] = useState<
+		string | null
+	>(null);
+	const [isDeletingScenario, setIsDeletingScenario] = useState(false);
 	const pathname = usePathname();
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -509,7 +564,20 @@ export default function StudioShell({
 	}
 
 	function handleCreateScenario() {
+		setEditingScenarioId(null);
 		setIsComposeOpen(true);
+	}
+
+	function handleEditScenario(scenarioId: string) {
+		setEditingScenarioId(scenarioId);
+		setIsComposeOpen(true);
+	}
+
+	function handleComposeOpenChange(nextOpen: boolean) {
+		setIsComposeOpen(nextOpen);
+		if (!nextOpen) {
+			setEditingScenarioId(null);
+		}
 	}
 
 	function handleScenarioCreated(nextSnapshot: AdminSnapshot) {
@@ -527,6 +595,64 @@ export default function StudioShell({
 			);
 		}
 	}
+
+	function handleScenarioUpdated(nextSnapshot: AdminSnapshot) {
+		setSnapshot(nextSnapshot);
+	}
+
+	function handleRequestDeleteScenario(scenarioId: string) {
+		setPendingDeleteScenarioId(scenarioId);
+	}
+
+	const handleConfirmDeleteScenario = useCallback(async () => {
+		if (!pendingDeleteScenarioId) {
+			return;
+		}
+		const scenarioId = pendingDeleteScenarioId;
+		setIsDeletingScenario(true);
+		try {
+			await deleteStudioScenario(scenarioId);
+			setSnapshot((current) => ({
+				...current,
+				scenarios: current.scenarios.filter((entry) => entry.id !== scenarioId),
+			}));
+			if (selectedScenarioId === scenarioId) {
+				router.replace(
+					buildStudioHref(pathname, currentSearch, {
+						assetId: null,
+						runId: null,
+						scenarioId: null,
+					}),
+					{ scroll: false }
+				);
+			}
+			toast.success("Scenario deleted.");
+			setPendingDeleteScenarioId(null);
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Unable to delete scenario."
+			);
+		} finally {
+			setIsDeletingScenario(false);
+		}
+	}, [
+		currentSearch,
+		pathname,
+		pendingDeleteScenarioId,
+		router,
+		selectedScenarioId,
+	]);
+
+	const editingScenario =
+		(editingScenarioId
+			? (snapshot.scenarios.find((entry) => entry.id === editingScenarioId) ??
+				null)
+			: null) ?? null;
+	const pendingDeleteScenario = pendingDeleteScenarioId
+		? (snapshot.scenarios.find(
+				(entry) => entry.id === pendingDeleteScenarioId
+			) ?? null)
+		: null;
 
 	function getScenarioHref(scenarioId: string) {
 		return buildStudioHref(pathname, currentSearch, {
@@ -572,6 +698,8 @@ export default function StudioShell({
 				<CommandSidebar
 					getScenarioHref={getScenarioHref}
 					onCreateScenario={handleCreateScenario}
+					onDeleteScenario={handleRequestDeleteScenario}
+					onEditScenario={handleEditScenario}
 					onSnapshotChange={setSnapshot}
 					scenarioCards={scenarioCards}
 					selectedScenarioId={selectedScenarioId}
@@ -605,10 +733,20 @@ export default function StudioShell({
 			workspaceLabel="Studio"
 		>
 			<ComposeDialog
-				onOpenChange={setIsComposeOpen}
+				editingScenario={editingScenario}
+				onOpenChange={handleComposeOpenChange}
 				onScenarioCreated={handleScenarioCreated}
+				onScenarioUpdated={handleScenarioUpdated}
 				open={isComposeOpen}
 				snapshot={snapshot}
+			/>
+			<DeleteScenarioDialog
+				isDeleting={isDeletingScenario}
+				onCancel={() => setPendingDeleteScenarioId(null)}
+				onConfirm={() => {
+					handleConfirmDeleteScenario().catch(() => undefined);
+				}}
+				scenario={pendingDeleteScenario}
 			/>
 			<div className="flex h-full min-h-0 flex-col gap-2">
 				<PreviewSurface

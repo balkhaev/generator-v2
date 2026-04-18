@@ -13,6 +13,7 @@
  */
 
 import { db } from "@generator/db";
+import { runtimeSetting } from "@generator/db/schema/runtime-config";
 import {
 	type CredentialRef,
 	type DomainName,
@@ -22,6 +23,7 @@ import {
 	createRuntimeConfigStore,
 	type RuntimeConfigStore,
 } from "@generator/runtime-config/store";
+import { and, eq } from "drizzle-orm";
 import IORedis from "ioredis";
 
 export interface RuntimeConfigSetup {
@@ -32,6 +34,19 @@ export interface RuntimeConfigSetup {
 export interface RuntimeConfigEnvSeed {
 	/** Map of provider -> keyName -> raw value from env. */
 	credentials: Record<string, Record<string, string | undefined>>;
+}
+
+/**
+ * Per-domain non-secret defaults sourced from env.
+ *
+ * Like `RuntimeConfigEnvSeed`, this is one-shot: a value is only written into
+ * the store if there is no existing setting for that `domain` + `key` pair.
+ * Once the admin UI writes a value, env is ignored on subsequent boots.
+ */
+export interface RuntimeConfigSettingsSeed {
+	settings: Partial<
+		Record<DomainName, Record<string, string | number | boolean | undefined>>
+	>;
 }
 
 const INVALIDATION_CHANNEL_PREFIX = "runtime-config:invalidated:";
@@ -119,6 +134,57 @@ export async function seedCredentialsFromEnv(
 			});
 		}
 	}
+}
+
+/**
+ * One-time backfill of non-secret per-domain settings from env. Skips any
+ * domain/key that already has a row, so the admin UI takes over after the
+ * first explicit write.
+ */
+export async function seedSettingsFromEnv(
+	store: RuntimeConfigStore,
+	seed: RuntimeConfigSettingsSeed,
+	logger: Pick<Console, "info" | "warn"> = console
+): Promise<void> {
+	for (const [domainName, kv] of Object.entries(seed.settings)) {
+		if (!(kv && isDomainNameLocal(domainName))) {
+			continue;
+		}
+		for (const [key, rawValue] of Object.entries(kv)) {
+			if (rawValue === undefined || rawValue === null || rawValue === "") {
+				continue;
+			}
+			const existingRows = await db
+				.select()
+				.from(runtimeSetting)
+				.where(
+					and(
+						eq(runtimeSetting.domain, domainName),
+						eq(runtimeSetting.key, key)
+					)
+				);
+			if (existingRows.length > 0) {
+				continue;
+			}
+			try {
+				await store.setSetting(domainName, key, rawValue);
+				logger.info?.("admin.runtime-config.seeded_setting_from_env", {
+					domain: domainName,
+					key,
+				});
+			} catch (error) {
+				logger.warn?.("admin.runtime-config.seed_setting_failed", {
+					domain: domainName,
+					key,
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
+	}
+}
+
+function isDomainNameLocal(value: string): value is DomainName {
+	return value in domains;
 }
 
 function collectAllCredentialRefs(): CredentialRef[] {

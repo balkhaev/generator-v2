@@ -29,6 +29,7 @@ import { createDrizzleUserRepository } from "@/repositories/users";
 import {
 	createRuntimeConfigSetup,
 	seedCredentialsFromEnv,
+	seedSettingsFromEnv,
 } from "@/runtime-config/setup";
 
 const generatorBaseUrl = getGeneratorApiUrl();
@@ -41,12 +42,12 @@ const internalTrainingControlService = new PersonLoraTrainingControlService(
 
 const s3Config = tryResolveS3StorageConfig() ?? undefined;
 
-const trainingProviderSettings = createRedisTrainingProviderSettings({
+const baseTrainingProviderSettings = createRedisTrainingProviderSettings({
 	defaultProvider: env.TRAINING_PROVIDER,
 	redisUrl,
 });
 
-const promptEnhanceSettings = createRedisPromptEnhanceSettings({
+const basePromptEnhanceSettings = createRedisPromptEnhanceSettings({
 	defaultOpenRouterModel: env.OPENROUTER_MODEL,
 	defaultProvider: env.PROMPT_ENHANCE_PROVIDER,
 	redisUrl,
@@ -91,6 +92,79 @@ const usersService = new UsersService({
 	repository: createDrizzleUserRepository(),
 });
 
+/**
+ * Wraps the Redis-backed settings store so every successful write is mirrored
+ * into the runtime-config store (the new source of truth) and consumer caches
+ * are invalidated via Redis pub/sub. Reads still go through Redis to keep the
+ * existing admin UI snapshot path unchanged.
+ */
+function mirrorPromptEnhanceSettings(
+	base: ReturnType<typeof createRedisPromptEnhanceSettings>,
+	setup: ReturnType<typeof createRuntimeConfigSetup> | null
+): ReturnType<typeof createRedisPromptEnhanceSettings> {
+	if (!setup) {
+		return base;
+	}
+	return {
+		close: () => base.close(),
+		getOpenRouterModel: () => base.getOpenRouterModel(),
+		getProvider: () => base.getProvider(),
+		async setOpenRouterModel(model) {
+			await base.setOpenRouterModel(model);
+			try {
+				await setup.store.setSetting(
+					"prompt-enhance",
+					"openrouterModel",
+					model
+				);
+				await setup.publishInvalidation("prompt-enhance");
+			} catch (error) {
+				console.warn("admin.runtime-config.mirror_setOpenRouterModel_failed", {
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
+		},
+		async setProvider(provider) {
+			await base.setProvider(provider);
+			try {
+				await setup.store.setSetting("prompt-enhance", "provider", provider);
+				await setup.publishInvalidation("prompt-enhance");
+			} catch (error) {
+				console.warn(
+					"admin.runtime-config.mirror_setPromptEnhanceProvider_failed",
+					{
+						message: error instanceof Error ? error.message : String(error),
+					}
+				);
+			}
+		},
+	};
+}
+
+function mirrorTrainingProviderSettings(
+	base: ReturnType<typeof createRedisTrainingProviderSettings>,
+	setup: ReturnType<typeof createRuntimeConfigSetup> | null
+): ReturnType<typeof createRedisTrainingProviderSettings> {
+	if (!setup) {
+		return base;
+	}
+	return {
+		close: () => base.close(),
+		getProvider: () => base.getProvider(),
+		async setProvider(provider) {
+			await base.setProvider(provider);
+			try {
+				await setup.store.setSetting("training", "provider", provider);
+				await setup.publishInvalidation("training");
+			} catch (error) {
+				console.warn("admin.runtime-config.mirror_setTrainingProvider_failed", {
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
+		},
+	};
+}
+
 const runtimeConfigSetup = env.CONFIG_MASTER_KEY
 	? createRuntimeConfigSetup({
 			masterKey: env.CONFIG_MASTER_KEY,
@@ -111,6 +185,22 @@ if (runtimeConfigSetup) {
 		},
 	}).catch((error) => {
 		console.warn("admin.runtime-config.seed_failed_outer", {
+			message: error instanceof Error ? error.message : String(error),
+		});
+	});
+
+	seedSettingsFromEnv(runtimeConfigSetup.store, {
+		settings: {
+			"prompt-enhance": {
+				openrouterModel: env.OPENROUTER_MODEL,
+				provider: env.PROMPT_ENHANCE_PROVIDER,
+			},
+			training: {
+				provider: env.TRAINING_PROVIDER,
+			},
+		},
+	}).catch((error) => {
+		console.warn("admin.runtime-config.seed_settings_failed_outer", {
 			message: error instanceof Error ? error.message : String(error),
 		});
 	});
@@ -162,11 +252,17 @@ const app = createApp({
 		openRouterConfigured: Boolean(env.OPENROUTER_API_KEY?.trim()),
 		openRouterModelEnvDefault: env.OPENROUTER_MODEL,
 	},
-	promptEnhanceSettings,
+	promptEnhanceSettings: mirrorPromptEnhanceSettings(
+		basePromptEnhanceSettings,
+		runtimeConfigSetup
+	),
 	trainingProviderAvailability: {
 		resolve: () => resolveTrainingProviderAvailability(env),
 	},
-	trainingProviderSettings,
+	trainingProviderSettings: mirrorTrainingProviderSettings(
+		baseTrainingProviderSettings,
+		runtimeConfigSetup
+	),
 	openRouterModelsApiKey: env.OPENROUTER_API_KEY ?? null,
 	runtimeConfig: runtimeConfigSetup
 		? {

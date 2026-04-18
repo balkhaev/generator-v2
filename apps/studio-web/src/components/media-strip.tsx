@@ -25,6 +25,48 @@ function formatPlaceholderLabel(asset: StudioMediaAsset) {
 	return "gen";
 }
 
+// `#t=0.1` подсказывает браузеру стартовать с 0.1с вместо нуля, что в большинстве
+// движков рендерится как первый осмысленный кадр (нулевой иногда чёрный из-за
+// фейда). Если video не поддерживается / не подгрузится, останется poster.
+function buildVideoThumbnailSrc(url: string) {
+	return url.includes("#") ? url : `${url}#t=0.1`;
+}
+
+function VideoThumbnail({ asset }: { asset: StudioMediaAsset }) {
+	const posterUrl = asset.posterUrl ?? null;
+
+	return (
+		<div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black/80">
+			{posterUrl ? (
+				<div
+					aria-hidden="true"
+					className="absolute inset-0 bg-center bg-cover"
+					style={{ backgroundImage: `url("${posterUrl}")` }}
+				/>
+			) : null}
+			<video
+				aria-hidden="true"
+				className="relative h-full w-full object-cover"
+				disablePictureInPicture
+				muted
+				playsInline
+				poster={posterUrl ?? undefined}
+				preload="metadata"
+				src={buildVideoThumbnailSrc(asset.url)}
+				tabIndex={-1}
+			>
+				<track kind="captions" />
+			</video>
+			<span
+				aria-hidden="true"
+				className="absolute right-1 bottom-1 inline-flex size-5 items-center justify-center rounded-full bg-black/60 text-white/90"
+			>
+				<Film className="size-3" strokeWidth={1.75} />
+			</span>
+		</div>
+	);
+}
+
 export default function MediaStrip({
 	assets,
 	getHref,
@@ -65,13 +107,7 @@ export default function MediaStrip({
 								}
 							>
 								{isVideo ? (
-									<div className="flex flex-1 items-center justify-center bg-black/80">
-										<Film
-											aria-hidden="true"
-											className="size-5 text-white/70"
-											strokeWidth={1.5}
-										/>
-									</div>
+									<VideoThumbnail asset={asset} />
 								) : (
 									<div
 										aria-hidden="true"

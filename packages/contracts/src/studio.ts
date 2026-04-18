@@ -1,4 +1,5 @@
 import type {
+	ExecutionPhase,
 	GeneratorExecutionRecord,
 	RunStatus,
 	ScenarioParamValue,
@@ -33,17 +34,25 @@ export interface StudioRunRecord {
 	artifacts?: StudioArtifactRecord[];
 	createdAt?: string;
 	errorSummary?: string | null;
+	/** Грубая оценка остатка в миллисекундах. Заполняется на live-обновлениях. */
+	etaMs?: number | null;
 	generatorRunId?: string | null;
 	id: string;
 	inputImageUrl: string;
 	inputPersonGenerationId?: string | null;
 	inputPersonId?: string | null;
+	/** Последняя строка лога провайдера, если есть. */
+	lastLogLine?: string | null;
 	/** Персона, чей LoRA подставлен в params при запуске (Studio → Cast). */
 	loraPersonId?: string | null;
+	/** Дискретная фаза для UI (queued/in_queue/running/finalizing/...). */
+	phase?: ExecutionPhase | null;
 	/** 0–100 с generator-api; null пока нет значения. */
 	progressPct?: number | null;
 	providerEndpointId?: string | null;
 	providerJobId?: string | null;
+	/** Позиция в очереди провайдера (только пока phase = in_queue). */
+	queuePosition?: number | null;
 	scenarioId: string;
 	status: RunStatus;
 	workflowKey: string;

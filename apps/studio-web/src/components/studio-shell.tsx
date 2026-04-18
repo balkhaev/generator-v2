@@ -342,18 +342,26 @@ function buildScenarioMediaAssets(
 		}
 
 		if (run.artifactUrls.length > 0) {
-			return run.artifactUrls.map<StudioMediaAsset>((url, index) => ({
-				createdAt: run.createdAt,
-				id: `output-${run.id}-${index}`,
-				label: `${run.scenarioName} output ${index + 1}`,
-				mediaKind: "output",
-				mediaType: getMediaType(url),
-				meta: run.scenarioName,
-				runId: run.id,
-				scenarioId: run.scenarioId,
-				status: run.status,
-				url,
-			}));
+			return run.artifactUrls.map<StudioMediaAsset>((url, index) => {
+				const mediaType = getMediaType(url);
+				return {
+					createdAt: run.createdAt,
+					id: `output-${run.id}-${index}`,
+					label: `${run.scenarioName} output ${index + 1}`,
+					mediaKind: "output",
+					mediaType,
+					meta: run.scenarioName,
+					// Для видео используем исходную картинку как poster, чтобы
+					// в media-strip вместо чёрного фона с иконкой Film сразу
+					// был осмысленный кадр — пока браузер не подтянет первый кадр
+					// самого видео.
+					posterUrl: mediaType === "video" ? (run.inputImageUrl ?? null) : null,
+					runId: run.id,
+					scenarioId: run.scenarioId,
+					status: run.status,
+					url,
+				};
+			});
 		}
 
 		// Пока генерация идёт и реальных артефактов нет — занимаем слот будущего

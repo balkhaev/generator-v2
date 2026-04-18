@@ -53,6 +53,13 @@ export interface StudioMediaAsset {
 	 * входное фото в том же слоте, где появится готовый результат.
 	 */
 	placeholder?: boolean;
+	/**
+	 * Картинка для предварительного отображения, пока сам ассет
+	 * не загружен/не воспроизведён. Сейчас используется в media-strip,
+	 * чтобы для видео-output показывать input-фотку как poster, если
+	 * первый кадр из самого видео ещё не отрисовался.
+	 */
+	posterUrl?: string | null;
 	progressPct?: number | null;
 	runId: string;
 	scenarioId: string;

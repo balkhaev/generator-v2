@@ -1,4 +1,5 @@
 import type {
+	ExecutionPhase,
 	WorkflowSummary as ServerWorkflowSummary,
 	WorkflowBaseModel,
 	WorkflowParameterKind,
@@ -59,6 +60,8 @@ export interface ScenarioRunRecord {
 	artifactUrls: string[];
 	createdAt: string;
 	errorSummary?: string | null;
+	/** Грубая оценка остатка в миллисекундах (только в live-стриме). */
+	etaMs?: number | null;
 	/** ID execution в generator-api (если ран уже привязан). */
 	generatorRunId?: string | null;
 	id: string;
@@ -66,11 +69,17 @@ export interface ScenarioRunRecord {
 	inputLabel: string;
 	inputPersonGenerationId: string | null;
 	inputPersonId: string | null;
+	/** Последняя строка лога провайдера, если есть (только в live-стриме). */
+	lastLogLine?: string | null;
 	loraPersonId?: string | null;
+	/** Дискретная фаза для UI (только в live-стриме). */
+	phase?: ExecutionPhase | null;
 	/** 0–100 при наличии данных от generator; иначе null. */
 	progressPct?: number | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
+	/** Позиция в очереди провайдера (только в live-стриме). */
+	queuePosition?: number | null;
 	scenarioId: string;
 	scenarioName: string;
 	status: "queued" | "running" | "succeeded" | "failed";
@@ -230,16 +239,20 @@ function normalizeRunRecord(
 			.filter((artifactUrl): artifactUrl is string => Boolean(artifactUrl)),
 		createdAt: record.createdAt ?? new Date().toISOString(),
 		errorSummary: record.errorSummary ?? null,
+		etaMs: record.etaMs ?? null,
 		generatorRunId: record.generatorRunId ?? null,
 		id: record.id,
 		inputImageUrl: record.inputImageUrl,
 		inputLabel: formatInputLabel(record.inputImageUrl),
 		inputPersonGenerationId: record.inputPersonGenerationId ?? null,
 		inputPersonId: record.inputPersonId ?? null,
+		lastLogLine: record.lastLogLine ?? null,
 		loraPersonId: record.loraPersonId ?? null,
+		phase: record.phase ?? null,
 		progressPct: record.progressPct ?? null,
 		providerEndpointId: record.providerEndpointId ?? null,
 		providerJobId: record.providerJobId ?? null,
+		queuePosition: record.queuePosition ?? null,
 		scenarioId: record.scenarioId,
 		scenarioName: scenarioNames.get(record.scenarioId) ?? "Unknown scenario",
 		status: record.status,

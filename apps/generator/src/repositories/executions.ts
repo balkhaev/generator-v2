@@ -16,9 +16,12 @@ function mapExecution(
 		callback: record.callback ?? null,
 		errorSummary: record.errorSummary,
 		inputImageUrl: record.inputImageUrl,
+		lastLogLine: record.lastLogLine ?? null,
 		params: record.params ?? {},
+		progressPct: record.progressPct ?? null,
 		providerEndpointId: record.providerEndpointId,
 		providerJobId: record.providerJobId,
+		queuePosition: record.queuePosition ?? null,
 	};
 }
 

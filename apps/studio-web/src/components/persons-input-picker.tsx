@@ -19,6 +19,7 @@ import {
 } from "@generator/ui/components/tooltip";
 import { cn } from "@generator/ui/lib/utils";
 import {
+	ArrowLeft,
 	ArrowRight,
 	Bookmark,
 	ImageUp,
@@ -560,12 +561,14 @@ export default function PersonsInputPicker({
 		return (
 			<div className="grid gap-3 rounded-xl bg-muted/8 p-3 dark:bg-muted/4">
 				<div className="flex items-center justify-between gap-2">
-					<div className="min-w-0">
-						<p className="truncate text-xs">{personDetail.name}</p>
-						<p className="truncate text-[11px] text-muted-foreground">
-							{personDetail.slug} {hasLora ? "· LoRA ready" : "· no LoRA yet"}
-						</p>
-					</div>
+					<button
+						className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted/20 hover:text-foreground dark:hover:bg-muted/10"
+						onClick={() => setSelectedPersonId(null)}
+						type="button"
+					>
+						<ArrowLeft className="size-3" />
+						Persons
+					</button>
 					<Button
 						onClick={() => pickFromPersonReference(personDetail)}
 						size="xs"
@@ -573,6 +576,12 @@ export default function PersonsInputPicker({
 					>
 						Reference
 					</Button>
+				</div>
+				<div className="min-w-0">
+					<p className="truncate text-xs">{personDetail.name}</p>
+					<p className="truncate text-[11px] text-muted-foreground">
+						{personDetail.slug} {hasLora ? "· LoRA ready" : "· no LoRA yet"}
+					</p>
 				</div>
 
 				{readyGenerations.length > 0 ? (
@@ -648,6 +657,9 @@ export default function PersonsInputPicker({
 	}
 
 	function renderPersonsTab() {
+		if (selectedPersonId) {
+			return renderPersonDetail();
+		}
 		return (
 			<div className="grid gap-2">
 				<div className="relative">
@@ -663,7 +675,6 @@ export default function PersonsInputPicker({
 					/>
 				</div>
 				{renderPersonsList()}
-				{renderPersonDetail()}
 			</div>
 		);
 	}

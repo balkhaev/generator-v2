@@ -795,7 +795,7 @@ function ActivitySection({
 	);
 
 	return (
-		<section className="flex min-h-0 flex-1 flex-col">
+		<section className="flex flex-col">
 			<div className="flex items-center justify-between gap-2 px-3 py-2">
 				<div className="flex items-center gap-1.5">
 					<SectionLabel>Activity</SectionLabel>
@@ -810,7 +810,7 @@ function ActivitySection({
 				/>
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+			<div className="px-3 pb-3">
 				{filteredRuns.length === 0 ? (
 					<EmptyState
 						hint={
@@ -1070,7 +1070,7 @@ export default function CommandSidebar({
 				className
 			)}
 		>
-			<header className="flex items-center gap-1 border-foreground/6 border-b px-2 py-2 dark:border-foreground/10">
+			<header className="flex shrink-0 items-center gap-1 border-foreground/6 border-b px-2 py-2 dark:border-foreground/10">
 				<div className="min-w-0 flex-1">
 					<ScenarioSwitcher
 						getScenarioHref={getScenarioHref}
@@ -1095,57 +1095,59 @@ export default function CommandSidebar({
 				</IconButton>
 			</header>
 
-			{selectedScenario ? (
-				<LaunchSection
-					activeRunCount={activeRunCount}
-					draft={selectedRunDraft}
-					isReadyToLaunch={isReadyToLaunch}
-					isSubmitting={submittingRunId === selectedScenario.id}
-					onDraftChange={(next) => {
-						setRunDrafts((current) => ({
-							...current,
-							[selectedScenario.id]: next,
-						}));
-					}}
-					onLaunch={() => {
-						handleLaunchRun(selectedScenario).catch(() => undefined);
-					}}
-					recentReferences={recentReferences}
-					requiresInputImage={requiresInputImage}
-					scenario={selectedScenario}
-					shots={snapshot.shots}
-					storageLabel={storageLabel}
-				/>
-			) : (
-				<section className="px-3 py-3">
-					<EmptyState
-						action={
-							onCreateScenario ? (
-								<Button onClick={onCreateScenario} size="sm">
-									<Plus className="size-3.5" />
-									Compose scenario
-								</Button>
-							) : null
-						}
-						hint="Select or compose a scenario to launch."
-						message="No scenario selected."
+			<div className="min-h-0 flex-1 overflow-y-auto">
+				{selectedScenario ? (
+					<LaunchSection
+						activeRunCount={activeRunCount}
+						draft={selectedRunDraft}
+						isReadyToLaunch={isReadyToLaunch}
+						isSubmitting={submittingRunId === selectedScenario.id}
+						onDraftChange={(next) => {
+							setRunDrafts((current) => ({
+								...current,
+								[selectedScenario.id]: next,
+							}));
+						}}
+						onLaunch={() => {
+							handleLaunchRun(selectedScenario).catch(() => undefined);
+						}}
+						recentReferences={recentReferences}
+						requiresInputImage={requiresInputImage}
+						scenario={selectedScenario}
+						shots={snapshot.shots}
+						storageLabel={storageLabel}
 					/>
-				</section>
-			)}
+				) : (
+					<section className="px-3 py-3">
+						<EmptyState
+							action={
+								onCreateScenario ? (
+									<Button onClick={onCreateScenario} size="sm">
+										<Plus className="size-3.5" />
+										Compose scenario
+									</Button>
+								) : null
+							}
+							hint="Select or compose a scenario to launch."
+							message="No scenario selected."
+						/>
+					</section>
+				)}
 
-			<ActivitySection
-				copiedRunId={copiedRunId}
-				filter={runFilter}
-				filteredRuns={filteredRuns}
-				focusedRunId={focusedRunId}
-				linkedPerson={linkedPerson}
-				onCopyRunId={handleCopyRunId}
-				onFilterChange={setRunFilter}
-				onSyncRun={handleSyncRun}
-				personsUrl={personsUrl}
-				scenarioRuns={selectedScenarioRuns}
-				syncingRunId={syncingRunId}
-			/>
+				<ActivitySection
+					copiedRunId={copiedRunId}
+					filter={runFilter}
+					filteredRuns={filteredRuns}
+					focusedRunId={focusedRunId}
+					linkedPerson={linkedPerson}
+					onCopyRunId={handleCopyRunId}
+					onFilterChange={setRunFilter}
+					onSyncRun={handleSyncRun}
+					personsUrl={personsUrl}
+					scenarioRuns={selectedScenarioRuns}
+					syncingRunId={syncingRunId}
+				/>
+			</div>
 		</aside>
 	);
 }

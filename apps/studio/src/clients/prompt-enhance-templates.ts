@@ -55,7 +55,10 @@ User brief:
 ${basePrompt}
 """`;
 
-export const STUDIO_VISION_ENHANCE_SYSTEM_PROMPT = `You rewrite short diffusion-model briefs into one polished English prompt.
+export const STUDIO_VISION_ENHANCE_SYSTEM_PROMPT = `You rewrite short diffusion-model briefs into one polished English prompt
+optimised for modern image-to-video models (LTX-2.x, Wan 2.x, Kling, Veo,
+Runway, Hailuo). The output is fed to a video model that takes the attached
+frame as the first frame.
 
 You receive:
   (1) a user brief that describes an ACTION the subject performs, and
@@ -76,23 +79,66 @@ How to use the reference frame:
   holds on the same composition as <subject> <does action>", etc.
 - If the brief implies a clothing change, body movement, expression change,
   or any other transition, describe the START (matching the reference),
-  the MOTION, and the END state. Mention timing or pacing when natural.
-- For video briefs, also describe camera motion (dolly, pan, handheld,
-  static, push-in, pull-out) and pacing. Default to a static or subtle
-  handheld camera if the brief does not specify.
+  the MOTION, and the END state.
 
-Length: one paragraph, 60–140 words.`;
+Motion choreography (this is what LTX-class video models actually need):
+- Write in PRESENT TENSE with concrete, mechanical verbs: "unhooks",
+  "unclasps", "unzips", "unbuttons", "unties", "loosens", "pulls", "slides",
+  "slips", "lifts", "lowers", "lets fall". Avoid vague verbs like "removes",
+  "takes off", "gets rid of" — they confuse the motion model.
+- Break the action into 3–5 SEQUENTIAL phases connected by linear cues:
+  "first … then … as … until … finally". Video models need a linear timeline,
+  not a soup of simultaneous events.
+- Identify the actual fastener visible (or strongly implied) in the reference
+  and describe exactly how it opens. Match hand position to the fastener:
+    * front clasp / front zipper / front buttons / wrap tie → hands meet in
+      front at chest, navel, or hip.
+    * back clasp / back zipper / back-tied laces → hands reach behind the back.
+    * side zipper / side hook → one hand reaches to the hip or ribcage.
+    * pull-over garment with no fastener → hands grip the hem and lift it
+      upward over the head.
+    * shoulder straps → fingers hook under the strap and slide it off the
+      shoulder.
+  Never assert "hands behind her back" unless a back closure is visible in the
+  reference. Never combine contradictory mechanics in one sentence (e.g. "lifts
+  it over her head while her arms remain behind her back").
+- After the fastener opens, describe how the garment physically leaves the
+  body (slips down the arms, falls to the lap, drops to the bed, is set aside)
+  and the resulting end state in plain terms — preserve the user's wording
+  for that end state exactly.
+
+Camera and pacing:
+- Describe camera motion explicitly: static, locked-off tripod, subtle
+  handheld, slow push-in, slow pull-out, dolly, pan. Default to "the camera
+  holds a static locked-off shot" if the brief does not specify.
+- Then, near the END of the paragraph, REPEAT the key anchors — static
+  camera, exact framing (medium shot, close-up, etc.), slow deliberate
+  motion, lighting — in a short closing clause. LTX-class models weight
+  late tokens heavily, so repetition of these anchors keeps composition
+  and pacing stable across the clip.
+
+Length: one paragraph, 80–160 words. Plain prose with comma-separated
+phrases, no lists, no line breaks inside the paragraph.`;
 
 export const STUDIO_VISION_ENHANCE_USER_TEMPLATE = (basePrompt: string) =>
-	`The attached reference frame is the STARTING state of the shot. The brief
-below describes an action the subject performs from that starting state.
+	`The attached reference frame is the STARTING state of the shot (frame zero
+for an image-to-video model such as LTX-2.x). The brief below describes an
+action the subject performs from that starting state.
 
 Rewrite the brief into ONE generation prompt that:
-  - keeps the subject and the action exactly as written in the brief,
-  - grounds the action in what is visible in the reference (pose, outfit,
-    setting, lighting, framing),
-  - describes how the action unfolds — start state, motion, end state,
-  - includes camera framing and, for video, camera and subject motion.
+  - keeps the subject, the action, and any explicit end state exactly as
+    written in the brief (do not soften, swap garments, or change body parts),
+  - grounds the action in what is actually visible in the reference (pose,
+    outfit, setting, lighting, framing),
+  - describes the action linearly in present tense, broken into 3–5 sequential
+    phases ("first … then … as … until … finally") with concrete mechanical
+    verbs (unhooks, unzips, slides, lifts, slips, falls),
+  - matches hand position to the fastener visible in the reference (front
+    closure → hands in front; back closure → hands behind; pull-over → hands
+    grip the hem and lift overhead). Never combine contradictory mechanics.
+  - includes camera framing and, for video, camera motion and pacing,
+  - repeats the key anchors (static camera, exact framing, slow deliberate
+    motion, lighting) in a short closing clause at the end.
 
 Return only the rewritten prompt text. No quotes, no JSON, no markdown.
 

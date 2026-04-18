@@ -27,6 +27,7 @@ export default function AdminShell({
 	const navigation = createWorkspaceNavigation("admin", {
 		admin: "/",
 		persons: personsUrl,
+		shots: `${studioUrl}/shots`,
 		studio: studioUrl,
 	});
 

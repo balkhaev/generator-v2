@@ -54,6 +54,7 @@ export default async function Home() {
 		const navigation = createWorkspaceNavigation("admin", {
 			admin: "/",
 			persons: personsUrl,
+			shots: `${studioUrl}/shots`,
 			studio: studioUrl,
 		});
 

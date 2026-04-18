@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@generator/ui/lib/utils";
-import { Pause, Play, Volume2, VolumeX } from "lucide-react";
+import { Loader2, Pause, Play, Volume2, VolumeX } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -38,6 +38,7 @@ export default function VideoPlayer({
 	const [currentTime, setCurrentTime] = useState(0);
 	const [duration, setDuration] = useState(0);
 	const [isScrubbing, setIsScrubbing] = useState(false);
+	const [isLoading, setIsLoading] = useState(false);
 
 	useEffect(() => {
 		const video = videoRef.current;
@@ -49,6 +50,7 @@ export default function VideoPlayer({
 		setIsMuted(video.muted);
 		setCurrentTime(video.currentTime);
 		setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+		setIsLoading(video.readyState < 3 && !video.paused);
 	}, []);
 
 	const togglePlay = useCallback(async () => {
@@ -59,12 +61,15 @@ export default function VideoPlayer({
 
 		try {
 			if (video.paused) {
+				if (video.readyState < 3) {
+					setIsLoading(true);
+				}
 				await video.play();
 			} else {
 				video.pause();
 			}
 		} catch {
-			// Autoplay rejection or interruption — keep state consistent on next event.
+			setIsLoading(false);
 		}
 	}, []);
 
@@ -90,10 +95,23 @@ export default function VideoPlayer({
 
 	const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
+	function renderPlayPauseIcon() {
+		if (isLoading) {
+			return <Loader2 className="size-3 animate-spin" />;
+		}
+
+		if (isPlaying) {
+			return <Pause className="size-3" />;
+		}
+
+		return <Play className="size-3" />;
+	}
+
 	return (
 		<div className="relative flex h-full w-full items-center justify-center">
 			<video
 				className="h-full w-full cursor-pointer bg-black/90 object-contain"
+				onCanPlay={() => setIsLoading(false)}
 				onClick={() => {
 					togglePlay();
 				}}
@@ -105,14 +123,25 @@ export default function VideoPlayer({
 					const next = event.currentTarget.duration;
 					setDuration(Number.isFinite(next) ? next : 0);
 				}}
+				onLoadStart={() => {
+					const video = videoRef.current;
+					if (video && video.readyState < 3) {
+						setIsLoading(true);
+					}
+				}}
 				onPause={() => setIsPlaying(false)}
 				onPlay={() => setIsPlaying(true)}
+				onPlaying={() => setIsLoading(false)}
+				onSeeked={() => setIsLoading(false)}
+				onSeeking={() => setIsLoading(true)}
+				onStalled={() => setIsLoading(true)}
 				onTimeUpdate={(event) => {
 					if (!isScrubbing) {
 						setCurrentTime(event.currentTarget.currentTime);
 					}
 				}}
 				onVolumeChange={(event) => setIsMuted(event.currentTarget.muted)}
+				onWaiting={() => setIsLoading(true)}
 				playsInline
 				preload="metadata"
 				ref={videoRef}
@@ -126,6 +155,14 @@ export default function VideoPlayer({
 					srcLang="en"
 				/>
 			</video>
+
+			{isLoading ? (
+				<div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+					<div className="flex size-12 items-center justify-center rounded-full bg-background/70 backdrop-blur-md">
+						<Loader2 className="size-6 animate-spin text-foreground" />
+					</div>
+				</div>
+			) : null}
 
 			<div className="absolute right-2 bottom-2 left-2 flex flex-col gap-1.5 rounded-lg bg-background/80 px-3 py-2 backdrop-blur-lg dark:bg-background/60">
 				<input
@@ -159,11 +196,7 @@ export default function VideoPlayer({
 						onClick={togglePlay}
 						size="icon-xs"
 					>
-						{isPlaying ? (
-							<Pause className="size-3" />
-						) : (
-							<Play className="size-3" />
-						)}
+						{renderPlayPauseIcon()}
 					</IconButton>
 					<span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
 						{formatTime(currentTime)} / {formatTime(duration)}

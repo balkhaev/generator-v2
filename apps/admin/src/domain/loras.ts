@@ -2,11 +2,14 @@ import { randomUUID } from "node:crypto";
 import type {
 	CreateLoraFromUrlInput,
 	ListLorasQuery,
+	LoraBaseModel,
 	LoraRegistryEntry,
 	LoraSourcePreview,
+	LoraVariant,
 	PreviewLoraSourceInput,
 	UpdateLoraInput,
 } from "@generator/contracts/loras";
+import { isDualExpertBaseModel } from "@generator/contracts/loras";
 import type { EventPublisher, LoraRegistryChangeKind } from "@generator/events";
 import {
 	cacheExternalLoraToS3,
@@ -24,6 +27,11 @@ import type { LoraRepository } from "@/repositories/loras";
 
 const slugAllowedCharsPattern = /[^a-z0-9]+/g;
 const slugEdgeDashesPattern = /^-+|-+$/g;
+// Matches trailing "(High Noise)" / "(Low Noise)" / "- High" / "[high]" etc.
+// We strip these when deriving the base name for paired imports so we don't
+// end up with "Foo High Noise (High Noise)".
+const variantSuffixPattern =
+	/[\s\-_]*[([]?(?:high|low)(?:[\s_-]*noise)?[)\]]?\s*$/iu;
 
 export function slugify(value: string): string {
 	return value
@@ -86,12 +94,22 @@ export class LoraRegistryService {
 
 	async createFromUrl(
 		input: CreateLoraFromUrlInput
-	): Promise<LoraRegistryEntry> {
+	): Promise<LoraRegistryEntry | LoraRegistryEntry[]> {
 		if (!this.s3Config) {
 			throw new Error("S3 is not configured; cannot import LoRA from URL.");
 		}
+
+		// Pair import: cache and persist both high+low atomically with a shared
+		// pairGroupId so studio can auto-fill the matching slot.
+		if (input.pair) {
+			return await this.createPair(input);
+		}
+
 		const source = await this.resolveSource(input);
-		const name = this.resolveName(input, source);
+		const baseModel: LoraBaseModel =
+			input.baseModel ?? source.baseModel ?? "other";
+		const variant = this.resolveVariantForSingle(baseModel, input.variant);
+		const name = this.resolveName(input, source, variant);
 		if (!name) {
 			throw new Error("LoRA name is required.");
 		}
@@ -109,15 +127,155 @@ export class LoraRegistryService {
 			name,
 			description:
 				input.description?.trim() || source.description?.trim() || "",
-			baseModel: input.baseModel ?? source.baseModel ?? "other",
+			baseModel,
 			sourceUrl: source.sourceUrl,
 			s3Key: cached.key,
 			s3Url: cached.url,
 			sizeBytes: cached.sizeBytes,
 			defaultWeight: input.defaultWeight ?? 1,
+			variant,
+			pairGroupId: null,
 		});
 		await this.emitChange("created", created);
 		return created;
+	}
+
+	private async createPair(
+		input: CreateLoraFromUrlInput
+	): Promise<LoraRegistryEntry[]> {
+		if (!(this.s3Config && input.pair)) {
+			throw new Error("S3 is not configured; cannot import LoRA pair.");
+		}
+		const baseModel: LoraBaseModel = input.baseModel ?? "other";
+		if (!isDualExpertBaseModel(baseModel)) {
+			throw new Error(
+				`Pair import is only supported for dual-expert base models (got "${baseModel}").`
+			);
+		}
+		if (input.variant && input.variant === input.pair.variant) {
+			throw new Error("Pair entries must have different variants (high/low).");
+		}
+		const primaryVariant = (input.variant ?? "high") as Exclude<
+			LoraVariant,
+			"both"
+		>;
+		const secondaryVariant = input.pair.variant;
+		if (primaryVariant === secondaryVariant) {
+			throw new Error("Pair entries must have different variants (high/low).");
+		}
+
+		const primarySource = await this.resolveSource(input);
+		const secondarySource = await this.resolveSource({
+			baseModel,
+			defaultWeight: input.pair.defaultWeight,
+			description: input.pair.description,
+			name: input.pair.name,
+			sourceFilePath: input.pair.sourceFilePath,
+			sourceProvider: input.sourceProvider,
+			sourceUrl: input.pair.sourceUrl,
+			sourceVersionId: input.pair.sourceVersionId,
+		});
+
+		const baseName = (input.name?.trim() || primarySource.name?.trim() || "")
+			.trim()
+			.replace(variantSuffixPattern, "")
+			.trim();
+		if (!baseName) {
+			throw new Error("LoRA name is required.");
+		}
+
+		const pairGroupId = this.generateId();
+
+		const primaryEntry = await this.persistPairEntry({
+			baseModel,
+			defaultWeight: input.defaultWeight,
+			descriptionOverride: input.description,
+			name: this.suffixVariantName(
+				input.name?.trim() || baseName,
+				primaryVariant
+			),
+			pairGroupId,
+			source: primarySource,
+			variant: primaryVariant,
+		});
+		const secondaryEntry = await this.persistPairEntry({
+			baseModel,
+			defaultWeight: input.pair.defaultWeight ?? input.defaultWeight,
+			descriptionOverride: input.pair.description,
+			name: this.suffixVariantName(
+				input.pair.name?.trim() || baseName,
+				secondaryVariant
+			),
+			pairGroupId,
+			source: secondarySource,
+			variant: secondaryVariant,
+		});
+
+		await this.emitChange("created", primaryEntry);
+		await this.emitChange("created", secondaryEntry);
+		return [primaryEntry, secondaryEntry];
+	}
+
+	private async persistPairEntry(input: {
+		baseModel: LoraBaseModel;
+		defaultWeight: number | undefined;
+		descriptionOverride: string | undefined;
+		name: string;
+		pairGroupId: string;
+		source: ResolvedLoraSource;
+		variant: Exclude<LoraVariant, "both">;
+	}): Promise<LoraRegistryEntry> {
+		const s3Config = this.s3Config;
+		if (!s3Config) {
+			throw new Error("S3 is not configured; cannot import LoRA pair.");
+		}
+		const baseSlug = slugify(input.name);
+		if (!baseSlug) {
+			throw new Error("Unable to derive slug from name.");
+		}
+		const slug = await this.uniqueSlug(baseSlug);
+		const cached = await this.cacheLora(input.source.downloadUrl, s3Config, {
+			headers: input.source.downloadHeaders,
+		});
+		return await this.repository.create({
+			id: this.generateId(),
+			slug,
+			name: input.name,
+			description:
+				input.descriptionOverride?.trim() ||
+				input.source.description?.trim() ||
+				"",
+			baseModel: input.baseModel,
+			sourceUrl: input.source.sourceUrl,
+			s3Key: cached.key,
+			s3Url: cached.url,
+			sizeBytes: cached.sizeBytes,
+			defaultWeight: input.defaultWeight ?? 1,
+			variant: input.variant,
+			pairGroupId: input.pairGroupId,
+		});
+	}
+
+	private resolveVariantForSingle(
+		baseModel: LoraBaseModel,
+		requested: LoraVariant | undefined
+	): LoraVariant | null {
+		if (!isDualExpertBaseModel(baseModel)) {
+			return null;
+		}
+		// For Wan we default to `both` when the caller doesn't say which expert
+		// the file targets — fal will load it into both transformers, which is
+		// the safest single-file behavior.
+		return requested ?? "both";
+	}
+
+	private suffixVariantName(
+		baseName: string,
+		variant: Exclude<LoraVariant, "both">
+	): string {
+		const cleaned = baseName.replace(variantSuffixPattern, "").trim();
+		const suffix = variant === "high" ? "High Noise" : "Low Noise";
+		return `${cleaned} (${suffix})`;
 	}
 
 	async previewSource(
@@ -139,9 +297,17 @@ export class LoraRegistryService {
 
 	private resolveName(
 		input: CreateLoraFromUrlInput,
-		source: ResolvedLoraSource
+		source: ResolvedLoraSource,
+		variant: LoraVariant | null
 	): string {
-		return (input.name?.trim() || source.name?.trim() || "").trim();
+		const base = (input.name?.trim() || source.name?.trim() || "").trim();
+		if (!base) {
+			return "";
+		}
+		if (variant === "high" || variant === "low") {
+			return this.suffixVariantName(base, variant);
+		}
+		return base;
 	}
 
 	list(query: ListLorasQuery = {}): Promise<LoraRegistryEntry[]> {
@@ -160,6 +326,20 @@ export class LoraRegistryService {
 
 	getById(id: string): Promise<LoraRegistryEntry | null> {
 		return this.repository.getById(id);
+	}
+
+	getPairedLora(entry: LoraRegistryEntry): Promise<LoraRegistryEntry | null> {
+		if (!(entry.pairGroupId && entry.variant) || entry.variant === "both") {
+			return Promise.resolve(null);
+		}
+		return this.repository
+			.getByPairGroupId(entry.pairGroupId)
+			.then(
+				(rows) =>
+					rows.find(
+						(item) => item.id !== entry.id && item.variant !== entry.variant
+					) ?? null
+			);
 	}
 
 	async update(

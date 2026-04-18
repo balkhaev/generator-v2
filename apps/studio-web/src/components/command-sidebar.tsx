@@ -1,6 +1,9 @@
 "use client";
 
-import type { PersonRecord } from "@generator/contracts/persons";
+import type {
+	PersonGenerationRecord,
+	PersonRecord,
+} from "@generator/contracts/persons";
 import { env } from "@generator/env/web";
 import { requestJson } from "@generator/http/client";
 import { normalizeBaseUrl } from "@generator/http/shared";
@@ -12,17 +15,10 @@ import {
 	type ScenarioRecord,
 	type ScenarioRunRecord,
 	type UploadedInputAsset,
-	type WorkflowDefinition,
 } from "@generator/studio-client/client";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
-import { Input } from "@generator/ui/components/input";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "@generator/ui/components/popover";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import {
 	Tooltip,
@@ -32,43 +28,42 @@ import {
 import { formatRelativeTime } from "@generator/ui/lib/format";
 import { cn } from "@generator/ui/lib/utils";
 import {
-	Activity,
 	Check,
-	ChevronDown,
-	Clock3,
 	Copy,
 	ExternalLink,
-	Layers,
 	Loader2,
-	Pencil,
 	Play,
 	Plus,
 	RotateCcw,
-	Search,
-	Trash2,
-	UserRound,
-	UsersRound,
 } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import IconButton from "@/components/icon-button";
+import PersonLaunchSection from "@/components/person-launch-section";
 import PersonsInputPicker from "@/components/persons-input-picker";
 import { getMediaType } from "@/components/preview-surface";
 import type { ScenarioCardData } from "@/components/scenario-card-data";
-import { listPersons } from "@/lib/persons-api";
+import SubjectSwitcher from "@/components/subject-switcher";
 
 interface CommandSidebarProps {
 	className?: string;
+	getPersonHref: (personId: string) => Route;
 	getScenarioHref: (scenarioId: string) => Route;
 	onCreateScenario?: () => void;
 	onDeleteScenario?: (scenarioId: string) => void | Promise<void>;
 	onEditScenario?: (scenarioId: string) => void;
+	onPersonRefreshed: (person: PersonRecord) => void;
+	onPickPerson: (personId: string) => void;
+	onPickScenario: (scenarioId: string) => void;
 	onSnapshotChange?: (snapshot: AdminSnapshot) => void;
+	persons: PersonRecord[];
 	scenarioCards: ScenarioCardData[];
+	selectedPerson: PersonRecord | null;
+	selectedPersonId: string | null;
 	selectedScenarioId: string | null;
 	snapshot: AdminSnapshot;
 }
@@ -103,14 +98,6 @@ const runStatusDot: Record<ScenarioRunRecord["status"], string> = {
 	running: "bg-amber-500 animate-pulse",
 	succeeded: "bg-emerald-500",
 };
-
-const scenarioStatusDot = {
-	draft: "bg-muted-foreground/40",
-	failed: "bg-rose-500",
-	queued: "bg-sky-500",
-	ready: "bg-emerald-500",
-	running: "bg-amber-500 animate-pulse",
-} as const;
 
 const runFilterOptions: { id: RunFilter; label: string }[] = [
 	{ id: "all", label: "All" },
@@ -169,7 +156,6 @@ function createRunDraft(scenarioId: string): RunDraft {
 		inputImageUrl: "",
 		inputPersonGenerationId: null,
 		inputPersonId: null,
-		loraPersonId: null,
 		scenarioId,
 		uploadStorage: null,
 	};
@@ -196,20 +182,11 @@ function buildLaunchInput({
 	if (draft.inputPersonGenerationId) {
 		launchInput.inputPersonGenerationId = draft.inputPersonGenerationId;
 	}
-	if (draft.loraPersonId) {
-		launchInput.loraPersonId = draft.loraPersonId;
-	}
 	const promptOverride = draft.promptOverride?.trim();
 	if (promptOverride && promptOverride !== scenario.prompt) {
 		launchInput.promptOverride = promptOverride;
 	}
 	return launchInput;
-}
-
-function workflowSupportsPersonLora(workflow: WorkflowDefinition | null) {
-	return Boolean(
-		workflow?.parameters.some((parameter) => parameter.key === "loraUrl")
-	);
 }
 
 function getLatestScenarioInputImage(
@@ -294,429 +271,6 @@ function StatusPill({ status }: { status: ScenarioRunRecord["status"] }) {
 			/>
 			{status}
 		</span>
-	);
-}
-
-function ScenarioSwitcherItemActions({
-	isActive,
-	onDelete,
-	onEdit,
-	scenario,
-}: {
-	isActive: boolean;
-	onDelete?: (scenarioId: string) => void;
-	onEdit?: (scenarioId: string) => void;
-	scenario: ScenarioCardData;
-}) {
-	if (!(onEdit || onDelete)) {
-		return null;
-	}
-
-	return (
-		<div className="absolute top-1 right-1 hidden items-center gap-0.5 group-focus-within/scenario:flex group-hover/scenario:flex">
-			{onEdit ? (
-				<button
-					aria-label={`Edit ${scenario.name}`}
-					className={cn(
-						"inline-flex size-6 items-center justify-center rounded-md transition",
-						isActive
-							? "text-background/80 hover:bg-background/10"
-							: "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-					)}
-					onClick={(event) => {
-						event.preventDefault();
-						event.stopPropagation();
-						onEdit(scenario.id);
-					}}
-					title="Edit scenario"
-					type="button"
-				>
-					<Pencil className="size-3" />
-				</button>
-			) : null}
-			{onDelete ? (
-				<button
-					aria-label={`Delete ${scenario.name}`}
-					className={cn(
-						"inline-flex size-6 items-center justify-center rounded-md transition",
-						isActive
-							? "text-background/80 hover:bg-rose-500/20"
-							: "text-muted-foreground hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400"
-					)}
-					onClick={(event) => {
-						event.preventDefault();
-						event.stopPropagation();
-						onDelete(scenario.id);
-					}}
-					title="Delete scenario"
-					type="button"
-				>
-					<Trash2 className="size-3" />
-				</button>
-			) : null}
-		</div>
-	);
-}
-
-function ScenarioSwitcherItem({
-	getScenarioHref,
-	isActive,
-	onDelete,
-	onEdit,
-	onPick,
-	scenario,
-}: {
-	getScenarioHref: (scenarioId: string) => Route;
-	isActive: boolean;
-	onDelete?: (scenarioId: string) => void;
-	onEdit?: (scenarioId: string) => void;
-	onPick: (scenarioId: string) => void;
-	scenario: ScenarioCardData;
-}) {
-	return (
-		<li className="group/scenario relative">
-			<a
-				aria-current={isActive ? "true" : undefined}
-				className={cn(
-					"flex items-start gap-2 rounded-lg px-2 py-1.5 text-left transition",
-					isActive
-						? "bg-foreground text-background"
-						: "hover:bg-muted/20 dark:hover:bg-muted/10"
-				)}
-				href={getScenarioHref(scenario.id)}
-				onClick={() => onPick(scenario.id)}
-			>
-				<span
-					aria-hidden="true"
-					className={cn(
-						"mt-1 size-2 shrink-0 rounded-full",
-						scenarioStatusDot[scenario.status]
-					)}
-				/>
-				<div className="min-w-0 flex-1">
-					<p
-						className={cn(
-							"truncate font-medium text-xs leading-tight",
-							isActive ? "text-background" : "text-foreground"
-						)}
-					>
-						{scenario.name}
-					</p>
-					<p
-						className={cn(
-							"mt-0.5 line-clamp-1 text-[10px] leading-tight",
-							isActive ? "text-background/65" : "text-muted-foreground"
-						)}
-					>
-						{scenario.prompt || scenario.workflowKey}
-					</p>
-					<div
-						className={cn(
-							"mt-0.5 flex items-center gap-2 text-[10px]",
-							isActive ? "text-background/60" : "text-muted-foreground/80"
-						)}
-					>
-						<span className="truncate">{scenario.workflowKey}</span>
-						<span className="inline-flex items-center gap-0.5">
-							<Clock3 className="size-2.5" />
-							{scenario.duration}
-						</span>
-						<span className="inline-flex items-center gap-0.5">
-							<Activity className="size-2.5" />
-							{scenario.runCount}
-						</span>
-					</div>
-				</div>
-			</a>
-			<ScenarioSwitcherItemActions
-				isActive={isActive}
-				onDelete={onDelete}
-				onEdit={onEdit}
-				scenario={scenario}
-			/>
-		</li>
-	);
-}
-
-function CastLoraInline({
-	onSelect,
-	persons,
-	selectedPersonId,
-}: {
-	onSelect: (personId: string | null) => void;
-	persons: PersonRecord[];
-	selectedPersonId: string | null;
-}) {
-	const trainable = persons.filter((person) => Boolean(person.loraUrl));
-	const selected = persons.find((p) => p.id === selectedPersonId) ?? null;
-
-	if (trainable.length === 0 && !selected) {
-		return (
-			<div className="flex items-center gap-2 rounded-md bg-muted/15 px-2 py-1.5 text-[10px] text-muted-foreground">
-				<UsersRound className="size-3 shrink-0" />
-				<span className="min-w-0 truncate">
-					No trained Cast LoRAs available.
-				</span>
-			</div>
-		);
-	}
-
-	return (
-		<div className="grid gap-1.5">
-			<div className="flex items-center justify-between gap-2 px-0.5">
-				<span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-					Cast LoRA
-				</span>
-				{selected ? (
-					<button
-						className="text-[10px] text-muted-foreground underline transition hover:text-foreground"
-						onClick={() => onSelect(null)}
-						type="button"
-					>
-						Clear
-					</button>
-				) : (
-					<span className="text-[10px] text-muted-foreground/70">optional</span>
-				)}
-			</div>
-			<div className="flex max-w-full gap-1 overflow-x-auto pb-1">
-				<button
-					aria-pressed={selectedPersonId === null}
-					className={cn(
-						"flex size-10 shrink-0 items-center justify-center rounded-md border transition",
-						selectedPersonId === null
-							? "border-foreground bg-foreground/10"
-							: "border-foreground/10 hover:bg-muted/15"
-					)}
-					onClick={() => onSelect(null)}
-					title="No Cast LoRA"
-					type="button"
-				>
-					<UsersRound className="size-3.5 text-muted-foreground" />
-				</button>
-				{trainable.map((person) => {
-					const thumb = person.photoUrl ?? person.referencePhotoUrl ?? null;
-					const isActive = person.id === selectedPersonId;
-					return (
-						<button
-							aria-pressed={isActive}
-							className={cn(
-								"relative size-10 shrink-0 overflow-hidden rounded-md border transition",
-								isActive
-									? "border-foreground ring-1 ring-foreground"
-									: "border-foreground/10 opacity-80 hover:opacity-100"
-							)}
-							key={person.id}
-							onClick={() => onSelect(person.id)}
-							title={person.name}
-							type="button"
-						>
-							{thumb ? (
-								<div
-									aria-hidden="true"
-									className="absolute inset-0 bg-center bg-cover"
-									style={{ backgroundImage: `url("${thumb}")` }}
-								/>
-							) : (
-								<UserRound className="absolute top-1/2 left-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/60" />
-							)}
-						</button>
-					);
-				})}
-			</div>
-		</div>
-	);
-}
-
-function ScenarioSwitcher({
-	castLoraSlot,
-	getScenarioHref,
-	onCreateScenario,
-	onDeleteScenario,
-	onEditScenario,
-	onSelect,
-	personLoraSelected,
-	scenarios,
-	selectedScenarioId,
-}: {
-	castLoraSlot: React.ReactNode;
-	getScenarioHref: (scenarioId: string) => Route;
-	onCreateScenario?: () => void;
-	onDeleteScenario?: (scenarioId: string) => void;
-	onEditScenario?: (scenarioId: string) => void;
-	onSelect: (scenarioId: string) => void;
-	personLoraSelected: PersonRecord | null;
-	scenarios: ScenarioCardData[];
-	selectedScenarioId: string | null;
-}) {
-	const [query, setQuery] = useState("");
-	const [open, setOpen] = useState(false);
-	const selected =
-		scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
-	const filtered = useMemo(() => {
-		const normalized = query.trim().toLowerCase();
-		if (!normalized) {
-			return scenarios;
-		}
-		return scenarios.filter(
-			(scenario) =>
-				scenario.name.toLowerCase().includes(normalized) ||
-				scenario.workflowKey.toLowerCase().includes(normalized) ||
-				scenario.prompt.toLowerCase().includes(normalized)
-		);
-	}, [query, scenarios]);
-
-	const personThumb =
-		personLoraSelected?.photoUrl ??
-		personLoraSelected?.referencePhotoUrl ??
-		null;
-
-	return (
-		<div className="flex min-w-0 items-center gap-1">
-			<Popover onOpenChange={setOpen} open={open}>
-				<PopoverTrigger
-					render={
-						<button
-							className="group flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-muted/15"
-							type="button"
-						>
-							{selected ? (
-								<span
-									aria-hidden="true"
-									className={cn(
-										"size-2 shrink-0 rounded-full",
-										scenarioStatusDot[selected.status]
-									)}
-								/>
-							) : (
-								<Layers
-									aria-hidden="true"
-									className="size-3.5 shrink-0 text-muted-foreground/60"
-								/>
-							)}
-							<div className="min-w-0 flex-1">
-								<p className="truncate font-medium text-xs leading-tight">
-									{selected?.name ?? "Pick scenario"}
-								</p>
-								<p className="truncate text-[10px] text-muted-foreground">
-									{selected
-										? `${selected.workflowKey} · ${selected.duration} · ${selected.runCount} runs`
-										: `${scenarios.length} scenarios`}
-								</p>
-							</div>
-							{personLoraSelected ? (
-								<span
-									className="relative size-6 shrink-0 overflow-hidden rounded-md ring-1 ring-foreground/30"
-									title={`Cast: ${personLoraSelected.name}`}
-								>
-									<span className="sr-only">
-										Cast LoRA: {personLoraSelected.name}
-									</span>
-									{personThumb ? (
-										<span
-											aria-hidden="true"
-											className="absolute inset-0 bg-center bg-cover"
-											style={{ backgroundImage: `url("${personThumb}")` }}
-										/>
-									) : (
-										<UserRound className="absolute top-1/2 left-1/2 size-3 -translate-x-1/2 -translate-y-1/2 text-muted-foreground" />
-									)}
-								</span>
-							) : null}
-							<ChevronDown
-								aria-hidden="true"
-								className={cn(
-									"size-3.5 shrink-0 text-muted-foreground transition-transform",
-									open && "rotate-180"
-								)}
-							/>
-						</button>
-					}
-				/>
-				<PopoverContent className="flex max-h-[60vh] w-(--anchor-width) min-w-72 flex-col gap-2 p-2">
-					<div className="relative">
-						<Search
-							aria-hidden="true"
-							className="pointer-events-none absolute top-1/2 left-2.5 size-3 -translate-y-1/2 text-muted-foreground"
-						/>
-						<Input
-							aria-label="Search scenarios"
-							className="h-8 pl-7 text-xs"
-							onChange={(event) => setQuery(event.target.value)}
-							placeholder="Search by name, workflow, prompt"
-							value={query}
-						/>
-					</div>
-					<div className="min-h-0 flex-1 overflow-y-auto">
-						{filtered.length === 0 ? (
-							<p className="px-2 py-4 text-center text-[11px] text-muted-foreground">
-								{scenarios.length === 0
-									? "No scenarios yet."
-									: "No matches found."}
-							</p>
-						) : (
-							<ul className="grid gap-0.5">
-								{filtered.map((scenario) => (
-									<ScenarioSwitcherItem
-										getScenarioHref={getScenarioHref}
-										isActive={scenario.id === selectedScenarioId}
-										key={scenario.id}
-										onDelete={
-											onDeleteScenario
-												? (id) => {
-														setOpen(false);
-														onDeleteScenario(id);
-													}
-												: undefined
-										}
-										onEdit={
-											onEditScenario
-												? (id) => {
-														setOpen(false);
-														onEditScenario(id);
-													}
-												: undefined
-										}
-										onPick={(id) => {
-											onSelect(id);
-											setOpen(false);
-										}}
-										scenario={scenario}
-									/>
-								))}
-							</ul>
-						)}
-					</div>
-					{castLoraSlot ? (
-						<div className="border-foreground/8 border-t pt-2">
-							{castLoraSlot}
-						</div>
-					) : null}
-					{onCreateScenario ? (
-						<Button
-							onClick={() => {
-								setOpen(false);
-								onCreateScenario();
-							}}
-							size="sm"
-							variant="outline"
-						>
-							<Plus className="size-3.5" />
-							New scenario
-						</Button>
-					) : null}
-				</PopoverContent>
-			</Popover>
-			{onCreateScenario ? (
-				<IconButton
-					hint="Compose new scenario"
-					label="New scenario"
-					onClick={onCreateScenario}
-				>
-					<Plus className="size-3.5" />
-				</IconButton>
-			) : null}
-		</div>
 	);
 }
 
@@ -1114,7 +668,7 @@ function RunFilterPills({
 	);
 }
 
-function ActivitySection({
+function ScenarioActivitySection({
 	copiedRunId,
 	filter,
 	filteredRuns,
@@ -1197,14 +751,155 @@ function ActivitySection({
 	);
 }
 
+function PersonActivitySection({ person }: { person: PersonRecord }) {
+	const studioGenerations = useMemo(
+		() =>
+			person.generations.filter(
+				(generation) => generation.metadata?.isDatasetPhoto !== true
+			),
+		[person.generations]
+	);
+	const ready = studioGenerations.filter(
+		(generation) => generation.status === "ready"
+	);
+	const live = studioGenerations.filter(
+		(generation) => generation.status === "queued"
+	);
+
+	return (
+		<section className="flex min-w-0 flex-col">
+			<div className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
+				<div className="flex shrink-0 items-center gap-1.5">
+					<SectionLabel>Activity</SectionLabel>
+					<span className="rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[10px] text-muted-foreground tabular-nums">
+						{studioGenerations.length}
+					</span>
+				</div>
+				{live.length > 0 ? (
+					<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+						<span className="size-1 animate-pulse rounded-full bg-amber-500" />
+						{live.length} active
+					</span>
+				) : null}
+			</div>
+
+			<div className="min-w-0 px-3 pb-3">
+				{ready.length === 0 ? (
+					<EmptyState
+						hint="Generate a photo above and it will appear here."
+						message="No generations yet."
+					/>
+				) : (
+					<div className="grid min-w-0 gap-2">
+						{ready.slice(0, 24).map((generation) => (
+							<PersonGenerationCard
+								generation={generation}
+								key={generation.id}
+							/>
+						))}
+					</div>
+				)}
+			</div>
+		</section>
+	);
+}
+
+function PersonGenerationCard({
+	generation,
+}: {
+	generation: PersonGenerationRecord;
+}) {
+	const url = generation.previewUrl ?? generation.sourceUrl;
+	const [copied, setCopied] = useState(false);
+
+	async function handleCopyUrl() {
+		try {
+			await copyValueToClipboard(url);
+			setCopied(true);
+			setTimeout(() => setCopied(false), 1500);
+			toast.success("Image URL copied. Pick a scenario and paste it as input.");
+		} catch {
+			toast.error("Unable to copy URL.");
+		}
+	}
+
+	return (
+		<article className="grid min-w-0 gap-2 rounded-lg bg-muted/8 p-2.5 dark:bg-muted/5">
+			<div className="flex min-w-0 items-start justify-between gap-2">
+				<div className="min-w-0 flex-1">
+					<p className="truncate text-[11px]">
+						{generation.title || "Generation"}
+					</p>
+					<p className="line-clamp-2 text-[10px] text-muted-foreground">
+						{generation.prompt}
+					</p>
+					<p className="mt-0.5 text-[10px] text-muted-foreground/80">
+						{formatRelativeTime(generation.createdAt)}
+					</p>
+				</div>
+			</div>
+			{url ? (
+				<a
+					className="group relative aspect-[9/16] max-h-56 overflow-hidden rounded-md bg-black/30"
+					href={url}
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					<div
+						aria-hidden="true"
+						className="absolute inset-0 bg-center bg-cover transition group-hover:scale-105"
+						style={{ backgroundImage: `url("${url}")` }}
+					/>
+					<span className="sr-only">Open generation in new tab</span>
+				</a>
+			) : null}
+			<div className="flex flex-wrap items-center gap-1">
+				<Button
+					className="h-6 px-2 text-[10px]"
+					onClick={() => {
+						handleCopyUrl().catch(() => undefined);
+					}}
+					size="sm"
+					variant="outline"
+				>
+					{copied ? (
+						<Check className="size-3 text-emerald-500" />
+					) : (
+						<Copy className="size-3" />
+					)}
+					Copy URL for scenario
+				</Button>
+				{url ? (
+					<a
+						className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
+						href={url}
+						rel="noreferrer noopener"
+						target="_blank"
+					>
+						Open
+						<ExternalLink className="size-2.5" />
+					</a>
+				) : null}
+			</div>
+		</article>
+	);
+}
+
 export default function CommandSidebar({
 	className,
+	getPersonHref,
 	getScenarioHref,
 	onCreateScenario,
 	onDeleteScenario,
 	onEditScenario,
+	onPersonRefreshed,
+	onPickPerson,
+	onPickScenario,
 	onSnapshotChange,
+	persons,
 	scenarioCards,
+	selectedPerson,
+	selectedPersonId,
 	selectedScenarioId,
 	snapshot: initialSnapshot,
 }: CommandSidebarProps) {
@@ -1214,8 +909,6 @@ export default function CommandSidebar({
 	const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
 	const [linkedPerson, setLinkedPerson] = useState<LinkedPersonState>(null);
 	const [runFilter, setRunFilter] = useState<RunFilter>("all");
-	const [studioPersons, setStudioPersons] = useState<PersonRecord[]>([]);
-	const router = useRouter();
 	const searchParams = useSearchParams();
 	const focusedRunId = searchParams.get("run");
 	const personsUrl = env.NEXT_PUBLIC_PERSONS_URL ?? "http://localhost:3004";
@@ -1223,14 +916,20 @@ export default function CommandSidebar({
 	const runs = snapshot.runs;
 	const scenarios = snapshot.scenarios;
 	const workflows = snapshot.workflows;
-	const selectedScenario =
-		scenarios.find((scenario) => scenario.id === selectedScenarioId) ?? null;
+	const isPersonMode = selectedPerson !== null;
+	const selectedScenario = isPersonMode
+		? null
+		: (scenarios.find((scenario) => scenario.id === selectedScenarioId) ??
+			null);
 	const selectedScenarioRuns = useMemo(() => {
+		if (isPersonMode) {
+			return [];
+		}
 		if (!selectedScenarioId) {
 			return runs.slice(0, 12);
 		}
 		return runs.filter((run) => run.scenarioId === selectedScenarioId);
-	}, [runs, selectedScenarioId]);
+	}, [isPersonMode, runs, selectedScenarioId]);
 	const filteredRuns = useMemo(
 		() =>
 			selectedScenarioRuns.filter((run) =>
@@ -1302,35 +1001,6 @@ export default function CommandSidebar({
 		};
 	}, [focusedRunId]);
 
-	useEffect(() => {
-		listPersons()
-			.then((result) => {
-				setStudioPersons(result.persons);
-			})
-			.catch(() => {
-				setStudioPersons([]);
-			});
-	}, []);
-
-	useEffect(() => {
-		if (!(selectedScenarioId && selectedScenarioWorkflow)) {
-			return;
-		}
-		if (workflowSupportsPersonLora(selectedScenarioWorkflow)) {
-			return;
-		}
-		setRunDrafts((current) => {
-			const draft = current[selectedScenarioId];
-			if (!draft?.loraPersonId) {
-				return current;
-			}
-			return {
-				...current,
-				[selectedScenarioId]: { ...draft, loraPersonId: null },
-			};
-		});
-	}, [selectedScenarioId, selectedScenarioWorkflow]);
-
 	async function handleCopyRunId(runId: string) {
 		try {
 			await copyValueToClipboard(runId);
@@ -1377,7 +1047,6 @@ export default function CommandSidebar({
 				[scenario.id]: {
 					...createRunDraft(scenario.id),
 					inputImageUrl: result.data.inputImageUrl,
-					loraPersonId: draft.loraPersonId ?? null,
 					promptOverride: undefined,
 				},
 			}));
@@ -1391,10 +1060,6 @@ export default function CommandSidebar({
 		}
 	}
 
-	function selectScenario(scenarioId: string) {
-		router.replace(getScenarioHref(scenarioId), { scroll: false });
-	}
-
 	const requiresInputImage = Boolean(
 		selectedScenarioWorkflow?.requiresInputImage
 	);
@@ -1402,30 +1067,6 @@ export default function CommandSidebar({
 		selectedScenario !== null &&
 		(!requiresInputImage || Boolean(selectedRunDraft?.inputImageUrl?.trim()));
 	const storageLabel = getStorageLabel(selectedRunDraft?.uploadStorage ?? null);
-
-	const supportsPersonLora =
-		Boolean(selectedScenario) &&
-		workflowSupportsPersonLora(selectedScenarioWorkflow);
-	const selectedPersonLora = supportsPersonLora
-		? (studioPersons.find(
-				(person) => person.id === selectedRunDraft?.loraPersonId
-			) ?? null)
-		: null;
-
-	function handleSelectPersonLora(personId: string | null) {
-		if (!selectedScenario) {
-			return;
-		}
-		setRunDrafts((current) => ({
-			...current,
-			[selectedScenario.id]: {
-				...(current[selectedScenario.id] ??
-					createRunDraft(selectedScenario.id)),
-				loraPersonId: personId,
-				scenarioId: selectedScenario.id,
-			},
-		}));
-	}
 
 	return (
 		<aside
@@ -1437,23 +1078,18 @@ export default function CommandSidebar({
 			<header className="flex shrink-0 flex-col border-foreground/6 border-b dark:border-foreground/10">
 				<div className="flex min-w-0 items-center gap-1 px-2 py-2">
 					<div className="min-w-0 flex-1">
-						<ScenarioSwitcher
-							castLoraSlot={
-								supportsPersonLora ? (
-									<CastLoraInline
-										onSelect={handleSelectPersonLora}
-										persons={studioPersons}
-										selectedPersonId={selectedRunDraft?.loraPersonId ?? null}
-									/>
-								) : null
-							}
+						<SubjectSwitcher
+							getPersonHref={getPersonHref}
 							getScenarioHref={getScenarioHref}
 							onCreateScenario={onCreateScenario}
 							onDeleteScenario={onDeleteScenario}
 							onEditScenario={onEditScenario}
-							onSelect={selectScenario}
-							personLoraSelected={selectedPersonLora}
+							onPickPerson={onPickPerson}
+							onPickScenario={onPickScenario}
+							persons={persons}
 							scenarios={scenarioCards}
+							selectedPerson={selectedPerson}
+							selectedPersonId={selectedPersonId}
 							selectedScenarioId={selectedScenarioId}
 						/>
 					</div>
@@ -1461,28 +1097,51 @@ export default function CommandSidebar({
 			</header>
 
 			<div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-				{selectedScenario ? (
-					<LaunchSection
-						activeRunCount={activeRunCount}
-						draft={selectedRunDraft}
-						isReadyToLaunch={isReadyToLaunch}
-						isSubmitting={submittingRunId === selectedScenario.id}
-						onDraftChange={(next) => {
-							setRunDrafts((current) => ({
-								...current,
-								[selectedScenario.id]: next,
-							}));
-						}}
-						onLaunch={() => {
-							handleLaunchRun(selectedScenario).catch(() => undefined);
-						}}
-						recentReferences={recentReferences}
-						requiresInputImage={requiresInputImage}
-						scenario={selectedScenario}
-						shots={snapshot.shots}
-						storageLabel={storageLabel}
-					/>
-				) : (
+				{isPersonMode && selectedPerson ? (
+					<>
+						<PersonLaunchSection
+							onPersonRefreshed={onPersonRefreshed}
+							person={selectedPerson}
+						/>
+						<PersonActivitySection person={selectedPerson} />
+					</>
+				) : null}
+				{!isPersonMode && selectedScenario ? (
+					<>
+						<LaunchSection
+							activeRunCount={activeRunCount}
+							draft={selectedRunDraft}
+							isReadyToLaunch={isReadyToLaunch}
+							isSubmitting={submittingRunId === selectedScenario.id}
+							onDraftChange={(next) => {
+								setRunDrafts((current) => ({
+									...current,
+									[selectedScenario.id]: next,
+								}));
+							}}
+							onLaunch={() => {
+								handleLaunchRun(selectedScenario).catch(() => undefined);
+							}}
+							recentReferences={recentReferences}
+							requiresInputImage={requiresInputImage}
+							scenario={selectedScenario}
+							shots={snapshot.shots}
+							storageLabel={storageLabel}
+						/>
+						<ScenarioActivitySection
+							copiedRunId={copiedRunId}
+							filter={runFilter}
+							filteredRuns={filteredRuns}
+							focusedRunId={focusedRunId}
+							linkedPerson={linkedPerson}
+							onCopyRunId={handleCopyRunId}
+							onFilterChange={setRunFilter}
+							personsUrl={personsUrl}
+							scenarioRuns={selectedScenarioRuns}
+						/>
+					</>
+				) : null}
+				{isPersonMode || selectedScenario ? null : (
 					<section className="px-3 py-3">
 						<EmptyState
 							action={
@@ -1498,18 +1157,6 @@ export default function CommandSidebar({
 						/>
 					</section>
 				)}
-
-				<ActivitySection
-					copiedRunId={copiedRunId}
-					filter={runFilter}
-					filteredRuns={filteredRuns}
-					focusedRunId={focusedRunId}
-					linkedPerson={linkedPerson}
-					onCopyRunId={handleCopyRunId}
-					onFilterChange={setRunFilter}
-					personsUrl={personsUrl}
-					scenarioRuns={selectedScenarioRuns}
-				/>
 			</div>
 		</aside>
 	);

@@ -4,9 +4,12 @@ import type {
 	LoraBaseModel,
 	LoraPreviewMediaType,
 	LoraSourcePreview,
+	LoraSourcePreviewPairedFile,
 	LoraSourcePreviewVariant,
 	LoraSourceProvider,
+	LoraVariant,
 } from "@generator/contracts/loras";
+import { isDualExpertBaseModel } from "@generator/contracts/loras";
 
 const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
 const huggingFaceHostPattern = /(^|\.)huggingface\.co$/iu;
@@ -29,6 +32,12 @@ export interface ResolvedLoraSource {
 	downloadUrl: string;
 	fileName?: string;
 	name?: string;
+	/**
+	 * Detected high/low pair for dual-expert base models (Wan 2.2). When set,
+	 * the importer can create both registry entries and link them via a shared
+	 * pair group id.
+	 */
+	pairedFiles?: LoraSourcePreviewPairedFile[];
 	previewImageUrl?: string;
 	previewMediaType?: LoraPreviewMediaType;
 	previewMediaUrl?: string;
@@ -37,6 +46,7 @@ export interface ResolvedLoraSource {
 	sourceUrl: string;
 	sourceVersionId?: number;
 	trainedWords?: string[];
+	variant?: LoraVariant;
 	variants?: LoraSourcePreviewVariant[];
 	versionName?: string;
 }
@@ -409,6 +419,39 @@ function buildCivitaiApiUrl(sourceUrl: URL, path: string): string {
 	return `${sourceUrl.origin}${path}`;
 }
 
+// Heuristic detection of high/low expert affinity from version/file naming.
+// Civitai authors usually call them e.g. "Wan 2.2 I2V High Noise" or have file
+// names like `*_HighNoise.safetensors`. We match `high noise`, standalone
+// `high`, the same for `low`, and a few common abbreviations.
+const variantHighPattern = /\bhigh(?:[\s_-]*noise)?\b|hn\b|h-?noise/iu;
+const variantLowPattern = /\blow(?:[\s_-]*noise)?\b|ln\b|l-?noise/iu;
+
+function detectVariantFromText(
+	value: string | undefined
+): LoraVariant | undefined {
+	if (!value) {
+		return;
+	}
+	if (variantHighPattern.test(value)) {
+		return "high";
+	}
+	if (variantLowPattern.test(value)) {
+		return "low";
+	}
+	return;
+}
+
+function detectVariantForVersion(
+	version: CivitaiModelVersion,
+	file: CivitaiFile | null
+): LoraVariant | undefined {
+	return (
+		detectVariantFromText(file?.name) ??
+		detectVariantFromText(version.name) ??
+		detectVariantFromText(version.description ?? undefined)
+	);
+}
+
 function buildCivitaiVariant(
 	version: CivitaiModelVersion
 ): LoraSourcePreviewVariant | null {
@@ -418,8 +461,9 @@ function buildCivitaiVariant(
 		return null;
 	}
 	const media = selectPreviewMedia(version);
+	const baseModel = mapCivitaiBaseModel(version.baseModel);
 	return {
-		baseModel: mapCivitaiBaseModel(version.baseModel),
+		baseModel,
 		description: buildCivitaiDescription({
 			trainedWords: version.trainedWords,
 			versionDescription: version.description,
@@ -430,9 +474,100 @@ function buildCivitaiVariant(
 		mediaUrl: media?.url,
 		sizeBytes: sizeKbToBytes(file?.sizeKb),
 		trainedWords: version.trainedWords,
+		variant: detectVariantForVersion(version, file ?? null),
 		versionId: version.id,
 		versionName: version.name,
 	};
+}
+
+function findPairedFiles(input: {
+	baseModel: LoraBaseModel | undefined;
+	primary: LoraSourcePreviewVariant;
+	versions: CivitaiModelVersion[];
+}): LoraSourcePreviewPairedFile[] | undefined {
+	if (!(input.baseModel && isDualExpertBaseModel(input.baseModel))) {
+		return;
+	}
+	const pickHighLowFromVariants = (): LoraSourcePreviewPairedFile[] => {
+		const variants = input.versions
+			.map(buildCivitaiVariant)
+			.filter((variant): variant is LoraSourcePreviewVariant =>
+				Boolean(variant)
+			)
+			.filter((variant) => variant.baseModel === input.baseModel);
+
+		const high = variants.find((variant) => variant.variant === "high");
+		const low = variants.find((variant) => variant.variant === "low");
+		if (!(high && low)) {
+			return [];
+		}
+		return [
+			{
+				downloadUrl: high.downloadUrl,
+				fileName: high.fileName,
+				sizeBytes: high.sizeBytes,
+				sourceUrl: high.downloadUrl,
+				sourceVersionId: high.versionId,
+				variant: "high",
+			},
+			{
+				downloadUrl: low.downloadUrl,
+				fileName: low.fileName,
+				sizeBytes: low.sizeBytes,
+				sourceUrl: low.downloadUrl,
+				sourceVersionId: low.versionId,
+				variant: "low",
+			},
+		];
+	};
+
+	const pickHighLowFromFiles = (
+		version: CivitaiModelVersion
+	): LoraSourcePreviewPairedFile[] => {
+		const files = version.files ?? [];
+		const high = files.find(
+			(file) => detectVariantFromText(file.name) === "high"
+		);
+		const low = files.find(
+			(file) => detectVariantFromText(file.name) === "low"
+		);
+		if (!(high?.downloadUrl && low?.downloadUrl)) {
+			return [];
+		}
+		return [
+			{
+				downloadUrl: high.downloadUrl,
+				fileName: high.name,
+				sizeBytes: sizeKbToBytes(high.sizeKb),
+				sourceUrl: high.downloadUrl,
+				sourceVersionId: version.id,
+				variant: "high",
+			},
+			{
+				downloadUrl: low.downloadUrl,
+				fileName: low.name,
+				sizeBytes: sizeKbToBytes(low.sizeKb),
+				sourceUrl: low.downloadUrl,
+				sourceVersionId: version.id,
+				variant: "low",
+			},
+		];
+	};
+
+	const fromVariants = pickHighLowFromVariants();
+	if (fromVariants.length === 2) {
+		return fromVariants;
+	}
+	const primaryVersion = input.versions.find(
+		(version) => version.id === input.primary.versionId
+	);
+	if (primaryVersion) {
+		const fromFiles = pickHighLowFromFiles(primaryVersion);
+		if (fromFiles.length === 2) {
+			return fromFiles;
+		}
+	}
+	return;
 }
 
 function buildResolvedCivitaiSource(input: {
@@ -440,6 +575,7 @@ function buildResolvedCivitaiSource(input: {
 	input: CreateLoraFromUrlInput;
 	modelDescription?: null | string;
 	modelName: string;
+	pairedFiles?: LoraSourcePreviewPairedFile[];
 	variant: LoraSourcePreviewVariant;
 	variants?: LoraSourcePreviewVariant[];
 }): ResolvedLoraSource {
@@ -453,6 +589,7 @@ function buildResolvedCivitaiSource(input: {
 		downloadUrl: input.variant.downloadUrl,
 		fileName: input.variant.fileName,
 		name: input.modelName,
+		pairedFiles: input.pairedFiles,
 		previewImageUrl:
 			input.variant.mediaType === "image" ? input.variant.mediaUrl : undefined,
 		previewMediaType: input.variant.mediaType,
@@ -462,6 +599,7 @@ function buildResolvedCivitaiSource(input: {
 		sourceUrl: input.input.sourceUrl.trim(),
 		sourceVersionId: input.variant.versionId,
 		trainedWords: input.variant.trainedWords,
+		variant: input.variant.variant,
 		variants: input.variants,
 		versionName: input.variant.versionName,
 	};
@@ -573,11 +711,17 @@ export function createLoraSourceResolver(
 			if (!variant) {
 				throw new Error(`Civitai model "${model.name}" has no download URL.`);
 			}
+			const pairedFiles = findPairedFiles({
+				baseModel: variant.baseModel,
+				primary: variant,
+				versions: model.modelVersions ?? [],
+			});
 			return buildResolvedCivitaiSource({
 				downloadHeaders,
 				input,
 				modelDescription: model.description,
 				modelName: model.name,
+				pairedFiles,
 				variant,
 				variants,
 			});
@@ -684,6 +828,7 @@ export function toLoraSourcePreview(
 		downloadUrl: source.downloadUrl,
 		fileName: source.fileName,
 		name: source.name,
+		pairedFiles: source.pairedFiles,
 		previewMediaType: source.previewMediaType,
 		previewMediaUrl: source.previewMediaUrl,
 		previewImageUrl: source.previewImageUrl,
@@ -692,6 +837,7 @@ export function toLoraSourcePreview(
 		sourceUrl: source.sourceUrl,
 		sourceVersionId: source.sourceVersionId,
 		trainedWords: source.trainedWords,
+		variant: source.variant,
 		variants: source.variants,
 		versionName: source.versionName,
 	};

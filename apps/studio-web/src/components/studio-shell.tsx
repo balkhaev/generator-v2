@@ -1,12 +1,11 @@
 "use client";
 
+import type { PersonRecord } from "@generator/contracts/persons";
 import { env } from "@generator/env/web";
 import {
 	type AdminSnapshot,
-	deleteStudioScenario,
 	type ScenarioRecord,
 	type ScenarioRunRecord,
-	saveStudioShot,
 	syncStudioRun,
 } from "@generator/studio-client/client";
 import { Button } from "@generator/ui/components/button";
@@ -26,8 +25,7 @@ import { createWorkspaceNavigation } from "@generator/ui/lib/workspace-nav";
 import { Loader2, Trash2 } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { useCallback, useMemo, useState } from "react";
 
 import CommandSidebar from "@/components/command-sidebar";
 import ComposeDialog from "@/components/compose/compose-dialog";
@@ -41,15 +39,20 @@ import type {
 	ScenarioCardData,
 	ScenarioRailStatus,
 } from "@/components/scenario-card-data";
+import { usePersonSelection } from "@/components/use-person-selection";
 import { useRunAutoSync } from "@/components/use-run-auto-sync";
+import { useScenarioDeletion } from "@/components/use-scenario-deletion";
+import { useShotSaving } from "@/components/use-shot-saving";
+import { useStudioMedia } from "@/components/use-studio-media";
+import { useStudioSelection } from "@/components/use-studio-selection";
 import UserMenu from "@/components/user-menu";
-import { importGenerationToPerson } from "@/lib/persons-api";
 
 function buildStudioHref(
 	pathname: string,
 	currentSearch: string,
 	input: {
 		assetId?: string | null;
+		personId?: string | null;
 		runId?: string | null;
 		scenarioId?: string | null;
 		tab?: string | null;
@@ -73,6 +76,12 @@ function buildStudioHref(
 		params.delete("scenario");
 	} else if (typeof input.scenarioId === "string") {
 		params.set("scenario", input.scenarioId);
+	}
+
+	if (input.personId === null) {
+		params.delete("person");
+	} else if (typeof input.personId === "string") {
+		params.set("person", input.personId);
 	}
 
 	if (input.tab === null) {
@@ -168,18 +177,18 @@ function StudioStatusBar({
 	activeRunCount,
 	assetsCount,
 	headlineLiveRun,
-	selectedWorkflowKey,
+	statusLabel,
 	succeededRunCount,
 }: {
 	activeRunCount: number;
 	assetsCount: number;
 	headlineLiveRun: ScenarioRunRecord | null;
-	selectedWorkflowKey: string;
+	statusLabel: string;
 	succeededRunCount: number;
 }) {
 	return (
 		<>
-			<WorkspaceStatus tone="info">{selectedWorkflowKey}</WorkspaceStatus>
+			<WorkspaceStatus tone="info">{statusLabel}</WorkspaceStatus>
 			{activeRunCount > 0 ? (
 				<WorkspaceStatus tone="warning">
 					<span className="size-1.5 shrink-0 animate-pulse rounded-full bg-amber-500" />
@@ -200,12 +209,32 @@ function StudioStatusBar({
 function StudioSubtitleBar({
 	activeRunCount,
 	scenarioCount,
+	selectedPerson,
 	selectedScenarioCard,
 }: {
 	activeRunCount: number;
 	scenarioCount: number;
+	selectedPerson: PersonRecord | null;
 	selectedScenarioCard: ScenarioCardData | null;
 }) {
+	if (selectedPerson) {
+		const readyCount = selectedPerson.generations.filter(
+			(generation) =>
+				generation.status === "ready" &&
+				generation.metadata?.isDatasetPhoto !== true
+		).length;
+		return (
+			<span className="flex flex-wrap items-center gap-2">
+				<span>{selectedPerson.slug}</span>
+				<span aria-hidden="true">·</span>
+				<span>{readyCount} ready photos</span>
+				<span aria-hidden="true">·</span>
+				<span className="text-muted-foreground/80">
+					Generate a photo, then pick a scenario to use it as input
+				</span>
+			</span>
+		);
+	}
 	if (!selectedScenarioCard) {
 		return `${scenarioCount} scenarios ready to launch`;
 	}
@@ -300,7 +329,9 @@ function DeleteScenarioDialog({
 	);
 }
 
-function buildMediaAssets(runs: ScenarioRunRecord[]): StudioMediaAsset[] {
+function buildScenarioMediaAssets(
+	runs: ScenarioRunRecord[]
+): StudioMediaAsset[] {
 	return runs.flatMap((run) => {
 		// Failed runs только засоряют ленту превью: их выход — пусто, а вход
 		// (reference image / first frame) уже виден в композере и не помогает
@@ -345,6 +376,34 @@ function buildMediaAssets(runs: ScenarioRunRecord[]): StudioMediaAsset[] {
 	});
 }
 
+function buildPersonMediaAssets(person: PersonRecord): StudioMediaAsset[] {
+	const studioGenerations = person.generations.filter(
+		(generation) =>
+			generation.status === "ready" &&
+			generation.metadata?.isDatasetPhoto !== true
+	);
+	return studioGenerations.flatMap((generation) => {
+		const url = generation.previewUrl ?? generation.sourceUrl;
+		if (!url) {
+			return [];
+		}
+		return [
+			{
+				createdAt: generation.createdAt,
+				id: `person-${generation.id}`,
+				label: generation.title || `${person.name} photo`,
+				mediaKind: "output",
+				mediaType: getMediaType(url),
+				meta: person.name,
+				runId: `person:${generation.id}`,
+				scenarioId: `person:${person.id}`,
+				status: "succeeded",
+				url,
+			},
+		];
+	});
+}
+
 export default function StudioShell({
 	initialSnapshot,
 	sessionEmail,
@@ -359,10 +418,6 @@ export default function StudioShell({
 	const [editingScenarioId, setEditingScenarioId] = useState<string | null>(
 		null
 	);
-	const [pendingDeleteScenarioId, setPendingDeleteScenarioId] = useState<
-		string | null
-	>(null);
-	const [isDeletingScenario, setIsDeletingScenario] = useState(false);
 	const pathname = usePathname();
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -371,161 +426,75 @@ export default function StudioShell({
 		() => buildScenarioCards(snapshot.scenarios, snapshot.runs),
 		[snapshot.runs, snapshot.scenarios]
 	);
-	const mediaAssets = useMemo(
-		() => buildMediaAssets(snapshot.runs),
-		[snapshot.runs]
-	);
+	const requestedPersonId = searchParams.get("person");
+	const { handlePersonRefreshed, personDetail, persons, selectedPersonId } =
+		usePersonSelection(requestedPersonId);
 	const requestedRunId = searchParams.get("run");
-	const requestedRun =
-		(requestedRunId
-			? snapshot.runs.find(
-					(run) =>
-						run.id === requestedRunId || run.providerJobId === requestedRunId
-				)
-			: null) ?? null;
 	const requestedScenarioId = searchParams.get("scenario");
-	const selectedScenarioId =
-		(requestedScenarioId &&
-		scenarioCards.some((scenario) => scenario.id === requestedScenarioId)
-			? requestedScenarioId
-			: null) ??
-		requestedRun?.scenarioId ??
-		scenarioCards[0]?.id ??
-		null;
+	const requestedAssetId = searchParams.get("asset");
 
-	useEffect(() => {
-		if (requestedScenarioId === selectedScenarioId) {
-			return;
-		}
+	const navigate = useCallback(
+		(href: string) => router.replace(href as Route, { scroll: false }),
+		[router]
+	);
+	const selectionUrlBuilder = useCallback(
+		(input: {
+			assetId?: string | null;
+			personId?: string | null;
+			runId?: string | null;
+			scenarioId?: string | null;
+		}) => buildStudioHref(pathname, currentSearch, input),
+		[currentSearch, pathname]
+	);
+	const mediaUrlBuilder = useCallback(
+		(input: { assetId?: string | null; runId?: string | null }) =>
+			buildStudioHref(pathname, currentSearch, input),
+		[currentSearch, pathname]
+	);
 
-		router.replace(
-			buildStudioHref(pathname, currentSearch, {
-				assetId: null,
-				runId: requestedRunId,
-				scenarioId: selectedScenarioId,
-			}),
-			{
-				scroll: false,
-			}
-		);
-	}, [
+	const {
+		isPersonMode,
+		requestedRun,
+		selectedScenarioCard,
+		selectedScenarioId,
+	} = useStudioSelection({
 		currentSearch,
+		navigate,
 		pathname,
+		requestedPersonId,
 		requestedRunId,
 		requestedScenarioId,
-		router,
-		selectedScenarioId,
-	]);
+		runs: snapshot.runs,
+		scenarioCards,
+		selectedPersonId,
+		urlBuilder: selectionUrlBuilder,
+	});
 
-	const selectedScenarioCard =
-		scenarioCards.find((scenario) => scenario.id === selectedScenarioId) ??
-		null;
-	const selectedScenarioAssets = useMemo(() => {
-		if (!selectedScenarioId) {
-			return mediaAssets;
-		}
-
-		return mediaAssets.filter(
-			(asset) => asset.scenarioId === selectedScenarioId
-		);
-	}, [mediaAssets, selectedScenarioId]);
-	const requestedAssetId = searchParams.get("asset");
-	const selectedMediaIndex = (() => {
-		if (selectedScenarioAssets.length === 0) {
-			return -1;
-		}
-
-		const directIndex = selectedScenarioAssets.findIndex(
-			(asset) => asset.id === requestedAssetId
-		);
-
-		if (directIndex !== -1) {
-			return directIndex;
-		}
-
-		return 0;
-	})();
-	const selectedMediaId =
-		selectedMediaIndex === -1
-			? null
-			: selectedScenarioAssets[selectedMediaIndex].id;
-
-	useEffect(() => {
-		if (requestedAssetId === selectedMediaId) {
-			return;
-		}
-
-		router.replace(
-			buildStudioHref(pathname, currentSearch, {
-				assetId: selectedMediaId,
-				runId: requestedRunId,
-			}),
-			{
-				scroll: false,
-			}
-		);
-	}, [
+	const {
+		navigateToMedia,
+		selectedMediaAsset,
+		selectedMediaId,
+		selectedMediaIndex,
+		selectedScenarioAssets,
+	} = useStudioMedia({
+		buildPersonMediaAssets,
+		buildScenarioMediaAssets,
 		currentSearch,
+		isPersonMode,
+		navigate,
 		pathname,
+		personDetail,
 		requestedAssetId,
 		requestedRunId,
-		router,
-		selectedMediaId,
-	]);
+		runs: snapshot.runs,
+		selectedScenarioId,
+		urlBuilder: mediaUrlBuilder,
+	});
 
-	const selectedMediaAsset =
-		selectedMediaIndex === -1
-			? null
-			: selectedScenarioAssets[selectedMediaIndex];
-
-	const [savingShotAssetId, setSavingShotAssetId] = useState<string | null>(
-		null
-	);
-
-	const handleSaveShot = useCallback(
-		async (asset: StudioMediaAsset) => {
-			const run = snapshot.runs.find((entry) => entry.id === asset.runId);
-			if (!run) {
-				toast.error("Source run no longer available.");
-				return;
-			}
-			setSavingShotAssetId(asset.id);
-			try {
-				if (run.inputPersonId) {
-					if (!run.providerJobId) {
-						toast.error("Run is not finished yet.");
-						return;
-					}
-					await importGenerationToPerson(run.inputPersonId, {
-						prompt: run.scenarioName,
-						providerEndpointId: run.providerEndpointId ?? undefined,
-						providerJobId: run.providerJobId,
-						title: `${run.scenarioName} · ${asset.label}`,
-						workflowKey: run.workflowKey,
-					});
-					toast.success("Saved to person.");
-				} else {
-					const result = await saveStudioShot({
-						artifactKind: asset.mediaType,
-						artifactUrl: asset.url,
-						runId: asset.runId,
-					});
-					setSnapshot((current) => ({
-						...current,
-						shots: [result.data, ...current.shots],
-					}));
-					toast.success("Shot saved.");
-				}
-			} catch (error) {
-				toast.error(
-					error instanceof Error ? error.message : "Unable to save shot."
-				);
-			} finally {
-				setSavingShotAssetId(null);
-			}
-		},
-		[snapshot.runs]
-	);
+	const { savingShotAssetId, saveShot } = useShotSaving({
+		runs: snapshot.runs,
+		setSnapshot,
+	});
 
 	const handleSyncRun = useCallback(async (runId: string) => {
 		try {
@@ -541,27 +510,13 @@ export default function StudioShell({
 	}, []);
 
 	useRunAutoSync({
-		enabled: true,
+		enabled: !isPersonMode,
 		onSync: handleSyncRun,
 		runs: snapshot.runs,
 	});
 
 	const personsUrl = env.NEXT_PUBLIC_PERSONS_URL ?? "http://localhost:3004";
 	const adminUrl = env.NEXT_PUBLIC_ADMIN_URL ?? "http://localhost:3001";
-
-	function navigateToMedia(targetIndex: number) {
-		if (targetIndex < 0 || targetIndex >= selectedScenarioAssets.length) {
-			return;
-		}
-
-		router.replace(
-			buildStudioHref(pathname, currentSearch, {
-				assetId: selectedScenarioAssets[targetIndex].id,
-				runId: requestedRunId,
-			}),
-			{ scroll: false }
-		);
-	}
 
 	function handleCreateScenario() {
 		setEditingScenarioId(null);
@@ -587,6 +542,7 @@ export default function StudioShell({
 			router.push(
 				buildStudioHref(pathname, currentSearch, {
 					assetId: null,
+					personId: null,
 					runId: null,
 					scenarioId: created.id,
 					tab: "launch",
@@ -600,22 +556,8 @@ export default function StudioShell({
 		setSnapshot(nextSnapshot);
 	}
 
-	function handleRequestDeleteScenario(scenarioId: string) {
-		setPendingDeleteScenarioId(scenarioId);
-	}
-
-	const handleConfirmDeleteScenario = useCallback(async () => {
-		if (!pendingDeleteScenarioId) {
-			return;
-		}
-		const scenarioId = pendingDeleteScenarioId;
-		setIsDeletingScenario(true);
-		try {
-			await deleteStudioScenario(scenarioId);
-			setSnapshot((current) => ({
-				...current,
-				scenarios: current.scenarios.filter((entry) => entry.id !== scenarioId),
-			}));
+	const handleAfterScenarioDelete = useCallback(
+		(scenarioId: string) => {
 			if (selectedScenarioId === scenarioId) {
 				router.replace(
 					buildStudioHref(pathname, currentSearch, {
@@ -626,22 +568,19 @@ export default function StudioShell({
 					{ scroll: false }
 				);
 			}
-			toast.success("Scenario deleted.");
-			setPendingDeleteScenarioId(null);
-		} catch (error) {
-			toast.error(
-				error instanceof Error ? error.message : "Unable to delete scenario."
-			);
-		} finally {
-			setIsDeletingScenario(false);
-		}
-	}, [
-		currentSearch,
-		pathname,
+		},
+		[currentSearch, pathname, router, selectedScenarioId]
+	);
+	const {
+		cancelDeleteScenario,
+		confirmDeleteScenario,
+		isDeletingScenario,
 		pendingDeleteScenarioId,
-		router,
-		selectedScenarioId,
-	]);
+		requestDeleteScenario,
+	} = useScenarioDeletion({
+		onAfterDelete: handleAfterScenarioDelete,
+		setSnapshot,
+	});
 
 	const editingScenario =
 		(editingScenarioId
@@ -657,15 +596,33 @@ export default function StudioShell({
 	function getScenarioHref(scenarioId: string) {
 		return buildStudioHref(pathname, currentSearch, {
 			assetId: null,
+			personId: null,
 			runId: null,
 			scenarioId,
 		});
 	}
 
+	function getPersonHref(personId: string) {
+		return buildStudioHref(pathname, currentSearch, {
+			assetId: null,
+			personId,
+			runId: null,
+			scenarioId: null,
+		});
+	}
+
+	function handlePickScenario(scenarioId: string) {
+		router.replace(getScenarioHref(scenarioId), { scroll: false });
+	}
+
+	function handlePickPerson(personId: string) {
+		router.replace(getPersonHref(personId), { scroll: false });
+	}
+
 	function getMediaHref(mediaId: string) {
 		return buildStudioHref(pathname, currentSearch, {
 			assetId: mediaId,
-			runId: requestedRunId,
+			runId: isPersonMode ? null : requestedRunId,
 		});
 	}
 
@@ -686,6 +643,13 @@ export default function StudioShell({
 		[requestedRun, selectedScenarioId, snapshot.runs]
 	);
 
+	const statusLabel = isPersonMode
+		? "person · LoRA"
+		: (selectedScenarioCard?.workflowKey ?? "scenario");
+	const titleText = isPersonMode
+		? (personDetail?.name ?? "Person")
+		: (selectedScenarioCard?.name ?? "Studio");
+
 	return (
 		<WorkspaceShell
 			actions={
@@ -696,12 +660,19 @@ export default function StudioShell({
 			}
 			context={
 				<CommandSidebar
+					getPersonHref={getPersonHref}
 					getScenarioHref={getScenarioHref}
 					onCreateScenario={handleCreateScenario}
-					onDeleteScenario={handleRequestDeleteScenario}
+					onDeleteScenario={requestDeleteScenario}
 					onEditScenario={handleEditScenario}
+					onPersonRefreshed={handlePersonRefreshed}
+					onPickPerson={handlePickPerson}
+					onPickScenario={handlePickScenario}
 					onSnapshotChange={setSnapshot}
+					persons={persons}
 					scenarioCards={scenarioCards}
+					selectedPerson={personDetail}
+					selectedPersonId={selectedPersonId}
 					selectedScenarioId={selectedScenarioId}
 					snapshot={snapshot}
 				/>
@@ -715,21 +686,22 @@ export default function StudioShell({
 			})}
 			status={
 				<StudioStatusBar
-					activeRunCount={activeRunCount}
+					activeRunCount={isPersonMode ? 0 : activeRunCount}
 					assetsCount={selectedScenarioAssets.length}
-					headlineLiveRun={headlineLiveRun}
-					selectedWorkflowKey={selectedScenarioCard?.workflowKey ?? "scenario"}
-					succeededRunCount={succeededRunCount}
+					headlineLiveRun={isPersonMode ? null : headlineLiveRun}
+					statusLabel={statusLabel}
+					succeededRunCount={isPersonMode ? 0 : succeededRunCount}
 				/>
 			}
 			subtitle={
 				<StudioSubtitleBar
 					activeRunCount={activeRunCount}
 					scenarioCount={snapshot.scenarios.length}
+					selectedPerson={isPersonMode ? personDetail : null}
 					selectedScenarioCard={selectedScenarioCard}
 				/>
 			}
-			title={selectedScenarioCard?.name ?? "Studio"}
+			title={titleText}
 			workspaceLabel="Studio"
 		>
 			<ComposeDialog
@@ -742,9 +714,9 @@ export default function StudioShell({
 			/>
 			<DeleteScenarioDialog
 				isDeleting={isDeletingScenario}
-				onCancel={() => setPendingDeleteScenarioId(null)}
+				onCancel={cancelDeleteScenario}
 				onConfirm={() => {
-					handleConfirmDeleteScenario().catch(() => undefined);
+					confirmDeleteScenario().catch(() => undefined);
 				}}
 				scenario={pendingDeleteScenario}
 			/>
@@ -767,9 +739,13 @@ export default function StudioShell({
 							? () => navigateToMedia(selectedMediaIndex - 1)
 							: undefined
 					}
-					onSaveShot={(asset) => {
-						handleSaveShot(asset).catch(() => undefined);
-					}}
+					onSaveShot={
+						isPersonMode
+							? undefined
+							: (asset) => {
+									saveShot(asset).catch(() => undefined);
+								}
+					}
 					totalAssets={selectedScenarioAssets.length}
 				/>
 				<MediaStrip

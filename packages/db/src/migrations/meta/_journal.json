@@ -78,6 +78,13 @@
       "when": 1776532847956,
       "tag": "0010_studio_run_progress_pct",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1776542369963,
+      "tag": "0011_brave_ezekiel",
+      "breakpoints": true
     }
   ]
 }

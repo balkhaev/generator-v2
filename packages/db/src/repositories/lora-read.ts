@@ -3,6 +3,7 @@ import type {
 	LoraRegistryEntry,
 	LoraSourceProvider,
 	LoraStatus,
+	LoraVariant,
 } from "@generator/contracts/loras";
 
 import { db as defaultDb } from "../index";
@@ -47,6 +48,8 @@ export function mapLoraRow(row: LoraRow): LoraRegistryEntry {
 		s3Url: row.s3Url,
 		sizeBytes: row.sizeBytes,
 		defaultWeight: row.defaultWeight,
+		variant: (row.variant ?? null) as LoraVariant | null,
+		pairGroupId: row.pairGroupId ?? null,
 		sourceProvider: deriveSourceProvider(row.sourceUrl),
 		status: row.status as LoraStatus,
 		createdAt: row.createdAt.toISOString(),
@@ -61,6 +64,7 @@ export interface ListLorasFilter {
 
 export interface LoraReadRepository {
 	getById(id: string): Promise<LoraRegistryEntry | null>;
+	getByPairGroupId(pairGroupId: string): Promise<LoraRegistryEntry[]>;
 	getBySlug(slug: string): Promise<LoraRegistryEntry | null>;
 	list(filter?: ListLorasFilter): Promise<LoraRegistryEntry[]>;
 }
@@ -72,6 +76,13 @@ export function createLoraReadRepository(
 		async getById(id) {
 			const [row] = await database.select().from(lora).where(eq(lora.id, id));
 			return row ? mapLoraRow(row) : null;
+		},
+		async getByPairGroupId(pairGroupId) {
+			const rows = await database
+				.select()
+				.from(lora)
+				.where(eq(lora.pairGroupId, pairGroupId));
+			return rows.map(mapLoraRow);
 		},
 		async getBySlug(slug) {
 			const [row] = await database

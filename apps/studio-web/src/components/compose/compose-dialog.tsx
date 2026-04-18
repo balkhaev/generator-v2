@@ -50,13 +50,23 @@ async function fetchStudioLoras(baseModel?: string): Promise<{
 		params.set("baseModel", baseModel);
 	}
 	const query = params.toString();
+	const url = `${studioApiBaseUrl}/api/loras${query ? `?${query}` : ""}`;
 	try {
-		const payload = await requestJson<{ loras: LoraRegistryEntry[] }>(
-			`${studioApiBaseUrl}/api/loras${query ? `?${query}` : ""}`,
-			{ cache: "no-store", credentials: "include" }
-		);
-		return { error: null, loras: payload.loras };
+		const payload = await requestJson<{ loras: LoraRegistryEntry[] }>(url, {
+			cache: "no-store",
+			credentials: "include",
+		});
+		// eslint-disable-next-line no-console
+		console.info("[compose] fetched loras", {
+			baseModel,
+			url,
+			payload,
+			count: Array.isArray(payload?.loras) ? payload.loras.length : null,
+		});
+		return { error: null, loras: payload.loras ?? [] };
 	} catch (error) {
+		// eslint-disable-next-line no-console
+		console.error("[compose] failed to fetch loras", { baseModel, url, error });
 		const message =
 			error instanceof Error ? error.message : "Failed to load LoRAs";
 		return { error: message, loras: [] };

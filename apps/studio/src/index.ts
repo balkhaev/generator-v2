@@ -5,6 +5,7 @@ import {
 } from "@generator/auth";
 import {
 	env,
+	getAdminApiUrl,
 	getGeneratorApiUrl,
 	getGeneratorCallbackToken,
 	getRequiredCorsOrigins,
@@ -22,10 +23,10 @@ const PORT = Number(process.env.PORT ?? 3006);
 const generatorBaseUrl = getGeneratorApiUrl();
 const repository = createDrizzleStudioRepository();
 
-const adminApiUrl = env.STUDIO_ADMIN_URL ?? env.ADMIN_API_URL;
-const adminLoraClient = adminApiUrl
-	? createAdminLoraClient(adminApiUrl, getTrainingControlToken())
-	: undefined;
+const adminLoraClient = createAdminLoraClient(
+	getAdminApiUrl(),
+	getTrainingControlToken()
+);
 
 const grokClient = env.XAI_API_KEY
 	? createStudioGrokClient({ apiKey: env.XAI_API_KEY })

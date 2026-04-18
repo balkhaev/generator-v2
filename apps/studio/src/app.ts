@@ -305,6 +305,19 @@ export function createApp(options: AppOptions) {
 	app.route("/api/enhance-prompt", createEnhanceRoutes(options.grokClient));
 	if (options.adminLoraClient) {
 		app.route("/api/loras", createLoraRoutes(options.adminLoraClient));
+	} else {
+		options.loggerImpl?.warn(
+			"[studio] adminLoraClient is not configured; /api/loras will return 503"
+		);
+		app.all("/api/loras", (c) =>
+			c.json(
+				{
+					error:
+						"LoRA registry is not configured on the server (ADMIN_API_URL is missing).",
+				},
+				503
+			)
+		);
 	}
 	app.route(
 		"/api/input-assets",

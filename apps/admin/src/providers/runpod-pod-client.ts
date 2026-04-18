@@ -31,6 +31,13 @@ export interface CreatePodInput {
 	networkVolumeId?: string;
 	ports?: string[];
 	supportPublicIp?: boolean;
+	/**
+	 * Опциональный id RunPod-template (например, `0fqzfjy6f3` —
+	 * официальный ostris ai-toolkit). RunPod scheduler предпочитает
+	 * хосты, где этот template уже warm, что радикально сокращает
+	 * provisioning.
+	 */
+	templateId?: string;
 	volumeInGb?: number;
 	volumeMountPath?: string;
 }

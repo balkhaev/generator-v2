@@ -44,6 +44,7 @@ interface AdminSettingsEnvSnapshot {
 	RUNPOD_POD_BOOTSTRAP_URL?: string | null;
 	RUNPOD_POD_GPU_TYPE_IDS?: string | null;
 	RUNPOD_POD_IMAGE_NAME?: string | null;
+	RUNPOD_POD_TEMPLATE_ID?: string | null;
 	RUNPOD_TRAINING_MODE?: "serverless" | "pod" | null;
 }
 
@@ -157,6 +158,10 @@ export function buildAdminSettingsSnapshot(
 			podImageName:
 				workerSnapshot?.runpod.podImageName ??
 				input.env.RUNPOD_POD_IMAGE_NAME ??
+				null,
+			podTemplateId:
+				workerSnapshot?.runpod.podTemplateId ??
+				input.env.RUNPOD_POD_TEMPLATE_ID ??
 				null,
 			pollMs: runpodPollMs,
 			timeoutMs: runpodTimeoutMs,

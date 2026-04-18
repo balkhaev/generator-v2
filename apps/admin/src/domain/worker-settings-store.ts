@@ -41,6 +41,7 @@ export interface WorkerSettingsSnapshot {
 		mode: "serverless" | "pod" | null;
 		podGpuTypeIds: string[] | null;
 		podImageName: string | null;
+		podTemplateId: string | null;
 		pollMs: number | null;
 		timeoutMs: number | null;
 	};
@@ -149,6 +150,7 @@ function parseSnapshot(raw: string): WorkerSettingsSnapshot | null {
 						) as string[])
 					: null,
 				podImageName: runpod.podImageName ?? null,
+				podTemplateId: runpod.podTemplateId ?? null,
 				pollMs: runpod.pollMs ?? null,
 				timeoutMs: runpod.timeoutMs ?? null,
 			},

@@ -123,6 +123,7 @@ export interface RunpodTrainingSettings {
 	mode: "serverless" | "pod";
 	podGpuTypeIds: string[];
 	podImageName: string | null;
+	podTemplateId: string | null;
 	pollMs: number;
 	timeoutMs: number;
 }

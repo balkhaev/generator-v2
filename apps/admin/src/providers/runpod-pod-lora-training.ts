@@ -216,6 +216,11 @@ interface RunpodPodLoraTrainingRunnerOptions {
 	pollMs?: number;
 	resultCallbackUrl?: string;
 	s3Config: S3StorageConfig;
+	/**
+	 * Опциональный id RunPod-template, передаётся в createPod, чтобы
+	 * scheduler предпочёл хосты с уже warm template (быстрый pull).
+	 */
+	templateId?: string;
 	trainingControlToken: string;
 	trainingTimeoutMs?: number;
 	volumeInGb?: number;
@@ -240,6 +245,7 @@ export class RunpodPodLoraTrainingRunner {
 	private readonly pollMs: number;
 	private readonly resultCallbackUrl?: string;
 	private readonly s3Config: S3StorageConfig;
+	private readonly templateId?: string;
 	private readonly trainingControlToken: string;
 	private readonly trainingTimeoutMs: number;
 	private readonly volumeInGb: number;
@@ -263,6 +269,7 @@ export class RunpodPodLoraTrainingRunner {
 		this.pollMs = options.pollMs ?? 30_000;
 		this.resultCallbackUrl = options.resultCallbackUrl;
 		this.s3Config = options.s3Config;
+		this.templateId = options.templateId;
 		this.trainingControlToken = options.trainingControlToken;
 		this.trainingTimeoutMs = options.trainingTimeoutMs ?? 120 * 60 * 1000;
 		this.volumeInGb = options.volumeInGb ?? 60;
@@ -508,6 +515,7 @@ export class RunpodPodLoraTrainingRunner {
 				networkVolumeId: this.networkVolumeId,
 				ports: ["22/tcp"],
 				supportPublicIp: false,
+				templateId: this.templateId,
 				volumeInGb: this.volumeInGb,
 				volumeMountPath: "/workspace",
 			});

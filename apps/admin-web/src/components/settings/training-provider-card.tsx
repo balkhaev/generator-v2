@@ -144,9 +144,14 @@ export function TrainingProviderCard({
 				{runpod.mode === "pod" ? (
 					<>
 						<SettingsRow
-							hint="From RUNPOD_POD_IMAGE_NAME"
+							hint="From RUNPOD_POD_IMAGE_NAME (default: ostris/aitoolkit:latest — кешируется на хостах)"
 							label="Pod image"
 							value={runpod.podImageName ?? "— not set —"}
+						/>
+						<SettingsRow
+							hint="From RUNPOD_POD_TEMPLATE_ID (например, 0fqzfjy6f3 — официальный ostris ai-toolkit). Подсказывает scheduler-у RunPod выбрать warm-хосты."
+							label="Pod template"
+							value={runpod.podTemplateId ?? "— not set —"}
 						/>
 						<SettingsRow
 							hint="From RUNPOD_POD_GPU_TYPE_IDS (comma-separated, ranked)"

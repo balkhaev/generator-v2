@@ -203,14 +203,21 @@ const serverSchema = {
 
 	// Pod-mode-only.
 	RUNPOD_REST_API_BASE_URL: z.url().default("https://rest.runpod.io/v1"),
-	RUNPOD_POD_IMAGE_NAME: z
-		.string()
-		.min(1)
-		.default("runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"),
+	// `ostris/aitoolkit:latest` — официальный образ ai-toolkit (~10.5 GB), уже
+	// содержит torch 2.9.1+cu128, склонированный /app/ai-toolkit и весь pip
+	// stack. Этот же image сидит за RunPod-template `0fqzfjy6f3`, поэтому
+	// большинство хостов держат его в локальном кеше → docker pull завершается
+	// за секунды вместо 10–15 минут на community pytorch image.
+	RUNPOD_POD_IMAGE_NAME: z.string().min(1).default("ostris/aitoolkit:latest"),
+	// Опциональный template-id официального ostris ai-toolkit (`0fqzfjy6f3`).
+	// Когда задан, RunPod scheduler предпочитает хосты, у которых этот
+	// template уже warm — это самый надёжный способ получить «холодный»
+	// старт в районе минуты вместо десятков минут на провижининг.
+	RUNPOD_POD_TEMPLATE_ID: z.string().min(1).optional(),
 	RUNPOD_POD_GPU_TYPE_IDS: z
 		.string()
 		.min(1)
-		.default("NVIDIA RTX A4000,NVIDIA GeForce RTX 4090,NVIDIA RTX A5000")
+		.default("NVIDIA GeForce RTX 4090,NVIDIA RTX A5000,NVIDIA RTX A6000")
 		.describe("Comma-separated list of acceptable RunPod GPU type ids."),
 	RUNPOD_POD_CONTAINER_DISK_GB: z.coerce.number().int().positive().default(60),
 	RUNPOD_POD_VOLUME_GB: z.coerce.number().int().positive().default(60),

@@ -128,6 +128,7 @@ const runpodPodRunner =
 				),
 				pollMs: env.RUNPOD_AI_TOOLKIT_POLL_MS,
 				s3Config,
+				templateId: env.RUNPOD_POD_TEMPLATE_ID,
 				trainingControlToken,
 				trainingTimeoutMs: env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS,
 				volumeInGb: env.RUNPOD_POD_VOLUME_GB,
@@ -176,6 +177,7 @@ const stopHeartbeat = startWorkerSettingsHeartbeat({
 				.map((id) => id.trim())
 				.filter((id) => id.length > 0),
 			podImageName: env.RUNPOD_POD_IMAGE_NAME,
+			podTemplateId: env.RUNPOD_POD_TEMPLATE_ID ?? null,
 			pollMs: env.RUNPOD_AI_TOOLKIT_POLL_MS,
 			timeoutMs: env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS,
 		},

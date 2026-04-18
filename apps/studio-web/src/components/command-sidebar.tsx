@@ -368,7 +368,7 @@ function RunCard({
 					{outputThumbnails.map((url, index) => (
 						<a
 							aria-label={`Open output ${index + 1}`}
-							className="group relative aspect-square overflow-hidden rounded-md bg-black/30"
+							className="group relative aspect-[9/16] overflow-hidden rounded-md bg-black/30"
 							href={url}
 							key={url}
 							rel="noopener noreferrer"

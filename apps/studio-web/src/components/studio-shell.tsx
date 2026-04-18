@@ -340,10 +340,8 @@ function buildScenarioMediaAssets(
 			return [];
 		}
 
-		const assets: StudioMediaAsset[] = [];
-
-		for (const [index, url] of run.artifactUrls.entries()) {
-			assets.push({
+		if (run.artifactUrls.length > 0) {
+			return run.artifactUrls.map<StudioMediaAsset>((url, index) => ({
 				createdAt: run.createdAt,
 				id: `output-${run.id}-${index}`,
 				label: `${run.scenarioName} output ${index + 1}`,
@@ -354,25 +352,35 @@ function buildScenarioMediaAssets(
 				scenarioId: run.scenarioId,
 				status: run.status,
 				url,
-			});
+			}));
 		}
 
-		if (run.inputImageUrl) {
-			assets.push({
-				createdAt: run.createdAt,
-				id: `input-${run.id}`,
-				label: run.inputLabel,
-				mediaKind: "input",
-				mediaType: getMediaType(run.inputImageUrl),
-				meta: run.scenarioName,
-				runId: run.id,
-				scenarioId: run.scenarioId,
-				status: run.status,
-				url: run.inputImageUrl,
-			});
+		// Пока генерация идёт и реальных артефактов нет — занимаем слот будущего
+		// output входным фото, чтобы пользователь видел, что именно мы генерируем.
+		// Как только artifactUrls появятся, placeholder заменится настоящим выводом.
+		if (
+			run.inputImageUrl &&
+			(run.status === "queued" || run.status === "running")
+		) {
+			return [
+				{
+					createdAt: run.createdAt,
+					id: `pending-${run.id}`,
+					label: run.inputLabel,
+					mediaKind: "output",
+					mediaType: getMediaType(run.inputImageUrl),
+					meta: run.scenarioName,
+					placeholder: true,
+					progressPct: run.progressPct ?? null,
+					runId: run.id,
+					scenarioId: run.scenarioId,
+					status: run.status,
+					url: run.inputImageUrl,
+				},
+			];
 		}
 
-		return assets;
+		return [];
 	});
 }
 
@@ -643,6 +651,17 @@ export default function StudioShell({
 		[requestedRun, selectedScenarioId, snapshot.runs]
 	);
 
+	const isSelectedAssetSavedShot = useMemo(() => {
+		if (!selectedMediaAsset) {
+			return false;
+		}
+		return snapshot.shots.some(
+			(shot) =>
+				shot.runId === selectedMediaAsset.runId &&
+				shot.artifactUrl === selectedMediaAsset.url
+		);
+	}, [selectedMediaAsset, snapshot.shots]);
+
 	const statusLabel = isPersonMode
 		? "person · LoRA"
 		: (selectedScenarioCard?.workflowKey ?? "scenario");
@@ -724,6 +743,7 @@ export default function StudioShell({
 				<PreviewSurface
 					asset={selectedMediaAsset}
 					currentIndex={selectedMediaIndex}
+					isSavedShot={isSelectedAssetSavedShot}
 					isSavingShot={
 						selectedMediaAsset
 							? savingShotAssetId === selectedMediaAsset.id

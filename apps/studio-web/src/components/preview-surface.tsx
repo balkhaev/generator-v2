@@ -47,6 +47,13 @@ export interface StudioMediaAsset {
 	mediaKind: "input" | "output";
 	mediaType: "image" | "video";
 	meta: string;
+	/**
+	 * true, когда asset показывается как заглушка для будущего output:
+	 * пока run в queued/running и реальных artefact'ов ещё нет, мы рендерим
+	 * входное фото в том же слоте, где появится готовый результат.
+	 */
+	placeholder?: boolean;
+	progressPct?: number | null;
 	runId: string;
 	scenarioId: string;
 	status: "queued" | "running" | "succeeded" | "failed";
@@ -104,18 +111,35 @@ function PreviewEmptyState() {
 	);
 }
 
+function getPlaceholderLabel(asset: StudioMediaAsset) {
+	if (asset.status === "queued") {
+		return "queued";
+	}
+	if (
+		typeof asset.progressPct === "number" &&
+		Number.isFinite(asset.progressPct)
+	) {
+		return `generating · ${Math.round(asset.progressPct)}%`;
+	}
+	return "generating";
+}
+
 function PreviewBadges({ asset }: { asset: StudioMediaAsset }) {
+	const isPlaceholder = asset.placeholder === true;
+	const placeholderLabel = getPlaceholderLabel(asset);
+
 	return (
 		<div className="absolute top-2 left-2 flex items-center gap-1.5">
 			<span
 				className={cn(
-					"rounded-full px-2 py-0.5 text-[11px]",
-					asset.mediaKind === "output"
-						? "bg-emerald-500/15 text-emerald-50 backdrop-blur-md"
-						: "bg-sky-500/15 text-sky-50 backdrop-blur-md"
+					"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] backdrop-blur-md",
+					isPlaceholder
+						? "bg-amber-500/15 text-amber-50"
+						: "bg-emerald-500/15 text-emerald-50"
 				)}
 			>
-				{asset.mediaKind}
+				{isPlaceholder ? <Loader2 className="size-3 animate-spin" /> : null}
+				{isPlaceholder ? placeholderLabel : asset.mediaKind}
 			</span>
 			<span className="inline-flex items-center gap-1 rounded-full bg-background/70 px-2 py-0.5 text-[11px] backdrop-blur-md">
 				{asset.mediaType === "video" ? (
@@ -132,6 +156,7 @@ function PreviewBadges({ asset }: { asset: StudioMediaAsset }) {
 function PreviewToolbar({
 	asset,
 	isFullscreen,
+	isSavedShot,
 	isSavingShot,
 	onCopyUrl,
 	onSaveShot,
@@ -139,6 +164,7 @@ function PreviewToolbar({
 }: {
 	asset: StudioMediaAsset;
 	isFullscreen: boolean;
+	isSavedShot?: boolean;
 	isSavingShot?: boolean;
 	onCopyUrl: () => void;
 	onSaveShot?: (asset: StudioMediaAsset) => void;
@@ -146,17 +172,24 @@ function PreviewToolbar({
 }) {
 	return (
 		<div className="absolute top-2 right-2 flex items-center gap-1 rounded-lg bg-background/70 px-1 py-1 backdrop-blur-md">
-			{onSaveShot && asset.mediaKind === "output" ? (
+			{onSaveShot &&
+			asset.mediaKind === "output" &&
+			asset.placeholder !== true ? (
 				<IconButton
-					disabled={isSavingShot}
-					hint="Save as shot"
-					label="Save as shot"
+					disabled={isSavingShot || isSavedShot}
+					hint={isSavedShot ? "Saved as shot" : "Save as shot"}
+					label={isSavedShot ? "Saved as shot" : "Save as shot"}
 					onClick={() => onSaveShot(asset)}
 				>
 					{isSavingShot ? (
 						<Loader2 className="size-3.5 animate-spin" />
 					) : (
-						<Bookmark className="size-3.5" />
+						<Bookmark
+							className={cn(
+								"size-3.5",
+								isSavedShot && "fill-current text-amber-400"
+							)}
+						/>
 					)}
 				</IconButton>
 			) : null}
@@ -284,6 +317,7 @@ export default function PreviewSurface({
 	asset,
 	currentIndex,
 	emptyState,
+	isSavedShot,
 	isSavingShot,
 	onNext,
 	onPrevious,
@@ -293,6 +327,7 @@ export default function PreviewSurface({
 	asset: StudioMediaAsset | null;
 	currentIndex: number;
 	emptyState?: ReactNode;
+	isSavedShot?: boolean;
 	isSavingShot?: boolean;
 	onNext?: () => void;
 	onPrevious?: () => void;
@@ -413,6 +448,7 @@ export default function PreviewSurface({
 					<PreviewToolbar
 						asset={asset}
 						isFullscreen={isFullscreen}
+						isSavedShot={isSavedShot}
 						isSavingShot={isSavingShot}
 						onCopyUrl={handleCopyUrl}
 						onSaveShot={onSaveShot}

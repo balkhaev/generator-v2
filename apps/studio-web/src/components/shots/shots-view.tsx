@@ -252,7 +252,7 @@ export default function ShotsView({
 								>
 									{item.artifactKind === "video" ? (
 										<video
-											className="aspect-square w-full object-cover"
+											className="aspect-[9/16] w-full object-cover"
 											muted
 											playsInline
 											preload="metadata"
@@ -261,7 +261,7 @@ export default function ShotsView({
 									) : (
 										<div
 											aria-hidden="true"
-											className="aspect-square bg-center bg-cover"
+											className="aspect-[9/16] bg-center bg-cover"
 											style={{
 												backgroundImage: `url("${item.thumbnailUrl}")`,
 											}}

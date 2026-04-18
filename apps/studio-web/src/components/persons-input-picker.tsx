@@ -68,7 +68,7 @@ function isPersonDatasetGeneration(generation: PersonGenerationRecord) {
 /**
  * Адаптивный grid с тайлами фиксированной шириной — на узком aside даёт
  * 3-4 колонки, на широком сайдбаре или мобильном пикере раскладывается
- * соответственно. Без этого `grid-cols-4` + `aspect-square` на широком
+ * соответственно. Без этого `grid-cols-4` + `aspect-[9/16]` на широком
  * контейнере раздувает превью до 200+px и они визуально «наезжают» друг
  * на друга при `max-h-*` overflow.
  */
@@ -125,7 +125,7 @@ function IdentityTiles({
 									<button
 										aria-label={tile.label}
 										className={cn(
-											"relative aspect-square overflow-hidden rounded-lg transition",
+											"relative aspect-[9/16] overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"
@@ -582,7 +582,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={reference.label}
 										className={cn(
-											"group relative aspect-square overflow-hidden rounded-lg transition",
+											"group relative aspect-[9/16] overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-70 hover:opacity-100"
@@ -641,7 +641,7 @@ export default function PersonsInputPicker({
 					return (
 						<button
 							className={cn(
-								"group relative aspect-square overflow-hidden rounded-lg transition",
+								"group relative aspect-[9/16] overflow-hidden rounded-lg transition",
 								isActive
 									? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 									: "opacity-80 hover:opacity-100"
@@ -728,7 +728,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={generation.title}
 										className={cn(
-											"relative aspect-square overflow-hidden rounded-lg transition",
+											"relative aspect-[9/16] overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"
@@ -834,7 +834,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={shot.scenarioName}
 										className={cn(
-											"group relative aspect-square overflow-hidden rounded-lg transition",
+											"group relative aspect-[9/16] overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"

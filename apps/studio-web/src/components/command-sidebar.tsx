@@ -964,7 +964,9 @@ function PromptOverrideEditor({
 							const result = await enhanceStudioPrompt(value, {
 								imageUrl: draft?.inputImageUrl ?? null,
 							});
-							if (result.mode === "vision") {
+							if (result.notice) {
+								toast.warning(result.notice);
+							} else if (result.mode === "vision") {
 								toast.success("Prompt rewritten for this image");
 							} else {
 								toast.success("Prompt enhanced with Grok");

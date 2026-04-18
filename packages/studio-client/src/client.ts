@@ -143,7 +143,11 @@ export function uploadStudioInputImage(input: {
 export async function enhanceStudioPrompt(
 	prompt: string,
 	options?: { imageUrl?: string | null }
-): Promise<{ enhanced: string; mode: "text" | "vision" }> {
+): Promise<{
+	enhanced: string;
+	mode: "text" | "vision";
+	notice?: string | null;
+}> {
 	const imageUrl = options?.imageUrl?.trim();
 	const body: Record<string, unknown> = { prompt };
 	if (imageUrl) {
@@ -152,6 +156,7 @@ export async function enhanceStudioPrompt(
 	const payload = await requestStudioJson<{
 		enhanced?: unknown;
 		mode?: unknown;
+		notice?: unknown;
 	}>(`${apiBaseUrl}/api/enhance-prompt`, {
 		body: JSON.stringify(body),
 		method: "POST",
@@ -162,7 +167,13 @@ export async function enhanceStudioPrompt(
 	}
 
 	const mode = payload.mode === "vision" ? "vision" : "text";
-	return { enhanced: payload.enhanced, mode };
+	const notice =
+		typeof payload.notice === "string" && payload.notice.trim() !== ""
+			? payload.notice
+			: null;
+	return notice
+		? { enhanced: payload.enhanced, mode, notice }
+		: { enhanced: payload.enhanced, mode };
 }
 
 export async function saveStudioShot(

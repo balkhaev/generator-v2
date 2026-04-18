@@ -1,5 +1,6 @@
 const XAI_BASE_URL = "https://api.x.ai/v1";
 const DEFAULT_MODEL = "grok-4-fast";
+const IPV4_HOST_PATTERN = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/;
 
 const STUDIO_SYSTEM_PROMPT = `You are an expert prompt engineer for diffusion image and video generation
 models (Flux, SDXL, Wan, Veo, Kling and similar). Your job is to take a short or
@@ -34,38 +35,24 @@ User brief:
 ${basePrompt}
 """`;
 
-const ENHANCE_WITH_IMAGE_SYSTEM_PROMPT = `You are an expert prompt engineer for diffusion image and video generation
-models. You receive (a) a short scenario brief written by a user and (b) a
-reference image that will be the input/source frame for the generation. Your
-job is to rewrite the brief into a single concrete, image-grounded production
-prompt that describes exactly what should happen on top of THAT specific image.
+const ENHANCE_WITH_IMAGE_SYSTEM_PROMPT = `You rewrite short diffusion-model
+briefs (image/video) into one polished English prompt.
 
-Hard rules for every rewrite:
-- READ the image carefully. Identify the main subject(s): apparent gender,
-  approximate age bracket, hair (length/color/texture), notable clothing,
-  environment, lighting, time of day, color palette and overall mood.
-- PRESERVE the user's intent: the action, scene, style cues from the brief
-  must remain. Never replace the subject, never invent additional people,
-  never change who/what is in the shot.
-- GROUND the rewrite in the image: use the visual details you observed
-  ("young woman with long dark hair", "white linen shirt", "warm sunset
-  light through the window") instead of generic placeholders.
-- For motion/video briefs, also describe how the subject and camera move
-  (handheld, dolly-in, static, slow pan), pacing, and what physically reacts
-  in the scene (hair, fabric, dust, water).
-- Output ONLY the rewritten prompt — single English paragraph, comma-separated
-  clauses, no markdown, no code fences, no quotes around the result, no
-  numbering, no preamble, no labels like "Prompt:".
-- Keep it focused: 50–140 words. Don't pad with empty adjectives.
-- SFW only. Refuse and return the original brief unchanged if the image or
-  brief is sexual, illegal, or otherwise disallowed.`;
+You receive: (1) a user brief and (2) a reference frame that will be the
+generation input.
+
+Rules:
+- Observe the frame: main subject, outfit, setting, lighting, palette, mood.
+  Use neutral, factual wording (avoid demographic guesses).
+- Keep the user's requested action, motion, and style; do not change creative
+  intent. Do not add people or objects beyond the brief and what is visible.
+- For motion, mention camera and subject motion when the brief implies video.
+- Output a single paragraph, comma-separated phrases, 50–130 words, plain
+  text only: no markdown, no code fences, no numbered lists, no leading label.`;
 
 const ENHANCE_WITH_IMAGE_USER_TEMPLATE = (basePrompt: string) =>
-	`Look at the attached image. It is the source/input frame for a generation.
-Rewrite the following brief into a single production-ready prompt grounded in
-what you actually see in the image (subject details, environment, lighting,
-mood). Preserve the user's intent and action exactly — only enrich it with
-concrete, image-specific detail.
+	`Using the attached reference frame, rewrite this brief into one detailed
+generation prompt that ties the action to what is visible in the frame.
 
 Return only the rewritten prompt text. No quotes, no JSON, no markdown.
 
@@ -102,6 +89,89 @@ function cleanPromptOutput(value: string) {
 		.trim()
 		.replace(surroundingQuotePattern, "")
 		.trim();
+}
+
+function isBlockedImageFetchHostname(hostname: string): boolean {
+	const h = hostname.toLowerCase();
+	if (h === "localhost" || h.endsWith(".localhost")) {
+		return true;
+	}
+	if (h === "0.0.0.0" || h === "[::1]" || h === "::1") {
+		return true;
+	}
+	const ipv4 = IPV4_HOST_PATTERN.exec(h);
+	if (ipv4) {
+		const a = Number(ipv4[1]);
+		const b = Number(ipv4[2]);
+		if (a === 0 || a === 127 || a === 10) {
+			return true;
+		}
+		if (a === 169 && b === 254) {
+			return true;
+		}
+		if (a === 192 && b === 168) {
+			return true;
+		}
+		if (a === 172 && b >= 16 && b <= 31) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** Only fetch remote images over HTTPS to avoid SSRF; skip private hosts. */
+function canFetchImageAsInlineData(url: string): boolean {
+	try {
+		const u = new URL(url);
+		if (u.protocol !== "https:") {
+			return false;
+		}
+		return !isBlockedImageFetchHostname(u.hostname);
+	} catch {
+		return false;
+	}
+}
+
+const MAX_VISION_IMAGE_BYTES = 6 * 1024 * 1024;
+const VISION_IMAGE_FETCH_MS = 15_000;
+
+async function tryInlineImageForVision(
+	imageUrl: string,
+	fetchImpl: typeof fetch
+): Promise<string> {
+	const trimmed = imageUrl.trim();
+	if (trimmed.startsWith("data:image/")) {
+		return trimmed;
+	}
+	if (!canFetchImageAsInlineData(trimmed)) {
+		return trimmed;
+	}
+
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), VISION_IMAGE_FETCH_MS);
+	try {
+		const response = await fetchImpl(trimmed, {
+			headers: { accept: "image/*,*/*" },
+			method: "GET",
+			redirect: "follow",
+			signal: controller.signal,
+		});
+		if (!response.ok) {
+			return trimmed;
+		}
+		const buffer = await response.arrayBuffer();
+		if (buffer.byteLength === 0 || buffer.byteLength > MAX_VISION_IMAGE_BYTES) {
+			return trimmed;
+		}
+		const rawType = response.headers.get("content-type")?.split(";")[0]?.trim();
+		const mime = rawType?.startsWith("image/") ? rawType : "image/jpeg";
+		const base64 = Buffer.from(buffer).toString("base64");
+		return `data:${mime};base64,${base64}`;
+	} catch {
+		return trimmed;
+	} finally {
+		clearTimeout(timeoutId);
+	}
 }
 
 export function createStudioGrokClient(
@@ -161,7 +231,7 @@ export function createStudioGrokClient(
 			]);
 		},
 
-		enhancePromptWithImage(prompt, imageUrl) {
+		async enhancePromptWithImage(prompt, imageUrl) {
 			const trimmed = prompt.trim();
 			if (!trimmed) {
 				return Promise.reject(new Error("Cannot enhance an empty prompt"));
@@ -172,6 +242,10 @@ export function createStudioGrokClient(
 					new Error("Image URL is required for vision-based enhance")
 				);
 			}
+			const imageForModel = await tryInlineImageForVision(
+				trimmedUrl,
+				fetchImpl
+			);
 			return callChatCompletions([
 				{ role: "system", content: ENHANCE_WITH_IMAGE_SYSTEM_PROMPT },
 				{
@@ -179,7 +253,7 @@ export function createStudioGrokClient(
 					content: [
 						{
 							type: "image_url",
-							image_url: { url: trimmedUrl, detail: "high" },
+							image_url: { detail: "low", url: imageForModel },
 						},
 						{
 							type: "text",

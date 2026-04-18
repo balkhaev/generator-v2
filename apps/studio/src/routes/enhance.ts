@@ -8,6 +8,54 @@ const enhanceRequestSchema = z.object({
 	prompt: z.string().min(1).max(2000),
 });
 
+function shouldFallbackVisionToText(error: unknown): boolean {
+	const msg = (
+		error instanceof Error ? error.message : String(error)
+	).toLowerCase();
+	return (
+		msg.includes("403") ||
+		msg.includes("forbidden") ||
+		msg.includes("usage guidelines") ||
+		msg.includes("does not have permission") ||
+		msg.includes("content violates") ||
+		msg.includes("policy violation") ||
+		msg.includes("moderation") ||
+		msg.includes("safety system")
+	);
+}
+
+async function runEnhancement(
+	client: StudioGrokClient,
+	input: z.infer<typeof enhanceRequestSchema>
+): Promise<{
+	enhanced: string;
+	mode: "text" | "vision";
+	notice: string | null;
+}> {
+	if (!input.imageUrl) {
+		const enhanced = await client.enhancePrompt(input.prompt);
+		return { enhanced, mode: "text", notice: null };
+	}
+	try {
+		const enhanced = await client.enhancePromptWithImage(
+			input.prompt,
+			input.imageUrl
+		);
+		return { enhanced, mode: "vision", notice: null };
+	} catch (visionError) {
+		if (!shouldFallbackVisionToText(visionError)) {
+			throw visionError;
+		}
+		const enhanced = await client.enhancePrompt(input.prompt);
+		return {
+			enhanced,
+			mode: "text",
+			notice:
+				"Grok could not use the image (policy or provider limits). Prompt was enhanced without vision.",
+		};
+	}
+}
+
 export function createEnhanceRoutes(client: StudioGrokClient | undefined) {
 	const app = new Hono();
 
@@ -35,15 +83,11 @@ export function createEnhanceRoutes(client: StudioGrokClient | undefined) {
 		}
 
 		try {
-			const enhanced = parsed.data.imageUrl
-				? await client.enhancePromptWithImage(
-						parsed.data.prompt,
-						parsed.data.imageUrl
-					)
-				: await client.enhancePrompt(parsed.data.prompt);
+			const out = await runEnhancement(client, parsed.data);
 			return c.json({
-				enhanced,
-				mode: parsed.data.imageUrl ? "vision" : "text",
+				enhanced: out.enhanced,
+				mode: out.mode,
+				...(out.notice ? { notice: out.notice } : {}),
 			});
 		} catch (error) {
 			return c.json(

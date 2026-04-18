@@ -205,6 +205,20 @@ function LoraSection({
 }: LoraSectionProps) {
 	const baseModelLabel = selectedWorkflow.baseModel ?? "any";
 	const showEmptyHint = !lorasError && availableLoras.length === 0;
+	if (typeof window !== "undefined") {
+		// eslint-disable-next-line no-console
+		console.info(
+			"[compose] LoraSection render " +
+				JSON.stringify({
+					baseModelLabel,
+					availableLorasLength: availableLoras.length,
+					availableLorasSlugs: availableLoras.map((entry) => entry.slug),
+					selectedWorkflowKey: selectedWorkflow.key,
+					selectedWorkflowBaseModel: selectedWorkflow.baseModel,
+					lorasError,
+				})
+		);
+	}
 	return (
 		<section className="grid gap-2">
 			<div className="flex items-center justify-between gap-2">

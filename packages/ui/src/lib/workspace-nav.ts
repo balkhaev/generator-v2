@@ -29,17 +29,17 @@ interface WorkspaceDefinition {
 }
 
 const workspaceDefinitions: Record<WorkspaceId, WorkspaceDefinition> = {
-	admin: {
+	studio: {
 		accent: {
 			chroma: 0.12,
 			foreground: "oklch(0.99 0 0)",
-			hue: 230,
+			hue: 205,
 			lightness: 0.58,
-			lightnessDark: 0.66,
+			lightnessDark: 0.68,
 		},
-		icon: ShieldEllipsis,
-		label: "Admin",
-		shortLabel: "Adm",
+		icon: Clapperboard,
+		label: "Studio",
+		shortLabel: "Std",
 	},
 	persons: {
 		accent: {
@@ -65,17 +65,17 @@ const workspaceDefinitions: Record<WorkspaceId, WorkspaceDefinition> = {
 		label: "Shots",
 		shortLabel: "Sht",
 	},
-	studio: {
+	admin: {
 		accent: {
 			chroma: 0.12,
 			foreground: "oklch(0.99 0 0)",
-			hue: 205,
+			hue: 230,
 			lightness: 0.58,
-			lightnessDark: 0.68,
+			lightnessDark: 0.66,
 		},
-		icon: Clapperboard,
-		label: "Studio",
-		shortLabel: "Std",
+		icon: ShieldEllipsis,
+		label: "Admin",
+		shortLabel: "Adm",
 	},
 };
 

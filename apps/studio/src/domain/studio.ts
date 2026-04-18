@@ -1,5 +1,6 @@
 import type {
 	CreateGeneratorExecutionInput,
+	ExecutionPhase,
 	GeneratorExecutionRecord,
 	ScenarioParamValue,
 	SyncGeneratorExecutionInput,
@@ -16,6 +17,7 @@ import { normalizeBaseUrl } from "@generator/http/shared";
 import { getWorkflowDefinition } from "@generator/workflows";
 import { z } from "zod";
 
+import { RunUpdatesEmitter } from "@/domain/run-updates-emitter";
 import { BadRequestError, NotFoundError } from "@/routes/utils";
 
 const studioScenarioParamsSchema = z
@@ -95,15 +97,25 @@ export interface StudioRunEntity {
 	completedAt: Date | null;
 	createdAt: Date;
 	errorSummary: string | null;
+	/**
+	 * Транзиентные live-поля. Не персистятся в studio_run, заполняются при
+	 * `applyExecutionCallback`/`launchRun`/`syncRun` из execution-payload и
+	 * сразу пробрасываются в SSE. После рестарта инстанса исчезают, но
+	 * `progressPct` остаётся в БД, поэтому UI всё равно увидит прогресс.
+	 */
+	etaMs?: number | null;
 	generatorRunId: string | null;
 	id: string;
 	inputImageUrl: string;
 	inputPersonGenerationId: string | null;
 	inputPersonId: string | null;
+	lastLogLine?: string | null;
 	loraPersonId: string | null;
+	phase?: ExecutionPhase | null;
 	progressPct: number | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
+	queuePosition?: number | null;
 	scenarioId: string;
 	status: StudioRunStatus;
 	updatedAt: Date;
@@ -262,18 +274,64 @@ function toStudioRunRecord(entity: StudioRunEntity): StudioRunRecord {
 		})),
 		createdAt: entity.createdAt.toISOString(),
 		errorSummary: entity.errorSummary,
+		etaMs: entity.etaMs ?? null,
 		generatorRunId: entity.generatorRunId,
 		id: entity.id,
 		inputImageUrl: entity.inputImageUrl,
 		inputPersonGenerationId: entity.inputPersonGenerationId,
 		inputPersonId: entity.inputPersonId,
+		lastLogLine: entity.lastLogLine ?? null,
 		loraPersonId: entity.loraPersonId ?? null,
+		phase: entity.phase ?? null,
 		progressPct: entity.progressPct,
 		providerEndpointId: entity.providerEndpointId,
 		providerJobId: entity.providerJobId,
+		queuePosition: entity.queuePosition ?? null,
 		scenarioId: entity.scenarioId,
 		status: entity.status,
 		workflowKey: entity.workflowKey,
+	};
+}
+
+const fileExtensionPattern = /\.[a-z0-9]+$/i;
+
+function formatInputLabel(inputImageUrl: string): string {
+	try {
+		const url = new URL(inputImageUrl);
+		const lastPathSegment = url.pathname
+			.split("/")
+			.filter(Boolean)
+			.at(-1)
+			?.replace(fileExtensionPattern, "");
+		return lastPathSegment || url.hostname;
+	} catch {
+		return inputImageUrl;
+	}
+}
+
+/**
+ * Расширенная wire-форма run-записи, отдаваемая SSE и снапшотом студии.
+ * Включает derived-поля (`scenarioName`, `inputLabel`, `artifactUrls`),
+ * чтобы фронту не приходилось знать о scenarios для рендера.
+ */
+export interface StudioRunWireRecord extends StudioRunRecord {
+	artifactUrls: string[];
+	inputLabel: string;
+	scenarioName: string;
+}
+
+export function runEntityToWireRecord(
+	entity: StudioRunEntity,
+	scenarioName: string
+): StudioRunWireRecord {
+	const base = toStudioRunRecord(entity);
+	return {
+		...base,
+		artifactUrls: entity.artifacts
+			.map((artifact) => artifact.url)
+			.filter((url): url is string => Boolean(url)),
+		inputLabel: formatInputLabel(entity.inputImageUrl),
+		scenarioName,
 	};
 }
 
@@ -347,6 +405,7 @@ export class StudioService {
 	private readonly outboundFetch: HttpFetch;
 	private readonly personsApiBaseUrl?: string;
 	private readonly repository: StudioRepository;
+	readonly runUpdatesEmitter = new RunUpdatesEmitter<StudioRunWireRecord>();
 
 	constructor(
 		repository: StudioRepository,
@@ -364,6 +423,79 @@ export class StudioService {
 		this.callbackConfig = callbackConfig;
 		this.personsApiBaseUrl = resolver?.personsApiBaseUrl?.trim();
 		this.outboundFetch = resolver?.fetchImpl ?? fetch;
+	}
+
+	/**
+	 * Тонкая обёртка над репозиторием, чтобы наружу можно было получить
+	 * snapshot активных runs для SSE без дублирования логики (использует
+	 * тот же wire-mapper, что и `createStudioSnapshot`).
+	 */
+	async listActiveWireRuns(limit = 50): Promise<StudioRunWireRecord[]> {
+		const runs = await this.repository.listActiveRuns(limit);
+		const scenarioNames = await this.scenarioNamesFor(runs);
+		return runs.map((run) =>
+			runEntityToWireRecord(
+				run,
+				scenarioNames.get(run.scenarioId) ?? "Unknown scenario"
+			)
+		);
+	}
+
+	private async scenarioNamesFor(
+		runs: Pick<StudioRunEntity, "scenarioId">[]
+	): Promise<Map<string, string>> {
+		if (runs.length === 0) {
+			return new Map();
+		}
+		const ids = new Set(runs.map((run) => run.scenarioId));
+		const entries = await Promise.all(
+			Array.from(ids).map(async (id) => {
+				const scenario = await this.repository.getScenarioById(id);
+				return [id, scenario?.name ?? "Unknown scenario"] as const;
+			})
+		);
+		return new Map(entries);
+	}
+
+	private async emitRunUpdate(entity: StudioRunEntity): Promise<void> {
+		try {
+			const scenario = await this.repository.getScenarioById(entity.scenarioId);
+			const record = runEntityToWireRecord(
+				entity,
+				scenario?.name ?? "Unknown scenario"
+			);
+			this.runUpdatesEmitter.emit(record);
+		} catch (error) {
+			this.logger.error("studio.run-emit.failed", {
+				error: error instanceof Error ? error.message : "unknown",
+				runId: entity.id,
+			});
+		}
+	}
+
+	/**
+	 * Дополняет entity данными, которые приходят с execution-payload
+	 * (etaMs/phase/queuePosition/lastLogLine), но не персистятся.
+	 * После сохранения в БД мы получаем «чистую» сущность без этих полей —
+	 * этот хелпер мерджит их обратно перед публикацией в SSE.
+	 */
+	private withExecutionLiveFields<T extends StudioRunEntity>(
+		entity: T,
+		execution: Pick<
+			GeneratorExecutionRecord,
+			"etaMs" | "lastLogLine" | "phase" | "queuePosition"
+		> | null
+	): T {
+		if (!execution) {
+			return entity;
+		}
+		return {
+			...entity,
+			etaMs: execution.etaMs ?? null,
+			lastLogLine: execution.lastLogLine ?? null,
+			phase: execution.phase ?? null,
+			queuePosition: execution.queuePosition ?? null,
+		};
 	}
 
 	private resolveLatestExecution(
@@ -441,6 +573,17 @@ export class StudioService {
 
 	async listRuns() {
 		return (await this.repository.listRuns()).map(toStudioRunRecord);
+	}
+
+	async listRunsWire(): Promise<StudioRunWireRecord[]> {
+		const runs = await this.repository.listRuns();
+		const scenarioNames = await this.scenarioNamesFor(runs);
+		return runs.map((run) =>
+			runEntityToWireRecord(
+				run,
+				scenarioNames.get(run.scenarioId) ?? "Unknown scenario"
+			)
+		);
 	}
 
 	async getRunById(runId: string) {
@@ -631,7 +774,9 @@ export class StudioService {
 			throw new Error("Failed to persist studio run after generator launch.");
 		}
 
-		return toStudioRunRecord(updated);
+		const enriched = this.withExecutionLiveFields(updated, execution);
+		await this.emitRunUpdate(enriched);
+		return toStudioRunRecord(enriched);
 	}
 
 	async syncRun(
@@ -682,7 +827,12 @@ export class StudioService {
 			status: execution.status,
 		});
 
-		return updatedRun ? toStudioRunRecord(updatedRun) : null;
+		if (!updatedRun) {
+			return null;
+		}
+		const enriched = this.withExecutionLiveFields(updatedRun, execution);
+		await this.emitRunUpdate(enriched);
+		return toStudioRunRecord(enriched);
 	}
 
 	/**
@@ -707,6 +857,9 @@ export class StudioService {
 			previousStatus: currentRun.status,
 			runId,
 		});
+		if (updated) {
+			await this.emitRunUpdate(updated);
+		}
 		return updated ? toStudioRunRecord(updated) : null;
 	}
 
@@ -755,7 +908,12 @@ export class StudioService {
 			status: input.execution.status,
 		});
 
-		return updatedRun ? toStudioRunRecord(updatedRun) : null;
+		if (!updatedRun) {
+			return null;
+		}
+		const enriched = this.withExecutionLiveFields(updatedRun, input.execution);
+		await this.emitRunUpdate(enriched);
+		return toStudioRunRecord(enriched);
 	}
 
 	async listShots() {
@@ -820,6 +978,8 @@ export class StudioService {
 				});
 				if (updated) {
 					updatedCount += 1;
+					const enriched = this.withExecutionLiveFields(updated, execution);
+					await this.emitRunUpdate(enriched);
 				}
 				this.logger.info("studio.reconcile.run-synced", {
 					runId: run.id,

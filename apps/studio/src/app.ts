@@ -90,52 +90,17 @@ interface WorkflowDefinition {
 }
 
 interface StudioSnapshotResponse {
-	runs: Array<{
-		artifactUrls: string[];
-		createdAt?: string;
-		errorSummary?: string | null;
-		generatorRunId?: string | null;
-		id: string;
-		inputImageUrl: string;
-		inputLabel: string;
-		inputPersonGenerationId?: string | null;
-		inputPersonId?: string | null;
-		loraPersonId?: string | null;
-		progressPct?: number | null;
-		providerEndpointId?: string | null;
-		providerJobId?: string | null;
-		scenarioId: string;
-		scenarioName: string;
-		status: string;
-		workflowKey: string;
-	}>;
+	runs: Awaited<ReturnType<StudioService["listRunsWire"]>>;
 	scenarios: Awaited<ReturnType<StudioService["listScenarios"]>>;
 	shots: Array<StudioShotRecord & { scenarioName: string }>;
 	source: "server";
 	workflows: WorkflowDefinition[];
 }
 
-const fileExtensionPattern = /\.[a-z0-9]+$/i;
-
 const isPublicApiPath = createPublicPathMatcher({
 	exact: ["/api/health", "/api/ready", "/api/studio-snapshot"],
 	prefixes: ["/api/auth/", "/api/internal/"],
 });
-
-function formatInputLabel(inputImageUrl: string) {
-	try {
-		const url = new URL(inputImageUrl);
-		const lastPathSegment = url.pathname
-			.split("/")
-			.filter(Boolean)
-			.at(-1)
-			?.replace(fileExtensionPattern, "");
-
-		return lastPathSegment || url.hostname;
-	} catch {
-		return inputImageUrl;
-	}
-}
 
 function createPromptHint(workflowName: string) {
 	return `Describe the ${workflowName} shot, camera movement, and effect you want the generated clip to amplify.`;
@@ -195,7 +160,7 @@ async function createStudioSnapshot(
 ): Promise<StudioSnapshotResponse> {
 	const [scenarios, runs, shots] = await Promise.all([
 		service.listScenarios(),
-		service.listRuns(),
+		service.listRunsWire(),
 		service.listShots().catch(() => [] as StudioShotRecord[]),
 	]);
 	const scenarioNames = new Map(
@@ -203,27 +168,7 @@ async function createStudioSnapshot(
 	);
 
 	return {
-		runs: runs.map((run) => ({
-			artifactUrls: (run.artifacts ?? [])
-				.flatMap((artifact) => artifact.url ?? [])
-				.filter((artifactUrl): artifactUrl is string => Boolean(artifactUrl)),
-			createdAt: run.createdAt,
-			errorSummary: run.errorSummary ?? null,
-			generatorRunId: run.generatorRunId ?? null,
-			id: run.id,
-			inputImageUrl: run.inputImageUrl,
-			inputLabel: formatInputLabel(run.inputImageUrl),
-			inputPersonGenerationId: run.inputPersonGenerationId ?? null,
-			inputPersonId: run.inputPersonId ?? null,
-			loraPersonId: run.loraPersonId ?? null,
-			progressPct: run.progressPct ?? null,
-			providerEndpointId: run.providerEndpointId ?? null,
-			providerJobId: run.providerJobId ?? null,
-			scenarioId: run.scenarioId,
-			scenarioName: scenarioNames.get(run.scenarioId) ?? "Unknown scenario",
-			status: run.status,
-			workflowKey: run.workflowKey,
-		})),
+		runs,
 		scenarios,
 		shots: shots.map((shot) => ({
 			...shot,

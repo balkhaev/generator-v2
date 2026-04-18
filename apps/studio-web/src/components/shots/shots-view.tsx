@@ -7,6 +7,7 @@ import type {
 import { env } from "@generator/env/web";
 import type { ScenarioShotRecord } from "@generator/studio-client/client";
 import { deleteStudioShot } from "@generator/studio-client/client";
+import { Checkbox } from "@generator/ui/components/checkbox";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
 import {
@@ -45,6 +46,9 @@ import {
 import { toast } from "sonner";
 
 import { ModeToggle } from "@/components/mode-toggle";
+import ShotsBulkBar, {
+	type BulkSelectionItem,
+} from "@/components/shots/shots-bulk-bar";
 import ShotsLightbox, {
 	type LightboxItem,
 } from "@/components/shots/shots-lightbox";
@@ -160,14 +164,34 @@ function sortByDateDesc(left: FeedItem, right: FeedItem) {
 	return right.createdAt.localeCompare(left.createdAt);
 }
 
+interface FeedTileSelectEvent {
+	id: string;
+	index: number;
+	meta: boolean;
+	shift: boolean;
+}
+
 interface FeedTileProps {
 	deletingId: string | null;
+	hasSelection: boolean;
+	index: number;
+	isSelected: boolean;
 	item: FeedItem;
 	onDelete: (item: FeedItem) => void;
 	onOpen: (id: string) => void;
+	onToggleSelect: (event: FeedTileSelectEvent) => void;
 }
 
-function FeedTile({ deletingId, item, onDelete, onOpen }: FeedTileProps) {
+function FeedTile({
+	deletingId,
+	hasSelection,
+	index,
+	isSelected,
+	item,
+	onDelete,
+	onOpen,
+	onToggleSelect,
+}: FeedTileProps) {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const isVideo = item.artifactKind === "video";
 
@@ -190,14 +214,37 @@ function FeedTile({ deletingId, item, onDelete, onOpen }: FeedTileProps) {
 		videoRef.current.currentTime = 0;
 	}, []);
 
+	const handleClick = useCallback(
+		(event: React.MouseEvent<HTMLButtonElement>) => {
+			const meta = event.metaKey || event.ctrlKey;
+			const shift = event.shiftKey;
+			if (hasSelection || meta || shift) {
+				event.preventDefault();
+				onToggleSelect({ id: item.id, index, meta, shift });
+				return;
+			}
+			onOpen(item.id);
+		},
+		[hasSelection, index, item.id, onOpen, onToggleSelect]
+	);
+
 	const handleKeyDown = useCallback(
-		(event: React.KeyboardEvent<HTMLElement>) => {
+		(event: React.KeyboardEvent<HTMLButtonElement>) => {
 			if (event.key === "Enter" || event.key === " ") {
 				event.preventDefault();
+				if (hasSelection || event.metaKey || event.ctrlKey) {
+					onToggleSelect({
+						id: item.id,
+						index,
+						meta: event.metaKey || event.ctrlKey,
+						shift: event.shiftKey,
+					});
+					return;
+				}
 				onOpen(item.id);
 			}
 		},
-		[item.id, onOpen]
+		[hasSelection, index, item.id, onOpen, onToggleSelect]
 	);
 
 	const isDeleting = deletingId === item.id;
@@ -205,14 +252,28 @@ function FeedTile({ deletingId, item, onDelete, onOpen }: FeedTileProps) {
 
 	return (
 		<article
-			className="group relative overflow-hidden rounded-xl border border-foreground/8 bg-muted/5 transition focus-within:ring-2 focus-within:ring-ring/60 hover:border-foreground/20 hover:shadow-lg"
+			className={cn(
+				"group relative overflow-hidden rounded-xl border bg-muted/5 transition focus-within:ring-2 focus-within:ring-ring/60 hover:shadow-lg",
+				isSelected
+					? "border-primary/70 ring-2 ring-primary/40"
+					: "border-foreground/8 hover:border-foreground/20"
+			)}
+			data-selected={isSelected || undefined}
 			onPointerEnter={isVideo ? handlePointerEnter : undefined}
 			onPointerLeave={isVideo ? handlePointerLeave : undefined}
 		>
 			<button
-				aria-label={`Открыть ${item.title}`}
-				className="block w-full cursor-zoom-in text-left outline-none"
-				onClick={() => onOpen(item.id)}
+				aria-label={
+					hasSelection
+						? `${isSelected ? "Снять выделение" : "Выделить"} — ${item.title}`
+						: `Открыть ${item.title}`
+				}
+				aria-pressed={hasSelection ? isSelected : undefined}
+				className={cn(
+					"block w-full text-left outline-none",
+					hasSelection ? "cursor-pointer" : "cursor-zoom-in"
+				)}
+				onClick={handleClick}
 				onKeyDown={handleKeyDown}
 				type="button"
 			>
@@ -248,6 +309,36 @@ function FeedTile({ deletingId, item, onDelete, onOpen }: FeedTileProps) {
 					)}
 					{item.badge}
 				</span>
+			</div>
+
+			<div
+				className={cn(
+					"pointer-events-auto absolute top-2 right-2 flex size-7 items-center justify-center rounded-md bg-background/85 backdrop-blur-md transition-opacity",
+					isSelected || hasSelection
+						? "opacity-100"
+						: "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+				)}
+			>
+				<Checkbox
+					aria-label={isSelected ? "Снять выделение" : "Выделить"}
+					checked={isSelected}
+					onCheckedChange={(_checked, details) => {
+						const native = details.event as
+							| KeyboardEvent
+							| MouseEvent
+							| PointerEvent
+							| TouchEvent
+							| undefined;
+						const meta = Boolean(
+							(native as KeyboardEvent | MouseEvent | undefined)?.metaKey ||
+								(native as KeyboardEvent | MouseEvent | undefined)?.ctrlKey
+						);
+						const shift = Boolean(
+							(native as KeyboardEvent | MouseEvent | undefined)?.shiftKey
+						);
+						onToggleSelect({ id: item.id, index, meta, shift });
+					}}
+				/>
 			</div>
 
 			{isVideo ? (
@@ -435,6 +526,49 @@ interface ShotsEmptyStateProps {
 	hasSearch: boolean;
 }
 
+function toggleSingle(current: Set<string>, id: string): Set<string> {
+	const next = new Set(current);
+	if (next.has(id)) {
+		next.delete(id);
+	} else {
+		next.add(id);
+	}
+	return next;
+}
+
+interface ApplyRangeSelectionInput {
+	anchorIndex: number;
+	current: Set<string>;
+	items: FeedItem[];
+	pivotId: string;
+	targetIndex: number;
+}
+
+function applyRangeSelection({
+	anchorIndex,
+	current,
+	items,
+	pivotId,
+	targetIndex,
+}: ApplyRangeSelectionInput): Set<string> {
+	const next = new Set(current);
+	const start = Math.min(anchorIndex, targetIndex);
+	const end = Math.max(anchorIndex, targetIndex);
+	const shouldSelect = !current.has(pivotId);
+	for (let cursor = start; cursor <= end; cursor += 1) {
+		const target = items[cursor];
+		if (!target) {
+			continue;
+		}
+		if (shouldSelect) {
+			next.add(target.id);
+		} else {
+			next.delete(target.id);
+		}
+	}
+	return next;
+}
+
 function ShotsEmptyStateBlock({ activeTab, hasSearch }: ShotsEmptyStateProps) {
 	const tab = tabsById.get(activeTab) ?? tabsById.get("all");
 	const Icon = tab?.icon ?? Sparkles;
@@ -480,6 +614,9 @@ export default function ShotsView({
 	const [studioShots, setStudioShots] = useState(shots);
 	const [deletingId, setDeletingId] = useState<string | null>(null);
 	const [lightboxId, setLightboxId] = useState<string | null>(null);
+	const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+	const [isBulkBusy, setIsBulkBusy] = useState(false);
+	const lastSelectedIndexRef = useRef<number | null>(null);
 
 	useEffect(() => {
 		setStudioShots(shots);
@@ -567,6 +704,14 @@ export default function ShotsView({
 		try {
 			await deleteStudioShot(shotId);
 			setStudioShots((current) => current.filter((shot) => shot.id !== shotId));
+			setSelectedIds((current) => {
+				if (!current.has(item.id)) {
+					return current;
+				}
+				const next = new Set(current);
+				next.delete(item.id);
+				return next;
+			});
 			toast.success("Shot удалён");
 		} catch (error) {
 			toast.error(
@@ -588,6 +733,154 @@ export default function ShotsView({
 		(item: LightboxItem) => item.id.startsWith("shot-"),
 		[]
 	);
+
+	useEffect(() => {
+		const visibleIds = new Set(filteredItems.map((item) => item.id));
+		setSelectedIds((current) => {
+			if (current.size === 0) {
+				return current;
+			}
+			let changed = false;
+			const next = new Set<string>();
+			for (const id of current) {
+				if (visibleIds.has(id)) {
+					next.add(id);
+				} else {
+					changed = true;
+				}
+			}
+			return changed ? next : current;
+		});
+	}, [filteredItems]);
+
+	const handleToggleSelect = useCallback(
+		({ id, index, shift }: FeedTileSelectEvent) => {
+			setSelectedIds((current) => {
+				if (shift && lastSelectedIndexRef.current !== null) {
+					return applyRangeSelection({
+						anchorIndex: lastSelectedIndexRef.current,
+						current,
+						items: filteredItems,
+						pivotId: id,
+						targetIndex: index,
+					});
+				}
+				return toggleSingle(current, id);
+			});
+			if (!shift) {
+				lastSelectedIndexRef.current = index;
+			}
+		},
+		[filteredItems]
+	);
+
+	const handleClearSelection = useCallback(() => {
+		setSelectedIds(new Set());
+		lastSelectedIndexRef.current = null;
+	}, []);
+
+	const handleSelectAllVisible = useCallback(() => {
+		setSelectedIds(new Set(filteredItems.map((item) => item.id)));
+		lastSelectedIndexRef.current = filteredItems.length - 1;
+	}, [filteredItems]);
+
+	const selectedItems = useMemo(
+		() => filteredItems.filter((item) => selectedIds.has(item.id)),
+		[filteredItems, selectedIds]
+	);
+
+	const selectedDeletableIds = useMemo(
+		() =>
+			selectedItems
+				.filter((item) => item.kind === "studio")
+				.map((item) => item.id),
+		[selectedItems]
+	);
+
+	const handleBulkDelete = useCallback(async () => {
+		if (selectedDeletableIds.length === 0) {
+			return;
+		}
+		setIsBulkBusy(true);
+		const toastId = toast.loading(
+			`Удаляем ${selectedDeletableIds.length} shots…`
+		);
+		const results = await Promise.allSettled(
+			selectedDeletableIds.map((id) =>
+				deleteStudioShot(id.replace(studioShotIdPrefix, ""))
+			)
+		);
+		const deletedIds = new Set<string>();
+		let failed = 0;
+		results.forEach((result, index) => {
+			const id = selectedDeletableIds[index];
+			if (!id) {
+				return;
+			}
+			if (result.status === "fulfilled") {
+				deletedIds.add(id);
+			} else {
+				failed += 1;
+			}
+		});
+		if (deletedIds.size > 0) {
+			const rawIds = new Set<string>();
+			for (const id of deletedIds) {
+				rawIds.add(id.replace(studioShotIdPrefix, ""));
+			}
+			setStudioShots((current) =>
+				current.filter((shot) => !rawIds.has(shot.id))
+			);
+		}
+		setSelectedIds((current) => {
+			if (deletedIds.size === 0) {
+				return current;
+			}
+			const next = new Set(current);
+			for (const id of deletedIds) {
+				next.delete(id);
+			}
+			return next;
+		});
+		setIsBulkBusy(false);
+		if (failed === 0) {
+			toast.success(`Удалено ${deletedIds.size}`, { id: toastId });
+		} else if (deletedIds.size === 0) {
+			toast.error(`Не удалось удалить (${failed} ошибок)`, { id: toastId });
+		} else {
+			toast.message(`Удалено ${deletedIds.size}, ${failed} ошибок`, {
+				id: toastId,
+			});
+		}
+	}, [selectedDeletableIds]);
+
+	const bulkSelectionItems = useMemo<BulkSelectionItem[]>(
+		() =>
+			selectedItems.map((item) => ({
+				artifactKind: item.artifactKind,
+				fullUrl: item.fullUrl,
+				id: item.id,
+				kind: item.kind,
+				title: item.title,
+			})),
+		[selectedItems]
+	);
+
+	useEffect(() => {
+		if (selectedIds.size === 0) {
+			return;
+		}
+		const handleKey = (event: KeyboardEvent) => {
+			if (event.key === "Escape" && lightboxIndex < 0) {
+				event.preventDefault();
+				handleClearSelection();
+			}
+		};
+		window.addEventListener("keydown", handleKey);
+		return () => window.removeEventListener("keydown", handleKey);
+	}, [handleClearSelection, lightboxIndex, selectedIds.size]);
+
+	const hasSelection = selectedIds.size > 0;
 
 	return (
 		<WorkspaceShell
@@ -625,6 +918,18 @@ export default function ShotsView({
 					searchQuery={searchQuery}
 				/>
 
+				{hasSelection ? (
+					<ShotsBulkBar
+						deletableCount={selectedDeletableIds.length}
+						isBusy={isBulkBusy}
+						items={bulkSelectionItems}
+						onClear={handleClearSelection}
+						onDeleteSelected={handleBulkDelete}
+						onSelectAll={handleSelectAllVisible}
+						totalVisible={filteredItems.length}
+					/>
+				) : null}
+
 				{warnings.length > 0 ? (
 					<div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-amber-700 text-xs dark:text-amber-300">
 						{warnings.join(" · ")}
@@ -651,13 +956,17 @@ export default function ShotsView({
 								} as CSSProperties
 							}
 						>
-							{filteredItems.map((item) => (
+							{filteredItems.map((item, index) => (
 								<FeedTile
 									deletingId={deletingId}
+									hasSelection={hasSelection}
+									index={index}
+									isSelected={selectedIds.has(item.id)}
 									item={item}
 									key={item.id}
 									onDelete={handleDeleteSync}
 									onOpen={handleOpenLightbox}
+									onToggleSelect={handleToggleSelect}
 								/>
 							))}
 						</div>

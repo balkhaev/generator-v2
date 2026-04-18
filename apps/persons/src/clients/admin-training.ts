@@ -14,6 +14,12 @@ export interface StartPersonLoraTrainingInput {
 	personSlug: string;
 	referencePhotoUrl: string;
 	referencePrompt?: string;
+	/**
+	 * Optional URL of an already-built reference dataset zip (e.g. от
+	 * предыдущей успешной тренировки). Если задано — admin runner скипнет
+	 * fal.ai-генерацию и подаст этот zip pod'у напрямую через DATASET_URL.
+	 */
+	reuseDatasetUrl?: string;
 	trainingRunId: string;
 	triggerWord?: string;
 }

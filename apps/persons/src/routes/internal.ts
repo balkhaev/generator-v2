@@ -92,11 +92,13 @@ export function createInternalRoutes(service: PersonsService) {
 			const body = (await c.req.json().catch(() => ({}))) as {
 				outputName?: string;
 				referencePrompt?: string;
+				regenerateDataset?: boolean;
 				triggerWord?: string;
 			};
 			const person = await service.startLoraTraining(c.req.param("personId"), {
 				outputName: body.outputName,
 				referencePrompt: body.referencePrompt,
+				regenerateDataset: body.regenerateDataset,
 				triggerWord: body.triggerWord,
 			});
 			if (!person) {

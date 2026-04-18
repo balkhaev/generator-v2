@@ -85,6 +85,13 @@ export const startRunpodPodTrainingSchema = z.object({
 	personSlug: z.string().trim().min(1),
 	referencePhotoUrl: z.url(),
 	referencePrompt: z.string().trim().min(1).optional(),
+	/**
+	 * URL уже готового reference-zip от предыдущей тренировки. Если задан —
+	 * runner полностью пропускает фазы `generating-references` /
+	 * `uploading-dataset` (никаких fal.ai-вызовов, никакой пересборки zip)
+	 * и подаёт этот URL pod'у напрямую через DATASET_URL.
+	 */
+	reuseDatasetUrl: z.url().optional(),
 	trainingRunId: z.string().trim().min(1),
 	triggerWord: z.string().trim().min(1).optional(),
 });
@@ -450,6 +457,154 @@ export class RunpodPodLoraTrainingRunner {
 		}
 	}
 
+	/**
+	 * Готовит reference-датасет двумя путями:
+	 *
+	 *   - **reuse**: если в `parsed.reuseDatasetUrl` есть готовый zip от
+	 *     предыдущей тренировки — пропускаем 19 fal.ai/flux-2/edit вызовов
+	 *     и просто отдаём этот URL pod'у. Captions уже встроены в zip
+	 *     как `.txt` рядом с каждым кадром (см. `lora-dataset-builder.ts`),
+	 *     `default_caption` в ai-toolkit config используется только для
+	 *     слотов без `.txt`, поэтому в reuse-режиме ставим минимальный
+	 *     fallback (`triggerWord`).
+	 *
+	 *   - **build**: классический путь — генерим 19 вариаций через fal,
+	 *     дублируем оригинал 6 раз, собираем zip, заливаем в S3. Используется
+	 *     при первой тренировке персоны и при явном `regenerateDataset=true`.
+	 */
+	private async prepareReferenceDataset(input: {
+		genderHint: string | null;
+		outputName: string;
+		parsed: StartInput;
+		triggerWord: string;
+	}): Promise<{
+		datasetUrl: string;
+		datasetZipSizeBytes: number | null;
+		defaultCaption: string;
+		referenceImageCount: number;
+		referenceImageUrls: string[];
+		reused: boolean;
+	}> {
+		const { parsed, triggerWord, genderHint, outputName } = input;
+
+		if (parsed.reuseDatasetUrl) {
+			this.logger.info("runpod-pod.dataset-reused", {
+				datasetUrl: parsed.reuseDatasetUrl,
+				personId: parsed.personId,
+				trainingRunId: parsed.trainingRunId,
+			});
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					datasetUrl: parsed.reuseDatasetUrl,
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					phase: "starting-training",
+					progressPct: 65,
+					referenceImageCount: TOTAL_DATASET_COUNT,
+					referenceImageTargetCount: TOTAL_DATASET_COUNT,
+					referenceImageUrls: [parsed.referencePhotoUrl],
+					status: "training",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+					uploadMethod: "reused",
+				},
+			});
+			return {
+				datasetUrl: parsed.reuseDatasetUrl,
+				datasetZipSizeBytes: null,
+				defaultCaption: triggerWord,
+				referenceImageCount: TOTAL_DATASET_COUNT,
+				referenceImageUrls: [parsed.referencePhotoUrl],
+				reused: true,
+			};
+		}
+
+		await this.sendTrainingEvent({
+			personId: parsed.personId,
+			event: {
+				debugCorrelationId: parsed.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				phase: "generating-references",
+				progressPct: buildGeneratingProgress(ORIGINAL_PHOTO_DUPLICATES),
+				referenceImageCount: ORIGINAL_PHOTO_DUPLICATES,
+				referenceImageTargetCount: TOTAL_DATASET_COUNT,
+				status: "generating",
+				trainingRunId: parsed.trainingRunId,
+				triggerWord,
+			},
+		});
+
+		const dataset = await buildReferenceDataset({
+			apiKey: this.falApiKeyForDataset,
+			genderHint,
+			onVariantGenerated: async ({ generated }) => {
+				await this.sendTrainingEvent({
+					personId: parsed.personId,
+					event: {
+						debugCorrelationId: parsed.debugCorrelationId,
+						lastEventAt: new Date().toISOString(),
+						phase: "generating-references",
+						progressPct: buildGeneratingProgress(
+							generated.length + ORIGINAL_PHOTO_DUPLICATES
+						),
+						referenceImageCount: generated.length + ORIGINAL_PHOTO_DUPLICATES,
+						referenceImageTargetCount: TOTAL_DATASET_COUNT,
+						referenceImageUrls: [
+							parsed.referencePhotoUrl,
+							...generated.map((entry) => entry.url),
+						],
+						status: "generating",
+						trainingRunId: parsed.trainingRunId,
+						triggerWord,
+					},
+				});
+			},
+			referencePhotoUrl: parsed.referencePhotoUrl,
+			referencePrompt: parsed.referencePrompt,
+			triggerWord,
+		});
+
+		const zipData = buildZipFromBuffers(dataset.zipFiles);
+
+		await this.sendTrainingEvent({
+			personId: parsed.personId,
+			event: {
+				datasetZipSizeBytes: zipData.length,
+				debugCorrelationId: parsed.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				phase: "uploading-dataset",
+				progressPct: 62,
+				referenceImageCount:
+					dataset.generatedReferences.length + ORIGINAL_PHOTO_DUPLICATES,
+				referenceImageTargetCount: TOTAL_DATASET_COUNT,
+				status: "generating",
+				trainingRunId: parsed.trainingRunId,
+				triggerWord,
+				uploadMethod: "s3",
+			},
+		});
+
+		const datasetUrl = await uploadZipToS3(
+			zipData,
+			`${outputName}-dataset.zip`,
+			this.s3Config
+		);
+
+		return {
+			datasetUrl,
+			datasetZipSizeBytes: zipData.length,
+			defaultCaption: dataset.defaultCaption,
+			referenceImageCount:
+				dataset.generatedReferences.length + ORIGINAL_PHOTO_DUPLICATES,
+			referenceImageUrls: [
+				parsed.referencePhotoUrl,
+				...dataset.generatedReferences.map((entry) => entry.url),
+			],
+			reused: false,
+		};
+	}
+
 	private async executeRunpodPodTraining(parsed: StartInput): Promise<void> {
 		const triggerWord =
 			parsed.triggerWord ?? buildDefaultTriggerWord(parsed.personSlug);
@@ -471,6 +626,7 @@ export class RunpodPodLoraTrainingRunner {
 			this.logger.info("runpod-pod.starting", {
 				baseModel: this.baseModel,
 				personId: parsed.personId,
+				reuseDataset: Boolean(parsed.reuseDatasetUrl),
 			});
 
 			await this.sendTrainingEvent({
@@ -478,6 +634,7 @@ export class RunpodPodLoraTrainingRunner {
 				event: {
 					debug: {
 						baseModel: this.baseModel,
+						datasetReused: Boolean(parsed.reuseDatasetUrl),
 						gpuTypeIds: this.gpuTypeIds,
 						imageName: this.imageName,
 						originalPhotoDuplicates: ORIGINAL_PHOTO_DUPLICATES,
@@ -487,71 +644,28 @@ export class RunpodPodLoraTrainingRunner {
 					},
 					debugCorrelationId: parsed.debugCorrelationId,
 					lastEventAt: startedAt,
-					phase: "generating-references",
-					progressPct: buildGeneratingProgress(ORIGINAL_PHOTO_DUPLICATES),
-					referenceImageCount: ORIGINAL_PHOTO_DUPLICATES,
+					phase: parsed.reuseDatasetUrl
+						? "starting-training"
+						: "generating-references",
+					progressPct: parsed.reuseDatasetUrl
+						? 60
+						: buildGeneratingProgress(ORIGINAL_PHOTO_DUPLICATES),
+					referenceImageCount: parsed.reuseDatasetUrl
+						? TOTAL_DATASET_COUNT
+						: ORIGINAL_PHOTO_DUPLICATES,
 					referenceImageTargetCount: TOTAL_DATASET_COUNT,
-					status: "generating",
+					status: parsed.reuseDatasetUrl ? "training" : "generating",
 					trainingRunId: parsed.trainingRunId,
 					triggerWord,
 				},
 			});
 
-			const dataset = await buildReferenceDataset({
-				apiKey: this.falApiKeyForDataset,
+			const datasetPrep = await this.prepareReferenceDataset({
 				genderHint,
-				onVariantGenerated: async ({ generated }) => {
-					await this.sendTrainingEvent({
-						personId: parsed.personId,
-						event: {
-							debugCorrelationId: parsed.debugCorrelationId,
-							lastEventAt: new Date().toISOString(),
-							phase: "generating-references",
-							progressPct: buildGeneratingProgress(
-								generated.length + ORIGINAL_PHOTO_DUPLICATES
-							),
-							referenceImageCount: generated.length + ORIGINAL_PHOTO_DUPLICATES,
-							referenceImageTargetCount: TOTAL_DATASET_COUNT,
-							referenceImageUrls: [
-								parsed.referencePhotoUrl,
-								...generated.map((entry) => entry.url),
-							],
-							status: "generating",
-							trainingRunId: parsed.trainingRunId,
-							triggerWord,
-						},
-					});
-				},
-				referencePhotoUrl: parsed.referencePhotoUrl,
-				referencePrompt: parsed.referencePrompt,
+				outputName,
+				parsed,
 				triggerWord,
 			});
-
-			const zipData = buildZipFromBuffers(dataset.zipFiles);
-
-			await this.sendTrainingEvent({
-				personId: parsed.personId,
-				event: {
-					datasetZipSizeBytes: zipData.length,
-					debugCorrelationId: parsed.debugCorrelationId,
-					lastEventAt: new Date().toISOString(),
-					phase: "uploading-dataset",
-					progressPct: 62,
-					referenceImageCount:
-						dataset.generatedReferences.length + ORIGINAL_PHOTO_DUPLICATES,
-					referenceImageTargetCount: TOTAL_DATASET_COUNT,
-					status: "generating",
-					trainingRunId: parsed.trainingRunId,
-					triggerWord,
-					uploadMethod: "s3",
-				},
-			});
-
-			const datasetUrl = await uploadZipToS3(
-				zipData,
-				`${outputName}-dataset.zip`,
-				this.s3Config
-			);
 
 			const loraUploadUrl = await createPresignedPutUrl(
 				{
@@ -574,11 +688,12 @@ export class RunpodPodLoraTrainingRunner {
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
-					datasetUrl,
-					datasetZipSizeBytes: zipData.length,
+					datasetUrl: datasetPrep.datasetUrl,
+					datasetZipSizeBytes: datasetPrep.datasetZipSizeBytes,
 					debug: {
 						baseModel: this.baseModel,
-						defaultCaption: dataset.defaultCaption,
+						datasetReused: datasetPrep.reused,
+						defaultCaption: datasetPrep.defaultCaption,
 						loraS3Key,
 						originalPhotoDuplicates: ORIGINAL_PHOTO_DUPLICATES,
 						outputName,
@@ -587,19 +702,15 @@ export class RunpodPodLoraTrainingRunner {
 					lastEventAt: new Date().toISOString(),
 					phase: "starting-training",
 					progressPct: 70,
-					referenceImageCount:
-						dataset.generatedReferences.length + ORIGINAL_PHOTO_DUPLICATES,
+					referenceImageCount: datasetPrep.referenceImageCount,
 					referenceImageTargetCount: TOTAL_DATASET_COUNT,
-					referenceImageUrls: [
-						parsed.referencePhotoUrl,
-						...dataset.generatedReferences.map((entry) => entry.url),
-					],
+					referenceImageUrls: datasetPrep.referenceImageUrls,
 					status: "training",
 					trainingRunId: parsed.trainingRunId,
 					trainingStartedAt: new Date().toISOString(),
 					trainingSteps,
 					triggerWord,
-					uploadMethod: "s3",
+					uploadMethod: datasetPrep.reused ? "reused" : "s3",
 				},
 			});
 
@@ -608,8 +719,8 @@ export class RunpodPodLoraTrainingRunner {
 
 			const podEnv: Record<string, string> = {
 				BASE_MODEL: this.baseModel,
-				DATASET_URL: datasetUrl,
-				DEFAULT_CAPTION: dataset.defaultCaption,
+				DATASET_URL: datasetPrep.datasetUrl,
+				DEFAULT_CAPTION: datasetPrep.defaultCaption,
 				LEARNING_RATE: String(DEFAULT_LEARNING_RATE),
 				LOG_UPLOAD_URL: logUploadUrl,
 				LORA_RANK: String(DEFAULT_LORA_RANK),
@@ -681,19 +792,15 @@ export class RunpodPodLoraTrainingRunner {
 			});
 
 			await this.pollUntilExited({
-				datasetUrl,
+				datasetUrl: datasetPrep.datasetUrl,
 				debugCorrelationId: parsed.debugCorrelationId,
 				loraS3Key,
 				outputName,
 				personId: parsed.personId,
 				podId,
-				referenceImageCount:
-					dataset.generatedReferences.length + ORIGINAL_PHOTO_DUPLICATES,
+				referenceImageCount: datasetPrep.referenceImageCount,
 				referenceImageTargetCount: TOTAL_DATASET_COUNT,
-				referenceImageUrls: [
-					parsed.referencePhotoUrl,
-					...dataset.generatedReferences.map((entry) => entry.url),
-				],
+				referenceImageUrls: datasetPrep.referenceImageUrls,
 				trainingRunId: parsed.trainingRunId,
 				trainingStartedAt,
 				trainingStartedMs,
@@ -722,9 +829,10 @@ export class RunpodPodLoraTrainingRunner {
 				personId: parsed.personId,
 				event: {
 					completedAt: new Date().toISOString(),
-					datasetUrl,
+					datasetUrl: datasetPrep.datasetUrl,
 					debug: {
 						baseModel: this.baseModel,
+						datasetReused: datasetPrep.reused,
 						loraS3Key,
 						podId,
 					},
@@ -736,20 +844,16 @@ export class RunpodPodLoraTrainingRunner {
 					providerJobId: podId,
 					providerRequestId: podId,
 					providerStatus: "EXITED",
-					referenceImageCount:
-						dataset.generatedReferences.length + ORIGINAL_PHOTO_DUPLICATES,
+					referenceImageCount: datasetPrep.referenceImageCount,
 					referenceImageTargetCount: TOTAL_DATASET_COUNT,
-					referenceImageUrls: [
-						parsed.referencePhotoUrl,
-						...dataset.generatedReferences.map((entry) => entry.url),
-					],
+					referenceImageUrls: datasetPrep.referenceImageUrls,
 					status: "ready",
 					trainingElapsedMs: Date.now() - trainingStartedMs,
 					trainingRunId: parsed.trainingRunId,
 					trainingStartedAt,
 					trainingSteps,
 					triggerWord,
-					uploadMethod: "s3",
+					uploadMethod: datasetPrep.reused ? "reused" : "s3",
 				},
 			});
 		} catch (error) {

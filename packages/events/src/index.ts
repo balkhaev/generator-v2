@@ -77,6 +77,13 @@ const personLoraTrainingRequestSchema = z.object({
 	personSlug: z.string().min(1),
 	referencePhotoUrl: z.string().min(1),
 	referencePrompt: z.string().optional(),
+	/**
+	 * Если задано — runner пропускает повторную генерацию reference-датасета
+	 * через fal.ai/flux-2/edit и передаёт этот URL прямо в pod_runner как
+	 * DATASET_URL. Кладётся persons-сервисом из `person.datasetUrl` при
+	 * retrain'е, если оператор не запросил `regenerateDataset=true` явно.
+	 */
+	reuseDatasetUrl: z.string().min(1).optional(),
 	trainingRunId: z.string().min(1),
 	triggerWord: z.string().optional(),
 });

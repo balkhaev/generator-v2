@@ -226,6 +226,13 @@ const AVATAR_REFINE_WORKFLOW_KEY = PERSONS_AVATAR_WORKFLOWS.refine;
 
 export const startPersonLoraTrainingInputSchema = z.object({
 	outputName: optionalStringSchema,
+	/**
+	 * Если `true` — заставляет admin runner заново нагенерить reference-датасет
+	 * (19 fal.ai/flux-2/edit вариаций + 6 копий оригинала). По умолчанию
+	 * `false`: при retrain'е переиспользуем `person.datasetUrl` от предыдущей
+	 * успешной тренировки, экономим ~5 минут и ~$0.20 на каждом ретрейне.
+	 */
+	regenerateDataset: z.boolean().optional(),
 	referencePrompt: optionalStringSchema,
 	triggerWord: optionalStringSchema,
 });
@@ -1264,6 +1271,15 @@ export class PersonsService {
 			},
 		});
 
+		// Reuse existing dataset zip from the previous successful training, unless
+		// the operator explicitly requested `regenerateDataset: true`. This skips
+		// the ~5min, ~$0.20 worth of fal.ai/flux-2/edit calls done by
+		// `buildReferenceDataset` on every retrain.
+		const reuseDatasetUrl =
+			!parsed.regenerateDataset && person.datasetUrl
+				? person.datasetUrl
+				: undefined;
+
 		await this.adminTrainingClient.startPersonLoraTraining(
 			{
 				debugCorrelationId: options?.debugCorrelationId,
@@ -1274,6 +1290,7 @@ export class PersonsService {
 				personSlug: person.slug,
 				referencePhotoUrl: person.referencePhotoUrl,
 				referencePrompt: parsed.referencePrompt ?? undefined,
+				reuseDatasetUrl,
 				trainingRunId,
 				triggerWord,
 			},

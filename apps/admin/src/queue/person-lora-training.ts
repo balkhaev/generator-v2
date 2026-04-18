@@ -13,6 +13,12 @@ export interface PersonLoraTrainingJobData {
 	personSlug: string;
 	referencePhotoUrl: string;
 	referencePrompt?: string;
+	/**
+	 * URL уже готового reference-zip от предыдущей успешной тренировки. Если
+	 * задан — runner пропустит fal.ai-генерацию и подаст этот zip pod'у через
+	 * DATASET_URL.
+	 */
+	reuseDatasetUrl?: string;
 	trainingRunId: string;
 	triggerWord?: string;
 }

@@ -11,6 +11,7 @@ export const enqueuePersonLoraTrainingSchema = z.object({
 	personSlug: z.string().trim().min(1),
 	referencePhotoUrl: z.url(),
 	referencePrompt: z.string().trim().min(1).optional(),
+	reuseDatasetUrl: z.url().optional(),
 	trainingRunId: z.string().trim().min(1),
 	triggerWord: z.string().trim().min(1).optional(),
 });

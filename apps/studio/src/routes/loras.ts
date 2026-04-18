@@ -16,23 +16,11 @@ export function createLoraRoutes(repository: LoraReadRepository) {
 	const app = new Hono();
 
 	app.get("/", async (c) => {
-		const rawBaseModel = c.req.query("baseModel");
-		const baseModel = parseBaseModel(rawBaseModel);
+		const baseModel = parseBaseModel(c.req.query("baseModel"));
 		try {
 			const loras = await repository.list({ baseModel, status: "active" });
-			console.info("studio.loras.list", {
-				rawBaseModel,
-				parsedBaseModel: baseModel,
-				count: loras.length,
-				slugs: loras.map((entry) => entry.slug),
-			});
 			return c.json({ loras });
 		} catch (error) {
-			console.error("studio.loras.error", {
-				rawBaseModel,
-				parsedBaseModel: baseModel,
-				error: error instanceof Error ? error.message : String(error),
-			});
 			return c.json(
 				{
 					error:

@@ -50,36 +50,13 @@ async function fetchStudioLoras(baseModel?: string): Promise<{
 		params.set("baseModel", baseModel);
 	}
 	const query = params.toString();
-	const url = `${studioApiBaseUrl}/api/loras${query ? `?${query}` : ""}`;
 	try {
-		const payload = await requestJson<{ loras: LoraRegistryEntry[] }>(url, {
-			cache: "no-store",
-			credentials: "include",
-		});
-		// eslint-disable-next-line no-console
-		console.info(
-			"[compose] fetched loras " +
-				JSON.stringify({
-					baseModel,
-					url,
-					hasLoras: Array.isArray(payload?.loras),
-					count: Array.isArray(payload?.loras) ? payload.loras.length : null,
-					slugs: Array.isArray(payload?.loras)
-						? payload.loras.map((entry) => entry.slug)
-						: null,
-				})
+		const payload = await requestJson<{ loras: LoraRegistryEntry[] }>(
+			`${studioApiBaseUrl}/api/loras${query ? `?${query}` : ""}`,
+			{ cache: "no-store", credentials: "include" }
 		);
 		return { error: null, loras: payload.loras ?? [] };
 	} catch (error) {
-		// eslint-disable-next-line no-console
-		console.error(
-			"[compose] failed to fetch loras " +
-				JSON.stringify({
-					baseModel,
-					url,
-					error: error instanceof Error ? error.message : String(error),
-				})
-		);
 		const message =
 			error instanceof Error ? error.message : "Failed to load LoRAs";
 		return { error: message, loras: [] };
@@ -139,24 +116,8 @@ export default function ComposeDialog({
 		let cancelled = false;
 		fetchStudioLoras(selectedWorkflow?.baseModel).then((result) => {
 			if (cancelled) {
-				// eslint-disable-next-line no-console
-				console.info(
-					"[compose] cancelled setState " +
-						JSON.stringify({
-							baseModel: selectedWorkflow?.baseModel,
-							count: result.loras.length,
-						})
-				);
 				return;
 			}
-			// eslint-disable-next-line no-console
-			console.info(
-				"[compose] applying setState " +
-					JSON.stringify({
-						baseModel: selectedWorkflow?.baseModel,
-						count: result.loras.length,
-					})
-			);
 			setAvailableLoras(result.loras);
 			setLorasError(result.error);
 		});

@@ -202,11 +202,13 @@ export async function seedSettingsFromLegacyRedis(
 	options: { redisUrl: string },
 	logger: Pick<Console, "info" | "warn"> = console
 ): Promise<void> {
+	// Allow the offline queue here (unlike the publisher) because this seed
+	// runs once at boot and we want to wait for the connection to come up
+	// rather than racing the first GET against a half-open socket.
 	const redis = new IORedis(options.redisUrl, {
-		commandTimeout: 1500,
-		enableOfflineQueue: false,
+		commandTimeout: 5000,
 		lazyConnect: false,
-		maxRetriesPerRequest: 1,
+		maxRetriesPerRequest: 3,
 	});
 	redis.on("error", () => {
 		// Errors are surfaced via the read attempts below; suppress the global

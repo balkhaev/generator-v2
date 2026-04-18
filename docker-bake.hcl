@@ -3,6 +3,7 @@ group "all" {
 		"admin-api",
 		"admin-web",
 		"admin-worker",
+		"db-migrate",
 		"generator-api",
 		"generator-worker",
 		"persons-api",
@@ -48,6 +49,16 @@ target "admin-api" {
 		APP_NAME = "admin"
 		APP_PORT = "3000"
 		SERVICE_ENTRYPOINT = "apps/admin/dist/index.mjs"
+	}
+}
+
+target "db-migrate" {
+	inherits = ["_api"]
+	tags = ["generator/db-migrate:local"]
+	args = {
+		APP_NAME = "db-migrate"
+		APP_PORT = "3010"
+		SERVICE_ENTRYPOINT = "apps/db-migrate/dist/index.mjs"
 	}
 }
 

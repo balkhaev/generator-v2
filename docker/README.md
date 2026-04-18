@@ -137,10 +137,53 @@ docker run -d --name admin-web \
 
 ## Миграции
 
-- По умолчанию миграции выключены.
-- Включаются через `RUN_DB_MIGRATIONS=true`.
-- Advisory lock защищает от одновременного запуска нескольких контейнеров с миграциями, но обычно достаточно включить этот флаг только у одного API контейнера на окружение.
-- Таймаут и polling можно регулировать через `DATABASE_READY_TIMEOUT_MS` и `DATABASE_READY_INTERVAL_MS`.
+Каноничный способ — отдельный сервис `db-migrate` (`apps/db-migrate`):
+
+- Это long-running Hono-сервис на порту `3010`.
+- На старте всегда применяет все pending Drizzle-миграции под защитой Postgres advisory lock (`pg_advisory_lock(48612451)`).
+- После завершения остаётся живым: `GET /api/health` всегда отдаёт `200 {ok: true}` (это нужно Coolify/Docker, чтобы не килять контейнер).
+- `GET /api/status` отдаёт детали последней попытки: `state` (`pending|running|succeeded|failed`), `startedAt`, `completedAt`, `durationMs`, `error`.
+- `GET /api/ready` возвращает 200 при `succeeded`, 503 при `failed/running/pending`.
+- `POST /api/migrate` повторно прогоняет миграции без редеплоя контейнера. Защищается опциональным `MIGRATE_TRIGGER_TOKEN` (Bearer).
+
+Минимальный набор переменных окружения:
+
+```bash
+DATABASE_URL=postgres://user:pass@host:5432/db
+PORT=3010
+SERVICE_ENTRYPOINT=apps/db-migrate/dist/index.mjs
+APP_NAME=db-migrate
+# Опционально:
+DATABASE_READY_TIMEOUT_MS=120000
+DATABASE_READY_INTERVAL_MS=2000
+DATABASE_MIGRATION_LOCK_ID=48612451
+MIGRATE_TRIGGER_TOKEN=...   # для POST /api/migrate
+```
+
+Workflow деплоя со схема-меняющими PR:
+
+1. Деплой `db-migrate` — он применяет миграции и переходит в healthy.
+2. Деплой остальных API/worker сервисов с тем же commit SHA.
+3. Если миграции упали — `db-migrate` всё равно остаётся live; смотри `GET /api/status` и логи.
+
+### Fallback: миграции на entrypoint API
+
+Старый механизм всё ещё поддерживается:
+
+- `RUN_DB_MIGRATIONS=true` на API/worker контейнере → entrypoint вызывает `bun packages/db/src/run-migrations.ts` перед стартом сервиса.
+- Advisory lock защищает от гонки между несколькими контейнерами.
+- Таймаут и polling регулируются через `DATABASE_READY_TIMEOUT_MS` и `DATABASE_READY_INTERVAL_MS`.
+
+Использовать имеет смысл только если по каким-то причинам нельзя завести отдельный `db-migrate`. При наличии `db-migrate` отключите `RUN_DB_MIGRATIONS` у всех остальных сервисов, чтобы избежать лишней блокировки lock'а на каждом старте.
+
+## Health vs readiness
+
+Все Bun/Hono API сервисы экспонируют два эндпоинта:
+
+- `GET /api/health` — **liveness**. Возвращает `200 {ok: true, service}` всегда, пока процесс жив. БД и внешние зависимости НЕ трогает. Это эндпоинт для Docker `HEALTHCHECK`, Coolify health check, Kubernetes liveness probe.
+- `GET /api/ready` — **readiness**. Делает `select 1` в БД, отдаёт 200 при успехе и 503 при ошибке. Используется только для диагностики и ручных проверок. Не подключайте к деплой-гейтам — это сделает деплой хрупким при schema-меняющих PR.
+
+Ранее `/api/health` в studio/persons/generator делал реальные запросы к БД (`listRuns`, `listPersons` и т.п.). Это приводило к 500-кам во время прокатки миграций и к тому, что Docker килял старые контейнеры с health-check failure. Теперь этого нет.
 
 ## Event bus
 

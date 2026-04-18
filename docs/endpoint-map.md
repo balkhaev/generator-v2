@@ -8,7 +8,8 @@ Canonical execution backend for image and video generation.
 
 Keep:
 
-- `GET /api/health`
+- `GET /api/health` — liveness only, no DB
+- `GET /api/ready` — readiness, pings DB
 - `GET /api/workflows`
 - `POST /api/executions`
 - `GET /api/executions/:executionId`
@@ -27,7 +28,8 @@ Canonical character service.
 
 Keep:
 
-- `GET /api/health`
+- `GET /api/health` — liveness only, no DB
+- `GET /api/ready` — readiness, pings DB
 - `GET /api/integrations/server`
 - `GET /api/persons`
 - `POST /api/persons`
@@ -82,6 +84,12 @@ Uses:
 
 Legacy persisted scenario/run API.
 
+Operational endpoints (always kept):
+
+- `GET /api/health` — liveness only, no DB
+- `GET /api/ready` — readiness, pings DB
+- `GET /api/studio-snapshot`
+
 Legacy endpoints:
 
 - `GET /api/scenarios`
@@ -105,3 +113,18 @@ Status:
 Keep:
 
 - `POST /api/internal/generator-executions`
+
+## Operational Services
+
+### `apps/db-migrate`
+
+One-shot-style long-running service that owns Drizzle migration runs.
+
+Endpoints:
+
+- `GET /api/health` — liveness, always 200
+- `GET /api/ready` — 200 when last migration succeeded, 503 otherwise
+- `GET /api/status` — full status of last migration attempt (`state`, `startedAt`, `completedAt`, `durationMs`, `error`)
+- `POST /api/migrate` — re-run migrations (Bearer-auth via `MIGRATE_TRIGGER_TOKEN` if set)
+
+Deploy `db-migrate` first; deploy other services with `RUN_DB_MIGRATIONS=false` after it goes healthy. See `docker/README.md` for the full deploy workflow.

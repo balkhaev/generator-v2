@@ -4,6 +4,7 @@ import {
 	createSessionMiddleware,
 } from "@generator/auth/middleware";
 import { createPublicPathMatcher } from "@generator/auth/public-paths";
+import { pingDatabase } from "@generator/db/health";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import {
 	DEBUG_CORRELATION_HEADER,
@@ -42,7 +43,7 @@ interface AppOptions {
 }
 
 const isPublicApiPath = createPublicPathMatcher({
-	exact: ["/api/health"],
+	exact: ["/api/health", "/api/ready"],
 	prefixes: ["/api/auth/", "/api/internal/"],
 });
 
@@ -96,12 +97,30 @@ export function createApp(options: AppOptions) {
 	}
 
 	app.get("/", (c) => c.text("OK"));
-	app.get("/api/health", async (c) => {
-		const persons = await service.listPersons();
-		return c.json({
+	// Liveness: подтверждает только что процесс жив. БД и схему НЕ трогает,
+	// чтобы health-check Docker/Coolify не убивал контейнер из-за временных
+	// проблем БД или несоответствия схемы во время прокатки миграций.
+	app.get("/api/health", (c) =>
+		c.json({
 			ok: true,
-			persons: persons.length,
-		});
+			service: "persons",
+		})
+	);
+	// Readiness: лёгкий пинг БД (`select 1`).
+	app.get("/api/ready", async (c) => {
+		try {
+			await pingDatabase();
+			return c.json({ ok: true });
+		} catch (error) {
+			return c.json(
+				{
+					error:
+						error instanceof Error ? error.message : "database unreachable",
+					ok: false,
+				},
+				503
+			);
+		}
 	});
 
 	app.route("/api/persons", createPersonRoutes(service));

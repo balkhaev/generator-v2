@@ -8,6 +8,7 @@ import type {
 	AdminDashboardSnapshot,
 	AdminSetupStatus,
 } from "@generator/contracts/admin";
+import { pingDatabase } from "@generator/db/health";
 import { type FetchLike, proxyHttpRequest } from "@generator/http/proxy";
 import {
 	DEBUG_CORRELATION_HEADER,
@@ -62,7 +63,7 @@ interface AppOptions {
 }
 
 const isPublicApiPath = createPublicPathMatcher({
-	exact: ["/api/health", "/api/setup/status"],
+	exact: ["/api/health", "/api/ready", "/api/setup/status"],
 	prefixes: ["/api/auth/", "/api/internal/"],
 });
 
@@ -122,12 +123,31 @@ export function createApp(options: AppOptions) {
 	);
 
 	app.get("/", (c) => c.text("OK"));
+	// Liveness: только подтверждает что процесс жив. БД не трогает.
 	app.get("/api/health", (c) =>
 		c.json({
 			gateway: true,
 			ok: true,
+			service: "admin",
 		})
 	);
+	// Readiness: лёгкий пинг БД (`select 1`).
+	app.get("/api/ready", async (c) => {
+		try {
+			await pingDatabase();
+			return c.json({ ok: true });
+		} catch (error) {
+			options.loggerImpl?.error?.("admin.ready.failed", error);
+			return c.json(
+				{
+					error:
+						error instanceof Error ? error.message : "database unreachable",
+					ok: false,
+				},
+				503
+			);
+		}
+	});
 	app.get("/api/setup/status", async (c) =>
 		c.json(await options.loadSetupStatus())
 	);

@@ -6,6 +6,7 @@ import {
 import { createPublicPathMatcher } from "@generator/auth/public-paths";
 import type { WorkflowSummary as ServerWorkflowSummary } from "@generator/contracts/generator";
 import type { StudioShotRecord } from "@generator/contracts/studio";
+import { pingDatabase } from "@generator/db/health";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import { proxyHttpRequest } from "@generator/http/proxy";
 import {
@@ -106,7 +107,7 @@ interface StudioSnapshotResponse {
 const fileExtensionPattern = /\.[a-z0-9]+$/i;
 
 const isPublicApiPath = createPublicPathMatcher({
-	exact: ["/api/health", "/api/studio-snapshot"],
+	exact: ["/api/health", "/api/ready", "/api/studio-snapshot"],
 	prefixes: ["/api/auth/", "/api/internal/"],
 });
 
@@ -265,13 +266,35 @@ export function createApp(options: AppOptions) {
 	);
 
 	app.get("/", (c) => c.text("OK"));
-	app.get("/api/health", async (c) =>
+	// Liveness: подтверждает только что процесс жив. БД и схему НЕ трогает,
+	// чтобы health-check Docker/Coolify не убивал контейнер из-за временных
+	// проблем БД или несоответствия схемы во время прокатки миграций.
+	app.get("/api/health", (c) =>
 		c.json({
 			ok: true,
-			runs: (await service.listRuns()).length,
-			scenarios: (await service.listScenarios()).length,
+			service: "studio",
 		})
 	);
+	// Readiness: лёгкий пинг БД (`select 1`). Не использовать для health-check
+	// деплоя — только для диагностики и ручных проверок.
+	app.get("/api/ready", async (c) => {
+		try {
+			await pingDatabase();
+			return c.json({ ok: true });
+		} catch (error) {
+			options.loggerImpl?.warn?.("studio.ready.failed", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			return c.json(
+				{
+					error:
+						error instanceof Error ? error.message : "database unreachable",
+					ok: false,
+				},
+				503
+			);
+		}
+	});
 	app.get("/api/studio-snapshot", async (c) =>
 		c.json(await createStudioSnapshot(service))
 	);

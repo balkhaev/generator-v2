@@ -1,6 +1,7 @@
 import type { AuthVariables } from "@generator/auth/middleware";
 import { createSessionMiddleware } from "@generator/auth/middleware";
 import { createPublicPathMatcher } from "@generator/auth/public-paths";
+import { pingDatabase } from "@generator/db/health";
 import type { EventPublisher } from "@generator/events";
 import {
 	DEBUG_CORRELATION_HEADER,
@@ -55,7 +56,7 @@ interface AppOptions {
 }
 
 const isPublicApiPath = createPublicPathMatcher({
-	exact: ["/api/health"],
+	exact: ["/api/health", "/api/ready"],
 });
 
 export function createApp(options: AppOptions) {
@@ -145,11 +146,32 @@ export function createApp(options: AppOptions) {
 	}
 
 	app.get("/", (c) => c.text("OK"));
-	app.get("/api/health", (c) => {
-		return c.json({
+	// Liveness: только подтверждает что процесс жив. БД и провайдеры не трогает.
+	app.get("/api/health", (c) =>
+		c.json({
 			ok: true,
-			workflows: executionService.listWorkflows().length,
-		});
+			service: "generator",
+		})
+	);
+	// Readiness: пинг БД + проверка что workflows загружены.
+	app.get("/api/ready", async (c) => {
+		try {
+			await pingDatabase();
+			return c.json({
+				ok: true,
+				workflows: executionService.listWorkflows().length,
+			});
+		} catch (error) {
+			options.loggerImpl?.warn?.("generator.ready.failed", error);
+			return c.json(
+				{
+					error:
+						error instanceof Error ? error.message : "database unreachable",
+					ok: false,
+				},
+				503
+			);
+		}
 	});
 
 	app.route("/api/workflows", createWorkflowRoutes(executionService));

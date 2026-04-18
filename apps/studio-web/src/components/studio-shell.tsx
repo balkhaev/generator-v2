@@ -4,9 +4,9 @@ import type { PersonRecord } from "@generator/contracts/persons";
 import { env } from "@generator/env/web";
 import {
 	type AdminSnapshot,
+	getStudioSnapshot,
 	type ScenarioRecord,
 	type ScenarioRunRecord,
-	syncStudioRun,
 } from "@generator/studio-client/client";
 import { Button } from "@generator/ui/components/button";
 import {
@@ -18,6 +18,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@generator/ui/components/dialog";
+import { RunProgressIndicator } from "@generator/ui/components/run-progress-indicator";
 import WorkspaceShell, {
 	WorkspaceStatus,
 } from "@generator/ui/components/workspace-shell";
@@ -26,6 +27,7 @@ import { Loader2, Trash2 } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import CommandSidebar from "@/components/command-sidebar";
 import ComposeDialog from "@/components/compose/compose-dialog";
@@ -40,10 +42,10 @@ import type {
 	ScenarioRailStatus,
 } from "@/components/scenario-card-data";
 import { usePersonSelection } from "@/components/use-person-selection";
-import { useRunAutoSync } from "@/components/use-run-auto-sync";
 import { useScenarioDeletion } from "@/components/use-scenario-deletion";
 import { useShotSaving } from "@/components/use-shot-saving";
 import { useStudioMedia } from "@/components/use-studio-media";
+import { useStudioRunStream } from "@/components/use-studio-run-stream";
 import { useStudioSelection } from "@/components/use-studio-selection";
 import UserMenu from "@/components/user-menu";
 import { getPersonById } from "@/lib/persons-api";
@@ -194,9 +196,19 @@ function StudioStatusBar({
 				<WorkspaceStatus tone="warning">
 					<span className="size-1.5 shrink-0 animate-pulse rounded-full bg-amber-500" />
 					{activeRunCount} active
-					{headlineLiveRun && typeof headlineLiveRun.progressPct === "number"
-						? ` · ${headlineLiveRun.progressPct}%`
-						: null}
+					{headlineLiveRun ? (
+						<>
+							<span aria-hidden="true">·</span>
+							<RunProgressIndicator
+								etaMs={headlineLiveRun.etaMs}
+								phase={headlineLiveRun.phase}
+								progressPct={headlineLiveRun.progressPct}
+								queuePosition={headlineLiveRun.queuePosition}
+								status={headlineLiveRun.status}
+								variant="inline"
+							/>
+						</>
+					) : null}
 				</WorkspaceStatus>
 			) : null}
 			<WorkspaceStatus tone="success">
@@ -379,8 +391,12 @@ function buildScenarioMediaAssets(
 					mediaKind: "output",
 					mediaType: getMediaType(run.inputImageUrl),
 					meta: run.scenarioName,
+					etaMs: run.etaMs ?? null,
+					lastLogLine: run.lastLogLine ?? null,
+					phase: run.phase ?? null,
 					placeholder: true,
 					progressPct: run.progressPct ?? null,
+					queuePosition: run.queuePosition ?? null,
 					runId: run.id,
 					scenarioId: run.scenarioId,
 					status: run.status,
@@ -539,24 +555,82 @@ export default function StudioShell({
 		setSnapshot,
 	});
 
-	const handleSyncRun = useCallback(async (runId: string) => {
-		try {
-			const result = await syncStudioRun(runId);
+	const scenarioNamesById = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const scenario of snapshot.scenarios) {
+			map.set(scenario.id, scenario.name);
+		}
+		return map;
+	}, [snapshot.scenarios]);
 
-			setSnapshot((current) => ({
-				...current,
-				runs: current.runs.map((run) => (run.id === runId ? result.data : run)),
-			}));
+	const handleStreamSnapshot = useCallback(
+		(streamRuns: ScenarioRunRecord[]) => {
+			if (streamRuns.length === 0) {
+				return;
+			}
+			setSnapshot((current) => {
+				const byId = new Map(current.runs.map((run) => [run.id, run]));
+				for (const run of streamRuns) {
+					byId.set(run.id, run);
+				}
+				return { ...current, runs: Array.from(byId.values()) };
+			});
+		},
+		[]
+	);
+
+	const handleStreamRun = useCallback((streamRun: ScenarioRunRecord) => {
+		setSnapshot((current) => {
+			const index = current.runs.findIndex((run) => run.id === streamRun.id);
+			if (index === -1) {
+				return { ...current, runs: [streamRun, ...current.runs] };
+			}
+			const nextRuns = current.runs.slice();
+			nextRuns[index] = streamRun;
+			return { ...current, runs: nextRuns };
+		});
+	}, []);
+
+	const handleFallbackPoll = useCallback(async () => {
+		try {
+			const nextSnapshot = await getStudioSnapshot();
+			setSnapshot(nextSnapshot);
 		} catch {
-			// silent: user-triggered syncs surface errors via toast in console
+			// silent: best-effort recovery, will retry next tick
 		}
 	}, []);
 
-	useRunAutoSync({
+	useStudioRunStream({
 		enabled: !isPersonMode,
-		onSync: handleSyncRun,
-		runs: snapshot.runs,
+		onFallbackPoll: handleFallbackPoll,
+		onSnapshot: handleStreamSnapshot,
+		onUpdate: handleStreamRun,
+		scenarioNames: scenarioNamesById,
 	});
+
+	const previousRunStatusRef = useRef<Map<string, ScenarioRunRecord["status"]>>(
+		new Map()
+	);
+	useEffect(() => {
+		const previous = previousRunStatusRef.current;
+		const next = new Map<string, ScenarioRunRecord["status"]>();
+		for (const run of snapshot.runs) {
+			next.set(run.id, run.status);
+			const prevStatus = previous.get(run.id);
+			if (prevStatus && prevStatus !== run.status && previous.size > 0) {
+				if (run.status === "succeeded") {
+					toast.success(`${run.scenarioName}: готово`);
+				} else if (run.status === "failed") {
+					toast.error(
+						run.errorSummary
+							? `${run.scenarioName}: ${run.errorSummary}`
+							: `${run.scenarioName}: ошибка генерации`
+					);
+				}
+			}
+		}
+		previousRunStatusRef.current = next;
+	}, [snapshot.runs]);
 
 	const personsUrl = env.NEXT_PUBLIC_PERSONS_URL ?? "http://localhost:3004";
 	const adminUrl = env.NEXT_PUBLIC_ADMIN_URL ?? "http://localhost:3001";

@@ -1,5 +1,6 @@
 "use client";
 
+import { RunProgressIndicator } from "@generator/ui/components/run-progress-indicator";
 import {
 	Tooltip,
 	TooltipContent,
@@ -42,11 +43,17 @@ export function getMediaType(url: string): "image" | "video" {
 
 export interface StudioMediaAsset {
 	createdAt: string;
+	/** Грубая оценка остатка в миллисекундах — для overlay-индикатора прогресса. */
+	etaMs?: number | null;
 	id: string;
 	label: string;
+	/** Последняя строка лога, отображается под прогрессом. */
+	lastLogLine?: string | null;
 	mediaKind: "input" | "output";
 	mediaType: "image" | "video";
 	meta: string;
+	/** Дискретная фаза для overlay-индикатора прогресса. */
+	phase?: import("@generator/contracts/generator").ExecutionPhase | null;
 	/**
 	 * true, когда asset показывается как заглушка для будущего output:
 	 * пока run в queued/running и реальных artefact'ов ещё нет, мы рендерим
@@ -61,6 +68,8 @@ export interface StudioMediaAsset {
 	 */
 	posterUrl?: string | null;
 	progressPct?: number | null;
+	/** Позиция в очереди провайдера для overlay-индикатора прогресса. */
+	queuePosition?: number | null;
 	runId: string;
 	scenarioId: string;
 	status: "queued" | "running" | "succeeded" | "failed";
@@ -118,36 +127,27 @@ function PreviewEmptyState() {
 	);
 }
 
-function getPlaceholderLabel(asset: StudioMediaAsset) {
-	if (asset.status === "queued") {
-		return "queued";
-	}
-	if (
-		typeof asset.progressPct === "number" &&
-		Number.isFinite(asset.progressPct)
-	) {
-		return `generating · ${Math.round(asset.progressPct)}%`;
-	}
-	return "generating";
-}
-
 function PreviewBadges({ asset }: { asset: StudioMediaAsset }) {
 	const isPlaceholder = asset.placeholder === true;
-	const placeholderLabel = getPlaceholderLabel(asset);
 
 	return (
 		<div className="absolute top-2 left-2 flex items-center gap-1.5">
-			<span
-				className={cn(
-					"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] backdrop-blur-md",
-					isPlaceholder
-						? "bg-amber-500/15 text-amber-50"
-						: "bg-emerald-500/15 text-emerald-50"
-				)}
-			>
-				{isPlaceholder ? <Loader2 className="size-3 animate-spin" /> : null}
-				{isPlaceholder ? placeholderLabel : asset.mediaKind}
-			</span>
+			{isPlaceholder ? (
+				<span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-50 backdrop-blur-md">
+					<RunProgressIndicator
+						etaMs={asset.etaMs}
+						phase={asset.phase}
+						progressPct={asset.progressPct}
+						queuePosition={asset.queuePosition}
+						status={asset.status}
+						variant="inline"
+					/>
+				</span>
+			) : (
+				<span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-50 backdrop-blur-md">
+					{asset.mediaKind}
+				</span>
+			)}
 			<span className="inline-flex items-center gap-1 rounded-full bg-background/70 px-2 py-0.5 text-[11px] backdrop-blur-md">
 				{asset.mediaType === "video" ? (
 					<Film className="size-3" />
@@ -156,6 +156,24 @@ function PreviewBadges({ asset }: { asset: StudioMediaAsset }) {
 				)}
 				{asset.mediaType}
 			</span>
+		</div>
+	);
+}
+
+function PreviewProgressOverlay({ asset }: { asset: StudioMediaAsset }) {
+	if (asset.placeholder !== true) {
+		return null;
+	}
+	return (
+		<div className="pointer-events-none absolute inset-x-2 bottom-2 rounded-lg bg-background/85 px-3 py-2 backdrop-blur-lg dark:bg-background/70">
+			<RunProgressIndicator
+				etaMs={asset.etaMs}
+				lastLogLine={asset.lastLogLine}
+				phase={asset.phase}
+				progressPct={asset.progressPct}
+				queuePosition={asset.queuePosition}
+				status={asset.status}
+			/>
 		</div>
 	);
 }
@@ -462,7 +480,9 @@ export default function PreviewSurface({
 						onToggleFullscreen={handleToggleFullscreen}
 					/>
 
-					{asset.mediaType === "video" ? null : (
+					<PreviewProgressOverlay asset={asset} />
+
+					{asset.mediaType === "video" || asset.placeholder === true ? null : (
 						<PreviewBottomInfo
 							asset={asset}
 							currentIndex={currentIndex}

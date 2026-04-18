@@ -994,4 +994,21 @@ export class StudioService {
 		}
 		return { updatedCount };
 	}
+
+	async processStreamEvent(input: {
+		context: Record<string, unknown>;
+		execution: GeneratorExecutionRecord;
+	}): Promise<void> {
+		const runId =
+			typeof input.context.runId === "string" ? input.context.runId : null;
+		if (!runId) {
+			return;
+		}
+		const run = await this.repository.getRunById(runId);
+		if (!run) {
+			return;
+		}
+		const enriched = this.withExecutionLiveFields(run, input.execution);
+		await this.emitRunUpdate(enriched);
+	}
 }

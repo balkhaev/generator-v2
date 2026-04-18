@@ -204,7 +204,7 @@ function createExecutionClientStub(
 
 describe("studio backend", () => {
 	it("rejects protected routes when session is missing", async () => {
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -225,7 +225,7 @@ describe("studio backend", () => {
 	it("creates local scenarios and delegates execution to generator", async () => {
 		const repository = createMemoryRepository();
 		const calls: string[] = [];
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -334,7 +334,7 @@ describe("studio backend", () => {
 	it("launches prompt-only video scenarios without an input image", async () => {
 		const repository = createMemoryRepository();
 		const receivedInputUrls: Array<string | undefined> = [];
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -402,7 +402,7 @@ describe("studio backend", () => {
 	});
 
 	it("rejects image-conditioned workflows without an input image", async () => {
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -465,7 +465,7 @@ describe("studio backend", () => {
 				return Promise.resolve(body.size);
 			},
 		};
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -534,7 +534,7 @@ describe("studio backend", () => {
 			workflowKey: "fal-zimage-turbo",
 		});
 
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -592,7 +592,7 @@ describe("studio backend", () => {
 			workflowKey: "fal-zimage-turbo",
 		});
 
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -622,7 +622,7 @@ describe("studio backend", () => {
 
 	it("returns 404 for GET /api/runs/:runId/debug when run is missing", async () => {
 		const repository = createMemoryRepository();
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -657,7 +657,7 @@ describe("studio backend", () => {
 			workflowKey: "fal-zimage-turbo",
 		});
 
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -718,7 +718,7 @@ describe("studio backend", () => {
 			workflowKey: "fal-zimage-turbo",
 		});
 
-		const app = createApp({
+		const { app } = createApp({
 			authHandler() {
 				return new Response("auth", { status: 200 });
 			},
@@ -772,5 +772,72 @@ describe("studio backend", () => {
 			}
 		);
 		expect(notFound.status).toBe(404);
+	});
+
+	it("streams initial snapshot via /api/runs/stream", async () => {
+		const repository = createMemoryRepository();
+		await repository.createScenario({
+			createdByUserId: "user-1",
+			durationLabel: null,
+			generatorScenarioId: null,
+			id: "scenario-stream",
+			name: "Stream scenario",
+			params: {},
+			prompt: "p",
+			workflowKey: "fal-zimage-turbo",
+		});
+		await repository.createRun({
+			errorSummary: null,
+			generatorRunId: null,
+			id: "run-active",
+			inputImageUrl: "https://input.example.com/in.png",
+			inputPersonGenerationId: null,
+			inputPersonId: null,
+			loraPersonId: null,
+			progressPct: 42,
+			providerEndpointId: null,
+			providerJobId: null,
+			scenarioId: "scenario-stream",
+			status: "running",
+			workflowKey: "fal-zimage-turbo",
+		});
+
+		const { app } = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub(),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({ session: {}, user: {} });
+			},
+			repository,
+			s3Config: fakeS3Config,
+		});
+
+		const response = await app.request("http://localhost/api/runs/stream");
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toContain("text/event-stream");
+		const reader = response.body?.getReader();
+		if (!reader) {
+			throw new Error("expected SSE body");
+		}
+		const decoder = new TextDecoder();
+		let buffer = "";
+		let sawSnapshot = false;
+		while (!sawSnapshot) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			buffer += decoder.decode(value, { stream: true });
+			if (buffer.includes("event: snapshot")) {
+				sawSnapshot = true;
+			}
+		}
+		await reader.cancel();
+		expect(sawSnapshot).toBe(true);
+		expect(buffer).toContain("run-active");
 	});
 });

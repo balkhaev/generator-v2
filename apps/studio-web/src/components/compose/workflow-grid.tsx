@@ -222,28 +222,6 @@ export default function WorkflowGrid({
 			<div className="grid gap-2 sm:grid-cols-2">
 				<div className="grid gap-1">
 					<span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
-						Output
-					</span>
-					<div className="grid grid-cols-2 gap-1.5">
-						{(["image", "video"] as const).map((value) => {
-							const meta = modalityMeta[value];
-							const isAvailable = availableModalities.includes(value);
-							return (
-								<Segment
-									active={modality === value}
-									disabled={!isAvailable}
-									icon={meta.icon}
-									key={value}
-									label={meta.label}
-									onClick={() => onModalityChange(value)}
-									sublabel={meta.sublabel}
-								/>
-							);
-						})}
-					</div>
-				</div>
-				<div className="grid gap-1">
-					<span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
 						Source
 					</span>
 					<div className="grid grid-cols-2 gap-1.5">
@@ -262,6 +240,28 @@ export default function WorkflowGrid({
 									sublabel={
 										value === "text" ? "Just a prompt" : "Reference image"
 									}
+								/>
+							);
+						})}
+					</div>
+				</div>
+				<div className="grid gap-1">
+					<span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
+						Output
+					</span>
+					<div className="grid grid-cols-2 gap-1.5">
+						{(["image", "video"] as const).map((value) => {
+							const meta = modalityMeta[value];
+							const isAvailable = availableModalities.includes(value);
+							return (
+								<Segment
+									active={modality === value}
+									disabled={!isAvailable}
+									icon={meta.icon}
+									key={value}
+									label={meta.label}
+									onClick={() => onModalityChange(value)}
+									sublabel={meta.sublabel}
 								/>
 							);
 						})}

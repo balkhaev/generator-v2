@@ -19,6 +19,7 @@ import {
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
+import { RunProgressIndicator } from "@generator/ui/components/run-progress-indicator";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import {
 	Tooltip,
@@ -274,39 +275,19 @@ function StatusPill({ status }: { status: ScenarioRunRecord["status"] }) {
 	);
 }
 
-function runProgressCaption(run: ScenarioRunRecord, pct: unknown): string {
-	if (run.status === "queued") {
-		return "Starting…";
-	}
-	if (typeof pct === "number" && Number.isFinite(pct)) {
-		return `${Math.round(pct)}%`;
-	}
-	return "Generating…";
-}
-
 function RunLiveProgress({ run }: { run: ScenarioRunRecord }) {
 	if (run.status !== "queued" && run.status !== "running") {
 		return null;
 	}
-	const pct = run.progressPct;
 	return (
-		<div className="space-y-1">
-			<div className="h-1 overflow-hidden rounded-full bg-muted/50">
-				{typeof pct === "number" && Number.isFinite(pct) ? (
-					<div
-						className="h-full rounded-full bg-sky-500/85 transition-[width] duration-500"
-						style={{
-							width: `${Math.min(100, Math.max(0, pct))}%`,
-						}}
-					/>
-				) : (
-					<div className="h-full w-full animate-pulse rounded-full bg-muted-foreground/20" />
-				)}
-			</div>
-			<p className="text-[10px] text-muted-foreground">
-				{runProgressCaption(run, pct)}
-			</p>
-		</div>
+		<RunProgressIndicator
+			etaMs={run.etaMs}
+			lastLogLine={run.lastLogLine}
+			phase={run.phase}
+			progressPct={run.progressPct}
+			queuePosition={run.queuePosition}
+			status={run.status}
+		/>
 	);
 }
 

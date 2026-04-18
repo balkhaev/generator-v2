@@ -1,29 +1,17 @@
 "use client";
 
+import { RunProgressIndicator } from "@generator/ui/components/run-progress-indicator";
 import {
 	Tooltip,
 	TooltipContent,
 	TooltipTrigger,
 } from "@generator/ui/components/tooltip";
 import { cn } from "@generator/ui/lib/utils";
-import { Film, Loader2 } from "lucide-react";
+import { Film } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 
 import type { StudioMediaAsset } from "./preview-surface";
-
-function formatPlaceholderLabel(asset: StudioMediaAsset) {
-	if (asset.status === "queued") {
-		return "queue";
-	}
-	if (
-		typeof asset.progressPct === "number" &&
-		Number.isFinite(asset.progressPct)
-	) {
-		return `${Math.round(asset.progressPct)}%`;
-	}
-	return "gen";
-}
 
 // `#t=0.1` подсказывает браузеру стартовать с 0.1с вместо нуля, что в большинстве
 // движков рендерится как первый осмысленный кадр (нулевой иногда чёрный из-за
@@ -123,7 +111,15 @@ export default function MediaStrip({
 										aria-hidden="true"
 										className="absolute inset-0 flex items-center justify-center bg-background/30 backdrop-blur-[1px]"
 									>
-										<Loader2 className="size-4 animate-spin text-foreground/80" />
+										<RunProgressIndicator
+											etaMs={asset.etaMs}
+											phase={asset.phase}
+											progressPct={asset.progressPct}
+											queuePosition={asset.queuePosition}
+											size={36}
+											status={asset.status}
+											variant="circle"
+										/>
 									</div>
 								) : null}
 								<div
@@ -135,7 +131,7 @@ export default function MediaStrip({
 									)}
 								>
 									<span className="truncate font-medium uppercase tracking-wide">
-										{isPlaceholder ? formatPlaceholderLabel(asset) : "out"}
+										{isPlaceholder ? "gen" : "out"}
 									</span>
 									{isVideo ? <span>video</span> : null}
 								</div>

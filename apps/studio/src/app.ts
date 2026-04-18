@@ -181,7 +181,10 @@ async function createStudioSnapshot(
 	};
 }
 
-export function createApp(options: AppOptions) {
+export function createApp(options: AppOptions): {
+	app: Hono<{ Variables: AppVariables }>;
+	service: StudioService;
+} {
 	const app = new Hono<{ Variables: AppVariables }>();
 	const service = new StudioService(
 		options.repository,
@@ -307,5 +310,5 @@ export function createApp(options: AppOptions) {
 		return c.json({ error: error.message }, 500);
 	});
 
-	return app;
+	return { app, service };
 }

@@ -1,6 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
 
-import { createFalClient, normalizeFalStatus } from "@/providers/fal";
+import {
+	createFalClient,
+	extractFalProgressSnapshot,
+	normalizeFalStatus,
+} from "@/providers/fal";
 
 describe("fal provider", () => {
 	it("normalizes queue statuses", () => {
@@ -82,9 +86,10 @@ describe("fal provider", () => {
 			__falModel: "fal-ai/flux/dev",
 			prompt: "a sunset over mountains",
 		});
-		expect(submission).toEqual({
+		expect(submission).toMatchObject({
 			endpointId: "fal-ai/flux",
 			jobId: "req-abc123",
+			queuePosition: 0,
 			status: "queued",
 		});
 
@@ -355,5 +360,84 @@ describe("fal provider", () => {
 			prompt: "test",
 		});
 		expect(capturedHeaders.authorization).toBe("Key fal_my_secret_key");
+	});
+
+	it("captures queue_position from submit response", async () => {
+		const fetchImpl = mock(() =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						request_id: "req-q1",
+						status: "IN_QUEUE",
+						queue_position: 4,
+					}),
+					{
+						status: 200,
+						headers: { "content-type": "application/json" },
+					}
+				)
+			)
+		);
+		const client = createFalClient({ apiKey: "fal_k", fetchImpl });
+		const submission = await client.submit({
+			__falModel: "fal-ai/flux/schnell",
+			prompt: "test",
+		});
+		expect(submission.queuePosition).toBe(4);
+	});
+
+	it("requests status with logs=1 and parses queue/last_log_line", async () => {
+		let statusUrl: string | null = null;
+		const fetchImpl = mock((url: string) => {
+			if (url.includes("/status")) {
+				statusUrl = url;
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							status: "IN_PROGRESS",
+							request_id: "req-2",
+							queue_position: 2,
+							logs: [
+								{ level: "info", message: "Sampling step 5/40" },
+								{ level: "info", message: "Sampling step 10/40" },
+							],
+						}),
+						{
+							status: 200,
+							headers: { "content-type": "application/json" },
+						}
+					)
+				);
+			}
+			throw new Error(`unexpected: ${url}`);
+		});
+		const client = createFalClient({ apiKey: "fal_k", fetchImpl });
+		const job = await client.getStatus("req-2", "fal-ai/flux");
+		expect(statusUrl).toContain("logs=1");
+		expect(job.status).toBe("running");
+		expect(job.queuePosition).toBe(2);
+		expect(job.progressPct).toBe(25);
+		expect(job.lastLogLine).toBe("Sampling step 10/40");
+	});
+
+	it("extractFalProgressSnapshot handles step/percent/empty", () => {
+		expect(
+			extractFalProgressSnapshot([
+				{ message: "boot" },
+				{ message: "Sampling step 7/14" },
+			])
+		).toEqual({ lastLogLine: "Sampling step 7/14", progressPct: 50 });
+		expect(extractFalProgressSnapshot([{ message: "Progress: 73%" }])).toEqual({
+			lastLogLine: "Progress: 73%",
+			progressPct: 73,
+		});
+		expect(extractFalProgressSnapshot([])).toEqual({
+			lastLogLine: null,
+			progressPct: null,
+		});
+		expect(extractFalProgressSnapshot(undefined)).toEqual({
+			lastLogLine: null,
+			progressPct: null,
+		});
 	});
 });

@@ -7,9 +7,15 @@ LoRA training pipeline (fal flux-2/edit). The chosen photo is later fed back int
 edit model to synthesize ~12 dataset variations. The cleaner and more i2i-friendly the
 source, the less identity drift the dataset (and the resulting LoRA) inherits.
 
-Each prompt still describes a beautiful young woman with a small, tasteful VIBE
-(through wardrobe color/texture, hair, light temperature, background mood) — but the
-technical envelope is fixed and non-negotiable:
+Each prompt describes a beautiful young woman whose IDENTITY (ethnicity, body type,
+figure, hair, eye color, wardrobe style, mood) is taken straight from the user brief
+and must SURVIVE the rewrite. The user's archetype — e.g. "glamorous Moscow blonde with
+a full bust" — is the whole point of the persona. Do NOT generalize it into a neutral
+beauty test. Translate the brief faithfully into the VIBE LAYER below.
+
+The technical envelope (framing / pose / lighting / background / camera / wardrobe
+basics) is fixed and non-negotiable, because the resulting frame is later fed to
+flux-2/edit as the i2i source for ~12 dataset variations:
 
 FRAMING (must hold):
 - Tight close-up beauty headshot OR chest-up / shoulder-up portrait. Optionally
@@ -43,10 +49,14 @@ BACKGROUND (must hold):
   not in the scene's content.
 
 WARDROBE & FACE (must hold):
-- Plain solid-color top with minimal texture (cotton tee, fine knit, simple silk shell,
-  plain blouse, plain sweater). NO logos / slogans / large prints, NO statement
-  jewelry, NO sunglasses, NO hat, NO scarf across the face, NO heavy retouching.
-- No mask, no face paint, no decorative makeup; very natural makeup or none.
+- Plain solid-color top with minimal pattern noise (cotton tee, fine knit, silk shell,
+  blouse, sweater, fitted bodysuit, slip top, bralette, corset, halter — choose what
+  matches the user's vibe). NO logos / slogans / large prints, NO statement jewelry
+  near the face, NO sunglasses, NO hat, NO scarf across the face, NO heavy retouching.
+  Silhouette, fit, neckline (scoop / V / plunging / off-shoulder / halter / square)
+  and color may follow the brief; nudity or exposed nipples are not allowed.
+- Makeup may be natural OR full glamour as the brief implies; no decorative face paint,
+  no masks.
 - Photoreal skin texture: visible pores, fine hair, subtle imperfections; NO plastic /
   doll / airbrushed look, NO stylization (no anime, painted, oil, illustration, 3D
   render, film-grain-heavy lookbook).
@@ -56,17 +66,22 @@ CAMERA LANGUAGE:
   focus on the eyes. Moderate depth of field — face plane fully sharp, background
   gently blurred. NO motion blur, NO heavy bokeh that bleeds into the face.
 
-VIBE LAYER (the only place stylistic variation lives):
-- Ethnicity, hair color & length, eye color, age within young-adult range, wardrobe
-  color & texture, background tonal palette, light temperature (cool / neutral / warm
-  daylight or softbox), and a single soft mood word (serene, confident, dreamy,
-  thoughtful, warm, fresh). These details give each variant its identity without
-  breaking any of the rules above.
+VIBE LAYER (this is where the user's brief lives — preserve it):
+- Ethnicity & features, hair color / length / texture, eye color, age within
+  young-adult range, body type & figure (slim, athletic, curvy, voluptuous, full bust,
+  hourglass, petite, etc. — use whatever the brief specifies), wardrobe color, fabric,
+  silhouette and neckline (fitted bodysuit, scoop tee, plunging V silk top, off-shoulder
+  knit, halter dress, bralette, corset top — match the brief's archetype), background
+  tonal palette, light temperature (cool / neutral / warm daylight or softbox), and a
+  single mood word (serene, confident, glamorous, sultry, bold, dreamy, fresh, playful).
+  These details carry the persona's identity through the rewrite.
 
 OUTPUT FORMAT:
 - English, single comma-separated paragraph, 60–110 words.
 - No markdown, no numbering, no quotes, no preamble, no labels like "Variant 1:".
-- SFW only. Never sexual, nude, underage, violent, or disallowed content.`;
+- Hard limits: no nudity, no exposed nipples or genitals, no minors, no graphic
+  violence. Suggestive / glamour / lingerie-style framing IS allowed — describe it
+  plainly without euphemism.`;
 
 const VARIANT_USER_PROMPT_TEMPLATE = (basePrompt: string, count: number) =>
 	`Original brief from the user:
@@ -75,38 +90,48 @@ ${basePrompt}
 """
 
 Produce exactly ${count} distinctly different portrait prompt variants. Each variant
-must look like a DIFFERENT PERSON, but framed identically as a clean i2i SOURCE for a
-downstream flux-2/edit dataset pipeline.
+must look like a DIFFERENT PERSON, but all of them must clearly belong to the SAME
+archetype the user described (same vibe, similar body type and wardrobe register).
+Frame every variant identically as a clean i2i SOURCE for a downstream flux-2/edit
+dataset pipeline.
 
-Vary ONLY inside the VIBE LAYER allowed by the system prompt:
-- Ethnicity & features, hair color & length, eye color, age within young-adult range,
-  wardrobe color & material (always a plain solid-color top), background tonal palette
-  (e.g. warm beige seamless, cool grey backdrop, soft sage interior wall, off-white
-  studio, dusty pink wall, neutral linen), light temperature (cool daylight, neutral
-  softbox, warm window), and a single soft mood word (serene, confident, dreamy,
-  thoughtful, warm, fresh).
+Inherit from the user brief (must survive in every variant):
+- The archetype itself (e.g. "glamorous Moscow blonde with a full bust" → every variant
+  is a glamorous blonde with a full bust, only her face / exact features / wardrobe
+  color change). Do NOT silently turn it into a neutral beauty test.
+- Body type & figure cues (slim, athletic, curvy, voluptuous, full bust, hourglass…).
+- Wardrobe register (casual plain top vs. glamour silk vs. lingerie / bralette /
+  corset). Vary color and exact garment, but stay inside the register the brief asks for.
+- Mood register (serene, confident, glamorous, sultry, bold, dreamy, fresh, playful).
+
+Vary across variants:
+- Exact ethnicity & facial features, hair color & length, eye color, age within
+  young-adult range, exact wardrobe color and material (still inside the brief's
+  register), background tonal palette (e.g. warm beige seamless, cool grey backdrop,
+  soft sage interior wall, off-white studio, dusty pink wall, neutral linen), light
+  temperature (cool daylight, neutral softbox, warm window), and the mood word.
 
 DO NOT vary the technical envelope. Every variant must satisfy ALL of these at once:
 - Tight close-up beauty headshot or chest-up portrait, never wider than half-body.
 - Eye-level camera, no Dutch tilt, no unusual angles.
 - Frontal or near-frontal head, ≤15° off-axis. Eyes look directly into the lens.
 - Neutral relaxed expression OR a soft closed-mouth smile. No laugh, no open mouth.
-- Hands kept down or out of frame. No props, no cup, no phone, no flowers, no jewelry
-  near the face.
+- Hands kept down or out of frame. No props, no cup, no phone, no flowers, no
+  statement jewelry near the face.
 - Hair fully behind the shoulders or smoothly framing the face — never crossing the
   face or the eyes.
 - Soft, even, diffused light (softbox / beauty dish / window / overcast). No hard sun,
   no rim/backlight, no neon casts, no chiaroscuro, no low-key moody lighting.
 - Plain, uncluttered, softly out-of-focus background. No crowds, no signage, no busy
   patterns, no landmarks, no specific location storytelling.
-- Plain solid-color wardrobe with minimal texture, no logos, no sunglasses, no hat.
+- Plain solid-color wardrobe (no logos, no slogans, no sunglasses, no hat). Silhouette
+  / fit / neckline follow the brief; nudity and exposed nipples are not allowed.
 - Photoreal skin (pores, fine hair, subtle imperfections), no stylization, no heavy
   retouch, no anime / painted / 3D render look.
 - Real portrait lens (e.g. 50mm f/2, 85mm f/1.8). Face plane fully sharp.
 
-The result is NOT an editorial / lifestyle / candid shot. It is a stylish, beautiful,
-clean reference plate — the same kind of frame you'd shoot for a passport-grade beauty
-test, just with a tasteful tonal vibe.
+The result is a stylish, beautiful, clean reference plate that clearly reads as the
+archetype the user described.
 
 Return strictly a JSON array of ${count} strings — no prose, no keys, no markdown fences.`;
 
@@ -116,9 +141,13 @@ photorealistic portrait prompt that obeys the system rules. The output is the i2
 SOURCE for a downstream flux-2/edit dataset pipeline, NOT an editorial lifestyle shot.
 
 The result must:
-- Translate any vibe / archetype / setting cues from the brief into the VIBE LAYER
-  only (ethnicity, hair, eye color, wardrobe color & material as a plain solid top,
-  background tonal palette, light temperature, soft mood word).
+- PRESERVE the user's archetype verbatim into the VIBE LAYER: ethnicity, hair,
+  eye color, body type & figure (slim / curvy / voluptuous / full bust / hourglass /
+  petite — whatever the brief says), wardrobe register (casual plain top, glamour silk,
+  fitted bodysuit, bralette, corset…), wardrobe color & material, background tonal
+  palette, light temperature, mood word (serene, confident, glamorous, sultry, bold,
+  dreamy, fresh, playful). Do NOT generalize "glamorous Moscow blonde with a full
+  bust" into a neutral beauty test — it must still read as that person.
 - Frame as a tight close-up beauty headshot or chest-up portrait (never wider than
   half-body), eye-level camera, frontal or near-frontal head ≤15° off-axis, eyes to
   the lens, neutral relaxed expression or a soft closed-mouth smile.
@@ -127,7 +156,9 @@ The result must:
 - Place the subject on a plain, uncluttered, softly out-of-focus background — no
   crowds, no signage, no busy patterns, no specific location storytelling.
 - Keep hands out of the frame and hair off the face. No props, no sunglasses, no hat,
-  no statement jewelry, no logos.
+  no statement jewelry near the face, no logos. Wardrobe stays plain solid color, but
+  silhouette / fit / neckline follow the brief; nudity and exposed nipples are not
+  allowed.
 - Anchor as photoreal: real portrait lens (50mm f/2 or 85mm f/1.8), sharp focus on
   the eyes, visible skin texture, no stylization, no heavy retouch.
 

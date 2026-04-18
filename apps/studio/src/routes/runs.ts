@@ -12,6 +12,18 @@ export function createRunRoutes(service: StudioService) {
 
 	app.get("/", async (c) => c.json({ runs: await service.listRuns() }));
 
+	app.get("/:runId/debug", async (c) => {
+		try {
+			const bundle = await service.getRunDebugBundle(c.req.param("runId"), {
+				debugCorrelationId: c.get("debugCorrelationId"),
+			});
+			return bundle ? c.json(bundle) : c.json({ error: "Run not found" }, 404);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status);
+		}
+	});
+
 	app.post("/", async (c) => {
 		try {
 			const payload = await c.req.json();

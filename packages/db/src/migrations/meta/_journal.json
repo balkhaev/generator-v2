@@ -71,6 +71,13 @@
       "when": 1776527918254,
       "tag": "0009_whole_titanium_man",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1776532847956,
+      "tag": "0010_studio_run_progress_pct",
+      "breakpoints": true
     }
   ]
 }

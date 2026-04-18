@@ -11,7 +11,6 @@ import {
 	launchStudioRun,
 	type ScenarioRecord,
 	type ScenarioRunRecord,
-	syncStudioRun,
 	type UploadedInputAsset,
 	type WorkflowDefinition,
 } from "@generator/studio-client/client";
@@ -43,10 +42,10 @@ import {
 	Play,
 	Plus,
 	RefreshCw,
-	RotateCw,
 	Search,
 } from "lucide-react";
 import type { Route } from "next";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -500,29 +499,60 @@ function ScenarioSwitcher({
 	);
 }
 
+function runProgressCaption(run: ScenarioRunRecord, pct: unknown): string {
+	if (run.status === "queued") {
+		return "Starting…";
+	}
+	if (typeof pct === "number" && Number.isFinite(pct)) {
+		return `${Math.round(pct)}%`;
+	}
+	return "Generating…";
+}
+
+function RunLiveProgress({ run }: { run: ScenarioRunRecord }) {
+	if (run.status !== "queued" && run.status !== "running") {
+		return null;
+	}
+	const pct = run.progressPct;
+	return (
+		<div className="space-y-1">
+			<div className="h-1 overflow-hidden rounded-full bg-muted/50">
+				{typeof pct === "number" && Number.isFinite(pct) ? (
+					<div
+						className="h-full rounded-full bg-sky-500/85 transition-[width] duration-500"
+						style={{
+							width: `${Math.min(100, Math.max(0, pct))}%`,
+						}}
+					/>
+				) : (
+					<div className="h-full w-full animate-pulse rounded-full bg-muted-foreground/20" />
+				)}
+			</div>
+			<p className="text-[10px] text-muted-foreground">
+				{runProgressCaption(run, pct)}
+			</p>
+		</div>
+	);
+}
+
 function RunCard({
 	isCopied,
 	isFocused,
 	linkedPerson,
 	onCopyRunId,
-	onSyncRun,
 	personsUrl,
 	run,
-	syncingRunId,
 }: {
 	isCopied: boolean;
 	isFocused: boolean;
 	linkedPerson: LinkedPersonState;
 	onCopyRunId: (runId: string) => Promise<void> | void;
-	onSyncRun: (runId: string) => Promise<void> | void;
 	personsUrl: string;
 	run: ScenarioRunRecord;
-	syncingRunId: string | null;
 }) {
 	const outputThumbnails = run.artifactUrls
 		.filter((url) => getMediaType(url) === "image")
 		.slice(0, 3);
-	const isSyncing = syncingRunId === run.id;
 	const hasLinkedPerson =
 		linkedPerson &&
 		(linkedPerson.runId === run.id || linkedPerson.runId === run.providerJobId);
@@ -580,6 +610,8 @@ function RunCard({
 				</div>
 			) : null}
 
+			<RunLiveProgress run={run} />
+
 			{run.errorSummary ? (
 				<p className="rounded-lg bg-rose-500/10 px-2 py-1 text-[10px] text-rose-700 dark:text-rose-300">
 					{run.errorSummary}
@@ -587,6 +619,12 @@ function RunCard({
 			) : null}
 
 			<div className="flex flex-wrap items-center gap-1">
+				<Link
+					className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
+					href={`/run/${run.id}` as Route}
+				>
+					Debug
+				</Link>
 				{hasLinkedPerson ? (
 					<a
 						className="inline-flex items-center gap-1 rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted-foreground transition hover:bg-muted/25 dark:bg-muted/8"
@@ -607,21 +645,6 @@ function RunCard({
 						Source
 						<ExternalLink className="size-2.5" />
 					</a>
-				) : null}
-				{run.status === "queued" || run.status === "running" ? (
-					<Button
-						disabled={isSyncing}
-						onClick={() => onSyncRun(run.id)}
-						size="xs"
-						variant="outline"
-					>
-						{isSyncing ? (
-							<Loader2 className="size-3 animate-spin" />
-						) : (
-							<RotateCw className="size-3" />
-						)}
-						Sync
-					</Button>
 				) : null}
 			</div>
 		</article>
@@ -672,6 +695,11 @@ function LaunchSection({
 					) : null}
 				</div>
 			</div>
+			{activeRunCount > 0 ? (
+				<p className="text-[10px] text-muted-foreground">
+					Status and previews refresh automatically while runs are active.
+				</p>
+			) : null}
 
 			{scenario.prompt ? (
 				<Tooltip>
@@ -776,10 +804,8 @@ function ActivitySection({
 	linkedPerson,
 	onCopyRunId,
 	onFilterChange,
-	onSyncRun,
 	personsUrl,
 	scenarioRuns,
-	syncingRunId,
 }: {
 	copiedRunId: string | null;
 	filter: RunFilter;
@@ -788,10 +814,8 @@ function ActivitySection({
 	linkedPerson: LinkedPersonState;
 	onCopyRunId: (runId: string) => Promise<void> | void;
 	onFilterChange: (next: RunFilter) => void;
-	onSyncRun: (runId: string) => Promise<void> | void;
 	personsUrl: string;
 	scenarioRuns: ScenarioRunRecord[];
-	syncingRunId: string | null;
 }) {
 	const counts = useMemo<Record<RunFilter, number>>(
 		() => ({
@@ -844,10 +868,8 @@ function ActivitySection({
 								key={run.id}
 								linkedPerson={linkedPerson}
 								onCopyRunId={onCopyRunId}
-								onSyncRun={onSyncRun}
 								personsUrl={personsUrl}
 								run={run}
-								syncingRunId={syncingRunId}
 							/>
 						))}
 					</div>
@@ -869,7 +891,6 @@ export default function CommandSidebar({
 	const [snapshot, setSnapshot] = useState<AdminSnapshot>(initialSnapshot);
 	const [runDrafts, setRunDrafts] = useState<Record<string, RunDraft>>({});
 	const [submittingRunId, setSubmittingRunId] = useState<string | null>(null);
-	const [syncingRunId, setSyncingRunId] = useState<string | null>(null);
 	const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
 	const [linkedPerson, setLinkedPerson] = useState<LinkedPersonState>(null);
 	const [runFilter, setRunFilter] = useState<RunFilter>("all");
@@ -1015,30 +1036,6 @@ export default function CommandSidebar({
 			}, 1500);
 		} catch {
 			toast.error("Unable to copy.");
-		}
-	}
-
-	async function handleSyncRun(runId: string) {
-		setSyncingRunId(runId);
-		try {
-			const result = await syncStudioRun(runId);
-			setSnapshot((current) => {
-				const next = {
-					...current,
-					runs: current.runs.map((run) =>
-						run.id === runId ? result.data : run
-					),
-				};
-				onSnapshotChange?.(next);
-				return next;
-			});
-			toast.success("Run status refreshed.");
-		} catch (error) {
-			toast.error(
-				error instanceof Error ? error.message : "Unable to sync run status."
-			);
-		} finally {
-			setSyncingRunId(null);
 		}
 	}
 
@@ -1212,10 +1209,8 @@ export default function CommandSidebar({
 					linkedPerson={linkedPerson}
 					onCopyRunId={handleCopyRunId}
 					onFilterChange={setRunFilter}
-					onSyncRun={handleSyncRun}
 					personsUrl={personsUrl}
 					scenarioRuns={selectedScenarioRuns}
-					syncingRunId={syncingRunId}
 				/>
 			</div>
 		</aside>

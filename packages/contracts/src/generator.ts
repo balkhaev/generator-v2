@@ -94,12 +94,21 @@ export interface SyncGeneratorExecutionInput {
 
 export interface GeneratorExecutionRecord {
 	artifacts: GeneratorArtifactRecord[];
+	callback?: {
+		context?: Record<string, unknown>;
+		token?: string;
+		url?: string;
+	} | null;
+	createdAt?: string;
 	errorSummary: string | null;
 	id: string;
 	inputImageUrl: string;
+	params?: Record<string, unknown>;
 	progressPct?: number | null;
+	prompt?: string;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
 	status: RunStatus;
+	updatedAt?: string;
 	workflowKey: string;
 }

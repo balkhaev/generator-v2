@@ -3,7 +3,7 @@
 import type { ScenarioRunRecord } from "@generator/studio-client/shared";
 import { useEffect, useMemo, useRef } from "react";
 
-const POLL_INTERVAL_MS = 6000;
+const POLL_INTERVAL_MS = 2500;
 
 function isActiveStatus(status: ScenarioRunRecord["status"]) {
 	return status === "queued" || status === "running";
@@ -38,18 +38,20 @@ export function useRunAutoSync({
 			return;
 		}
 
-		const ids = activeIdsKey.split(",");
+		const ids = activeIdsKey.split(",").filter(Boolean);
 		let cancelled = false;
 
-		const interval = setInterval(() => {
+		const tick = () => {
 			if (cancelled) {
 				return;
 			}
-
 			for (const runId of ids) {
 				Promise.resolve(onSyncRef.current(runId)).catch(() => undefined);
 			}
-		}, POLL_INTERVAL_MS);
+		};
+
+		tick();
+		const interval = setInterval(tick, POLL_INTERVAL_MS);
 
 		return () => {
 			cancelled = true;

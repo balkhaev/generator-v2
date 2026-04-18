@@ -8,10 +8,14 @@ import type {
 	AdminDashboardSnapshot,
 	AdminSetupStatus,
 } from "@generator/contracts/admin";
+import type { StudioRunDebugBundle } from "@generator/contracts/studio";
 import { pingDatabase } from "@generator/db/health";
+import { getGeneratorCallbackToken } from "@generator/env/server";
 import { type FetchLike, proxyHttpRequest } from "@generator/http/proxy";
 import {
 	DEBUG_CORRELATION_HEADER,
+	GENERATOR_CALLBACK_TOKEN_HEADER,
+	normalizeBaseUrl,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
 import type { S3StorageConfig } from "@generator/storage";
@@ -154,6 +158,28 @@ export function createApp(options: AppOptions) {
 	app.get("/api/dashboard", async (c) =>
 		c.json(await options.loadDashboardSnapshot())
 	);
+
+	app.get("/api/dashboard/runs/:studioRunId/debug", async (c) => {
+		const studioRunId = c.req.param("studioRunId");
+		const normalizedStudio = normalizeBaseUrl(options.studioBaseUrl);
+		const upstream = await fetchImpl(
+			`${normalizedStudio}/api/internal/runs/${encodeURIComponent(studioRunId)}`,
+			{
+				headers: {
+					[GENERATOR_CALLBACK_TOKEN_HEADER]: getGeneratorCallbackToken(),
+				},
+			}
+		);
+		if (upstream.status === 404) {
+			return c.json({ error: "Run not found" }, 404);
+		}
+		if (!upstream.ok) {
+			const text = await upstream.text();
+			return c.json({ error: text || `Upstream ${upstream.status}` }, 502);
+		}
+		const json = (await upstream.json()) as StudioRunDebugBundle;
+		return c.json(json);
+	});
 
 	if (options.internalTrainingControlService) {
 		app.route(

@@ -6,6 +6,7 @@ import type {
 } from "@generator/contracts/generator";
 import type { PersonRecord } from "@generator/contracts/persons";
 import type {
+	StudioRunDebugBundle,
 	StudioRunRecord,
 	StudioScenarioRecord,
 	StudioShotArtifactKind,
@@ -99,6 +100,7 @@ export interface StudioRunEntity {
 	inputPersonGenerationId: string | null;
 	inputPersonId: string | null;
 	loraPersonId: string | null;
+	progressPct: number | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
 	scenarioId: string;
@@ -162,6 +164,7 @@ export interface StudioRepository {
 				| "inputPersonGenerationId"
 				| "inputPersonId"
 				| "loraPersonId"
+				| "progressPct"
 				| "providerEndpointId"
 				| "providerJobId"
 				| "status"
@@ -240,6 +243,16 @@ function toStudioScenarioRecord(
 	};
 }
 
+function executionProgressPct(
+	execution: Pick<GeneratorExecutionRecord, "progressPct">
+): number | null {
+	const raw = execution.progressPct;
+	if (raw == null || !Number.isFinite(raw)) {
+		return null;
+	}
+	return Math.max(0, Math.min(100, Math.round(Number(raw))));
+}
+
 function toStudioRunRecord(entity: StudioRunEntity): StudioRunRecord {
 	return {
 		artifacts: entity.artifacts.map((artifact) => ({
@@ -254,6 +267,7 @@ function toStudioRunRecord(entity: StudioRunEntity): StudioRunRecord {
 		inputPersonGenerationId: entity.inputPersonGenerationId,
 		inputPersonId: entity.inputPersonId,
 		loraPersonId: entity.loraPersonId ?? null,
+		progressPct: entity.progressPct,
 		providerEndpointId: entity.providerEndpointId,
 		providerJobId: entity.providerJobId,
 		scenarioId: entity.scenarioId,
@@ -433,6 +447,31 @@ export class StudioService {
 		return run ? toStudioRunRecord(run) : null;
 	}
 
+	async getRunDebugBundle(
+		runId: string,
+		options?: { debugCorrelationId?: string }
+	): Promise<StudioRunDebugBundle | null> {
+		const entity = await this.repository.getRunById(runId);
+		if (!entity) {
+			return null;
+		}
+		const run = toStudioRunRecord(entity);
+		if (!entity.generatorRunId) {
+			return { execution: null, executionError: null, run };
+		}
+		try {
+			const execution = await this.executionClient.getExecution(
+				entity.generatorRunId,
+				{ debugCorrelationId: options?.debugCorrelationId }
+			);
+			return { execution, executionError: null, run };
+		} catch (error) {
+			const executionError =
+				error instanceof Error ? error.message : "Unknown error";
+			return { execution: null, executionError, run };
+		}
+	}
+
 	private async buildMergedExecutionParams(
 		scenario: StudioScenarioEntity,
 		parsed: z.infer<typeof createStudioRunInputSchema>,
@@ -502,6 +541,7 @@ export class StudioService {
 			inputPersonGenerationId: parsed.inputPersonGenerationId ?? null,
 			inputPersonId: parsed.inputPersonId ?? null,
 			loraPersonId: parsed.loraPersonId ?? null,
+			progressPct: null,
 			providerEndpointId: null,
 			providerJobId: null,
 			scenarioId: scenario.id,
@@ -545,6 +585,7 @@ export class StudioService {
 				.updateRun(createdRun.id, {
 					completedAt: new Date(),
 					errorSummary,
+					progressPct: null,
 					status: "failed",
 				})
 				.catch((markError) => {
@@ -579,6 +620,7 @@ export class StudioService {
 			errorSummary: execution.errorSummary ?? null,
 			generatorRunId: execution.id,
 			inputImageUrl: execution.inputImageUrl,
+			progressPct: executionProgressPct(execution),
 			providerEndpointId: execution.providerEndpointId,
 			providerJobId: execution.providerJobId,
 			status: execution.status,
@@ -633,6 +675,7 @@ export class StudioService {
 			errorSummary: execution.errorSummary ?? null,
 			generatorRunId: execution.id,
 			inputImageUrl: currentRun.inputImageUrl,
+			progressPct: executionProgressPct(execution),
 			providerEndpointId: execution.providerEndpointId,
 			providerJobId: execution.providerJobId,
 			status: execution.status,
@@ -655,6 +698,7 @@ export class StudioService {
 		const updated = await this.repository.updateRun(runId, {
 			completedAt: new Date(),
 			errorSummary,
+			progressPct: null,
 			status: "failed",
 		});
 		this.logger.info("studio.run.mark-failed", {
@@ -704,6 +748,7 @@ export class StudioService {
 			completedAt,
 			errorSummary: input.execution.errorSummary ?? null,
 			generatorRunId: input.execution.id,
+			progressPct: executionProgressPct(input.execution),
 			providerEndpointId: input.execution.providerEndpointId,
 			providerJobId: input.execution.providerJobId,
 			status: input.execution.status,
@@ -767,6 +812,7 @@ export class StudioService {
 					completedAt,
 					errorSummary: execution.errorSummary ?? null,
 					generatorRunId: execution.id,
+					progressPct: executionProgressPct(execution),
 					providerEndpointId: execution.providerEndpointId,
 					providerJobId: execution.providerJobId,
 					status: execution.status,

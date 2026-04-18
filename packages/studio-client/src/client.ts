@@ -1,3 +1,4 @@
+import type { StudioRunDebugBundle } from "@generator/contracts/studio";
 import { env } from "@generator/env/web";
 import { requestJson } from "@generator/http/client";
 import { normalizeBaseUrl } from "@generator/http/shared";
@@ -34,6 +35,14 @@ function requestStudioJson<T>(input: string, init?: RequestInit) {
 
 export function getStudioSnapshot(): Promise<AdminSnapshot> {
 	return requestStudioJson<AdminSnapshot>(`${apiBaseUrl}/api/studio-snapshot`);
+}
+
+export function getStudioRunDebugBundle(
+	runId: string
+): Promise<StudioRunDebugBundle> {
+	return requestStudioJson<StudioRunDebugBundle>(
+		`${apiBaseUrl}/api/runs/${encodeURIComponent(runId)}/debug`
+	);
 }
 
 export async function createStudioScenario(
@@ -163,6 +172,7 @@ export async function syncStudioRun(
 	};
 }
 
+export type { StudioRunDebugBundle } from "@generator/contracts/studio";
 export type {
 	AdminSnapshot,
 	CreateScenarioInput,

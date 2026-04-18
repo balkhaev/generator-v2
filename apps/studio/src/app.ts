@@ -88,12 +88,14 @@ interface StudioSnapshotResponse {
 		artifactUrls: string[];
 		createdAt?: string;
 		errorSummary?: string | null;
+		generatorRunId?: string | null;
 		id: string;
 		inputImageUrl: string;
 		inputLabel: string;
 		inputPersonGenerationId?: string | null;
 		inputPersonId?: string | null;
 		loraPersonId?: string | null;
+		progressPct?: number | null;
 		providerEndpointId?: string | null;
 		providerJobId?: string | null;
 		scenarioId: string;
@@ -201,12 +203,14 @@ async function createStudioSnapshot(
 				.filter((artifactUrl): artifactUrl is string => Boolean(artifactUrl)),
 			createdAt: run.createdAt,
 			errorSummary: run.errorSummary ?? null,
+			generatorRunId: run.generatorRunId ?? null,
 			id: run.id,
 			inputImageUrl: run.inputImageUrl,
 			inputLabel: formatInputLabel(run.inputImageUrl),
 			inputPersonGenerationId: run.inputPersonGenerationId ?? null,
 			inputPersonId: run.inputPersonId ?? null,
 			loraPersonId: run.loraPersonId ?? null,
+			progressPct: run.progressPct ?? null,
 			providerEndpointId: run.providerEndpointId ?? null,
 			providerJobId: run.providerJobId ?? null,
 			scenarioId: run.scenarioId,

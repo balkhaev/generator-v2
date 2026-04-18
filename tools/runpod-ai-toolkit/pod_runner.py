@@ -56,7 +56,7 @@ BASE_MODEL_MAP: dict[str, dict[str, Any]] = {
     "z-image": {
         "model": {
             "name_or_path": "Tongyi-MAI/Z-Image-Turbo",
-            "arch": "z_image",
+            "arch": "zimage",
             "quantize": True,
         },
         "sample": {"sampler": "flowmatch", "sample_steps": 8, "guidance_scale": 1.0},
@@ -65,7 +65,7 @@ BASE_MODEL_MAP: dict[str, dict[str, Any]] = {
     "flux-dev": {
         "model": {
             "name_or_path": "black-forest-labs/FLUX.1-dev",
-            "arch": "flux",
+            "is_flux": True,
             "quantize": True,
         },
         "sample": {"sampler": "flowmatch", "sample_steps": 28, "guidance_scale": 3.5},
@@ -74,7 +74,7 @@ BASE_MODEL_MAP: dict[str, dict[str, Any]] = {
     "flux-schnell": {
         "model": {
             "name_or_path": "black-forest-labs/FLUX.1-schnell",
-            "arch": "flux",
+            "is_flux": True,
             "quantize": True,
         },
         "sample": {"sampler": "flowmatch", "sample_steps": 4, "guidance_scale": 1.0},
@@ -92,7 +92,7 @@ BASE_MODEL_MAP: dict[str, dict[str, Any]] = {
     "sdxl": {
         "model": {
             "name_or_path": "stabilityai/stable-diffusion-xl-base-1.0",
-            "arch": "sdxl",
+            "is_xl": True,
             "quantize": False,
         },
         "sample": {"sampler": "ddpm", "sample_steps": 25, "guidance_scale": 7.0},
@@ -215,10 +215,12 @@ def build_ai_toolkit_config(
                         "dtype": "bf16",
                     },
                     "model": {
+                        **{
+                            k: v
+                            for k, v in profile["model"].items()
+                            if k != "name_or_path"
+                        },
                         "name_or_path": profile["model"]["name_or_path"],
-                        "arch": profile["model"]["arch"],
-                        "is_flux": profile["model"]["arch"] in {"flux", "flux2"},
-                        "quantize": profile["model"].get("quantize", False),
                         "low_vram": False,
                     },
                     "sample": {
@@ -359,6 +361,13 @@ def main() -> None:
         )
         config_path = workdir / "config.yaml"
         config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+
+        model_section = config["config"]["process"][0]["model"]
+        log(
+            "training.config_resolved",
+            base_model=env["BASE_MODEL"],
+            model_section=model_section,
+        )
 
         run_ai_toolkit(config_path)
 

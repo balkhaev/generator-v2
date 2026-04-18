@@ -39,6 +39,7 @@ interface ServerRunRecord {
 	artifacts?: ServerArtifactRecord[];
 	createdAt?: string;
 	errorSummary?: string | null;
+	generatorRunId?: string | null;
 	id: string;
 	inputImageUrl: string;
 	providerEndpointId?: string | null;
@@ -166,6 +167,7 @@ async function loadStudioDashboard(studioBaseUrl: string) {
 						artifactCount: run.artifacts?.length ?? 0,
 						createdAt: run.createdAt ?? new Date().toISOString(),
 						errorSummary: run.errorSummary ?? null,
+						generatorRunId: run.generatorRunId ?? null,
 						id: run.id,
 						inputImageUrl: run.inputImageUrl,
 						inputLabel: formatInputLabel(run.inputImageUrl),
@@ -173,6 +175,7 @@ async function loadStudioDashboard(studioBaseUrl: string) {
 							run.artifacts?.find((artifact) => artifact.url)?.url ?? null,
 						providerEndpointId: run.providerEndpointId ?? null,
 						providerJobId: run.providerJobId ?? null,
+						scenarioId: run.scenarioId,
 						scenarioName:
 							scenarioNameById.get(run.scenarioId) ?? "Unknown scenario",
 						status: run.status,

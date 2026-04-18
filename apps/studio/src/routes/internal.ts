@@ -7,16 +7,18 @@ import type { StudioService } from "@/domain/studio";
 
 const callbackPayloadSchema = z.object({
 	context: z.record(z.string(), z.unknown()),
-	execution: z.object({
-		artifacts: z.array(z.object({ url: z.string().nullable().optional() })),
-		errorSummary: z.string().nullable(),
-		id: z.string().min(1),
-		inputImageUrl: z.string(),
-		providerEndpointId: z.string().nullable(),
-		providerJobId: z.string().nullable(),
-		status: z.enum(["queued", "running", "succeeded", "failed"]),
-		workflowKey: z.string().min(1),
-	}),
+	execution: z
+		.object({
+			artifacts: z.array(z.object({ url: z.string().nullable().optional() })),
+			errorSummary: z.string().nullable(),
+			id: z.string().min(1),
+			inputImageUrl: z.string(),
+			providerEndpointId: z.string().nullable(),
+			providerJobId: z.string().nullable(),
+			status: z.enum(["queued", "running", "succeeded", "failed"]),
+			workflowKey: z.string().min(1),
+		})
+		.passthrough(),
 });
 
 const markFailedPayloadSchema = z.object({
@@ -25,6 +27,15 @@ const markFailedPayloadSchema = z.object({
 
 export function createInternalRoutes(service: StudioService) {
 	const app = new Hono();
+
+	app.get("/runs/:runId", async (c) => {
+		const token = c.req.header(GENERATOR_CALLBACK_TOKEN_HEADER);
+		if (token !== getGeneratorCallbackToken()) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+		const bundle = await service.getRunDebugBundle(c.req.param("runId"));
+		return bundle ? c.json(bundle) : c.json({ error: "Run not found" }, 404);
+	});
 
 	app.post("/generator-executions", async (c) => {
 		const token = c.req.header(GENERATOR_CALLBACK_TOKEN_HEADER);

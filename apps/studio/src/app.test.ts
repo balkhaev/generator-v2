@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { StudioRunDebugBundle } from "@generator/contracts/studio";
 import type { S3StorageConfig } from "@generator/storage";
 
 import { createApp } from "@/app";
@@ -525,6 +526,7 @@ describe("studio backend", () => {
 			inputPersonGenerationId: null,
 			inputPersonId: null,
 			loraPersonId: null,
+			progressPct: null,
 			providerEndpointId: "endpoint-1",
 			providerJobId: "job-1",
 			scenarioId: "scenario-1",
@@ -562,6 +564,86 @@ describe("studio backend", () => {
 		expect(snapshot.workflows.some((w) => w.key === "fal-zimage-turbo")).toBe(
 			true
 		);
+	});
+
+	it("returns run debug bundle for GET /api/runs/:runId/debug", async () => {
+		const repository = createMemoryRepository();
+		await repository.createScenario({
+			generatorScenarioId: null,
+			id: "scenario-debug",
+			name: "Debug scenario",
+			params: {},
+			prompt: "p",
+			workflowKey: "fal-zimage-turbo",
+		});
+		await repository.createRun({
+			errorSummary: null,
+			generatorRunId: "execution-1",
+			id: "run-debug",
+			inputImageUrl: "https://assets.example.com/input.png",
+			inputPersonGenerationId: null,
+			inputPersonId: null,
+			loraPersonId: null,
+			progressPct: null,
+			providerEndpointId: "endpoint-1",
+			providerJobId: "job-1",
+			scenarioId: "scenario-debug",
+			status: "queued",
+			workflowKey: "fal-zimage-turbo",
+		});
+
+		const app = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub(),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			repository,
+			s3Config: fakeS3Config,
+		});
+
+		const response = await app.request(
+			"http://localhost/api/runs/run-debug/debug"
+		);
+
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as StudioRunDebugBundle;
+		expect(body.run.id).toBe("run-debug");
+		expect(body.execution?.id).toBe("execution-1");
+		expect(body.executionError).toBeNull();
+	});
+
+	it("returns 404 for GET /api/runs/:runId/debug when run is missing", async () => {
+		const repository = createMemoryRepository();
+		const app = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub(),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			repository,
+			s3Config: fakeS3Config,
+		});
+
+		const response = await app.request(
+			"http://localhost/api/runs/missing-run/debug"
+		);
+
+		expect(response.status).toBe(404);
 	});
 
 	it("marks an orphan run failed when generator launch throws", async () => {
@@ -628,6 +710,7 @@ describe("studio backend", () => {
 			inputPersonGenerationId: null,
 			inputPersonId: null,
 			loraPersonId: null,
+			progressPct: null,
 			providerEndpointId: null,
 			providerJobId: null,
 			scenarioId: "scenario-mark",

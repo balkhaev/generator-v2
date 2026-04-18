@@ -165,6 +165,93 @@ function buildScenarioCards(
 	});
 }
 
+function pickHeadlineLiveRun(params: {
+	requestedRun: ScenarioRunRecord | null;
+	runs: ScenarioRunRecord[];
+	selectedScenarioId: string | null;
+}): ScenarioRunRecord | null {
+	const isLive = (run: ScenarioRunRecord) =>
+		run.status === "queued" || run.status === "running";
+	const inScenario = params.selectedScenarioId
+		? params.runs.filter((run) => run.scenarioId === params.selectedScenarioId)
+		: params.runs;
+	if (params.requestedRun && isLive(params.requestedRun)) {
+		return params.requestedRun;
+	}
+	return inScenario.find(isLive) ?? params.runs.find(isLive) ?? null;
+}
+
+function StudioStatusBar({
+	activeRunCount,
+	assetsCount,
+	headlineLiveRun,
+	selectedWorkflowKey,
+	succeededRunCount,
+}: {
+	activeRunCount: number;
+	assetsCount: number;
+	headlineLiveRun: ScenarioRunRecord | null;
+	selectedWorkflowKey: string;
+	succeededRunCount: number;
+}) {
+	return (
+		<>
+			<WorkspaceStatus tone="info">{selectedWorkflowKey}</WorkspaceStatus>
+			{activeRunCount > 0 ? (
+				<WorkspaceStatus tone="warning">
+					<span className="size-1.5 shrink-0 animate-pulse rounded-full bg-amber-500" />
+					{activeRunCount} active
+					{headlineLiveRun && typeof headlineLiveRun.progressPct === "number"
+						? ` · ${headlineLiveRun.progressPct}%`
+						: null}
+				</WorkspaceStatus>
+			) : null}
+			<WorkspaceStatus tone="success">
+				{succeededRunCount} succeeded
+			</WorkspaceStatus>
+			<WorkspaceStatus tone="neutral">{assetsCount} assets</WorkspaceStatus>
+		</>
+	);
+}
+
+function StudioSubtitleBar({
+	activeRunCount,
+	scenarioCount,
+	selectedScenarioCard,
+}: {
+	activeRunCount: number;
+	scenarioCount: number;
+	selectedScenarioCard: ScenarioCardData | null;
+}) {
+	if (!selectedScenarioCard) {
+		return `${scenarioCount} scenarios ready to launch`;
+	}
+	return (
+		<span className="flex flex-wrap items-center gap-2">
+			<span>{selectedScenarioCard.duration}</span>
+			<span aria-hidden="true">·</span>
+			<span>{selectedScenarioCard.runCount} runs</span>
+			{activeRunCount > 0 ? (
+				<>
+					<span aria-hidden="true">·</span>
+					<span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400">
+						<span className="size-1 animate-pulse rounded-full bg-amber-500" />
+						Live updates
+					</span>
+				</>
+			) : null}
+			{selectedScenarioCard.prompt ? (
+				<>
+					<span aria-hidden="true">·</span>
+					<span className="line-clamp-1 max-w-[60ch] text-muted-foreground/80">
+						{selectedScenarioCard.prompt}
+					</span>
+				</>
+			) : null}
+		</span>
+	);
+}
+
 function buildMediaAssets(runs: ScenarioRunRecord[]): StudioMediaAsset[] {
 	return runs.flatMap((run) => {
 		const assets: StudioMediaAsset[] = [];
@@ -456,6 +543,16 @@ export default function StudioShell({
 		(run) => run.status === "succeeded"
 	).length;
 
+	const headlineLiveRun = useMemo(
+		() =>
+			pickHeadlineLiveRun({
+				requestedRun,
+				runs: snapshot.runs,
+				selectedScenarioId,
+			}),
+		[requestedRun, selectedScenarioId, snapshot.runs]
+	);
+
 	return (
 		<WorkspaceShell
 			actions={
@@ -482,41 +579,20 @@ export default function StudioShell({
 				studio: "/",
 			})}
 			status={
-				<>
-					<WorkspaceStatus tone="info">
-						{selectedScenarioCard?.workflowKey ?? "scenario"}
-					</WorkspaceStatus>
-					{activeRunCount > 0 ? (
-						<WorkspaceStatus tone="warning">
-							{activeRunCount} active
-						</WorkspaceStatus>
-					) : null}
-					<WorkspaceStatus tone="success">
-						{succeededRunCount} succeeded
-					</WorkspaceStatus>
-					<WorkspaceStatus tone="neutral">
-						{selectedScenarioAssets.length} assets
-					</WorkspaceStatus>
-				</>
+				<StudioStatusBar
+					activeRunCount={activeRunCount}
+					assetsCount={selectedScenarioAssets.length}
+					headlineLiveRun={headlineLiveRun}
+					selectedWorkflowKey={selectedScenarioCard?.workflowKey ?? "scenario"}
+					succeededRunCount={succeededRunCount}
+				/>
 			}
 			subtitle={
-				selectedScenarioCard ? (
-					<span className="flex flex-wrap items-center gap-2">
-						<span>{selectedScenarioCard.duration}</span>
-						<span aria-hidden="true">·</span>
-						<span>{selectedScenarioCard.runCount} runs</span>
-						{selectedScenarioCard.prompt ? (
-							<>
-								<span aria-hidden="true">·</span>
-								<span className="line-clamp-1 max-w-[60ch] text-muted-foreground/80">
-									{selectedScenarioCard.prompt}
-								</span>
-							</>
-						) : null}
-					</span>
-				) : (
-					`${snapshot.scenarios.length} scenarios ready to launch`
-				)
+				<StudioSubtitleBar
+					activeRunCount={activeRunCount}
+					scenarioCount={snapshot.scenarios.length}
+					selectedScenarioCard={selectedScenarioCard}
+				/>
 			}
 			title={selectedScenarioCard?.name ?? "Studio"}
 			workspaceLabel="Studio"

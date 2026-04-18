@@ -1,0 +1,1 @@
+ALTER TABLE "studio_run" ADD COLUMN "progress_pct" integer;

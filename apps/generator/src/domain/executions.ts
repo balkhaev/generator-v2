@@ -113,13 +113,18 @@ export interface ExecutionRepository {
 function toExecutionRecord(entity: ExecutionEntity): GeneratorExecutionRecord {
 	return {
 		artifacts: entity.artifacts,
+		callback: entity.callback ?? null,
+		createdAt: entity.createdAt.toISOString(),
 		errorSummary: entity.errorSummary,
 		id: entity.id,
 		inputImageUrl: entity.inputImageUrl ?? "",
+		params: entity.params,
+		progressPct: getExecutionProgressPct(entity.status),
+		prompt: entity.prompt,
 		providerEndpointId: entity.providerEndpointId,
 		providerJobId: entity.providerJobId,
-		progressPct: getExecutionProgressPct(entity.status),
 		status: entity.status,
+		updatedAt: entity.updatedAt.toISOString(),
 		workflowKey: entity.workflowKey,
 	};
 }

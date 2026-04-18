@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import {
 	index,
+	integer,
 	jsonb,
 	pgEnum,
 	pgTable,
@@ -61,6 +62,8 @@ export const studioRun = pgTable(
 		loraPersonId: text("lora_person_id"),
 		providerEndpointId: text("provider_endpoint_id"),
 		providerJobId: text("provider_job_id"),
+		/** 0–100 с generator execution; null пока нет данных. */
+		progressPct: integer("progress_pct"),
 		status: studioRunStatusEnum("status").notNull().default("queued"),
 		errorSummary: text("error_summary"),
 		createdAt: timestamp("created_at").defaultNow().notNull(),

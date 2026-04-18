@@ -5,12 +5,15 @@ export interface DashboardRecentRun {
 	artifactCount: number;
 	createdAt: string;
 	errorSummary: string | null;
+	/** ID generator execution (если есть) — для debug / ссылок. */
+	generatorRunId: string | null;
 	id: string;
 	inputImageUrl: string;
 	inputLabel: string;
 	primaryArtifactUrl: string | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
+	scenarioId: string;
 	scenarioName: string;
 	status: RunStatus;
 	workflowKey: string;

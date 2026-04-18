@@ -59,12 +59,16 @@ export interface ScenarioRunRecord {
 	artifactUrls: string[];
 	createdAt: string;
 	errorSummary?: string | null;
+	/** ID execution в generator-api (если ран уже привязан). */
+	generatorRunId?: string | null;
 	id: string;
 	inputImageUrl: string;
 	inputLabel: string;
 	inputPersonGenerationId: string | null;
 	inputPersonId: string | null;
 	loraPersonId?: string | null;
+	/** 0–100 при наличии данных от generator; иначе null. */
+	progressPct?: number | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
 	scenarioId: string;
@@ -226,12 +230,14 @@ function normalizeRunRecord(
 			.filter((artifactUrl): artifactUrl is string => Boolean(artifactUrl)),
 		createdAt: record.createdAt ?? new Date().toISOString(),
 		errorSummary: record.errorSummary ?? null,
+		generatorRunId: record.generatorRunId ?? null,
 		id: record.id,
 		inputImageUrl: record.inputImageUrl,
 		inputLabel: formatInputLabel(record.inputImageUrl),
 		inputPersonGenerationId: record.inputPersonGenerationId ?? null,
 		inputPersonId: record.inputPersonId ?? null,
 		loraPersonId: record.loraPersonId ?? null,
+		progressPct: record.progressPct ?? null,
 		providerEndpointId: record.providerEndpointId ?? null,
 		providerJobId: record.providerJobId ?? null,
 		scenarioId: record.scenarioId,

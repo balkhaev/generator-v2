@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { StudioRunDebugBundle } from "@generator/contracts/studio";
 import { requestJsonWithForwardedHeaders } from "@generator/http/server";
 import { normalizeBaseUrl } from "@generator/http/shared";
 
@@ -24,4 +25,18 @@ export async function getStudioSnapshotForRequest(
 	};
 }
 
+export function getStudioRunDebugBundleForRequest(
+	baseUrl: string,
+	runId: string,
+	requestHeaders: Headers
+): Promise<StudioRunDebugBundle> {
+	const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+	return requestJsonWithForwardedHeaders<StudioRunDebugBundle>(
+		`${normalizedBaseUrl}/api/runs/${encodeURIComponent(runId)}/debug`,
+		requestHeaders,
+		{ cache: "no-store" }
+	);
+}
+
+export type { StudioRunDebugBundle } from "@generator/contracts/studio";
 export type { AdminSnapshot } from "./shared";

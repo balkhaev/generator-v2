@@ -16,6 +16,7 @@ import { formatRelativeTime } from "@generator/ui/lib/format";
 import { cn } from "@generator/ui/lib/utils";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import type { Route } from "next";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo } from "react";
 
@@ -138,6 +139,20 @@ export default function RunsContent({
 				<span className="text-[11px] text-muted-foreground">
 					{formatRelativeTime(run.createdAt)}
 				</span>
+			),
+		},
+		{
+			key: "details",
+			header: "Details",
+			width: "5rem",
+			align: "right",
+			render: (run) => (
+				<Link
+					className="text-[11px] text-sky-600 underline-offset-4 hover:underline dark:text-sky-400"
+					href={`/runs/${run.id}` as Route}
+				>
+					Debug
+				</Link>
 			),
 		},
 		{

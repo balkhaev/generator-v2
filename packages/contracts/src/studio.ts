@@ -1,4 +1,5 @@
 import type {
+	GeneratorExecutionRecord,
 	RunStatus,
 	ScenarioParamValue,
 	WorkflowField,
@@ -39,11 +40,20 @@ export interface StudioRunRecord {
 	inputPersonId?: string | null;
 	/** Персона, чей LoRA подставлен в params при запуске (Studio → Cast). */
 	loraPersonId?: string | null;
+	/** 0–100 с generator-api; null пока нет значения. */
+	progressPct?: number | null;
 	providerEndpointId?: string | null;
 	providerJobId?: string | null;
 	scenarioId: string;
 	status: RunStatus;
 	workflowKey: string;
+}
+
+/** Ответ debug-эндпоинтов studio / admin: ран + execution из generator. */
+export interface StudioRunDebugBundle {
+	execution: GeneratorExecutionRecord | null;
+	executionError: string | null;
+	run: StudioRunRecord;
 }
 
 export interface CreateStudioRunInput {

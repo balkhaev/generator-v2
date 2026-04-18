@@ -2,7 +2,6 @@ import type { S3StorageConfig } from "./config";
 
 const trailingSlashesPattern = /\/+$/u;
 const leadingSlashesPattern = /^\/+/u;
-const hexEncodedPattern = /%[0-9A-F]{2}/g;
 
 function toHex(buffer: ArrayBuffer): string {
 	return Array.from(new Uint8Array(buffer))
@@ -43,8 +42,13 @@ function formatAmzDate(date: Date): { dateStamp: string; timestamp: string } {
 }
 
 function rfc3986Encode(value: string): string {
-	return encodeURIComponent(value).replace(hexEncodedPattern, (match) =>
-		match.toLowerCase()
+	// AWS SigV4 requires uppercase percent-encoding in the canonical request.
+	// `encodeURIComponent` already emits uppercase (e.g. "%2F"), so we only
+	// need to additionally encode the four reserved characters it leaves alone
+	// (`!`, `'`, `(`, `)`, `*`).
+	return encodeURIComponent(value).replace(
+		/[!'()*]/gu,
+		(char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
 	);
 }
 

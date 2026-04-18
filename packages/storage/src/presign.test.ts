@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { createPresignedPutUrl } from "./presign";
 
 const HEX_64_PATTERN = /^[0-9a-f]{64}$/;
+const LOWERCASE_PCT_PATTERN = /%[0-9a-f][0-9a-f]/;
 
 const config = {
 	accessKeyId: "AKIA-test",
@@ -59,5 +60,22 @@ describe("createPresignedPutUrl", () => {
 		const parsed = new URL(url);
 		expect(parsed.pathname).toContain("/lora-bucket/");
 		expect(parsed.pathname).toContain("run%20pod");
+	});
+
+	it("uses uppercase percent-encoding in the query string (AWS SigV4)", async () => {
+		const url = await createPresignedPutUrl(
+			{
+				contentType: "text/plain; charset=utf-8",
+				expiresInSeconds: 60,
+				key: "x/y.log",
+			},
+			config
+		);
+		// Slashes in the credential and the semicolon in SignedHeaders must be
+		// uppercase percent-encoded; lowercase causes SignatureDoesNotMatch on
+		// strict S3 implementations like Hetzner.
+		expect(url).toContain("%2F");
+		expect(url).toContain("%3B");
+		expect(url).not.toMatch(LOWERCASE_PCT_PATTERN);
 	});
 });

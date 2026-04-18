@@ -127,4 +127,4 @@ Endpoints:
 - `GET /api/status` — full status of last migration attempt (`state`, `startedAt`, `completedAt`, `durationMs`, `error`)
 - `POST /api/migrate` — re-run migrations (Bearer-auth via `MIGRATE_TRIGGER_TOKEN` if set)
 
-Deploy `db-migrate` first; deploy other services with `RUN_DB_MIGRATIONS=false` after it goes healthy. See `docker/README.md` for the full deploy workflow.
+Deploy `db-migrate` first and wait for `GET /api/status` → `state: "succeeded"`, then deploy other services. Backend services no longer have a `RUN_DB_MIGRATIONS` flag — only `db-migrate` runs migrations. See `docker/README.md` for the full deploy workflow.

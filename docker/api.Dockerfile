@@ -41,9 +41,12 @@ COPY --from=builder --chown=bun:bun /app/package.json ./package.json
 COPY --from=builder --chown=bun:bun /app/bun.lock ./bun.lock
 COPY --from=builder --chown=bun:bun /app/apps/${APP_NAME}/package.json ./apps/${APP_NAME}/package.json
 COPY --from=builder --chown=bun:bun /app/apps/${APP_NAME}/dist ./apps/${APP_NAME}/dist
+# Drizzle SQL migrations are read at runtime by the dedicated `db-migrate`
+# service (`apps/db-migrate`). Other API services do not run migrations and
+# therefore don't need this folder, but we ship it to all `_api` images for
+# simplicity (a few hundred KB of .sql) — db-migrate inherits this Dockerfile
+# via docker-bake.hcl. `migrate.ts` itself is bundled into each app's dist.
 COPY --from=builder --chown=bun:bun /app/packages/db/src/migrations ./packages/db/src/migrations
-COPY --from=builder --chown=bun:bun /app/packages/db/src/migrate.ts ./packages/db/src/migrate.ts
-COPY --from=builder --chown=bun:bun /app/packages/db/src/run-migrations.ts ./packages/db/src/run-migrations.ts
 COPY --from=pruner --chown=bun:bun /app/docker/entrypoints/run-bun-service.sh /usr/local/bin/run-bun-service
 
 RUN chmod +x /usr/local/bin/run-bun-service

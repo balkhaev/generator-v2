@@ -13,7 +13,7 @@
 - `turbo prune --docker` уменьшает build-context под конкретный сервис
 - install-слои отделены от исходников, поэтому повторная сборка не переустанавливает зависимости без необходимости
 - фронты собираются в `standalone`, рантайм не тащит весь workspace
-- backend/worker контейнеры умеют ждать Postgres и прогонять Drizzle migrations под `pg_advisory_lock`
+- Drizzle-миграции прогоняет отдельный `db-migrate` сервис под `pg_advisory_lock`; бэкенд-контейнеры миграции НЕ запускают
 - для API и web выставлены встроенные `HEALTHCHECK`
 - Kafka используется как шина событий между доменными сервисами: generator публикует статусы executions, admin-worker публикует события LoRA training, а persons/studio workers подписываются на свои consumer groups
 
@@ -105,10 +105,12 @@ docker run -d --name admin-api \
   -e GENERATOR_API_URL=http://generator-api:3005 \
   -e STUDIO_API_URL=http://studio-api:3006 \
   -e PERSONS_API_URL=http://persons-api:3003 \
-  -e RUN_DB_MIGRATIONS=true \
   -p 3000:3000 \
   generator/admin-api:local
 ```
+
+> Перед поднятием API-сервисов сначала запусти `db-migrate` (см. ниже) и
+> дождись `GET /api/status` со `state: "succeeded"`.
 
 Пример worker:
 
@@ -137,7 +139,11 @@ docker run -d --name admin-web \
 
 ## Миграции
 
-Каноничный способ — отдельный сервис `db-migrate` (`apps/db-migrate`):
+Все Drizzle-миграции прогоняет ровно один сервис — `db-migrate`
+(`apps/db-migrate`). Бэкенд-сервисы (admin/studio/persons/generator + workers)
+миграции НЕ запускают: entrypoint просто `exec bun "$SERVICE_ENTRYPOINT"`,
+без какого-либо `RUN_DB_MIGRATIONS` флага. Это устраняет гонки между
+несколькими репликами и позволяет деплоить API независимо от schema-changes.
 
 - Это long-running Hono-сервис на порту `3010`.
 - На старте всегда применяет все pending Drizzle-миграции под защитой Postgres advisory lock (`pg_advisory_lock(48612451)`).
@@ -168,6 +174,14 @@ Workflow деплоя со схема-меняющими PR:
 2. Деплой остальных API/worker сервисов с тем же commit SHA.
 3. Если миграции упали — `db-migrate` всё равно остаётся live; смотри `GET /api/status` и логи.
 
+Триггер прогона без редеплоя (когда коммит уже задеплоен, но нужно прокатить
+свежую миграцию вручную):
+
+```bash
+curl -X POST -H "Authorization: Bearer $MIGRATE_TRIGGER_TOKEN" \
+  https://<db-migrate-internal-host>/api/migrate
+```
+
 ### Подводный камень: timestamps в `meta/_journal.json`
 
 Drizzle migrator применяет миграцию только если её `when` (folder timestamp в journal) больше последнего `created_at` в `drizzle.__drizzle_migrations`. Если в журнале появляется миграция с **намеренно завышенным** `when` (например, ручной round-timestamp типа `1776600000000`), все последующие миграции с меньшим `when` будут **молча** пропущены — `runMigrations()` отчитается об успехе за десятки миллисекунд, но новых колонок не будет.
@@ -177,16 +191,6 @@ Drizzle migrator применяет миграцию только если её 
 Профилактика:
 - НЕ редактируйте `when` в `meta/_journal.json` руками. Дайте `drizzle-kit generate` поставить `Date.now()`.
 - Если уже случилось: использовать `POST /api/repair-journal` чтобы удалить «пробку» из журнала и переприменить пропущенные миграции (см. описание выше). Для диагностики — `GET /api/db-info`.
-
-### Fallback: миграции на entrypoint API
-
-Старый механизм всё ещё поддерживается:
-
-- `RUN_DB_MIGRATIONS=true` на API/worker контейнере → entrypoint вызывает `bun packages/db/src/run-migrations.ts` перед стартом сервиса.
-- Advisory lock защищает от гонки между несколькими контейнерами.
-- Таймаут и polling регулируются через `DATABASE_READY_TIMEOUT_MS` и `DATABASE_READY_INTERVAL_MS`.
-
-Использовать имеет смысл только если по каким-то причинам нельзя завести отдельный `db-migrate`. При наличии `db-migrate` отключите `RUN_DB_MIGRATIONS` у всех остальных сервисов, чтобы избежать лишней блокировки lock'а на каждом старте.
 
 ## Health vs readiness
 

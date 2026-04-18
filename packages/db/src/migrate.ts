@@ -79,8 +79,10 @@ async function waitForDatabase(
  * Применяет все pending Drizzle-миграции под защитой Postgres advisory lock.
  * Безопасно вызывать параллельно: второй вызывающий дождётся освобождения.
  *
- * Используется как из CLI-обёртки (`run-migrations.ts`), так и из
- * долгоживущего сервиса `apps/db-migrate`.
+ * Единственный потребитель — long-running сервис `apps/db-migrate`, который
+ * прогоняет миграции на старте и предоставляет `POST /api/migrate` для
+ * повторного запуска без редеплоя. Бэкенд-сервисы (admin/studio/...) больше
+ * НЕ запускают миграции на старте — см. docker/entrypoints/run-bun-service.sh.
  */
 export async function runMigrations(): Promise<RunMigrationsResult> {
 	const databaseUrl = getRequiredEnv("DATABASE_URL");
@@ -96,10 +98,10 @@ export async function runMigrations(): Promise<RunMigrationsResult> {
 		"DATABASE_MIGRATION_LOCK_ID",
 		DEFAULT_MIGRATION_LOCK_ID
 	);
-	// Бандлеры (tsdown) ломают import.meta.url, поэтому даём явный
-	// override через env. По умолчанию ищем рядом с этим файлом — это
-	// работает при запуске raw-TS из `packages/db/src` (legacy-режим
-	// RUN_DB_MIGRATIONS=yes на admin/studio).
+	// Бандлеры (tsdown) ломают import.meta.url, поэтому db-migrate
+	// передаёт `DATABASE_MIGRATIONS_FOLDER=/app/packages/db/src/migrations`
+	// явно. Fallback на путь рядом с файлом нужен только для запуска
+	// raw-TS из `packages/db/src` локально (drizzle-kit / dev-инструменты).
 	const migrationsFolder =
 		process.env.DATABASE_MIGRATIONS_FOLDER?.trim() ||
 		fileURLToPath(new URL("./migrations", import.meta.url));

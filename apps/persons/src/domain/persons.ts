@@ -1527,10 +1527,22 @@ export class PersonsService {
 		const nextProviderStatus =
 			parsedEvent.providerStatus ??
 			readMetadataString(currentTraining, "providerStatus");
+		const currentReferenceImageCount = readMetadataNumber(
+			currentTraining,
+			"referenceImageCount"
+		);
+		// Polling events from the training provider don't include
+		// `referenceImageCount` (it doesn't change while fal is crunching),
+		// so we must keep the previously-recorded value instead of falling
+		// back to `referenceImageUrls.length`. The URL list only contains
+		// unique entries, while the dataset zip duplicates the original
+		// reference photo a few times — using the URL count would silently
+		// downgrade the displayed `refs N/M` counter mid-training and make
+		// the UI look like dataset prep is incomplete.
 		const nextReferenceImageCount =
 			typeof parsedEvent.referenceImageCount === "number"
 				? parsedEvent.referenceImageCount
-				: nextReferenceImageUrls.length;
+				: (currentReferenceImageCount ?? nextReferenceImageUrls.length);
 		const currentHistory = Array.isArray(currentTraining.history)
 			? currentTraining.history.filter(
 					(entry): entry is Record<string, unknown> =>

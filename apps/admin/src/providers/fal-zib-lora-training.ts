@@ -993,6 +993,8 @@ export class FalZibLoraTrainingRunner {
 							providerJobId: input.providerJobId,
 							providerRequestId: input.providerJobId,
 							providerStatus: status.status,
+							referenceImageCount: input.referenceImageCount,
+							referenceImageTargetCount: input.referenceImageTargetCount,
 							status: "training",
 							trainingElapsedMs: status.elapsedMs,
 							trainingRunId: input.trainingRunId,

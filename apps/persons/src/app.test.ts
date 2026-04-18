@@ -794,6 +794,79 @@ describe("persons api", () => {
 		]);
 	});
 
+	it("preserves referenceImageCount across polling callbacks that omit it", async () => {
+		const app = createApp({
+			corsOrigins: ["http://localhost:3004"],
+			repository: createMemoryRepository(),
+		});
+		const createResponse = await app.request("http://localhost/api/persons", {
+			body: JSON.stringify({
+				name: "Refs Counter",
+				referencePhotoUrl: "https://assets.example.com/reference.png",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { person } = (await createResponse.json()) as {
+			person: PersonRecord;
+		};
+
+		// Initial event from the dataset upload step: 17 unique URLs but the
+		// zip actually packs 20 images (the original photo is duplicated 4×).
+		await app.request("http://localhost/api/internal/lora-trainings", {
+			body: JSON.stringify({
+				context: { personId: person.id },
+				event: {
+					phase: "starting-training",
+					referenceImageCount: 20,
+					referenceImageTargetCount: 20,
+					referenceImageUrls: [
+						"https://assets.example.com/reference.png",
+						...Array.from(
+							{ length: 16 },
+							(_, index) => `https://assets.example.com/dataset-${index}.png`
+						),
+					],
+					status: "training",
+				},
+			}),
+			headers: {
+				authorization: "Bearer local-training-control-token",
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		// A subsequent polling callback that does NOT carry referenceImageCount
+		// must not downgrade the previously-recorded value to the URL count
+		// (17). Otherwise the UI would render a stuck-looking "refs 17/20".
+		await app.request("http://localhost/api/internal/lora-trainings", {
+			body: JSON.stringify({
+				context: { personId: person.id },
+				event: {
+					phase: "polling-training",
+					providerStatus: "IN_PROGRESS",
+					status: "training",
+				},
+			}),
+			headers: {
+				authorization: "Bearer local-training-control-token",
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		const personResponse = await app.request(
+			`http://localhost/api/persons/${person.id}`
+		);
+		const { person: hydratedPerson } = (await personResponse.json()) as {
+			person: PersonRecord;
+		};
+		const training = (hydratedPerson.metadata as { training?: unknown })
+			.training as { referenceImageCount?: number } | undefined;
+		expect(training?.referenceImageCount).toBe(20);
+	});
+
 	it("exposes internal persons snapshot to bearer-authorized callers", async () => {
 		const repository = createMemoryRepository();
 		await repository.createPerson({

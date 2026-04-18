@@ -62,6 +62,7 @@ const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 2000;
 const PRESIGNED_URL_TTL_SECONDS = 6 * 60 * 60;
 const LORA_S3_PREFIX = "loras/runpod-pod";
+const LOG_S3_PREFIX = "loras/runpod-pod/logs";
 
 const POD_TRAINING_PROVIDER = "runpod-pod" as const;
 const TRAINING_MODEL_LABEL = "ai-toolkit-pod";
@@ -325,6 +326,8 @@ export class RunpodPodLoraTrainingRunner {
 			`${sanitizeSegment(parsed.personSlug)}-runpod-pod-lora-${Date.now()}`;
 		const loraS3Key = `${LORA_S3_PREFIX}/${sanitizeSegment(outputName)}-${parsed.trainingRunId.slice(0, 8)}.safetensors`;
 		const loraPublicUrl = buildPublicAssetUrl(this.s3Config, loraS3Key);
+		const logS3Key = `${LOG_S3_PREFIX}/${sanitizeSegment(outputName)}-${parsed.trainingRunId.slice(0, 8)}.log`;
+		const logPublicUrl = buildPublicAssetUrl(this.s3Config, logS3Key);
 
 		let podId: string | null = null;
 
@@ -423,6 +426,15 @@ export class RunpodPodLoraTrainingRunner {
 				this.s3Config
 			);
 
+			const logUploadUrl = await createPresignedPutUrl(
+				{
+					contentType: "text/plain; charset=utf-8",
+					expiresInSeconds: PRESIGNED_URL_TTL_SECONDS,
+					key: logS3Key,
+				},
+				this.s3Config
+			);
+
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
@@ -463,6 +475,7 @@ export class RunpodPodLoraTrainingRunner {
 				DATASET_URL: datasetUrl,
 				DEFAULT_CAPTION: dataset.defaultCaption,
 				LEARNING_RATE: String(DEFAULT_LEARNING_RATE),
+				LOG_UPLOAD_URL: logUploadUrl,
 				LORA_RANK: String(DEFAULT_LORA_RANK),
 				LORA_UPLOAD_CONTENT_TYPE: "application/octet-stream",
 				LORA_UPLOAD_URL: loraUploadUrl,
@@ -511,6 +524,7 @@ export class RunpodPodLoraTrainingRunner {
 				event: {
 					debug: {
 						podId,
+						podLogUrl: logPublicUrl,
 						runpodPodConsoleUrl: `https://runpod.io/console/pods/${podId}`,
 					},
 					debugCorrelationId: parsed.debugCorrelationId,

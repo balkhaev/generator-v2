@@ -42,6 +42,27 @@ cd "$WORKSPACE_DIR"
 BOOTSTRAP_LOG="${WORKSPACE_DIR}/pod-bootstrap.log"
 exec > >(tee -a "$BOOTSTRAP_LOG") 2>&1
 
+# ─── live log shipper ───────────────────────────────────────────────────────
+# Тренировка идёт внутри pod-а без публичного IP, поэтому без shipping
+# логов мы остаёмся слепы: если pip упал или модель не качается, мы видим
+# только desiredStatus=RUNNING + 0% GPU. Когда LOG_UPLOAD_URL передан
+# (presigned PUT URL), фоновый цикл раз в 30с заливает текущий лог в S3
+# и admin-worker может его прочитать без SSH/console.
+if [ -n "${LOG_UPLOAD_URL:-}" ]; then
+  log "starting background log shipper (interval=30s)"
+  (
+    while true; do
+      if [ -s "$BOOTSTRAP_LOG" ]; then
+        curl -sS -X PUT \
+          -H "content-type: text/plain; charset=utf-8" \
+          --data-binary "@$BOOTSTRAP_LOG" \
+          "$LOG_UPLOAD_URL" >/dev/null 2>&1 || true
+      fi
+      sleep 30
+    done
+  ) &
+fi
+
 log "installing system dependencies"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null
@@ -81,4 +102,22 @@ curl -sSfL "$POD_RUNNER_URL" -o "$WORKSPACE_DIR/pod_runner.py"
 log "starting pod_runner.py"
 cd "$WORKSPACE_DIR"
 export AI_TOOLKIT_PATH
-exec python3 pod_runner.py
+
+# Запускаем без exec, чтобы фоновый log shipper мог отправить финальный
+# чанк лога после завершения тренировки.
+set +e
+python3 pod_runner.py
+RUNNER_EXIT=$?
+set -e
+
+log "pod_runner.py exited with code $RUNNER_EXIT"
+
+if [ -n "${LOG_UPLOAD_URL:-}" ] && [ -s "$BOOTSTRAP_LOG" ]; then
+  log "uploading final bootstrap log"
+  curl -sS -X PUT \
+    -H "content-type: text/plain; charset=utf-8" \
+    --data-binary "@$BOOTSTRAP_LOG" \
+    "$LOG_UPLOAD_URL" >/dev/null 2>&1 || true
+fi
+
+exit "$RUNNER_EXIT"

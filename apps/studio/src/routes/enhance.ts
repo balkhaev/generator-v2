@@ -20,7 +20,14 @@ function shouldFallbackVisionToText(error: unknown): boolean {
 		msg.includes("content violates") ||
 		msg.includes("policy violation") ||
 		msg.includes("moderation") ||
-		msg.includes("safety system")
+		msg.includes("safety system") ||
+		// Reasoning models or non-vision-capable text models often answer a
+		// vision request with HTTP 200 + empty content. Falling back to text
+		// is strictly better than a 502 — the user still gets an enhanced
+		// prompt, just without grounding in the reference image.
+		msg.includes("empty content") ||
+		msg.includes("could not be processed") ||
+		msg.includes("image(s)")
 	);
 }
 

@@ -25,10 +25,18 @@ const OPENROUTER_MAX_TOKENS = 600;
 
 interface ChatCompletionResponse {
 	choices?: Array<{
+		finish_reason?: string | null;
 		message?: {
 			content?: string | null;
 		};
 	}>;
+	provider?: string;
+	usage?: {
+		completion_tokens?: number;
+		completion_tokens_details?: {
+			reasoning_tokens?: number;
+		};
+	};
 }
 
 interface StudioOpenRouterClientOptions {
@@ -50,6 +58,37 @@ function cleanPromptOutput(value: string) {
 		.trim()
 		.replace(surroundingQuotePattern, "")
 		.trim();
+}
+
+/**
+ * Most common cause in practice: a reasoning model (e.g. qwen/qwen3.5-9b)
+ * burns the entire OPENROUTER_MAX_TOKENS budget on hidden chain-of-thought
+ * and returns finish_reason="length" with content=null. Surface that
+ * diagnostically so the operator can pick a different model in the admin UI
+ * instead of seeing an opaque 502.
+ */
+function buildEmptyContentMessage(
+	model: string,
+	payload: ChatCompletionResponse
+): string {
+	const choice = payload.choices?.[0];
+	const finishReason = choice?.finish_reason ?? "unknown";
+	const provider = payload.provider ?? "unknown";
+	const reasoningTokens =
+		payload.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+	const completionTokens = payload.usage?.completion_tokens ?? 0;
+	const exhaustedReasoning =
+		reasoningTokens > 0 && completionTokens >= OPENROUTER_MAX_TOKENS;
+	const reasoningHint = exhaustedReasoning
+		? ` Model "${model}" appears to be a reasoning model and exhausted ` +
+			`the ${OPENROUTER_MAX_TOKENS}-token budget on hidden reasoning ` +
+			`(reasoning_tokens=${reasoningTokens}). Pick a non-reasoning ` +
+			"model in admin → settings → prompt enhance."
+		: "";
+	return (
+		`OpenRouter returned empty content (model=${model}, ` +
+		`provider=${provider}, finish_reason=${finishReason}).${reasoningHint}`
+	);
 }
 
 export function createStudioOpenRouterClient(
@@ -119,9 +158,10 @@ export function createStudioOpenRouterClient(
 		}
 
 		const payload = (await response.json()) as ChatCompletionResponse;
-		const content = payload.choices?.[0]?.message?.content?.trim();
+		const choice = payload.choices?.[0];
+		const content = choice?.message?.content?.trim();
 		if (!content) {
-			throw new Error("OpenRouter response did not contain any content");
+			throw new Error(buildEmptyContentMessage(model, payload));
 		}
 		return cleanPromptOutput(content);
 	}

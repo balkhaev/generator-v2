@@ -9,6 +9,20 @@ import { tryInlineImageForVision } from "@/clients/vision-input-image";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
+/**
+ * Hard cap for a single chat-completions call. Prompt enhance is interactive,
+ * so a stuck upstream must surface as a 502 to the user instead of hanging the
+ * HTTP request forever (Node's fetch has no default response timeout).
+ */
+const OPENROUTER_REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * Enhance is a short-form rewrite, never a long generation. Bounding the
+ * output also prevents a model from sitting in a stream loop and exhausting
+ * our request budget.
+ */
+const OPENROUTER_MAX_TOKENS = 600;
+
 interface ChatCompletionResponse {
 	choices?: Array<{
 		message?: {
@@ -68,18 +82,34 @@ export function createStudioOpenRouterClient(
 			headers["X-Title"] = appName;
 		}
 
-		const response = await fetchImpl(
-			`${OPENROUTER_BASE_URL}/chat/completions`,
-			{
+		const controller = new AbortController();
+		const timeoutId = setTimeout(
+			() => controller.abort(),
+			OPENROUTER_REQUEST_TIMEOUT_MS
+		);
+		let response: Response;
+		try {
+			response = await fetchImpl(`${OPENROUTER_BASE_URL}/chat/completions`, {
 				body: JSON.stringify({
+					max_tokens: OPENROUTER_MAX_TOKENS,
 					messages,
 					model,
 					temperature: 0.85,
 				}),
 				headers,
 				method: "POST",
+				signal: controller.signal,
+			});
+		} catch (error) {
+			if (controller.signal.aborted) {
+				throw new Error(
+					`OpenRouter request timed out after ${OPENROUTER_REQUEST_TIMEOUT_MS}ms`
+				);
 			}
-		);
+			throw error;
+		} finally {
+			clearTimeout(timeoutId);
+		}
 
 		if (!response.ok) {
 			const detail = await response.text().catch(() => "");

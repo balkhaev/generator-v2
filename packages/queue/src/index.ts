@@ -147,6 +147,42 @@ export function createRedisConnection(redisUrl: string) {
 	});
 }
 
+export interface CreateAppRedisConnectionOptions {
+	/** ms; default 1500. Caps how long a single command may wait. */
+	commandTimeout?: number;
+	/** ms; default 2000. Caps initial TCP/TLS connect. */
+	connectTimeout?: number;
+	/** default 2. Bounded retries so a flapping Redis cannot stall callers. */
+	maxRetriesPerRequest?: number;
+}
+
+/**
+ * Redis connection for low-latency application reads (settings, feature flags,
+ * cached lookups) sitting on a request hot path.
+ *
+ * Why this exists: `createRedisConnection` is tuned for BullMQ workers and uses
+ * `maxRetriesPerRequest: null` + the default `enableOfflineQueue: true`. That
+ * combination intentionally queues commands forever while the client tries to
+ * reconnect. For a worker that's correct; for an HTTP request handler it means
+ * a single Redis blip turns into requests hanging until the process is killed.
+ *
+ * This variant fails fast instead: bounded retries, an explicit
+ * `commandTimeout`, `enableOfflineQueue: false` (so calls reject immediately
+ * when the socket is down), and a finite `connectTimeout`. Callers should
+ * still treat Redis as best-effort and fall back to defaults on rejection.
+ */
+export function createAppRedisConnection(
+	redisUrl: string,
+	options: CreateAppRedisConnectionOptions = {}
+) {
+	return new IORedis(redisUrl, {
+		commandTimeout: options.commandTimeout ?? 1500,
+		connectTimeout: options.connectTimeout ?? 2000,
+		enableOfflineQueue: false,
+		maxRetriesPerRequest: options.maxRetriesPerRequest ?? 2,
+	});
+}
+
 export function createQueueClient<T>(
 	name: QueueName,
 	options: {

@@ -10,6 +10,10 @@ import { tryInlineImageForVision } from "@/clients/vision-input-image";
 const XAI_BASE_URL = "https://api.x.ai/v1";
 const DEFAULT_MODEL = "grok-4-fast";
 
+/** Mirrors the OpenRouter client cap; see notes there for rationale. */
+const GROK_REQUEST_TIMEOUT_MS = 60_000;
+const GROK_MAX_TOKENS = 600;
+
 interface ChatCompletionResponse {
 	choices?: Array<{
 		message?: {
@@ -54,18 +58,37 @@ export function createStudioGrokClient(
 			role: "system" | "user";
 		}[]
 	): Promise<string> {
-		const response = await fetchImpl(`${XAI_BASE_URL}/chat/completions`, {
-			body: JSON.stringify({
-				messages,
-				model,
-				temperature: 0.85,
-			}),
-			headers: {
-				authorization: `Bearer ${apiKey}`,
-				"content-type": "application/json",
-			},
-			method: "POST",
-		});
+		const controller = new AbortController();
+		const timeoutId = setTimeout(
+			() => controller.abort(),
+			GROK_REQUEST_TIMEOUT_MS
+		);
+		let response: Response;
+		try {
+			response = await fetchImpl(`${XAI_BASE_URL}/chat/completions`, {
+				body: JSON.stringify({
+					max_tokens: GROK_MAX_TOKENS,
+					messages,
+					model,
+					temperature: 0.85,
+				}),
+				headers: {
+					authorization: `Bearer ${apiKey}`,
+					"content-type": "application/json",
+				},
+				method: "POST",
+				signal: controller.signal,
+			});
+		} catch (error) {
+			if (controller.signal.aborted) {
+				throw new Error(
+					`Grok request timed out after ${GROK_REQUEST_TIMEOUT_MS}ms`
+				);
+			}
+			throw error;
+		} finally {
+			clearTimeout(timeoutId);
+		}
 
 		if (!response.ok) {
 			const detail = await response.text().catch(() => "");

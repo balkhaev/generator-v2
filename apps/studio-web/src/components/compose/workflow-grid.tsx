@@ -140,6 +140,26 @@ interface WorkflowCardProps {
 	workflow: WorkflowDefinition;
 }
 
+function renderLoraBadge(classification: ReturnType<typeof classifyWorkflow>) {
+	if (classification.requiresLora) {
+		return (
+			<span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 font-medium text-[10px] text-amber-600 dark:text-amber-400">
+				<Sparkles aria-hidden="true" className="size-2.5" />
+				LoRA
+			</span>
+		);
+	}
+	if (classification.hasLora) {
+		return (
+			<span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 py-0.5 font-medium text-[10px] text-muted-foreground">
+				<Sparkles aria-hidden="true" className="size-2.5" />
+				LoRA optional
+			</span>
+		);
+	}
+	return null;
+}
+
 function WorkflowCard({ active, onClick, workflow }: WorkflowCardProps) {
 	const classification = classifyWorkflow(workflow);
 	const baseModelId = workflow.baseModel ?? "other";
@@ -177,12 +197,7 @@ function WorkflowCard({ active, onClick, workflow }: WorkflowCardProps) {
 						</span>
 					</div>
 				</div>
-				{classification.hasLora ? (
-					<span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 font-medium text-[10px] text-amber-600 dark:text-amber-400">
-						<Sparkles aria-hidden="true" className="size-2.5" />
-						LoRA
-					</span>
-				) : null}
+				{renderLoraBadge(classification)}
 			</div>
 			<p className="line-clamp-2 text-[11px] text-muted-foreground leading-snug">
 				{workflow.summary}
@@ -280,10 +295,14 @@ function WorkflowGroups({
 	selectedWorkflowKey,
 	workflows,
 }: WorkflowGroupsProps) {
+	// Workflows where LoRA is optional are presented in the same list as
+	// "base" workflows — adding a LoRA is just an extra step inside the
+	// selected workflow's form. Only workflows that *require* a LoRA are
+	// pulled into a separate group, since they can't be used without one.
 	const base: WorkflowDefinition[] = [];
 	const lora: WorkflowDefinition[] = [];
 	for (const workflow of workflows) {
-		if (classifyWorkflow(workflow).hasLora) {
+		if (classifyWorkflow(workflow).requiresLora) {
 			lora.push(workflow);
 		} else {
 			base.push(workflow);
@@ -294,8 +313,8 @@ function WorkflowGroups({
 		<div className="grid gap-3">
 			{base.length > 0 ? (
 				<WorkflowGroup
-					hint="No style fine-tune; uses the base model as-is."
-					label="Base"
+					hint="LoRA-aware workflows accept an optional style LoRA."
+					label="Models"
 					onWorkflowChange={onWorkflowChange}
 					selectedWorkflowKey={selectedWorkflowKey}
 					workflows={base}
@@ -303,11 +322,11 @@ function WorkflowGroups({
 			) : null}
 			{lora.length > 0 ? (
 				<WorkflowGroup
-					hint="Add one or more style LoRAs after picking."
+					hint="These workflows require picking a LoRA."
 					icon={
 						<Sparkles aria-hidden="true" className="size-3 text-amber-500" />
 					}
-					label="With style LoRA"
+					label="LoRA-only"
 					onWorkflowChange={onWorkflowChange}
 					selectedWorkflowKey={selectedWorkflowKey}
 					workflows={lora}

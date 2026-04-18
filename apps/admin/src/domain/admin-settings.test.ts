@@ -29,14 +29,14 @@ describe("buildAdminSettingsSnapshot", () => {
 			currentTrainingProvider: "fal",
 			env: {
 				PERSONS_DEFAULT_AVATAR_WORKFLOW: "fal-flux2-turbo",
-				PERSONS_DEFAULT_LORA_WORKFLOW: "fal-zimage-turbo-lora",
+				PERSONS_DEFAULT_LORA_WORKFLOW: "fal-zimage-turbo",
 				RECONCILE_INTERVAL_MS: 7000,
 				RECONCILE_WATCH: false,
 			},
 		});
 
 		expect(snapshot.personsDefaults.avatarWorkflow).toBe("fal-flux2-turbo");
-		expect(snapshot.personsDefaults.loraWorkflow).toBe("fal-zimage-turbo-lora");
+		expect(snapshot.personsDefaults.loraWorkflow).toBe("fal-zimage-turbo");
 		expect(snapshot.personsDefaults.avatarPreviewWorkflow).toBe(
 			"fal-flux2-turbo"
 		);

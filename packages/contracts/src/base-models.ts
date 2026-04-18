@@ -11,14 +11,16 @@
 
 export type BaseModelFamily =
 	| "flux"
+	| "qwen"
 	| "sdxl"
 	| "sd"
 	| "z-image"
 	| "image-other"
 	| "video"
+	| "audio"
 	| "other";
 
-export type BaseModelModality = "image" | "video";
+export type BaseModelModality = "image" | "video" | "audio";
 
 export interface BaseModelEntry {
 	/** Civitai `baseModel` strings (case-insensitive substring match after normalization). */
@@ -29,6 +31,12 @@ export interface BaseModelEntry {
 	modality: BaseModelModality;
 }
 
+// Registry mirrors the model coverage of ostris/ai-toolkit (image/edit/video/
+// audio/experimental sections of its README). We intentionally do NOT carry
+// legacy Civitai bases (SD 2/3/3.5, Pony/Illustrious/NoobAI, Hunyuan/CogVideoX/
+// Mochi, Kolors, AuraFlow, Stable Cascade, PixArt, etc.) — we only need bases
+// we can actually train and run LoRAs against. Civitai alias matching prefers
+// longer patterns, so version-specific entries beat their generic counterparts.
 export const BASE_MODELS = [
 	// Flux family
 	{
@@ -50,17 +58,83 @@ export const BASE_MODELS = [
 	},
 	{
 		id: "flux-kontext",
-		label: "Flux Kontext",
+		label: "Flux.1 Kontext",
 		family: "flux",
 		modality: "image",
 		civitaiAliases: ["flux.1 kontext", "flux kontext", "kontext"],
 	},
 	{
 		id: "flux-2",
-		label: "Flux 2",
+		label: "Flux.2",
 		family: "flux",
 		modality: "image",
-		civitaiAliases: ["flux.2", "flux 2", "flux2"],
+		civitaiAliases: ["flux.2 dev", "flux 2 dev", "flux.2", "flux 2", "flux2"],
+	},
+	{
+		id: "flux-2-klein-4b",
+		label: "Flux.2 Klein 4B",
+		family: "flux",
+		modality: "image",
+		civitaiAliases: [
+			"flux.2 klein 4b",
+			"flux 2 klein 4b",
+			"flux2 klein 4b",
+			"flux.2-klein-base-4b",
+		],
+	},
+	{
+		id: "flux-2-klein-9b",
+		label: "Flux.2 Klein 9B",
+		family: "flux",
+		modality: "image",
+		civitaiAliases: [
+			"flux.2 klein 9b",
+			"flux 2 klein 9b",
+			"flux2 klein 9b",
+			"flux.2-klein-base-9b",
+		],
+	},
+
+	// Qwen-Image family
+	{
+		id: "qwen-image",
+		label: "Qwen-Image",
+		family: "qwen",
+		modality: "image",
+		civitaiAliases: ["qwen image", "qwen-image", "qwenimage"],
+	},
+	{
+		id: "qwen-image-2512",
+		label: "Qwen-Image 2512",
+		family: "qwen",
+		modality: "image",
+		civitaiAliases: [
+			"qwen image 2512",
+			"qwen-image 2512",
+			"qwen image-2512",
+			"qwen-image-2512",
+		],
+	},
+	{
+		id: "qwen-image-edit",
+		label: "Qwen-Image Edit",
+		family: "qwen",
+		modality: "image",
+		civitaiAliases: ["qwen image edit", "qwen-image-edit"],
+	},
+	{
+		id: "qwen-image-edit-2509",
+		label: "Qwen-Image Edit 2509",
+		family: "qwen",
+		modality: "image",
+		civitaiAliases: ["qwen image edit 2509", "qwen-image-edit-2509"],
+	},
+	{
+		id: "qwen-image-edit-2511",
+		label: "Qwen-Image Edit 2511",
+		family: "qwen",
+		modality: "image",
+		civitaiAliases: ["qwen image edit 2511", "qwen-image-edit-2511"],
 	},
 
 	// SDXL family
@@ -79,29 +153,8 @@ export const BASE_MODELS = [
 			"sdxl",
 		],
 	},
-	{
-		id: "pony",
-		label: "Pony",
-		family: "sdxl",
-		modality: "image",
-		civitaiAliases: ["pony"],
-	},
-	{
-		id: "illustrious",
-		label: "Illustrious",
-		family: "sdxl",
-		modality: "image",
-		civitaiAliases: ["illustrious"],
-	},
-	{
-		id: "noob-ai",
-		label: "NoobAI",
-		family: "sdxl",
-		modality: "image",
-		civitaiAliases: ["noobai", "noob ai"],
-	},
 
-	// SD family (legacy)
+	// SD 1.5
 	{
 		id: "sd-1-5",
 		label: "SD 1.5",
@@ -116,43 +169,39 @@ export const BASE_MODELS = [
 			"sd 1.5 hyper",
 		],
 	},
-	{
-		id: "sd-2",
-		label: "SD 2.x",
-		family: "sd",
-		modality: "image",
-		civitaiAliases: [
-			"sd 2.0",
-			"sd 2.1",
-			"sd 2.0 768",
-			"sd 2.1 768",
-			"sd 2.1 unclip",
-		],
-	},
-	{
-		id: "sd-3",
-		label: "SD 3",
-		family: "sd",
-		modality: "image",
-		civitaiAliases: ["sd 3"],
-	},
-	{
-		id: "sd-3-5",
-		label: "SD 3.5",
-		family: "sd",
-		modality: "image",
-		civitaiAliases: [
-			"sd 3.5",
-			"sd 3.5 medium",
-			"sd 3.5 large",
-			"sd 3.5 large turbo",
-		],
-	},
 
 	// Z-Image
+	// IMPORTANT: Z-Image (base) and Z-Image Turbo are different distillations
+	// (similar to Flux dev vs Flux schnell). LoRAs trained on one are NOT
+	// compatible with the other — keep them as separate registry entries.
+	{
+		id: "z-image-turbo",
+		label: "Z-Image Turbo",
+		family: "z-image",
+		modality: "image",
+		civitaiAliases: [
+			"z-image turbo",
+			"z image turbo",
+			"zimage turbo",
+			"z-image-turbo",
+			"zimageturbo",
+		],
+	},
+	{
+		id: "z-image-de-turbo",
+		label: "Z-Image De-Turbo",
+		family: "z-image",
+		modality: "image",
+		civitaiAliases: [
+			"z-image de-turbo",
+			"z image de turbo",
+			"zimage de-turbo",
+			"z-image-de-turbo",
+		],
+	},
 	{
 		id: "z-image",
-		label: "Z-Image",
+		label: "Z-Image (base)",
 		family: "z-image",
 		modality: "image",
 		civitaiAliases: ["z-image", "z image", "zimage"],
@@ -164,48 +213,82 @@ export const BASE_MODELS = [
 		label: "HiDream",
 		family: "image-other",
 		modality: "image",
-		civitaiAliases: ["hidream", "hi-dream", "hi dream"],
+		civitaiAliases: ["hidream i1", "hidream", "hi-dream", "hi dream"],
+	},
+	{
+		id: "hidream-e1",
+		label: "HiDream E1",
+		family: "image-other",
+		modality: "image",
+		civitaiAliases: ["hidream e1", "hi-dream e1", "hi dream e1", "hidream-e1"],
 	},
 	{
 		id: "lumina",
 		label: "Lumina",
 		family: "image-other",
 		modality: "image",
-		civitaiAliases: ["lumina"],
+		civitaiAliases: [
+			"lumina image 2",
+			"lumina-image-2.0",
+			"lumina 2",
+			"lumina2",
+			"lumina",
+		],
 	},
 	{
-		id: "kolors",
-		label: "Kolors",
+		id: "chroma",
+		label: "Chroma",
 		family: "image-other",
 		modality: "image",
-		civitaiAliases: ["kolors"],
+		civitaiAliases: ["chroma 1", "chroma1", "chroma"],
 	},
 	{
-		id: "aura-flow",
-		label: "Aura Flow",
+		id: "zeta-chroma",
+		label: "Zeta Chroma",
 		family: "image-other",
 		modality: "image",
-		civitaiAliases: ["aura flow", "auraflow"],
+		civitaiAliases: ["zeta chroma", "zeta-chroma"],
 	},
 	{
-		id: "stable-cascade",
-		label: "Stable Cascade",
+		id: "flex-1",
+		label: "Flex.1",
 		family: "image-other",
 		modality: "image",
-		civitaiAliases: ["stable cascade", "cascade"],
+		civitaiAliases: ["flex.1 alpha", "flex 1 alpha", "flex.1", "flex 1"],
 	},
 	{
-		id: "pixart",
-		label: "PixArt",
+		id: "flex-2",
+		label: "Flex.2",
 		family: "image-other",
 		modality: "image",
-		civitaiAliases: ["pixart a", "pixart e", "pixart-a", "pixart-e", "pixart"],
+		civitaiAliases: ["flex.2 preview", "flex 2 preview", "flex.2", "flex 2"],
+	},
+	{
+		id: "omnigen-2",
+		label: "OmniGen2",
+		family: "image-other",
+		modality: "image",
+		civitaiAliases: ["omnigen 2", "omnigen2", "omnigen-2"],
+	},
+	{
+		id: "ernie-image",
+		label: "ERNIE-Image",
+		family: "image-other",
+		modality: "image",
+		civitaiAliases: ["ernie image", "ernie-image", "ernieimage"],
+	},
+	{
+		id: "nucleus-image",
+		label: "Nucleus-Image",
+		family: "image-other",
+		modality: "image",
+		civitaiAliases: ["nucleus image", "nucleus-image"],
 	},
 
 	// Video
 	{
 		id: "wan",
-		label: "Wan",
+		label: "Wan 2.1",
 		family: "video",
 		modality: "video",
 		civitaiAliases: [
@@ -214,6 +297,10 @@ export const BASE_MODELS = [
 			"wan video 2.1",
 			"wan video t2v",
 			"wan video i2v",
+			"wan 2.1 1.3b",
+			"wan 2.1 14b",
+			"wan 2.1 i2v 14b-480p",
+			"wan 2.1 i2v 14b-720p",
 			"wan 2.1",
 			"wan video",
 		],
@@ -226,45 +313,48 @@ export const BASE_MODELS = [
 		civitaiAliases: [
 			"wan video 2.2",
 			"wan 2.2",
+			"wan 2.2 14b",
+			"wan 2.2 i2v 14b",
+			"wan 2.2 ti2v 5b",
 			"wan video 2.2 ti2v-5b",
 			"wan video 2.2 t2v-a14b",
 			"wan video 2.2 i2v-a14b",
 		],
 	},
 	{
-		id: "ltx",
-		label: "LTX Video",
+		id: "ltx-2",
+		label: "LTX-2",
 		family: "video",
 		modality: "video",
+		civitaiAliases: ["ltx 2", "ltx-2", "ltxv 2", "ltxv-2"],
+	},
+	{
+		id: "ltx-2-3",
+		label: "LTX-2.3",
+		family: "video",
+		modality: "video",
+		civitaiAliases: ["ltx 2.3", "ltx-2.3", "ltxv 2.3", "ltxv 13b"],
+	},
+
+	// Audio
+	{
+		id: "ace-step",
+		label: "Ace Step 1.5",
+		family: "audio",
+		modality: "audio",
+		civitaiAliases: ["ace step 1.5", "ace-step 1.5", "acestep 1.5", "ace step"],
+	},
+	{
+		id: "ace-step-xl",
+		label: "Ace Step 1.5 XL",
+		family: "audio",
+		modality: "audio",
 		civitaiAliases: [
-			"ltxv",
-			"ltx video",
-			"ltx-video",
-			"ltx 2",
-			"ltx 2.3",
-			"ltxv 13b",
+			"ace step 1.5 xl",
+			"acestep v15 xl",
+			"acestep-v15-xl",
+			"ace step xl",
 		],
-	},
-	{
-		id: "hunyuan-video",
-		label: "Hunyuan Video",
-		family: "video",
-		modality: "video",
-		civitaiAliases: ["hunyuan video", "hunyuanvideo"],
-	},
-	{
-		id: "cogvideox",
-		label: "CogVideoX",
-		family: "video",
-		modality: "video",
-		civitaiAliases: ["cogvideox", "cog video x", "cogvideo"],
-	},
-	{
-		id: "mochi",
-		label: "Mochi",
-		family: "video",
-		modality: "video",
-		civitaiAliases: ["mochi"],
 	},
 
 	// Catch-all
@@ -310,11 +400,13 @@ export const BASE_MODEL_FAMILIES: readonly {
 	label: string;
 }[] = [
 	{ id: "flux", label: "Flux" },
-	{ id: "sdxl", label: "SDXL family" },
-	{ id: "sd", label: "Stable Diffusion" },
+	{ id: "qwen", label: "Qwen-Image" },
 	{ id: "z-image", label: "Z-Image" },
 	{ id: "image-other", label: "Other image" },
+	{ id: "sdxl", label: "SDXL family" },
+	{ id: "sd", label: "Stable Diffusion" },
 	{ id: "video", label: "Video" },
+	{ id: "audio", label: "Audio" },
 	{ id: "other", label: "Other" },
 ];
 

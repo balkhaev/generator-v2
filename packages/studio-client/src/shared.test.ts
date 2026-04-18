@@ -5,7 +5,7 @@ import { buildCreateScenarioInput, type WorkflowDefinition } from "./shared";
 describe("studio shared scenario inputs", () => {
 	it("omits empty optional parameters", () => {
 		const workflow: WorkflowDefinition = {
-			baseModel: "ltx",
+			baseModel: "ltx-2-3",
 			key: "fal-ltx-2-3-image-to-video",
 			name: "LTX 2.3 I2V",
 			parameters: [

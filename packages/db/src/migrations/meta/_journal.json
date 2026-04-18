@@ -29,6 +29,27 @@
       "when": 1776450128602,
       "tag": "0003_fancy_natasha_romanoff",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776509825602,
+      "tag": "0004_backfill_zimage_turbo_lora_base_model",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1776510511358,
+      "tag": "0005_backfill_legacy_lora_base_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1776600000000,
+      "tag": "0006_unify_lora_workflow_keys",
+      "breakpoints": true
     }
   ]
 }

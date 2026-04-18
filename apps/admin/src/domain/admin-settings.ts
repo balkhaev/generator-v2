@@ -62,7 +62,7 @@ export function buildAdminSettingsSnapshot(
 			avatarWorkflow:
 				input.env.PERSONS_DEFAULT_AVATAR_WORKFLOW ?? "fal-zimage-turbo",
 			loraWorkflow:
-				input.env.PERSONS_DEFAULT_LORA_WORKFLOW ?? "fal-zimage-turbo-lora",
+				input.env.PERSONS_DEFAULT_LORA_WORKFLOW ?? "fal-zimage-turbo",
 		},
 		runpodTraining: {
 			baseModel: input.env.RUNPOD_AI_TOOLKIT_BASE_MODEL ?? "z-image",

@@ -128,7 +128,7 @@ describe("generator api", () => {
 					endpointId: "fal-ai/z-image",
 					jobId:
 						(payload as Record<string, unknown>).__falModel ===
-						"fal-ai/z-image/turbo"
+						"fal-ai/z-image/turbo/lora"
 							? "job-avatar"
 							: "job-other",
 					status: "queued" as const,
@@ -454,10 +454,11 @@ describe("generator api", () => {
 		);
 		expect(getResponse.status).toBe(200);
 		expect(submittedPayload).toMatchObject({
-			__falModel: "fal-ai/flux/dev",
+			__falModel: "fal-ai/flux-lora",
 			prompt: "Preserve the subject identity and add cinematic intimacy.",
 			guidance_scale: 5,
 			num_inference_steps: 28,
+			loras: [],
 		});
 
 		const syncResponse = await app.request(
@@ -550,7 +551,7 @@ describe("generator api", () => {
 			},
 			submit(payload: Record<string, unknown>) {
 				expect(payload).toMatchObject({
-					__falModel: "fal-ai/z-image/turbo",
+					__falModel: "fal-ai/z-image/turbo/lora",
 				});
 				return Promise.resolve({
 					endpointId: "fal-ai/z-image-resubmitted",

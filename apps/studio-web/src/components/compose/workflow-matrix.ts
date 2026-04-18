@@ -5,9 +5,12 @@ export type Approach = "text" | "image";
 
 export interface WorkflowClassification {
 	approach: Approach;
+	/** Workflow exposes at least one LoRA slot (required or optional). */
 	hasLora: boolean;
 	maxLoraSlots: number;
 	modality: Modality;
+	/** Workflow has at least one mandatory LoRA slot. */
+	requiresLora: boolean;
 }
 
 export interface WorkflowFilter {
@@ -22,12 +25,16 @@ export function classifyWorkflow(
 	const loraParameters = workflow.parameters.filter(
 		(parameter) => parameter.kind === "lora-url"
 	);
+	const requiredLoraParameters = loraParameters.filter(
+		(parameter) => !parameter.optional
+	);
 
 	return {
 		approach: workflow.requiresInputImage ? "image" : "text",
 		hasLora: loraParameters.length > 0,
 		maxLoraSlots: loraParameters.length,
 		modality: isVideo ? "video" : "image",
+		requiresLora: requiredLoraParameters.length > 0,
 	};
 }
 
@@ -76,10 +83,10 @@ export function pickDefaultWorkflow(
 	if (matches.length === 0) {
 		return null;
 	}
-	const noLora = matches.find(
-		(workflow) => !classifyWorkflow(workflow).hasLora
+	const noRequiredLora = matches.find(
+		(workflow) => !classifyWorkflow(workflow).requiresLora
 	);
-	return noLora ?? matches[0] ?? null;
+	return noRequiredLora ?? matches[0] ?? null;
 }
 
 export interface LoraSlotDefinition {

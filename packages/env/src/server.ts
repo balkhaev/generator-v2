@@ -186,10 +186,7 @@ const serverSchema = {
 		.string()
 		.min(1)
 		.default("fal-zimage-turbo"),
-	PERSONS_DEFAULT_LORA_WORKFLOW: z
-		.string()
-		.min(1)
-		.default("fal-zimage-turbo-lora"),
+	PERSONS_DEFAULT_LORA_WORKFLOW: z.string().min(1).default("fal-zimage-turbo"),
 	PERSON_LORA_TRAINING_STEPS: z.coerce.number().int().positive().optional(),
 
 	// Reconcile workers

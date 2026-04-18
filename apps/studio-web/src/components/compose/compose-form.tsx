@@ -28,6 +28,7 @@ import {
 	getAvailableApproaches,
 	getAvailableModalities,
 	getLoraSlots,
+	type LoraSlotDefinition,
 	type Modality,
 	pickDefaultWorkflow,
 } from "./workflow-matrix";
@@ -179,6 +180,52 @@ function validate(
 	}
 
 	return errors;
+}
+
+interface LoraSectionProps {
+	adminLorasHref: string;
+	availableLoras: LoraRegistryEntry[];
+	form: ScenarioFormState;
+	isOptional: boolean;
+	loraSlots: LoraSlotDefinition[];
+	onParamChange: (key: string, value: string) => void;
+	selectedWorkflow: WorkflowDefinition;
+}
+
+function LoraSection({
+	adminLorasHref,
+	availableLoras,
+	form,
+	isOptional,
+	loraSlots,
+	onParamChange,
+	selectedWorkflow,
+}: LoraSectionProps) {
+	return (
+		<section className="grid gap-2">
+			<div className="flex items-center justify-between gap-2">
+				<div className="flex items-baseline gap-1.5">
+					<SectionLabel>Style LoRAs</SectionLabel>
+					{isOptional ? (
+						<span className="text-[10px] text-muted-foreground/70">
+							optional · skip to use the base model
+						</span>
+					) : null}
+				</div>
+				<span className="text-[10px] text-muted-foreground">
+					{availableLoras.length} in registry
+				</span>
+			</div>
+			<LoraStack
+				adminHref={adminLorasHref}
+				availableLoras={availableLoras}
+				form={form}
+				onParamChange={onParamChange}
+				slots={loraSlots}
+				workflow={selectedWorkflow}
+			/>
+		</section>
+	);
 }
 
 function getCharCounterTone(length: number, isOver: boolean) {
@@ -506,23 +553,16 @@ export default function ComposeForm({
 				/>
 			</section>
 
-			{showLoraSection ? (
-				<section className="grid gap-2">
-					<div className="flex items-center justify-between gap-2">
-						<SectionLabel>Style LoRAs</SectionLabel>
-						<span className="text-[10px] text-muted-foreground">
-							{availableLoras.length} in registry
-						</span>
-					</div>
-					<LoraStack
-						adminHref={adminLorasHref}
-						availableLoras={availableLoras}
-						form={form}
-						onParamChange={handleParamChange}
-						slots={loraSlots}
-						workflow={selectedWorkflow}
-					/>
-				</section>
+			{showLoraSection && selectedClassification ? (
+				<LoraSection
+					adminLorasHref={adminLorasHref}
+					availableLoras={availableLoras}
+					form={form}
+					isOptional={!selectedClassification.requiresLora}
+					loraSlots={loraSlots}
+					onParamChange={handleParamChange}
+					selectedWorkflow={selectedWorkflow}
+				/>
 			) : null}
 
 			<section className="grid gap-2">

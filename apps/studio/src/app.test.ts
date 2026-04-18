@@ -364,7 +364,7 @@ describe("studio backend", () => {
 			{
 				body: JSON.stringify({
 					name: "Prompt-only video",
-					params: { duration: 6, fps: 25 },
+					params: { numFrames: 121, fps: 24 },
 					prompt: "Generate a cinematic street clip",
 					workflowKey: "fal-ltx-2-3-text-to-video",
 				}),

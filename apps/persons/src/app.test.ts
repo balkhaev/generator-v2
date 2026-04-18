@@ -669,7 +669,7 @@ describe("persons api", () => {
 		};
 		expect(executionInput).toMatchObject({
 			inputImageUrl: "https://assets.example.com/reference.png",
-			workflowKey: "fal-zimage-turbo-image-to-image-lora",
+			workflowKey: "fal-zimage-turbo-image-to-image",
 			params: {
 				imageSize: "portrait_4_3",
 				loraUrl: "https://assets.example.com/person.safetensors",
@@ -703,7 +703,7 @@ describe("persons api", () => {
 						providerEndpointId: "fal-ai/z-image",
 						providerJobId: "provider-lora",
 						status: "running",
-						workflowKey: "fal-zimage-turbo-image-to-image-lora",
+						workflowKey: "fal-zimage-turbo-image-to-image",
 					},
 				}),
 				headers: {

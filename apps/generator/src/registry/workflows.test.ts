@@ -12,7 +12,7 @@ describe("workflow registry", () => {
 		}
 	});
 
-	it("builds the fal-zimage-turbo payload", () => {
+	it("builds the fal-zimage-turbo payload without LoRA when no URL is provided", () => {
 		const workflow = getWorkflowDefinition("fal-zimage-turbo");
 
 		expect(
@@ -27,18 +27,19 @@ describe("workflow registry", () => {
 				prompt: "beautiful portrait of a woman, natural skin texture",
 			})
 		).toMatchObject({
-			__falModel: "fal-ai/z-image/turbo",
+			__falModel: "fal-ai/z-image/turbo/lora",
 			prompt: "beautiful portrait of a woman, natural skin texture",
 			image_size: "portrait_4_3",
 			num_inference_steps: 8,
 			num_images: 1,
 			enable_safety_checker: false,
 			output_format: "png",
+			loras: [],
 		});
 	});
 
-	it("builds the fal-zimage-turbo-lora payload with lora config", () => {
-		const workflow = getWorkflowDefinition("fal-zimage-turbo-lora");
+	it("builds the fal-zimage-turbo payload with lora config", () => {
+		const workflow = getWorkflowDefinition("fal-zimage-turbo");
 
 		expect(
 			workflow?.buildProviderInput({
@@ -65,8 +66,8 @@ describe("workflow registry", () => {
 		});
 	});
 
-	it("builds the fal-zimage-turbo-lora payload with an optional extra lora", () => {
-		const workflow = getWorkflowDefinition("fal-zimage-turbo-lora");
+	it("builds the fal-zimage-turbo payload with an optional extra lora", () => {
+		const workflow = getWorkflowDefinition("fal-zimage-turbo");
 
 		expect(
 			workflow?.buildProviderInput({
@@ -93,10 +94,8 @@ describe("workflow registry", () => {
 		});
 	});
 
-	it("builds the fal-zimage-turbo image-to-image lora payload", () => {
-		const workflow = getWorkflowDefinition(
-			"fal-zimage-turbo-image-to-image-lora"
-		);
+	it("builds the fal-zimage-turbo image-to-image payload with optional lora stack", () => {
+		const workflow = getWorkflowDefinition("fal-zimage-turbo-image-to-image");
 
 		expect(
 			workflow?.buildProviderInput({
@@ -122,6 +121,59 @@ describe("workflow registry", () => {
 				{
 					path: "https://storage.example.com/zit-mystic.safetensors",
 					weight: 0.05,
+				},
+			],
+		});
+	});
+
+	it("builds the fal-zimage-turbo image-to-image payload without lora", () => {
+		const workflow = getWorkflowDefinition("fal-zimage-turbo-image-to-image");
+
+		expect(
+			workflow?.buildProviderInput({
+				inputImageUrl: "https://storage.example.com/reference.png",
+				params: { strength: 0.6 },
+				prompt: "make it cinematic",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/z-image/turbo/image-to-image/lora",
+			loras: [],
+		});
+	});
+
+	it("builds the fal-flux-dev payload without LoRA when no URL is provided", () => {
+		const workflow = getWorkflowDefinition("fal-flux-dev");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: { numInferenceSteps: 28 },
+				prompt: "a serene mountain lake at sunrise",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/flux-lora",
+			loras: [],
+			num_inference_steps: 28,
+			prompt: "a serene mountain lake at sunrise",
+		});
+	});
+
+	it("builds the fal-flux-dev payload with a LoRA URL", () => {
+		const workflow = getWorkflowDefinition("fal-flux-dev");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					loraUrl: "https://storage.example.com/flux-style.safetensors",
+					loraScale: 0.7,
+				},
+				prompt: "portrait of my_character, painterly style",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/flux-lora",
+			loras: [
+				{
+					path: "https://storage.example.com/flux-style.safetensors",
+					scale: 0.7,
 				},
 			],
 		});
@@ -161,7 +213,7 @@ describe("workflow registry", () => {
 		});
 	});
 
-	it("builds the fal-flux-dev payload", () => {
+	it("builds the fal-flux-dev payload with guidance and no LoRA", () => {
 		const workflow = getWorkflowDefinition("fal-flux-dev");
 
 		expect(
@@ -173,10 +225,11 @@ describe("workflow registry", () => {
 				prompt: "a sunset over mountains",
 			})
 		).toMatchObject({
-			__falModel: "fal-ai/flux/dev",
+			__falModel: "fal-ai/flux-lora",
 			prompt: "a sunset over mountains",
 			num_inference_steps: 28,
 			guidance_scale: 3.5,
+			loras: [],
 		});
 	});
 
@@ -198,11 +251,12 @@ describe("workflow registry", () => {
 				prompt: "a cinematic tracking shot across a rainy neon street",
 			})
 		).toMatchObject({
-			__falModel: "fal-ai/wan/v2.2-a14b/text-to-video",
+			__falModel: "fal-ai/wan/v2.2-a14b/text-to-video/lora",
 			aspect_ratio: "16:9",
 			frames_per_second: 16,
 			guidance_scale: 3.5,
 			guidance_scale_2: 4,
+			loras: [],
 			num_frames: 81,
 			num_inference_steps: 27,
 			prompt: "a cinematic tracking shot across a rainy neon street",
@@ -225,6 +279,8 @@ describe("workflow registry", () => {
 					framesPerSecond: 16,
 					guidanceScale: 3.5,
 					guidanceScale2: 3.5,
+					loraScale: 0.8,
+					loraUrl: "https://storage.example.com/wan-lora.safetensors",
 					numFrames: 81,
 					numInferenceSteps: 27,
 					resolution: "720p",
@@ -233,13 +289,19 @@ describe("workflow registry", () => {
 				prompt: "the subject turns toward camera as the light changes",
 			})
 		).toMatchObject({
-			__falModel: "fal-ai/wan/v2.2-a14b/image-to-video",
+			__falModel: "fal-ai/wan/v2.2-a14b/image-to-video/lora",
 			aspect_ratio: "auto",
 			end_image_url: "https://storage.example.com/end-frame.png",
 			frames_per_second: 16,
 			guidance_scale: 3.5,
 			guidance_scale_2: 3.5,
 			image_url: "https://storage.example.com/reference.png",
+			loras: [
+				{
+					path: "https://storage.example.com/wan-lora.safetensors",
+					scale: 0.8,
+				},
+			],
 			num_frames: 81,
 			num_inference_steps: 27,
 			prompt: "the subject turns toward camera as the light changes",
@@ -256,48 +318,57 @@ describe("workflow registry", () => {
 		expect(
 			workflow?.buildProviderInput({
 				params: {
-					aspectRatio: "16:9",
-					duration: 6,
-					fps: 25,
-					resolution: "1080p",
+					fps: 24,
+					numFrames: 121,
+					numInferenceSteps: 40,
+					videoSize: "landscape_16_9",
 				},
 				prompt: "a fast handheld shot through a busy market",
 			})
 		).toMatchObject({
-			__falModel: "fal-ai/ltx-2.3/text-to-video",
-			aspect_ratio: "16:9",
-			duration: 6,
-			fps: 25,
+			__falModel: "fal-ai/ltx-2.3-22b/text-to-video/lora",
+			fps: 24,
 			generate_audio: true,
+			loras: [],
+			num_frames: 121,
+			num_inference_steps: 40,
 			prompt: "a fast handheld shot through a busy market",
-			resolution: "1080p",
+			video_size: "landscape_16_9",
 		});
 	});
 
-	it("builds the fal-ltx-2-3 image-to-video payload", () => {
+	it("builds the fal-ltx-2-3 image-to-video payload with optional LoRA", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-image-to-video");
 
 		expect(
 			workflow?.buildProviderInput({
 				inputImageUrl: "https://storage.example.com/reference.png",
 				params: {
-					aspectRatio: "auto",
-					duration: 6,
 					endImageUrl: "",
-					fps: 25,
-					resolution: "1080p",
+					fps: 24,
+					loraScale: 0.5,
+					loraUrl: "https://storage.example.com/ltx-lora.safetensors",
+					numFrames: 121,
+					numInferenceSteps: 40,
+					videoSize: "auto",
 				},
 				prompt: "animate the still image with a slow dolly push",
 			})
 		).toMatchObject({
-			__falModel: "fal-ai/ltx-2.3/image-to-video",
-			aspect_ratio: "auto",
-			duration: 6,
-			fps: 25,
+			__falModel: "fal-ai/ltx-2.3-22b/image-to-video/lora",
+			fps: 24,
 			generate_audio: true,
 			image_url: "https://storage.example.com/reference.png",
+			loras: [
+				{
+					path: "https://storage.example.com/ltx-lora.safetensors",
+					scale: 0.5,
+				},
+			],
+			num_frames: 121,
+			num_inference_steps: 40,
 			prompt: "animate the still image with a slow dolly push",
-			resolution: "1080p",
+			video_size: "auto",
 		});
 	});
 

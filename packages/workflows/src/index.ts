@@ -72,6 +72,16 @@ const falFluxSchnellParamsSchema = z.object({
 	enableSafetyChecker: z.boolean().default(true),
 });
 
+const optionalUrlParamSchema = z.preprocess(
+	(value) =>
+		typeof value === "string" && value.trim() === "" ? undefined : value,
+	z.string().url().optional()
+);
+
+// Flux Dev always targets the `/flux-lora` endpoint — LoRA is optional and we
+// send `loras: []` when no URL is provided. The LoRA endpoint is a strict
+// superset of the base `flux/dev` endpoint, so this avoids maintaining two
+// near-identical workflows for "with LoRA" / "without LoRA".
 const falFluxDevParamsSchema = z.object({
 	imageSize: z
 		.enum([
@@ -88,8 +98,13 @@ const falFluxDevParamsSchema = z.object({
 	numImages: z.number().int().min(1).max(4).default(1),
 	seed: z.number().int().nonnegative().optional(),
 	enableSafetyChecker: z.boolean().default(true),
+	loraUrl: optionalUrlParamSchema,
+	loraScale: z.number().min(0).max(2).default(1),
 });
 
+// Z-Image Turbo always targets the `/turbo/lora` endpoint — LoRA is optional.
+// We keep the dual-LoRA shape (primary + extra) the LoRA endpoint exposes so
+// that scenarios can stack styles without giving up the base T2I flow.
 const falZimageTurboParamsSchema = z.object({
 	imageSize: z
 		.enum([
@@ -106,32 +121,14 @@ const falZimageTurboParamsSchema = z.object({
 	seed: z.number().int().nonnegative().optional(),
 	enableSafetyChecker: z.boolean().default(false),
 	outputFormat: z.enum(["png", "jpeg", "webp"]).default("png"),
-});
-
-const falZimageTurboLoraParamsSchema = z.object({
-	imageSize: z
-		.enum([
-			"square_hd",
-			"square",
-			"landscape_4_3",
-			"landscape_16_9",
-			"portrait_4_3",
-			"portrait_16_9",
-		])
-		.default("portrait_4_3"),
-	numInferenceSteps: z.number().int().min(1).max(20).default(8),
-	numImages: z.number().int().min(1).max(4).default(1),
-	seed: z.number().int().nonnegative().optional(),
-	enableSafetyChecker: z.boolean().default(false),
-	outputFormat: z.enum(["png", "jpeg", "webp"]).default("png"),
-	loraUrl: z.string().url(),
+	loraUrl: optionalUrlParamSchema,
 	loraWeight: z.number().min(0).max(2).default(0.8),
-	extraLoraUrl: z.string().url().optional(),
+	extraLoraUrl: optionalUrlParamSchema,
 	extraLoraWeight: z.number().min(0).max(2).default(0.05),
 });
 
-const falZimageTurboImageToImageLoraParamsSchema =
-	falZimageTurboLoraParamsSchema.extend({
+const falZimageTurboImageToImageParamsSchema =
+	falZimageTurboParamsSchema.extend({
 		imageSize: z
 			.enum([
 				"auto",
@@ -147,32 +144,10 @@ const falZimageTurboImageToImageLoraParamsSchema =
 		strength: z.number().min(0).max(1).default(0.95),
 	});
 
-const falFluxLoraParamsSchema = z.object({
-	imageSize: z
-		.enum([
-			"square_hd",
-			"square",
-			"landscape_4_3",
-			"landscape_16_9",
-			"portrait_4_3",
-			"portrait_16_9",
-		])
-		.default("landscape_4_3"),
-	numInferenceSteps: z.number().int().min(1).max(50).default(28),
-	guidanceScale: z.number().min(1).max(20).default(3.5),
-	numImages: z.number().int().min(1).max(4).default(1),
-	seed: z.number().int().nonnegative().optional(),
-	loraUrl: z.string().url(),
-	loraScale: z.number().min(0).max(2).default(1),
-	enableSafetyChecker: z.boolean().default(true),
-});
-
-const optionalUrlParamSchema = z.preprocess(
-	(value) =>
-		typeof value === "string" && value.trim() === "" ? undefined : value,
-	z.string().url().optional()
-);
-
+// Wan 2.2 always targets the `/lora` endpoint — LoRA is optional and we send
+// `loras: []` when no URL is provided. The `/lora` endpoint is a strict
+// superset of the base endpoint, so this avoids maintaining two near-identical
+// workflows for "with LoRA" / "without LoRA".
 const falWan22TextToVideoParamsSchema = z.object({
 	negativePrompt: z.string().default(""),
 	numFrames: z.number().int().min(17).max(161).default(81),
@@ -193,6 +168,8 @@ const falWan22TextToVideoParamsSchema = z.object({
 	adjustFpsForInterpolation: z.boolean().default(true),
 	videoQuality: z.enum(["low", "medium", "high", "maximum"]).default("high"),
 	videoWriteMode: z.enum(["fast", "balanced", "small"]).default("balanced"),
+	loraUrl: optionalUrlParamSchema,
+	loraScale: z.number().min(0).max(2).default(1),
 });
 
 const falWan22ImageToVideoParamsSchema = falWan22TextToVideoParamsSchema.extend(
@@ -203,19 +180,51 @@ const falWan22ImageToVideoParamsSchema = falWan22TextToVideoParamsSchema.extend(
 	}
 );
 
+// LTX-2.3 always targets the LTX-2.3-22B `/lora` endpoint with optional LoRA.
+// The 22B endpoint is a superset that adds full CFG/STG/multiscale controls
+// and exposes `num_frames` + `video_size` instead of the simpler
+// `duration`/`resolution`/`aspect_ratio` knobs of the legacy endpoint.
 const falLtx23TextToVideoParamsSchema = z.object({
-	duration: z.union([z.literal(6), z.literal(8), z.literal(10)]).default(6),
-	resolution: z.enum(["1080p", "1440p", "2160p"]).default("1080p"),
-	aspectRatio: z.enum(["16:9", "9:16"]).default("16:9"),
-	fps: z
-		.union([z.literal(24), z.literal(25), z.literal(48), z.literal(50)])
-		.default(25),
+	negativePrompt: z
+		.string()
+		.default(
+			"news broadcast, 3d animation, computer graphics, pc game, console game, video game, cartoon, childish, watermark, logo, text, on screen text, subtitles, titles, signature, slowmo, static"
+		),
+	numFrames: z.number().int().min(17).max(257).default(121),
+	videoSize: z
+		.enum([
+			"square_hd",
+			"square",
+			"portrait_4_3",
+			"portrait_16_9",
+			"landscape_4_3",
+			"landscape_16_9",
+		])
+		.default("landscape_16_9"),
+	fps: z.number().int().min(8).max(60).default(24),
+	numInferenceSteps: z.number().int().min(1).max(60).default(40),
 	generateAudio: z.boolean().default(true),
+	useMultiscale: z.boolean().default(true),
+	enablePromptExpansion: z.boolean().default(true),
+	enableSafetyChecker: z.boolean().default(true),
+	seed: z.number().int().nonnegative().optional(),
+	loraUrl: optionalUrlParamSchema,
+	loraScale: z.number().min(0).max(2).default(1),
 });
 
 const falLtx23ImageToVideoParamsSchema = falLtx23TextToVideoParamsSchema.extend(
 	{
-		aspectRatio: z.enum(["auto", "16:9", "9:16"]).default("auto"),
+		videoSize: z
+			.enum([
+				"auto",
+				"square_hd",
+				"square",
+				"portrait_4_3",
+				"portrait_16_9",
+				"landscape_4_3",
+				"landscape_16_9",
+			])
+			.default("auto"),
 		endImageUrl: optionalUrlParamSchema,
 	}
 );
@@ -347,7 +356,7 @@ export const workflowRegistry = {
 		key: "fal-flux-dev",
 		name: "Flux Dev",
 		description:
-			"High-quality text-to-image generation using FLUX.1-dev with full guidance control.",
+			"High-quality text-to-image generation using FLUX.1-dev with full guidance control. Optionally accepts a LoRA URL to apply custom style weights.",
 		requiresInputImage: false,
 		parameterSchema: falFluxDevParamsSchema,
 		parameterFields: [
@@ -377,6 +386,20 @@ export const workflowRegistry = {
 				type: "number",
 			},
 			{
+				description:
+					"Optional public URL pointing to trained LoRA weights — leave empty to run the base model.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the LoRA effect when a URL is provided.",
+				key: "loraScale",
+				label: "LoRA scale",
+				type: "number",
+			},
+			{
 				description: "Optional deterministic seed for repeatable outputs.",
 				key: "seed",
 				label: "Seed",
@@ -386,12 +409,15 @@ export const workflowRegistry = {
 		buildProviderInput: ({ params, prompt }) => {
 			const parsed = falFluxDevParamsSchema.parse(params);
 			return {
-				__falModel: "fal-ai/flux/dev",
+				__falModel: "fal-ai/flux-lora",
 				prompt,
 				image_size: parsed.imageSize,
 				num_inference_steps: parsed.numInferenceSteps,
 				guidance_scale: parsed.guidanceScale,
 				num_images: parsed.numImages,
+				loras: parsed.loraUrl
+					? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
+					: [],
 				enable_safety_checker: parsed.enableSafetyChecker,
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
@@ -399,11 +425,11 @@ export const workflowRegistry = {
 		extractArtifactUrls: collectFalImageUrls,
 	},
 	"fal-zimage-turbo": {
-		baseModel: "z-image",
+		baseModel: "z-image-turbo",
 		key: "fal-zimage-turbo",
 		name: "Z-Image Turbo",
 		description:
-			"Lightning-fast text-to-image generation using Z-Image Turbo (6B) on fal.ai.",
+			"Lightning-fast text-to-image generation using Z-Image Turbo (6B) on fal.ai. Optionally accepts up to two LoRA URLs to apply custom style weights.",
 		requiresInputImage: false,
 		parameterSchema: falZimageTurboParamsSchema,
 		parameterFields: [
@@ -426,57 +452,15 @@ export const workflowRegistry = {
 				type: "number",
 			},
 			{
-				description: "Optional deterministic seed.",
-				key: "seed",
-				label: "Seed",
-				type: "number",
-			},
-		],
-		buildProviderInput: ({ params, prompt }) => {
-			const parsed = falZimageTurboParamsSchema.parse(params);
-			return {
-				__falModel: "fal-ai/z-image/turbo",
-				prompt,
-				image_size: parsed.imageSize,
-				num_inference_steps: parsed.numInferenceSteps,
-				num_images: parsed.numImages,
-				enable_safety_checker: parsed.enableSafetyChecker,
-				output_format: parsed.outputFormat,
-				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
-			};
-		},
-		extractArtifactUrls: collectFalImageUrls,
-	},
-	"fal-zimage-turbo-lora": {
-		baseModel: "z-image",
-		key: "fal-zimage-turbo-lora",
-		name: "Z-Image Turbo + LoRA",
-		description:
-			"Z-Image Turbo text-to-image with custom LoRA weights on fal.ai.",
-		requiresInputImage: false,
-		parameterSchema: falZimageTurboLoraParamsSchema,
-		parameterFields: [
-			{
-				description: "Output image size preset.",
-				key: "imageSize",
-				label: "Image size",
-				type: "text",
-			},
-			{
-				description: "Number of denoising steps.",
-				key: "numInferenceSteps",
-				label: "Steps",
-				type: "number",
-			},
-			{
-				description: "LoRA weights URL.",
+				description:
+					"Optional public URL pointing to trained LoRA weights — leave empty to run the base model.",
 				key: "loraUrl",
 				kind: "lora-url",
 				label: "LoRA URL",
 				type: "text",
 			},
 			{
-				description: "LoRA strength.",
+				description: "Strength of the primary LoRA effect when provided.",
 				key: "loraWeight",
 				label: "LoRA weight",
 				type: "number",
@@ -494,23 +478,25 @@ export const workflowRegistry = {
 				label: "Extra LoRA weight",
 				type: "number",
 			},
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
 		],
 		buildProviderInput: ({ params, prompt }) => {
-			const parsed = falZimageTurboLoraParamsSchema.parse(params);
-			const loras = [
-				{
-					path: parsed.loraUrl,
-					weight: parsed.loraWeight,
-				},
-				...(parsed.extraLoraUrl
-					? [
-							{
-								path: parsed.extraLoraUrl,
-								weight: parsed.extraLoraWeight,
-							},
-						]
-					: []),
-			];
+			const parsed = falZimageTurboParamsSchema.parse(params);
+			const loras: Array<{ path: string; weight: number }> = [];
+			if (parsed.loraUrl) {
+				loras.push({ path: parsed.loraUrl, weight: parsed.loraWeight });
+			}
+			if (parsed.extraLoraUrl) {
+				loras.push({
+					path: parsed.extraLoraUrl,
+					weight: parsed.extraLoraWeight,
+				});
+			}
 			return {
 				__falModel: "fal-ai/z-image/turbo/lora",
 				prompt,
@@ -525,14 +511,14 @@ export const workflowRegistry = {
 		},
 		extractArtifactUrls: collectFalImageUrls,
 	},
-	"fal-zimage-turbo-image-to-image-lora": {
-		baseModel: "z-image",
-		key: "fal-zimage-turbo-image-to-image-lora",
-		name: "Z-Image Turbo Image-to-Image + LoRA",
+	"fal-zimage-turbo-image-to-image": {
+		baseModel: "z-image-turbo",
+		key: "fal-zimage-turbo-image-to-image",
+		name: "Z-Image Turbo Image-to-Image",
 		description:
-			"Z-Image Turbo image-to-image generation with custom LoRA weights on fal.ai.",
+			"Z-Image Turbo image-to-image generation on fal.ai. Optionally accepts up to two LoRA URLs to apply custom style weights.",
 		requiresInputImage: true,
-		parameterSchema: falZimageTurboImageToImageLoraParamsSchema,
+		parameterSchema: falZimageTurboImageToImageParamsSchema,
 		parameterFields: [
 			{
 				description: "Output image size preset.",
@@ -553,14 +539,15 @@ export const workflowRegistry = {
 				type: "number",
 			},
 			{
-				description: "LoRA weights URL.",
+				description:
+					"Optional public URL pointing to trained LoRA weights — leave empty to run the base model.",
 				key: "loraUrl",
 				kind: "lora-url",
 				label: "LoRA URL",
 				type: "text",
 			},
 			{
-				description: "LoRA strength.",
+				description: "Strength of the primary LoRA effect when provided.",
 				key: "loraWeight",
 				label: "LoRA weight",
 				type: "number",
@@ -580,21 +567,17 @@ export const workflowRegistry = {
 			},
 		],
 		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
-			const parsed = falZimageTurboImageToImageLoraParamsSchema.parse(params);
-			const loras = [
-				{
-					path: parsed.loraUrl,
-					weight: parsed.loraWeight,
-				},
-				...(parsed.extraLoraUrl
-					? [
-							{
-								path: parsed.extraLoraUrl,
-								weight: parsed.extraLoraWeight,
-							},
-						]
-					: []),
-			];
+			const parsed = falZimageTurboImageToImageParamsSchema.parse(params);
+			const loras: Array<{ path: string; weight: number }> = [];
+			if (parsed.loraUrl) {
+				loras.push({ path: parsed.loraUrl, weight: parsed.loraWeight });
+			}
+			if (parsed.extraLoraUrl) {
+				loras.push({
+					path: parsed.extraLoraUrl,
+					weight: parsed.extraLoraWeight,
+				});
+			}
 			return {
 				__falModel: "fal-ai/z-image/turbo/image-to-image/lora",
 				prompt,
@@ -726,82 +709,12 @@ export const workflowRegistry = {
 		},
 		extractArtifactUrls: collectFalImageUrls,
 	},
-	"fal-flux-lora": {
-		baseModel: "flux",
-		key: "fal-flux-lora",
-		name: "Flux Dev LoRA (Fal)",
-		description:
-			"Text-to-image generation using FLUX.1-dev with custom LoRA weights.",
-		requiresInputImage: false,
-		parameterSchema: falFluxLoraParamsSchema,
-		parameterFields: [
-			{
-				description:
-					"Output image size preset controlling aspect ratio and resolution.",
-				key: "imageSize",
-				label: "Image size",
-				type: "text",
-			},
-			{
-				description: "Number of denoising steps.",
-				key: "numInferenceSteps",
-				label: "Steps",
-				type: "number",
-			},
-			{
-				description: "Classifier-free guidance scale.",
-				key: "guidanceScale",
-				label: "Guidance scale",
-				type: "number",
-			},
-			{
-				description: "Number of images to generate per request.",
-				key: "numImages",
-				label: "Number of images",
-				type: "number",
-			},
-			{
-				description: "Public URL pointing to the trained LoRA weights.",
-				key: "loraUrl",
-				kind: "lora-url",
-				label: "LoRA URL",
-				type: "text",
-			},
-			{
-				description: "Strength of the LoRA effect.",
-				key: "loraScale",
-				label: "LoRA scale",
-				type: "number",
-			},
-			{
-				description: "Optional deterministic seed for repeatable outputs.",
-				key: "seed",
-				label: "Seed",
-				type: "number",
-			},
-		],
-		buildProviderInput: ({ params, prompt }) => {
-			const parsed = falFluxLoraParamsSchema.parse(params);
-			return {
-				__falModel: "fal-ai/flux-lora",
-				prompt,
-				image_size: parsed.imageSize,
-				num_inference_steps: parsed.numInferenceSteps,
-				guidance_scale: parsed.guidanceScale,
-				num_images: parsed.numImages,
-				loras: [{ path: parsed.loraUrl, scale: parsed.loraScale }],
-				enable_safety_checker: parsed.enableSafetyChecker,
-				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
-			};
-		},
-		extractArtifactUrls: collectFalImageUrls,
-	},
 	"fal-wan-2-2-text-to-video": {
-		baseModel: "wan",
+		baseModel: "wan-2-2",
 		key: "fal-wan-2-2-text-to-video",
 		name: "Wan 2.2 A14B",
 		description:
-			"High-quality text-to-video generation using Wan 2.2 A14B on fal.ai.",
+			"High-quality text-to-video generation using Wan 2.2 A14B on fal.ai. Optionally accepts a LoRA URL.",
 		requiresInputImage: false,
 		parameterSchema: falWan22TextToVideoParamsSchema,
 		parameterFields: [
@@ -856,6 +769,20 @@ export const workflowRegistry = {
 				type: "number",
 			},
 			{
+				description:
+					"Optional public URL pointing to trained Wan 2.2 LoRA weights.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the LoRA effect (ignored when no LoRA set).",
+				key: "loraScale",
+				label: "LoRA scale",
+				type: "number",
+			},
+			{
 				description: "Optional deterministic seed.",
 				key: "seed",
 				label: "Seed",
@@ -864,8 +791,11 @@ export const workflowRegistry = {
 		],
 		buildProviderInput: ({ params, prompt }) => {
 			const parsed = falWan22TextToVideoParamsSchema.parse(params);
+			const loras = parsed.loraUrl
+				? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
+				: [];
 			return {
-				__falModel: "fal-ai/wan/v2.2-a14b/text-to-video",
+				__falModel: "fal-ai/wan/v2.2-a14b/text-to-video/lora",
 				prompt,
 				negative_prompt: parsed.negativePrompt,
 				num_frames: parsed.numFrames,
@@ -885,16 +815,18 @@ export const workflowRegistry = {
 				adjust_fps_for_interpolation: parsed.adjustFpsForInterpolation,
 				video_quality: parsed.videoQuality,
 				video_write_mode: parsed.videoWriteMode,
+				loras,
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},
 	"fal-wan-2-2-image-to-video": {
-		baseModel: "wan",
+		baseModel: "wan-2-2",
 		key: "fal-wan-2-2-image-to-video",
 		name: "Wan 2.2 A14B I2V",
-		description: "Image-to-video generation using Wan 2.2 A14B on fal.ai.",
+		description:
+			"Image-to-video generation using Wan 2.2 A14B on fal.ai. Optionally accepts a LoRA URL.",
 		requiresInputImage: true,
 		parameterSchema: falWan22ImageToVideoParamsSchema,
 		parameterFields: [
@@ -958,6 +890,20 @@ export const workflowRegistry = {
 				type: "number",
 			},
 			{
+				description:
+					"Optional public URL pointing to trained Wan 2.2 LoRA weights.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the LoRA effect (ignored when no LoRA set).",
+				key: "loraScale",
+				label: "LoRA scale",
+				type: "number",
+			},
+			{
 				description: "Optional deterministic seed.",
 				key: "seed",
 				label: "Seed",
@@ -966,8 +912,11 @@ export const workflowRegistry = {
 		],
 		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
 			const parsed = falWan22ImageToVideoParamsSchema.parse(params);
+			const loras = parsed.loraUrl
+				? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
+				: [];
 			return {
-				__falModel: "fal-ai/wan/v2.2-a14b/image-to-video",
+				__falModel: "fal-ai/wan/v2.2-a14b/image-to-video/lora",
 				image_url: inputImageUrl,
 				prompt,
 				negative_prompt: parsed.negativePrompt,
@@ -988,6 +937,7 @@ export const workflowRegistry = {
 				adjust_fps_for_interpolation: parsed.adjustFpsForInterpolation,
 				video_quality: parsed.videoQuality,
 				video_write_mode: parsed.videoWriteMode,
+				loras,
 				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
@@ -995,63 +945,103 @@ export const workflowRegistry = {
 		extractArtifactUrls: collectArtifactUrls,
 	},
 	"fal-ltx-2-3-text-to-video": {
-		baseModel: "ltx",
+		baseModel: "ltx-2-3",
 		key: "fal-ltx-2-3-text-to-video",
 		name: "LTX 2.3",
 		description:
-			"Text-to-video generation using LTX 2.3 Pro by Lightricks on fal.ai.",
+			"Text-to-video generation using LTX 2.3 22B by Lightricks on fal.ai. Optionally accepts a LoRA URL.",
 		requiresInputImage: false,
 		parameterSchema: falLtx23TextToVideoParamsSchema,
 		parameterFields: [
 			{
-				description: "Generated clip length in seconds.",
-				enumValues: ["6", "8", "10"],
-				key: "duration",
-				label: "Duration",
+				description: "Number of source frames to generate.",
+				key: "numFrames",
+				label: "Frames",
 				type: "number",
 			},
 			{
-				description: "Output video resolution.",
-				enumValues: ["1080p", "1440p", "2160p"],
-				key: "resolution",
-				label: "Resolution",
-				type: "text",
-			},
-			{
-				description: "Output video aspect ratio.",
-				enumValues: ["16:9", "9:16"],
-				key: "aspectRatio",
-				label: "Aspect ratio",
+				description: "Output video size preset.",
+				enumValues: [
+					"square_hd",
+					"square",
+					"portrait_4_3",
+					"portrait_16_9",
+					"landscape_4_3",
+					"landscape_16_9",
+				],
+				key: "videoSize",
+				label: "Video size",
 				type: "text",
 			},
 			{
 				description: "Frames per second of the generated video.",
-				enumValues: ["24", "25", "48", "50"],
 				key: "fps",
 				label: "FPS",
+				type: "number",
+			},
+			{
+				description: "Number of denoising steps.",
+				key: "numInferenceSteps",
+				label: "Steps",
+				type: "number",
+			},
+			{
+				description: "Negative prompt to discourage unwanted content.",
+				key: "negativePrompt",
+				label: "Negative prompt",
+				optional: true,
+				type: "text",
+			},
+			{
+				description:
+					"Optional public URL pointing to trained LTX 2.3 LoRA weights.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the LoRA effect (ignored when no LoRA set).",
+				key: "loraScale",
+				label: "LoRA scale",
+				type: "number",
+			},
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
 				type: "number",
 			},
 		],
 		buildProviderInput: ({ params, prompt }) => {
 			const parsed = falLtx23TextToVideoParamsSchema.parse(params);
+			const loras = parsed.loraUrl
+				? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
+				: [];
 			return {
-				__falModel: "fal-ai/ltx-2.3/text-to-video",
+				__falModel: "fal-ai/ltx-2.3-22b/text-to-video/lora",
 				prompt,
-				duration: parsed.duration,
-				resolution: parsed.resolution,
-				aspect_ratio: parsed.aspectRatio,
+				negative_prompt: parsed.negativePrompt,
+				num_frames: parsed.numFrames,
+				video_size: parsed.videoSize,
 				fps: parsed.fps,
+				num_inference_steps: parsed.numInferenceSteps,
 				generate_audio: parsed.generateAudio,
+				use_multiscale: parsed.useMultiscale,
+				enable_prompt_expansion: parsed.enablePromptExpansion,
+				enable_safety_checker: parsed.enableSafetyChecker,
+				loras,
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},
 	"fal-ltx-2-3-image-to-video": {
-		baseModel: "ltx",
+		baseModel: "ltx-2-3",
 		key: "fal-ltx-2-3-image-to-video",
 		name: "LTX 2.3 I2V",
 		description:
-			"Image-to-video generation using LTX 2.3 Pro by Lightricks on fal.ai.",
+			"Image-to-video generation using LTX 2.3 22B by Lightricks on fal.ai. Optionally accepts a LoRA URL.",
 		requiresInputImage: true,
 		parameterSchema: falLtx23ImageToVideoParamsSchema,
 		parameterFields: [
@@ -1064,47 +1054,88 @@ export const workflowRegistry = {
 				type: "text",
 			},
 			{
-				description: "Generated clip length in seconds.",
-				enumValues: ["6", "8", "10"],
-				key: "duration",
-				label: "Duration",
+				description: "Number of source frames to generate.",
+				key: "numFrames",
+				label: "Frames",
 				type: "number",
 			},
 			{
-				description: "Output video resolution.",
-				enumValues: ["1080p", "1440p", "2160p"],
-				key: "resolution",
-				label: "Resolution",
-				type: "text",
-			},
-			{
 				description:
-					"Output video aspect ratio. Auto follows the uploaded input image.",
-				enumValues: ["auto", "16:9", "9:16"],
-				key: "aspectRatio",
-				label: "Aspect ratio",
+					"Output video size preset. Auto follows the uploaded input image.",
+				enumValues: [
+					"auto",
+					"square_hd",
+					"square",
+					"portrait_4_3",
+					"portrait_16_9",
+					"landscape_4_3",
+					"landscape_16_9",
+				],
+				key: "videoSize",
+				label: "Video size",
 				type: "text",
 			},
 			{
 				description: "Frames per second of the generated video.",
-				enumValues: ["24", "25", "48", "50"],
 				key: "fps",
 				label: "FPS",
+				type: "number",
+			},
+			{
+				description: "Number of denoising steps.",
+				key: "numInferenceSteps",
+				label: "Steps",
+				type: "number",
+			},
+			{
+				description: "Negative prompt to discourage unwanted content.",
+				key: "negativePrompt",
+				label: "Negative prompt",
+				optional: true,
+				type: "text",
+			},
+			{
+				description:
+					"Optional public URL pointing to trained LTX 2.3 LoRA weights.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the LoRA effect (ignored when no LoRA set).",
+				key: "loraScale",
+				label: "LoRA scale",
+				type: "number",
+			},
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
 				type: "number",
 			},
 		],
 		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
 			const parsed = falLtx23ImageToVideoParamsSchema.parse(params);
+			const loras = parsed.loraUrl
+				? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
+				: [];
 			return {
-				__falModel: "fal-ai/ltx-2.3/image-to-video",
+				__falModel: "fal-ai/ltx-2.3-22b/image-to-video/lora",
 				image_url: inputImageUrl,
 				prompt,
-				duration: parsed.duration,
-				resolution: parsed.resolution,
-				aspect_ratio: parsed.aspectRatio,
+				negative_prompt: parsed.negativePrompt,
+				num_frames: parsed.numFrames,
+				video_size: parsed.videoSize,
 				fps: parsed.fps,
+				num_inference_steps: parsed.numInferenceSteps,
 				generate_audio: parsed.generateAudio,
+				use_multiscale: parsed.useMultiscale,
+				enable_prompt_expansion: parsed.enablePromptExpansion,
+				enable_safety_checker: parsed.enableSafetyChecker,
+				loras,
 				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},
 		extractArtifactUrls: collectArtifactUrls,
@@ -1132,7 +1163,7 @@ function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
 	switch (field.key) {
 		case "imageSize": {
 			const supportsAuto =
-				workflowKey === "fal-zimage-turbo-image-to-image-lora" ||
+				workflowKey === "fal-zimage-turbo-image-to-image" ||
 				workflowKey === "fal-flux2-dev-edit";
 			const enumValues = supportsAuto
 				? (["auto", ...SUPPORTED_IMAGE_SIZES] as const)
@@ -1147,6 +1178,8 @@ function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
 				max = 12;
 			} else if (workflowKey.startsWith("fal-zimage-turbo")) {
 				max = 20;
+			} else if (workflowKey.startsWith("fal-ltx-2-3")) {
+				max = 60;
 			}
 			return { ...field, min: 1, max, step: 1, unit: "steps" };
 		}
@@ -1155,10 +1188,14 @@ function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
 			return { ...field, min: 1, max: 20, step: 0.1 };
 		case "shift":
 			return { ...field, min: 1, max: 10, step: 0.1 };
-		case "numFrames":
-			return { ...field, min: 17, max: 161, step: 1, unit: "frames" };
+		case "numFrames": {
+			const max = workflowKey.startsWith("fal-ltx-2-3") ? 257 : 161;
+			return { ...field, min: 17, max, step: 1, unit: "frames" };
+		}
 		case "framesPerSecond":
 			return { ...field, min: 4, max: 60, step: 1, unit: "fps" };
+		case "fps":
+			return { ...field, min: 8, max: 60, step: 1, unit: "fps" };
 		case "numImages":
 			return { ...field, min: 1, max: 4, step: 1 };
 		case "loraScale":
@@ -1168,6 +1205,14 @@ function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
 			return { ...field, min: 0, max: 2, step: 0.05, optional: true };
 		case "extraLoraUrl":
 			return { ...field, optional: true };
+		case "loraUrl": {
+			// Every workflow that exposes a `loraUrl` field now runs on the LoRA
+			// variant of its provider endpoint, with an empty `loras` array sent
+			// when no URL is provided. We mark the field optional so the UI hides
+			// the required indicator and surfaces it as a "leave empty to skip"
+			// affordance.
+			return { ...field, optional: true };
+		}
 		case "endImageUrl":
 			return { ...field, kind: "image-url", optional: true };
 		case "seed":

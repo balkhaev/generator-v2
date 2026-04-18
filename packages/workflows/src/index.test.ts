@@ -40,6 +40,7 @@ describe("fal workflow registry", () => {
 	it("resolves fal-wan-2-2-text-to-video with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-wan-2-2-text-to-video");
 		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("wan-2-2");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
 			acceleration: "regular",
 			adjustFpsForInterpolation: true,
@@ -51,6 +52,7 @@ describe("fal workflow registry", () => {
 			guidanceScale: 3.5,
 			guidanceScale2: 4,
 			interpolatorModel: "film",
+			loraScale: 1,
 			numFrames: 81,
 			numInferenceSteps: 27,
 			numInterpolatedFrames: 1,
@@ -64,6 +66,7 @@ describe("fal workflow registry", () => {
 	it("resolves fal-wan-2-2-image-to-video with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-wan-2-2-image-to-video");
 		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("wan-2-2");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
 			acceleration: "regular",
 			adjustFpsForInterpolation: true,
@@ -75,6 +78,7 @@ describe("fal workflow registry", () => {
 			guidanceScale: 3.5,
 			guidanceScale2: 3.5,
 			interpolatorModel: "film",
+			loraScale: 1,
 			numFrames: 81,
 			numInferenceSteps: 27,
 			numInterpolatedFrames: 1,
@@ -88,25 +92,140 @@ describe("fal workflow registry", () => {
 	it("resolves fal-ltx-2-3-text-to-video with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
 		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("ltx-2-3");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
-			aspectRatio: "16:9",
-			duration: 6,
-			fps: 25,
-			generateAudio: true,
-			resolution: "1080p",
+			fps: 24,
+			loraScale: 1,
+			numFrames: 121,
+			numInferenceSteps: 40,
+			videoSize: "landscape_16_9",
 		});
 	});
 
 	it("resolves fal-ltx-2-3-image-to-video with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-image-to-video");
 		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("ltx-2-3");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
-			aspectRatio: "auto",
-			duration: 6,
-			fps: 25,
-			generateAudio: true,
-			resolution: "1080p",
+			fps: 24,
+			loraScale: 1,
+			numFrames: 121,
+			numInferenceSteps: 40,
+			videoSize: "auto",
 		});
+	});
+
+	it("always targets the /lora endpoints for wan/ltx and routes loras", () => {
+		const wanT2v = getWorkflowDefinition("fal-wan-2-2-text-to-video");
+		const wanI2v = getWorkflowDefinition("fal-wan-2-2-image-to-video");
+		const ltxT2v = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
+		const ltxI2v = getWorkflowDefinition("fal-ltx-2-3-image-to-video");
+		const buildInput = (
+			workflow: ReturnType<typeof getWorkflowDefinition>,
+			extra: Record<string, unknown> = {}
+		) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "test",
+				inputImageUrl: "https://example.com/in.jpg",
+			}) as Record<string, unknown>;
+
+		expect(buildInput(wanT2v)?.__falModel).toBe(
+			"fal-ai/wan/v2.2-a14b/text-to-video/lora"
+		);
+		expect(buildInput(wanI2v)?.__falModel).toBe(
+			"fal-ai/wan/v2.2-a14b/image-to-video/lora"
+		);
+		expect(buildInput(ltxT2v)?.__falModel).toBe(
+			"fal-ai/ltx-2.3-22b/text-to-video/lora"
+		);
+		expect(buildInput(ltxI2v)?.__falModel).toBe(
+			"fal-ai/ltx-2.3-22b/image-to-video/lora"
+		);
+
+		// No LoRA → empty loras array.
+		expect((buildInput(wanT2v) as { loras: unknown[] }).loras).toEqual([]);
+		expect((buildInput(ltxT2v) as { loras: unknown[] }).loras).toEqual([]);
+
+		// With LoRA → single entry with optional scale.
+		const wanWithLora = buildInput(wanT2v, {
+			loraUrl: "https://example.com/lora.safetensors",
+		}) as { loras: unknown[] };
+		expect(wanWithLora.loras).toEqual([
+			{ path: "https://example.com/lora.safetensors", scale: 1 },
+		]);
+
+		const ltxWithLora = buildInput(ltxI2v, {
+			loraUrl: "https://example.com/ltx-lora.safetensors",
+			loraScale: 0.7,
+		}) as { loras: unknown[] };
+		expect(ltxWithLora.loras).toEqual([
+			{ path: "https://example.com/ltx-lora.safetensors", scale: 0.7 },
+		]);
+	});
+
+	it("marks loraUrl fields as optional in enriched parameter list", () => {
+		const workflows = listWorkflows();
+		const keys = [
+			"fal-flux-dev",
+			"fal-zimage-turbo",
+			"fal-zimage-turbo-image-to-image",
+			"fal-wan-2-2-text-to-video",
+			"fal-wan-2-2-image-to-video",
+			"fal-ltx-2-3-text-to-video",
+			"fal-ltx-2-3-image-to-video",
+		];
+		for (const key of keys) {
+			const workflow = workflows.find((entry) => entry.key === key);
+			const loraField = workflow?.parameterFields.find(
+				(field) => field.key === "loraUrl"
+			);
+			expect(loraField?.optional).toBe(true);
+			expect(loraField?.kind).toBe("lora-url");
+		}
+	});
+
+	it("always targets the /lora endpoints for fal-flux-dev and fal-zimage-turbo", () => {
+		const flux = getWorkflowDefinition("fal-flux-dev");
+		const zit = getWorkflowDefinition("fal-zimage-turbo");
+		const zitI2I = getWorkflowDefinition("fal-zimage-turbo-image-to-image");
+		const buildInput = (
+			workflow: ReturnType<typeof getWorkflowDefinition>,
+			extra: Record<string, unknown> = {}
+		) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "test",
+				inputImageUrl: "https://example.com/in.jpg",
+			}) as Record<string, unknown>;
+
+		expect(buildInput(flux)?.__falModel).toBe("fal-ai/flux-lora");
+		expect(buildInput(zit)?.__falModel).toBe("fal-ai/z-image/turbo/lora");
+		expect(buildInput(zitI2I)?.__falModel).toBe(
+			"fal-ai/z-image/turbo/image-to-image/lora"
+		);
+
+		// No LoRA → empty loras array.
+		expect((buildInput(flux) as { loras: unknown[] }).loras).toEqual([]);
+		expect((buildInput(zit) as { loras: unknown[] }).loras).toEqual([]);
+		expect((buildInput(zitI2I) as { loras: unknown[] }).loras).toEqual([]);
+
+		// Flux uses scale, Z-Image uses weight.
+		const fluxWithLora = buildInput(flux, {
+			loraUrl: "https://example.com/flux.safetensors",
+			loraScale: 0.5,
+		}) as { loras: unknown[] };
+		expect(fluxWithLora.loras).toEqual([
+			{ path: "https://example.com/flux.safetensors", scale: 0.5 },
+		]);
+
+		const zitWithLora = buildInput(zit, {
+			loraUrl: "https://example.com/zit.safetensors",
+			loraWeight: 0.7,
+		}) as { loras: unknown[] };
+		expect(zitWithLora.loras).toEqual([
+			{ path: "https://example.com/zit.safetensors", weight: 0.7 },
+		]);
 	});
 
 	it("defaults fal-flux2-dev-edit imageSize to auto", () => {
@@ -116,15 +235,9 @@ describe("fal workflow registry", () => {
 		});
 	});
 
-	it("defaults fal-zimage-turbo-image-to-image-lora imageSize to auto", () => {
-		const workflow = getWorkflowDefinition(
-			"fal-zimage-turbo-image-to-image-lora"
-		);
-		expect(
-			workflow?.parameterSchema.parse({
-				loraUrl: "https://example.com/lora.safetensors",
-			})
-		).toMatchObject({
+	it("defaults fal-zimage-turbo-image-to-image imageSize to auto", () => {
+		const workflow = getWorkflowDefinition("fal-zimage-turbo-image-to-image");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
 			imageSize: "auto",
 		});
 	});
@@ -139,19 +252,24 @@ describe("fal workflow registry", () => {
 		);
 		expect(imageSize?.enumValues).toContain("auto");
 
-		const i2iLora = workflows.find(
-			(workflow) => workflow.key === "fal-zimage-turbo-image-to-image-lora"
+		const i2i = workflows.find(
+			(workflow) => workflow.key === "fal-zimage-turbo-image-to-image"
 		);
-		const i2iImageSize = i2iLora?.parameterFields.find(
+		const i2iImageSize = i2i?.parameterFields.find(
 			(field) => field.key === "imageSize"
 		);
 		expect(i2iImageSize?.enumValues).toContain("auto");
 	});
 
-	it("returns null for removed replicate workflows", () => {
+	it("returns null for legacy or replicate workflow keys", () => {
 		expect(getWorkflowDefinition("ltx-2.3-i2v")).toBeNull();
 		expect(getWorkflowDefinition("lustify-apex-avatar")).toBeNull();
 		expect(getWorkflowDefinition("replicate-flux-lora")).toBeNull();
 		expect(getWorkflowDefinition("zib-dpo")).toBeNull();
+		expect(getWorkflowDefinition("fal-flux-lora")).toBeNull();
+		expect(getWorkflowDefinition("fal-zimage-turbo-lora")).toBeNull();
+		expect(
+			getWorkflowDefinition("fal-zimage-turbo-image-to-image-lora")
+		).toBeNull();
 	});
 });

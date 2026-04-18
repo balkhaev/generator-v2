@@ -116,8 +116,9 @@ S3-креды нужны handler-у, чтобы залить финальный 
 | `sdxl` | `stabilityai/stable-diffusion-xl-base-1.0` | пока нет в registry |
 | `qwen-image` | `Qwen/Qwen-Image` | пока нет в registry |
 
-> Для совместимости с уже существующим `fal-zimage-turbo-lora` тренируй
-> `base_model=z-image`. Так downstream-инференс не нужно трогать.
+> Для совместимости с инференсом тренируй `base_model=z-image-turbo`. Workflow
+> `fal-zimage-turbo` всегда уходит в `/lora` endpoint, так что обученные веса
+> сразу подхватятся через опциональное поле `loraUrl` в сценарии.
 
 ## Локальный smoke-тест handler-а (без RunPod)
 

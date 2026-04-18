@@ -902,11 +902,19 @@ async function handleTrainingProviderToolCall(
 	argumentsPayload: Record<string, unknown>,
 	id: JsonRpcResponse["id"]
 ) {
+	const { error, token } = requireTrainingControlToken(id);
+	if (error) {
+		return error;
+	}
+	const authHeaders = { authorization: `Bearer ${token}` };
+
 	if (name === "training_provider_get") {
 		return createOkResponse(
 			id,
 			createToolResult(
-				await fetchServiceSnapshot("admin", "/api/admin/training-provider")
+				await fetchServiceSnapshot("admin", "/api/admin/training-provider", {
+					headers: authHeaders,
+				})
 			)
 		);
 	}
@@ -922,6 +930,7 @@ async function handleTrainingProviderToolCall(
 				await fetchServiceSnapshot("admin", "/api/admin/training-provider", {
 					body: JSON.stringify({ provider }),
 					headers: {
+						...authHeaders,
 						"content-type": "application/json",
 					},
 					method: "PUT",
@@ -934,7 +943,9 @@ async function handleTrainingProviderToolCall(
 		return createOkResponse(
 			id,
 			createToolResult(
-				await fetchServiceSnapshot("admin", "/api/admin/settings")
+				await fetchServiceSnapshot("admin", "/api/admin/settings", {
+					headers: authHeaders,
+				})
 			)
 		);
 	}

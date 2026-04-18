@@ -114,6 +114,7 @@ const app = createApp({
 	authHandler: handleAuthRequest,
 	corsOrigins: getRequiredCorsOrigins(),
 	generatorBaseUrl,
+	internalControlToken: env.TRAINING_CONTROL_TOKEN,
 	internalTrainingControlService,
 	getSession: getRequestSession,
 	loadDashboardSnapshot: () =>

@@ -53,6 +53,7 @@ interface AppOptions {
 	getSession: (
 		request: Request
 	) => Promise<{ session: unknown; user: unknown } | null>;
+	internalControlToken?: string;
 	internalTrainingControlService?: PersonLoraTrainingControl;
 	loadDashboardSnapshot: () => Promise<AdminDashboardSnapshot>;
 	loadSetupStatus: () => Promise<AdminSetupStatus>;
@@ -70,6 +71,21 @@ const isPublicApiPath = createPublicPathMatcher({
 	exact: ["/api/health", "/api/setup/status"],
 	prefixes: ["/api/auth/", "/api/internal/"],
 });
+
+const BEARER_PREFIX_PATTERN = /^Bearer\s+/iu;
+
+function createBearerTokenAuthorizer(token: string | undefined) {
+	if (!token) {
+		return undefined;
+	}
+	return (request: Request) => {
+		const header = request.headers.get("authorization");
+		if (!header) {
+			return false;
+		}
+		return header.replace(BEARER_PREFIX_PATTERN, "") === token;
+	};
+}
 
 export function createApp(options: AppOptions) {
 	const app = new Hono<{ Variables: AppVariables }>();
@@ -98,6 +114,9 @@ export function createApp(options: AppOptions) {
 		"/api/*",
 		createSessionMiddleware({
 			getSession: options.getSession,
+			isAuthorizedRequest: createBearerTokenAuthorizer(
+				options.internalControlToken
+			),
 			isPublicPath: isPublicApiPath,
 		})
 	);

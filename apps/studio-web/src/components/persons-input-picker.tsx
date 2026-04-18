@@ -64,6 +64,86 @@ function isPersonDatasetGeneration(generation: PersonGenerationRecord) {
 	return generation.metadata?.isDatasetPhoto === true;
 }
 
+interface IdentityTile {
+	id: string;
+	label: string;
+	url: string;
+}
+
+function getIdentityTiles(person: PersonRecord): IdentityTile[] {
+	const tiles: IdentityTile[] = [];
+	if (person.photoUrl) {
+		tiles.push({ id: "avatar", label: "Avatar", url: person.photoUrl });
+	}
+	if (
+		person.referencePhotoUrl &&
+		person.referencePhotoUrl !== person.photoUrl
+	) {
+		tiles.push({
+			id: "reference",
+			label: "Reference",
+			url: person.referencePhotoUrl,
+		});
+	}
+	return tiles;
+}
+
+function IdentityTiles({
+	currentUrl,
+	onPick,
+	person,
+}: {
+	currentUrl: string;
+	onPick: (url: string) => void;
+	person: PersonRecord;
+}) {
+	const tiles = getIdentityTiles(person);
+	if (tiles.length === 0) {
+		return null;
+	}
+	return (
+		<div className="grid gap-1.5">
+			<SectionLabel>Identity</SectionLabel>
+			<div className="grid grid-cols-4 gap-1.5">
+				{tiles.map((tile) => {
+					const isActive = currentUrl === tile.url;
+					return (
+						<Tooltip key={tile.id}>
+							<TooltipTrigger
+								render={
+									<button
+										aria-label={tile.label}
+										className={cn(
+											"relative aspect-square overflow-hidden rounded-lg transition",
+											isActive
+												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
+												: "opacity-80 hover:opacity-100"
+										)}
+										onClick={() => onPick(tile.url)}
+										type="button"
+									/>
+								}
+							>
+								<div
+									aria-hidden="true"
+									className="absolute inset-0 bg-center bg-cover"
+									style={{ backgroundImage: `url("${tile.url}")` }}
+								/>
+								<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1 pt-3 pb-1">
+									<p className="truncate text-center text-[10px] text-white leading-tight">
+										{tile.label}
+									</p>
+								</div>
+							</TooltipTrigger>
+							<TooltipContent>{tile.label}</TooltipContent>
+						</Tooltip>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
 interface RecentReference {
 	id: string;
 	label: string;
@@ -206,10 +286,9 @@ export default function PersonsInputPicker({
 		});
 	}
 
-	function pickFromPersonReference(person: PersonRecord) {
-		const url = person.photoUrl ?? person.referencePhotoUrl;
+	function pickFromPersonAsset(person: PersonRecord, url: string) {
 		if (!url) {
-			toast.error("Person has no reference photo.");
+			toast.error("Person has no image for this slot.");
 			return;
 		}
 		onPick({
@@ -583,20 +662,22 @@ export default function PersonsInputPicker({
 						<ArrowLeft className="size-3" />
 						Persons
 					</button>
-					<Button
-						onClick={() => pickFromPersonReference(personDetail)}
-						size="xs"
-						variant="outline"
-					>
-						Reference
-					</Button>
+					<span className="truncate text-[10px] text-muted-foreground">
+						{hasLora ? "LoRA ready" : "no LoRA yet"}
+					</span>
 				</div>
 				<div className="min-w-0">
 					<p className="truncate text-xs">{personDetail.name}</p>
 					<p className="truncate text-[11px] text-muted-foreground">
-						{personDetail.slug} {hasLora ? "· LoRA ready" : "· no LoRA yet"}
+						{personDetail.slug}
 					</p>
 				</div>
+
+				<IdentityTiles
+					currentUrl={currentUrl}
+					onPick={(url) => pickFromPersonAsset(personDetail, url)}
+					person={personDetail}
+				/>
 
 				{readyGenerations.length > 0 ? (
 					<div className="grid gap-1.5">

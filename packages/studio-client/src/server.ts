@@ -5,15 +5,25 @@ import { normalizeBaseUrl } from "@generator/http/shared";
 
 import type { AdminSnapshot } from "./shared";
 
-export function getStudioSnapshotForRequest(
+export async function getStudioSnapshotForRequest(
 	baseUrl: string,
 	requestHeaders: Headers
 ): Promise<AdminSnapshot> {
 	const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
-	return requestJsonWithForwardedHeaders<AdminSnapshot>(
-		`${normalizedBaseUrl}/api/studio-snapshot`,
-		requestHeaders
-	);
+	const snapshot = await requestJsonWithForwardedHeaders<
+		Partial<AdminSnapshot>
+	>(`${normalizedBaseUrl}/api/studio-snapshot`, requestHeaders);
+
+	return {
+		presets: snapshot.presets ?? [],
+		releases: snapshot.releases ?? [],
+		runs: snapshot.runs ?? [],
+		scenarios: snapshot.scenarios ?? [],
+		shots: snapshot.shots ?? [],
+		source: snapshot.source ?? "server",
+		warnings: snapshot.warnings ?? [],
+		workflows: snapshot.workflows ?? [],
+	};
 }
 
 export type { AdminSnapshot } from "./shared";

@@ -36,6 +36,8 @@ export interface StudioRunRecord {
 	generatorRunId?: string | null;
 	id: string;
 	inputImageUrl: string;
+	inputPersonGenerationId?: string | null;
+	inputPersonId?: string | null;
 	providerEndpointId?: string | null;
 	providerJobId?: string | null;
 	scenarioId: string;
@@ -45,7 +47,32 @@ export interface StudioRunRecord {
 
 export interface CreateStudioRunInput {
 	inputImageUrl?: string;
+	inputPersonGenerationId?: string | null;
+	inputPersonId?: string | null;
 	scenarioId: string;
+}
+
+export type StudioShotArtifactKind = "image" | "video" | "audio";
+
+export interface StudioShotRecord {
+	artifactKind: StudioShotArtifactKind;
+	artifactUrl: string;
+	createdAt: string;
+	id: string;
+	note: string | null;
+	personGenerationId: string | null;
+	personId: string | null;
+	runId: string;
+	scenarioId: string;
+}
+
+export interface CreateStudioShotInput {
+	artifactKind?: StudioShotArtifactKind;
+	artifactUrl: string;
+	note?: string | null;
+	personGenerationId?: string | null;
+	personId?: string | null;
+	runId: string;
 }
 
 export interface StudioInputAssetRecord {
@@ -65,6 +92,7 @@ export interface StudioSnapshot {
 	releases: AssetReleaseSnapshot[];
 	runs: StudioRunRecord[];
 	scenarios: StudioScenarioRecord[];
+	shots: StudioShotRecord[];
 	source: "server";
 	warnings: string[];
 	workflows: StudioWorkflowSummary[];

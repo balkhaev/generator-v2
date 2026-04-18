@@ -55,6 +55,8 @@ export const studioRun = pgTable(
 			.references(() => studioScenario.id, { onDelete: "cascade" }),
 		workflowKey: text("workflow_key").notNull(),
 		inputImageUrl: text("input_image_url").notNull(),
+		inputPersonId: text("input_person_id"),
+		inputPersonGenerationId: text("input_person_generation_id"),
 		providerEndpointId: text("provider_endpoint_id"),
 		providerJobId: text("provider_job_id"),
 		status: studioRunStatusEnum("status").notNull().default("queued"),
@@ -72,7 +74,33 @@ export const studioRun = pgTable(
 		index("studio_run_provider_endpoint_id_idx").on(table.providerEndpointId),
 		index("studio_run_provider_job_id_idx").on(table.providerJobId),
 		index("studio_run_status_idx").on(table.status),
+		index("studio_run_input_person_id_idx").on(table.inputPersonId),
 		uniqueIndex("studio_run_generator_run_uidx").on(table.generatorRunId),
+	]
+);
+
+export const studioScenarioShot = pgTable(
+	"studio_scenario_shot",
+	{
+		id: text("id").primaryKey(),
+		runId: text("run_id")
+			.notNull()
+			.references(() => studioRun.id, { onDelete: "cascade" }),
+		scenarioId: text("scenario_id")
+			.notNull()
+			.references(() => studioScenario.id, { onDelete: "cascade" }),
+		artifactUrl: text("artifact_url").notNull(),
+		artifactKind: text("artifact_kind").notNull().default("image"),
+		note: text("note"),
+		personId: text("person_id"),
+		personGenerationId: text("person_generation_id"),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [
+		index("studio_scenario_shot_run_id_idx").on(table.runId),
+		index("studio_scenario_shot_scenario_id_idx").on(table.scenarioId),
+		index("studio_scenario_shot_person_id_idx").on(table.personId),
+		index("studio_scenario_shot_created_at_idx").on(table.createdAt),
 	]
 );
 
@@ -107,6 +135,7 @@ export const studioRunRelations = relations(studioRun, ({ many, one }) => ({
 		fields: [studioRun.scenarioId],
 		references: [studioScenario.id],
 	}),
+	shots: many(studioScenarioShot),
 }));
 
 export const studioArtifactRelations = relations(studioArtifact, ({ one }) => ({
@@ -115,3 +144,17 @@ export const studioArtifactRelations = relations(studioArtifact, ({ one }) => ({
 		references: [studioRun.id],
 	}),
 }));
+
+export const studioScenarioShotRelations = relations(
+	studioScenarioShot,
+	({ one }) => ({
+		run: one(studioRun, {
+			fields: [studioScenarioShot.runId],
+			references: [studioRun.id],
+		}),
+		scenario: one(studioScenario, {
+			fields: [studioScenarioShot.scenarioId],
+			references: [studioScenario.id],
+		}),
+	})
+);

@@ -11,16 +11,22 @@ import type {
 import type {
 	CreateStudioRunInput,
 	CreateStudioScenarioInput,
+	CreateStudioShotInput,
 	StudioRunRecord as ServerRunRecord,
 	StudioScenarioRecord as ServerScenarioRecord,
+	StudioShotRecord as ServerShotRecord,
 	StudioInputAssetRecord,
+	StudioShotArtifactKind,
 } from "@generator/contracts/studio";
 
 export type { WorkflowParameterType } from "@generator/contracts/generator";
 export type {
 	CreateStudioRunInput,
 	CreateStudioScenarioInput,
+	CreateStudioShotInput,
 	StudioInputAssetRecord,
+	StudioShotArtifactKind,
+	StudioShotRecord,
 	StudioSnapshot,
 } from "@generator/contracts/studio";
 
@@ -60,6 +66,8 @@ export interface ScenarioRunRecord {
 	id: string;
 	inputImageUrl: string;
 	inputLabel: string;
+	inputPersonGenerationId: string | null;
+	inputPersonId: string | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
 	scenarioId: string;
@@ -68,11 +76,25 @@ export interface ScenarioRunRecord {
 	workflowKey: string;
 }
 
+export interface ScenarioShotRecord {
+	artifactKind: StudioShotArtifactKind;
+	artifactUrl: string;
+	createdAt: string;
+	id: string;
+	note: string | null;
+	personGenerationId: string | null;
+	personId: string | null;
+	runId: string;
+	scenarioId: string;
+	scenarioName: string;
+}
+
 export interface AdminSnapshot {
 	presets: AssetReleasePreset[];
 	releases: AssetReleaseSnapshot[];
 	runs: ScenarioRunRecord[];
 	scenarios: ScenarioRecord[];
+	shots: ScenarioShotRecord[];
 	source: "server";
 	warnings: string[];
 	workflows: WorkflowDefinition[];
@@ -87,6 +109,7 @@ export interface ScenarioFormState {
 
 export type CreateScenarioInput = CreateStudioScenarioInput;
 export type LaunchRunInput = CreateStudioRunInput;
+export type SaveShotInput = CreateStudioShotInput;
 export type UploadedInputAsset = StudioInputAssetRecord;
 
 export interface MutationResult<T> {
@@ -211,12 +234,32 @@ function normalizeRunRecord(
 		id: record.id,
 		inputImageUrl: record.inputImageUrl,
 		inputLabel: formatInputLabel(record.inputImageUrl),
+		inputPersonGenerationId: record.inputPersonGenerationId ?? null,
+		inputPersonId: record.inputPersonId ?? null,
 		providerEndpointId: record.providerEndpointId ?? null,
 		providerJobId: record.providerJobId ?? null,
 		scenarioId: record.scenarioId,
 		scenarioName: scenarioNames.get(record.scenarioId) ?? "Unknown scenario",
 		status: record.status,
 		workflowKey: record.workflowKey,
+	};
+}
+
+function normalizeShotRecord(
+	record: ServerShotRecord,
+	scenarioNames: ReadonlyMap<string, string>
+): ScenarioShotRecord {
+	return {
+		artifactKind: record.artifactKind,
+		artifactUrl: record.artifactUrl,
+		createdAt: record.createdAt,
+		id: record.id,
+		note: record.note,
+		personGenerationId: record.personGenerationId,
+		personId: record.personId,
+		runId: record.runId,
+		scenarioId: record.scenarioId,
+		scenarioName: scenarioNames.get(record.scenarioId) ?? "Unknown scenario",
 	};
 }
 
@@ -307,6 +350,7 @@ export function normalizeStudioSnapshot(params: {
 	releasesPayload: unknown;
 	runsPayload: unknown;
 	scenariosPayload: unknown;
+	shotsPayload?: unknown;
 	workflowsPayload: unknown;
 }): AdminSnapshot {
 	const scenarios = sortByNewest(
@@ -334,6 +378,12 @@ export function normalizeStudioSnapshot(params: {
 			)
 		),
 		scenarios,
+		shots: extractCollection<ServerShotRecord>(
+			params.shotsPayload ?? [],
+			"shots"
+		)
+			.map((shot) => normalizeShotRecord(shot, scenarioNames))
+			.sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
 		source: "server",
 		warnings: [],
 		workflows: extractCollection<ServerWorkflowSummary>(
@@ -368,4 +418,18 @@ export function extractStudioRun(
 	}
 
 	return normalizeRunRecord(run, scenarioNames);
+}
+
+export function extractStudioShot(
+	payload: unknown,
+	scenarioNames: ReadonlyMap<string, string>,
+	key = "shot"
+): ScenarioShotRecord {
+	const shot = extractRecord<ServerShotRecord>(payload, key);
+
+	if (!shot) {
+		throw new Error("Shot response did not include a shot record.");
+	}
+
+	return normalizeShotRecord(shot, scenarioNames);
 }

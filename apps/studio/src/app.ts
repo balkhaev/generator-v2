@@ -13,6 +13,7 @@ import type {
 	AssetReleaseSnapshot,
 } from "@generator/contracts/admin";
 import type { WorkflowSummary as ServerWorkflowSummary } from "@generator/contracts/generator";
+import type { StudioShotRecord } from "@generator/contracts/studio";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import { proxyHttpRequest } from "@generator/http/proxy";
 import {
@@ -37,6 +38,7 @@ import { createInternalRoutes } from "@/routes/internal";
 import { createLoraRoutes } from "@/routes/loras";
 import { createRunRoutes } from "@/routes/runs";
 import { createScenarioRoutes } from "@/routes/scenarios";
+import { createShotRoutes } from "@/routes/shots";
 
 interface AppVariables extends AuthVariables {
 	debugCorrelationId: string;
@@ -100,6 +102,8 @@ interface StudioSnapshotResponse {
 		id: string;
 		inputImageUrl: string;
 		inputLabel: string;
+		inputPersonGenerationId?: string | null;
+		inputPersonId?: string | null;
 		providerEndpointId?: string | null;
 		providerJobId?: string | null;
 		scenarioId: string;
@@ -108,6 +112,7 @@ interface StudioSnapshotResponse {
 		workflowKey: string;
 	}>;
 	scenarios: Awaited<ReturnType<StudioService["listScenarios"]>>;
+	shots: Array<StudioShotRecord & { scenarioName: string }>;
 	source: "server";
 	warnings: string[];
 	workflows: WorkflowDefinition[];
@@ -192,7 +197,7 @@ async function createStudioSnapshot(
 	assetReleaseReadService: AssetReleaseReadService,
 	service: StudioService
 ): Promise<StudioSnapshotResponse> {
-	const [releasesResult, scenarios, runs] = await Promise.all([
+	const [releasesResult, scenarios, runs, shots] = await Promise.all([
 		assetReleaseReadService
 			.listReleases(6)
 			.then((payload) => ({ payload, warning: null }))
@@ -205,6 +210,7 @@ async function createStudioSnapshot(
 			})),
 		service.listScenarios(),
 		service.listRuns(),
+		service.listShots().catch(() => [] as StudioShotRecord[]),
 	]);
 	const scenarioNames = new Map(
 		scenarios.map((scenario) => [scenario.id, scenario.name])
@@ -225,6 +231,8 @@ async function createStudioSnapshot(
 			id: run.id,
 			inputImageUrl: run.inputImageUrl,
 			inputLabel: formatInputLabel(run.inputImageUrl),
+			inputPersonGenerationId: run.inputPersonGenerationId ?? null,
+			inputPersonId: run.inputPersonId ?? null,
 			providerEndpointId: run.providerEndpointId ?? null,
 			providerJobId: run.providerJobId ?? null,
 			scenarioId: run.scenarioId,
@@ -233,6 +241,10 @@ async function createStudioSnapshot(
 			workflowKey: run.workflowKey,
 		})),
 		scenarios,
+		shots: shots.map((shot) => ({
+			...shot,
+			scenarioName: scenarioNames.get(shot.scenarioId) ?? "Unknown scenario",
+		})),
 		source: "server",
 		warnings,
 		workflows: listWorkflows().map((workflow) =>
@@ -315,6 +327,7 @@ export function createApp(options: AppOptions) {
 	}
 	app.route("/api/scenarios", createScenarioRoutes(service));
 	app.route("/api/runs", createRunRoutes(service));
+	app.route("/api/scenario-shots", createShotRoutes(service));
 	app.route("/api/internal", createInternalRoutes(service));
 	app.route("/api/enhance-prompt", createEnhanceRoutes(options.grokClient));
 	app.route(

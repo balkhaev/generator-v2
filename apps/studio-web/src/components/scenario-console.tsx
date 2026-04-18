@@ -5,6 +5,7 @@ import { requestJson } from "@generator/http/client";
 import { normalizeBaseUrl } from "@generator/http/shared";
 import {
 	type AdminSnapshot,
+	deleteStudioShot,
 	getStudioSnapshot,
 	type LaunchRunInput,
 	launchStudioRun,
@@ -12,25 +13,18 @@ import {
 	type ScenarioRunRecord,
 	syncStudioRun,
 	type UploadedInputAsset,
-	uploadStudioInputImage,
 } from "@generator/studio-client/client";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
-import { Input } from "@generator/ui/components/input";
 import { SectionLabel } from "@generator/ui/components/section-label";
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from "@generator/ui/components/tooltip";
 import { formatRelativeTime } from "@generator/ui/lib/format";
 import { cn } from "@generator/ui/lib/utils";
 import {
+	Bookmark,
 	Check,
 	ChevronDown,
 	Copy,
 	ExternalLink,
-	ImageUp,
 	Loader2,
 	Play,
 	Plus,
@@ -43,10 +37,12 @@ import {
 import type { Route } from "next";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import IconButton from "@/components/icon-button";
+import PersonsInputPicker from "@/components/persons-input-picker";
 import { getMediaType } from "@/components/preview-surface";
 
 interface ScenarioConsoleProps {
@@ -57,10 +53,12 @@ interface ScenarioConsoleProps {
 	snapshot: AdminSnapshot;
 }
 
-type ConsoleTab = "launch" | "runs";
+type ConsoleTab = "launch" | "runs" | "shots";
 type RunFilter = "all" | "active" | "succeeded" | "failed";
 
 type RunDraft = LaunchRunInput & {
+	inputPersonGenerationId?: string | null;
+	inputPersonId?: string | null;
 	uploadStorage?: UploadedInputAsset["storage"] | null;
 };
 
@@ -99,7 +97,7 @@ const runStatusDot: Record<ScenarioRunRecord["status"], string> = {
 };
 
 function readConsoleTabParam(tab: string | null): ConsoleTab {
-	if (tab === "runs") {
+	if (tab === "runs" || tab === "shots") {
 		return tab;
 	}
 
@@ -152,6 +150,8 @@ function formatScenarioDuration(params: ScenarioRecord["params"]) {
 function createRunDraft(scenarioId: string): RunDraft {
 	return {
 		inputImageUrl: "",
+		inputPersonGenerationId: null,
+		inputPersonId: null,
 		scenarioId,
 		uploadStorage: null,
 	};
@@ -237,58 +237,6 @@ function getStorageLabel(
 		default:
 			return null;
 	}
-}
-
-const previewableUrlPattern = /^(https?:\/\/.{3,}|data:\w+\/)/;
-
-function RecentInputPicker({
-	activeUrl,
-	onSelect,
-	references,
-}: {
-	activeUrl: string;
-	onSelect: (url: string) => void;
-	references: ScenarioRunRecord[];
-}) {
-	return (
-		<div className="grid max-h-60 grid-cols-4 gap-1.5 overflow-y-auto py-0.5">
-			{references.map((run) => {
-				const isActive = activeUrl === run.inputImageUrl;
-
-				return (
-					<Tooltip key={run.id}>
-						<TooltipTrigger
-							render={
-								<button
-									aria-label={run.inputLabel}
-									className={cn(
-										"group relative aspect-square overflow-hidden rounded-lg transition",
-										isActive
-											? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
-											: "opacity-70 hover:opacity-100"
-									)}
-									onClick={() => onSelect(run.inputImageUrl)}
-									type="button"
-								/>
-							}
-						>
-							<div
-								aria-hidden="true"
-								className="absolute inset-0 bg-center bg-cover"
-								style={{ backgroundImage: `url("${run.inputImageUrl}")` }}
-							/>
-							<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1 pt-3 pb-1">
-								<p className="truncate text-center text-[10px] text-white leading-tight">
-									{run.inputLabel}
-								</p>
-							</div>
-						</TooltipTrigger>
-						<TooltipContent>{run.inputLabel}</TooltipContent>
-					</Tooltip>
-				);
-			})}
-		</div>
-	);
 }
 
 function ScenarioInfoHeader({ scenario }: { scenario: ScenarioRecord | null }) {
@@ -524,17 +472,14 @@ export default function ScenarioConsole({
 }: ScenarioConsoleProps) {
 	const [error, setError] = useState<string | null>(null);
 	const [isRefreshing, setIsRefreshing] = useState(false);
-	const [isUploadingImage, setIsUploadingImage] = useState(false);
 	const [runDrafts, setRunDrafts] = useState<Record<string, RunDraft>>({});
 	const [snapshot, setSnapshot] = useState<AdminSnapshot>(initialSnapshot);
 	const [linkedPerson, setLinkedPerson] = useState<LinkedPersonState>(null);
 	const [submittingRunId, setSubmittingRunId] = useState<string | null>(null);
 	const [syncingRunId, setSyncingRunId] = useState<string | null>(null);
-	const [uploadProgressPct, setUploadProgressPct] = useState(0);
 	const [runFilter, setRunFilter] = useState<RunFilter>("all");
 	const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
-	const fileInputId = useId();
-	const fileInputRef = useRef<HTMLInputElement | null>(null);
+	const [deletingShotId, setDeletingShotId] = useState<string | null>(null);
 	const pathname = usePathname();
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -566,6 +511,14 @@ export default function ScenarioConsole({
 		() => getRecentReferenceOptions(runs, selectedScenarioId),
 		[runs, selectedScenarioId]
 	);
+	const selectedScenarioShots = useMemo(() => {
+		if (!selectedScenarioId) {
+			return snapshot.shots ?? [];
+		}
+		return (snapshot.shots ?? []).filter(
+			(shot) => shot.scenarioId === selectedScenarioId
+		);
+	}, [snapshot.shots, selectedScenarioId]);
 	const selectedRunDraft = selectedScenario
 		? (runDrafts[selectedScenario.id] ?? createRunDraft(selectedScenario.id))
 		: null;
@@ -731,6 +684,12 @@ export default function ScenarioConsole({
 			if (requiresInputImage) {
 				launchInput.inputImageUrl = inputImageUrl;
 			}
+			if (draft.inputPersonId) {
+				launchInput.inputPersonId = draft.inputPersonId;
+			}
+			if (draft.inputPersonGenerationId) {
+				launchInput.inputPersonGenerationId = draft.inputPersonGenerationId;
+			}
 			const result = await launchStudioRun(launchInput);
 
 			setSnapshot((current) => {
@@ -789,44 +748,30 @@ export default function ScenarioConsole({
 		}
 	}
 
-	async function handleUploadFile(file: File) {
-		if (!selectedScenario) {
-			toast.error("Select a scenario before uploading an image.");
-			return;
-		}
-
-		setIsUploadingImage(true);
-		setUploadProgressPct(0);
-
+	async function handleDeleteShot(shotId: string) {
+		setDeletingShotId(shotId);
 		try {
-			const uploaded = await uploadStudioInputImage({
-				file,
-				onProgress: setUploadProgressPct,
+			await deleteStudioShot(shotId);
+			setSnapshot((current) => {
+				const nextSnapshot = {
+					...current,
+					shots: current.shots.filter((shot) => shot.id !== shotId),
+				};
+				onSnapshotChange?.(nextSnapshot);
+				return nextSnapshot;
 			});
-
-			setRunDrafts((current) => ({
-				...current,
-				[selectedScenario.id]: {
-					...(current[selectedScenario.id] ??
-						createRunDraft(selectedScenario.id)),
-					inputImageUrl: uploaded.url,
-					scenarioId: selectedScenario.id,
-					uploadStorage: uploaded.storage,
-				},
-			}));
-			toast.success("Input image uploaded.");
-		} catch (uploadError) {
+			toast.success("Shot removed.");
+		} catch (shotError) {
 			toast.error(
-				uploadError instanceof Error
-					? uploadError.message
-					: "Unable to upload image."
+				shotError instanceof Error
+					? shotError.message
+					: "Unable to delete shot."
 			);
 		} finally {
-			setIsUploadingImage(false);
+			setDeletingShotId(null);
 		}
 	}
 
-	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: launch tab layout
 	function renderLaunchTab() {
 		if (!selectedScenario) {
 			return (
@@ -851,13 +796,14 @@ export default function ScenarioConsole({
 		const requiresInputImage = Boolean(
 			selectedScenarioWorkflow?.requiresInputImage
 		);
-		const hasValidPreview = previewableUrlPattern.test(
-			selectedRunDraft?.inputImageUrl ?? ""
-		);
 		const isReadyToLaunch =
-			(!requiresInputImage ||
-				Boolean(selectedRunDraft?.inputImageUrl?.trim())) &&
-			!isUploadingImage;
+			!requiresInputImage || Boolean(selectedRunDraft?.inputImageUrl?.trim());
+
+		const pickerReferences = recentReferences.map((run) => ({
+			id: run.id,
+			label: run.inputLabel,
+			url: run.inputImageUrl,
+		}));
 
 		return (
 			<div className="grid gap-3">
@@ -891,182 +837,25 @@ export default function ScenarioConsole({
 
 				{requiresInputImage ? (
 					<div className="grid gap-2">
-						<div className="flex items-center justify-between gap-2">
-							<SectionLabel>Input image</SectionLabel>
-							{storageLabel ? (
-								<span className="rounded-full bg-foreground/[0.05] px-2 py-0.5 text-[10px] text-muted-foreground uppercase tracking-wide">
-									{storageLabel}
-								</span>
-							) : null}
-						</div>
-						<input
-							accept="image/*"
-							className="sr-only"
-							id={fileInputId}
-							onChange={(event) => {
-								const file = event.target.files?.[0];
-
-								if (file) {
-									handleUploadFile(file).catch(() => undefined);
-								}
-
-								event.target.value = "";
-							}}
-							ref={fileInputRef}
-							type="file"
-						/>
-
-						{hasValidPreview ? (
-							// biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone for file input
-							<div
-								className="group relative overflow-hidden rounded-xl border border-foreground/8"
-								onDragOver={(event) => {
-									event.preventDefault();
-								}}
-								onDrop={(event) => {
-									event.preventDefault();
-									const file = event.dataTransfer.files?.[0];
-
-									if (file) {
-										handleUploadFile(file).catch(() => undefined);
-									}
-								}}
-							>
-								<div
-									className="aspect-video bg-center bg-cover bg-muted/10 bg-no-repeat"
-									style={{
-										backgroundImage: `url("${selectedRunDraft?.inputImageUrl}")`,
-									}}
-								/>
-								<div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-1.5 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-2 pt-8 pb-2">
-									<button
-										className="rounded-lg bg-white/15 px-2.5 py-1 text-[11px] text-white backdrop-blur-sm transition hover:bg-white/25"
-										onClick={() => fileInputRef.current?.click()}
-										type="button"
-									>
-										<Upload className="mr-1 inline size-3" />
-										Replace
-									</button>
-									<button
-										aria-label="Clear input image"
-										className="inline-flex size-7 items-center justify-center rounded-lg bg-white/15 text-white backdrop-blur-sm transition hover:bg-rose-500/60"
-										onClick={() => {
-											setRunDrafts((current) => ({
-												...current,
-												[selectedScenario.id]: {
-													...(current[selectedScenario.id] ??
-														createRunDraft(selectedScenario.id)),
-													inputImageUrl: "",
-													scenarioId: selectedScenario.id,
-													uploadStorage: null,
-												},
-											}));
-										}}
-										type="button"
-									>
-										<Trash2 className="size-3" />
-									</button>
-								</div>
-							</div>
-						) : (
-							// biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone for file input
-							<div
-								className="grid gap-3 rounded-xl border border-foreground/10 border-dashed px-3 py-4 transition hover:border-foreground/20 hover:bg-muted/5"
-								onDragOver={(event) => {
-									event.preventDefault();
-								}}
-								onDrop={(event) => {
-									event.preventDefault();
-									const file = event.dataTransfer.files?.[0];
-
-									if (file) {
-										handleUploadFile(file).catch(() => undefined);
-									}
-								}}
-							>
-								<button
-									className="flex items-center gap-2.5 text-left"
-									onClick={() => fileInputRef.current?.click()}
-									type="button"
-								>
-									<div className="flex size-9 items-center justify-center rounded-lg bg-muted/15 dark:bg-muted/10">
-										{isUploadingImage ? (
-											<Loader2 className="size-4 animate-spin" />
-										) : (
-											<ImageUp className="size-4 text-muted-foreground" />
-										)}
-									</div>
-									<div className="min-w-0">
-										<p className="text-xs">Upload or drop image</p>
-										<p className="text-[11px] text-muted-foreground">
-											PNG, JPG, WEBP, GIF, AVIF
-										</p>
-									</div>
-								</button>
-
-								{isUploadingImage ? (
-									<div className="grid gap-1">
-										<div className="h-1 overflow-hidden rounded-full bg-foreground/8">
-											<div
-												className="h-full rounded-full bg-foreground transition-[width]"
-												style={{ width: `${uploadProgressPct}%` }}
-											/>
-										</div>
-										<p className="text-[11px] text-muted-foreground">
-											{uploadProgressPct}%
-										</p>
-									</div>
-								) : (
-									<div className="flex items-center gap-2">
-										<div className="h-px flex-1 bg-foreground/8" />
-										<span className="text-[11px] text-muted-foreground">
-											or paste URL
-										</span>
-										<div className="h-px flex-1 bg-foreground/8" />
-									</div>
-								)}
-
-								<Input
-									onChange={(event) => {
-										const value = event.target.value;
-
-										setRunDrafts((current) => ({
-											...current,
-											[selectedScenario.id]: {
-												...(current[selectedScenario.id] ??
-													createRunDraft(selectedScenario.id)),
-												inputImageUrl: value,
-												scenarioId: selectedScenario.id,
-												uploadStorage: null,
-											},
-										}));
-									}}
-									placeholder="https://..."
-									value={selectedRunDraft?.inputImageUrl ?? ""}
-								/>
-							</div>
-						)}
-					</div>
-				) : null}
-
-				{requiresInputImage && recentReferences.length > 0 ? (
-					<div className="grid gap-1.5">
-						<SectionLabel>Recent inputs</SectionLabel>
-						<RecentInputPicker
-							activeUrl={selectedRunDraft?.inputImageUrl ?? ""}
-							onSelect={(url) => {
+						<SectionLabel>Input</SectionLabel>
+						<PersonsInputPicker
+							currentUrl={selectedRunDraft?.inputImageUrl ?? ""}
+							onPick={(pick) => {
 								setRunDrafts((current) => ({
 									...current,
 									[selectedScenario.id]: {
 										...(current[selectedScenario.id] ??
 											createRunDraft(selectedScenario.id)),
-										inputImageUrl: url,
+										inputImageUrl: pick.url,
+										inputPersonGenerationId: pick.personGenerationId ?? null,
+										inputPersonId: pick.personId ?? null,
 										scenarioId: selectedScenario.id,
-										uploadStorage: null,
+										uploadStorage: pick.storage ?? null,
 									},
 								}));
 							}}
-							references={recentReferences}
+							recentReferences={pickerReferences}
+							storageLabel={storageLabel}
 						/>
 					</div>
 				) : null}
@@ -1172,7 +961,90 @@ export default function ScenarioConsole({
 		);
 	}
 
-	const content = activeTab === "launch" ? renderLaunchTab() : renderRunsTab();
+	function renderShotsTab() {
+		if (selectedScenarioShots.length === 0) {
+			return (
+				<EmptyState
+					hint="Use Save shot from preview to bookmark generations into this scenario."
+					message="No saved shots yet."
+				/>
+			);
+		}
+
+		return (
+			<div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+				{selectedScenarioShots.map((shot) => {
+					const isImage = shot.artifactKind === "image";
+					return (
+						<article
+							className="group relative overflow-hidden rounded-xl border border-foreground/8 bg-muted/5"
+							key={shot.id}
+						>
+							{isImage ? (
+								<div
+									aria-hidden="true"
+									className="aspect-square bg-center bg-cover"
+									style={{ backgroundImage: `url("${shot.artifactUrl}")` }}
+								/>
+							) : (
+								<video
+									className="aspect-square w-full object-cover"
+									controls={false}
+									muted
+									playsInline
+									preload="metadata"
+									src={shot.artifactUrl}
+								/>
+							)}
+							<div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-1.5 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-2 pt-6 pb-2">
+								<div className="min-w-0 text-white">
+									<p className="truncate text-[11px]">{shot.scenarioName}</p>
+									<p className="truncate text-[10px] text-white/70">
+										{formatRelativeTime(shot.createdAt)}
+									</p>
+								</div>
+								<div className="flex items-center gap-1">
+									<a
+										aria-label="Open shot"
+										className="inline-flex size-7 items-center justify-center rounded-lg bg-white/15 text-white backdrop-blur-sm transition hover:bg-white/30"
+										href={shot.artifactUrl}
+										rel="noreferrer"
+										target="_blank"
+									>
+										<ExternalLink className="size-3" />
+									</a>
+									<button
+										aria-label="Delete shot"
+										className="inline-flex size-7 items-center justify-center rounded-lg bg-white/15 text-white backdrop-blur-sm transition hover:bg-rose-500/60 disabled:opacity-50"
+										disabled={deletingShotId === shot.id}
+										onClick={() => {
+											handleDeleteShot(shot.id).catch(() => undefined);
+										}}
+										type="button"
+									>
+										{deletingShotId === shot.id ? (
+											<Loader2 className="size-3 animate-spin" />
+										) : (
+											<Trash2 className="size-3" />
+										)}
+									</button>
+								</div>
+							</div>
+						</article>
+					);
+				})}
+			</div>
+		);
+	}
+
+	let content: ReactNode;
+	if (activeTab === "launch") {
+		content = renderLaunchTab();
+	} else if (activeTab === "runs") {
+		content = renderRunsTab();
+	} else {
+		content = renderShotsTab();
+	}
 
 	const tabs: {
 		badge?: number;
@@ -1190,6 +1062,13 @@ export default function ScenarioConsole({
 			id: "runs",
 			label: "Runs",
 			shortcut: "R",
+		},
+		{
+			badge: selectedScenarioShots.length,
+			icon: Bookmark,
+			id: "shots",
+			label: "Shots",
+			shortcut: "S",
 		},
 	];
 

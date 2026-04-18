@@ -63,6 +63,7 @@ export function WorkspacePane({
 
 export default function WorkspaceShell({
 	actions,
+	bottomDock,
 	children,
 	className,
 	context,
@@ -75,10 +76,11 @@ export default function WorkspaceShell({
 	workspaceLabel,
 }: {
 	actions?: ReactNode;
+	bottomDock?: ReactNode;
 	children: ReactNode;
 	className?: string;
 	context?: ReactNode;
-	inspector: ReactNode;
+	inspector?: ReactNode;
 	navigation: WorkspaceNavItem[];
 	railFooter?: ReactNode;
 	status?: ReactNode;
@@ -86,6 +88,29 @@ export default function WorkspaceShell({
 	title: ReactNode;
 	workspaceLabel: string;
 }) {
+	const hasInspector = inspector !== undefined && inspector !== null;
+	const columnCount = (context ? 1 : 0) + 1 + (hasInspector ? 1 : 0);
+	const gridTemplate = (() => {
+		if (context && hasInspector) {
+			return "xl:grid-cols-[15rem_minmax(0,1fr)_20rem]";
+		}
+		if (context) {
+			return "xl:grid-cols-[14rem_minmax(0,1fr)]";
+		}
+		if (hasInspector) {
+			return "xl:grid-cols-[minmax(0,1fr)_20rem]";
+		}
+		return "xl:grid-cols-[minmax(0,1fr)]";
+	})();
+	const headerSpan = (() => {
+		if (columnCount === 3) {
+			return "xl:col-span-3";
+		}
+		if (columnCount === 2) {
+			return "xl:col-span-2";
+		}
+		return "xl:col-span-1";
+	})();
 	return (
 		<main
 			className={cn(
@@ -135,15 +160,13 @@ export default function WorkspaceShell({
 			<div
 				className={cn(
 					"grid min-h-0 gap-3 p-3 xl:grid-rows-[auto_minmax(0,1fr)] xl:overflow-hidden",
-					context
-						? "xl:grid-cols-[15rem_minmax(0,1fr)_20rem]"
-						: "xl:grid-cols-[minmax(0,1fr)_20rem]"
+					gridTemplate
 				)}
 			>
 				<header
 					className={cn(
 						"flex min-w-0 flex-col gap-2 py-1 lg:flex-row lg:items-center lg:justify-between",
-						context ? "xl:col-span-3" : "xl:col-span-2"
+						headerSpan
 					)}
 				>
 					<div className="min-w-0">
@@ -169,8 +192,13 @@ export default function WorkspaceShell({
 				</header>
 
 				{context ? <div className="min-h-0">{context}</div> : null}
-				<div className="min-h-0">{children}</div>
-				<div className="min-h-0">{inspector}</div>
+				<div className="flex min-h-0 flex-col gap-3">
+					<div className="min-h-0 flex-1">{children}</div>
+					{bottomDock ? (
+						<div className="min-h-0 shrink-0">{bottomDock}</div>
+					) : null}
+				</div>
+				{hasInspector ? <div className="min-h-0">{inspector}</div> : null}
 			</div>
 		</main>
 	);

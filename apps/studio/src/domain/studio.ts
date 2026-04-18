@@ -7,6 +7,8 @@ import type {
 import type {
 	StudioRunRecord,
 	StudioScenarioRecord,
+	StudioShotArtifactKind,
+	StudioShotRecord,
 } from "@generator/contracts/studio";
 import { getWorkflowDefinition } from "@generator/workflows";
 import { z } from "zod";
@@ -33,7 +35,18 @@ export const updateStudioScenarioInputSchema = createStudioScenarioInputSchema
 
 export const createStudioRunInputSchema = z.object({
 	inputImageUrl: z.url("Input image URL must be a valid URL").optional(),
+	inputPersonGenerationId: z.string().trim().min(1).optional().nullable(),
+	inputPersonId: z.string().trim().min(1).optional().nullable(),
 	scenarioId: z.string().trim().min(1, "Scenario id is required"),
+});
+
+export const createStudioShotInputSchema = z.object({
+	artifactKind: z.enum(["image", "video", "audio"]).optional(),
+	artifactUrl: z.url("Shot artifact URL must be a valid URL"),
+	note: z.string().trim().max(2000).optional().nullable(),
+	personGenerationId: z.string().trim().min(1).optional().nullable(),
+	personId: z.string().trim().min(1).optional().nullable(),
+	runId: z.string().trim().min(1, "Run id is required"),
 });
 
 export type StudioRunStatus = "queued" | "running" | "succeeded" | "failed";
@@ -80,12 +93,26 @@ export interface StudioRunEntity {
 	generatorRunId: string | null;
 	id: string;
 	inputImageUrl: string;
+	inputPersonGenerationId: string | null;
+	inputPersonId: string | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
 	scenarioId: string;
 	status: StudioRunStatus;
 	updatedAt: Date;
 	workflowKey: string;
+}
+
+export interface StudioShotEntity {
+	artifactKind: StudioShotArtifactKind;
+	artifactUrl: string;
+	createdAt: Date;
+	id: string;
+	note: string | null;
+	personGenerationId: string | null;
+	personId: string | null;
+	runId: string;
+	scenarioId: string;
 }
 
 export interface StudioRepository {
@@ -98,7 +125,11 @@ export interface StudioRepository {
 	createScenario(
 		input: Omit<StudioScenarioEntity, "createdAt" | "updatedAt">
 	): Promise<StudioScenarioEntity>;
+	createShot(
+		input: Omit<StudioShotEntity, "createdAt">
+	): Promise<StudioShotEntity>;
 	deleteScenario(scenarioId: string): Promise<boolean>;
+	deleteShot(shotId: string): Promise<boolean>;
 	getRunByGeneratorRunId(
 		generatorRunId: string
 	): Promise<StudioRunEntity | null>;
@@ -110,6 +141,7 @@ export interface StudioRepository {
 	listActiveRuns(limit: number): Promise<StudioRunEntity[]>;
 	listRuns(): Promise<StudioRunEntity[]>;
 	listScenarios(): Promise<StudioScenarioEntity[]>;
+	listShots(): Promise<StudioShotEntity[]>;
 	replaceArtifacts(
 		runId: string,
 		artifacts: Omit<StudioArtifactEntity, "createdAt">[]
@@ -123,6 +155,8 @@ export interface StudioRepository {
 				| "errorSummary"
 				| "generatorRunId"
 				| "inputImageUrl"
+				| "inputPersonGenerationId"
+				| "inputPersonId"
 				| "providerEndpointId"
 				| "providerJobId"
 				| "status"
@@ -207,11 +241,27 @@ function toStudioRunRecord(entity: StudioRunEntity): StudioRunRecord {
 		generatorRunId: entity.generatorRunId,
 		id: entity.id,
 		inputImageUrl: entity.inputImageUrl,
+		inputPersonGenerationId: entity.inputPersonGenerationId,
+		inputPersonId: entity.inputPersonId,
 		providerEndpointId: entity.providerEndpointId,
 		providerJobId: entity.providerJobId,
 		scenarioId: entity.scenarioId,
 		status: entity.status,
 		workflowKey: entity.workflowKey,
+	};
+}
+
+function toStudioShotRecord(entity: StudioShotEntity): StudioShotRecord {
+	return {
+		artifactKind: entity.artifactKind,
+		artifactUrl: entity.artifactUrl,
+		createdAt: entity.createdAt.toISOString(),
+		id: entity.id,
+		note: entity.note,
+		personGenerationId: entity.personGenerationId,
+		personId: entity.personId,
+		runId: entity.runId,
+		scenarioId: entity.scenarioId,
 	};
 }
 
@@ -353,6 +403,8 @@ export class StudioService {
 			generatorRunId: null,
 			id: crypto.randomUUID(),
 			inputImageUrl: parsed.inputImageUrl ?? "",
+			inputPersonGenerationId: parsed.inputPersonGenerationId ?? null,
+			inputPersonId: parsed.inputPersonId ?? null,
 			providerEndpointId: null,
 			providerJobId: null,
 			scenarioId: scenario.id,
@@ -506,6 +558,35 @@ export class StudioService {
 		});
 
 		return updatedRun ? toStudioRunRecord(updatedRun) : null;
+	}
+
+	async listShots() {
+		return (await this.repository.listShots()).map(toStudioShotRecord);
+	}
+
+	async createShot(input: z.input<typeof createStudioShotInputSchema>) {
+		const parsed = createStudioShotInputSchema.parse(input);
+		const run = await this.repository.getRunById(parsed.runId);
+		if (!run) {
+			throw new NotFoundError(`Run not found: ${parsed.runId}`);
+		}
+
+		const created = await this.repository.createShot({
+			artifactKind: parsed.artifactKind ?? "image",
+			artifactUrl: parsed.artifactUrl,
+			id: crypto.randomUUID(),
+			note: parsed.note ?? null,
+			personGenerationId: parsed.personGenerationId ?? null,
+			personId: parsed.personId ?? run.inputPersonId ?? null,
+			runId: run.id,
+			scenarioId: run.scenarioId,
+		});
+
+		return toStudioShotRecord(created);
+	}
+
+	deleteShot(shotId: string) {
+		return this.repository.deleteShot(shotId);
 	}
 
 	async reconcileActiveRuns(limit = 10) {

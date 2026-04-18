@@ -1,11 +1,12 @@
 import {
+	Bookmark,
 	Clapperboard,
 	type LucideIcon,
 	ShieldEllipsis,
 	UsersRound,
 } from "lucide-react";
 
-export type WorkspaceId = "admin" | "persons" | "studio";
+export type WorkspaceId = "admin" | "persons" | "shots" | "studio";
 
 interface WorkspaceDefinition {
 	icon: LucideIcon;
@@ -23,6 +24,11 @@ const workspaceDefinitions: Record<WorkspaceId, WorkspaceDefinition> = {
 		icon: UsersRound,
 		label: "Persons",
 		shortLabel: "Cast",
+	},
+	shots: {
+		icon: Bookmark,
+		label: "Shots",
+		shortLabel: "Sht",
 	},
 	studio: {
 		icon: Clapperboard,

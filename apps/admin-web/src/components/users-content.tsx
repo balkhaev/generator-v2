@@ -1,9 +1,10 @@
 "use client";
 
 import { authClient } from "@generator/auth-client";
+import { Button } from "@generator/ui/components/button";
 import { PageHeader } from "@generator/ui/components/page-header";
 import { cn } from "@generator/ui/lib/utils";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, UserPlus } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
@@ -23,6 +24,7 @@ export default function UsersContent() {
 	const pathname = usePathname();
 	const searchParams = useSearchParams();
 	const [search, setSearch] = useState("");
+	const [createOpen, setCreateOpen] = useState(false);
 	const selectedId = searchParams?.get("id") ?? null;
 	const currentUserId = useCurrentUserId();
 
@@ -58,17 +60,23 @@ export default function UsersContent() {
 		<div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
 			<PageHeader
 				actions={
-					<button
-						className="inline-flex items-center gap-2 rounded-md border border-foreground/10 bg-background px-2.5 py-1.5 text-xs transition hover:bg-muted/30 disabled:opacity-50"
-						disabled={isFetching}
-						onClick={() => refetch()}
-						type="button"
-					>
-						<RefreshCw
-							className={cn("size-3", isFetching ? "animate-spin" : "")}
-						/>
-						Refresh
-					</button>
+					<>
+						<Button onClick={() => setCreateOpen(true)} size="sm" type="button">
+							<UserPlus data-icon="inline-start" />
+							Create user
+						</Button>
+						<button
+							className="inline-flex items-center gap-2 rounded-md border border-foreground/10 bg-background px-2.5 py-1.5 text-xs transition hover:bg-muted/30 disabled:opacity-50"
+							disabled={isFetching}
+							onClick={() => refetch()}
+							type="button"
+						>
+							<RefreshCw
+								className={cn("size-3", isFetching ? "animate-spin" : "")}
+							/>
+							Refresh
+						</button>
+					</>
 				}
 				description="Operators with access to the admin console."
 				eyebrow="User management"
@@ -76,19 +84,19 @@ export default function UsersContent() {
 			/>
 
 			<div className="min-h-0 overflow-y-auto px-4 py-4">
-				<div className="grid gap-4">
-					<UserForm />
-					<UserList
-						currentUserId={currentUserId}
-						isLoading={isLoading}
-						onSearchChange={setSearch}
-						onSelect={handleSelect}
-						search={search}
-						selectedId={selectedId}
-						users={users}
-					/>
-				</div>
+				<UserList
+					currentUserId={currentUserId}
+					isLoading={isLoading}
+					onCreate={() => setCreateOpen(true)}
+					onSearchChange={setSearch}
+					onSelect={handleSelect}
+					search={search}
+					selectedId={selectedId}
+					users={users}
+				/>
 			</div>
+
+			<UserForm onOpenChange={setCreateOpen} open={createOpen} />
 		</div>
 	);
 }

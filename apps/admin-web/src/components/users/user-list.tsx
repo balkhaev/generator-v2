@@ -1,15 +1,17 @@
 "use client";
 
 import type { AdminUser } from "@generator/contracts/admin";
+import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search, UserPlus } from "lucide-react";
 
 import UserRow from "./user-row";
 
 export default function UserList({
 	currentUserId,
 	isLoading,
+	onCreate,
 	onSearchChange,
 	onSelect,
 	search,
@@ -18,6 +20,7 @@ export default function UserList({
 }: {
 	currentUserId: string | null;
 	isLoading: boolean;
+	onCreate?: () => void;
 	onSearchChange: (value: string) => void;
 	onSelect: (id: string) => void;
 	search: string;
@@ -43,7 +46,14 @@ export default function UserList({
 				</div>
 			</div>
 
-			{renderBody({ currentUserId, isLoading, onSelect, selectedId, users })}
+			{renderBody({
+				currentUserId,
+				isLoading,
+				onCreate,
+				onSelect,
+				selectedId,
+				users,
+			})}
 		</div>
 	);
 }
@@ -51,12 +61,14 @@ export default function UserList({
 function renderBody({
 	currentUserId,
 	isLoading,
+	onCreate,
 	onSelect,
 	selectedId,
 	users,
 }: {
 	currentUserId: string | null;
 	isLoading: boolean;
+	onCreate?: () => void;
 	onSelect: (id: string) => void;
 	selectedId: string | null;
 	users: AdminUser[];
@@ -72,7 +84,15 @@ function renderBody({
 	if (users.length === 0) {
 		return (
 			<EmptyState
-				hint="Create the first operator using the form above."
+				action={
+					onCreate ? (
+						<Button onClick={onCreate} size="sm" type="button">
+							<UserPlus data-icon="inline-start" />
+							Create user
+						</Button>
+					) : null
+				}
+				hint="Create the first operator to get started."
 				message="No users yet"
 			/>
 		);

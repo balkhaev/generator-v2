@@ -1,10 +1,12 @@
 import type { ScenarioParamValue } from "@generator/contracts/generator";
+import type { StudioShotArtifactKind } from "@generator/contracts/studio";
 import { db } from "@generator/db";
 import { desc, eq, inArray } from "@generator/db/operators";
 import {
 	studioArtifact,
 	studioRun,
 	studioScenario,
+	studioScenarioShot,
 } from "@generator/db/schema/studio";
 
 import type {
@@ -12,6 +14,7 @@ import type {
 	StudioRepository,
 	StudioRunEntity,
 	StudioScenarioEntity,
+	StudioShotEntity,
 } from "@/domain/studio";
 
 type StudioDatabase = typeof db;
@@ -45,8 +48,26 @@ function mapRun(
 		completedAt: record.completedAt,
 		errorSummary: record.errorSummary,
 		generatorRunId: record.generatorRunId,
+		inputPersonGenerationId: record.inputPersonGenerationId,
+		inputPersonId: record.inputPersonId,
 		providerEndpointId: record.providerEndpointId,
 		providerJobId: record.providerJobId,
+	};
+}
+
+function mapShot(
+	record: typeof studioScenarioShot.$inferSelect
+): StudioShotEntity {
+	return {
+		artifactKind: (record.artifactKind ?? "image") as StudioShotArtifactKind,
+		artifactUrl: record.artifactUrl,
+		createdAt: record.createdAt,
+		id: record.id,
+		note: record.note,
+		personGenerationId: record.personGenerationId,
+		personId: record.personId,
+		runId: record.runId,
+		scenarioId: record.scenarioId,
 	};
 }
 
@@ -194,6 +215,30 @@ export function createDrizzleStudioRepository(
 				.where(eq(studioScenario.id, scenarioId))
 				.returning();
 			return row ? mapScenario(row) : null;
+		},
+		async createShot(input) {
+			const [row] = await database
+				.insert(studioScenarioShot)
+				.values(input)
+				.returning();
+			if (!row) {
+				throw new Error("Failed to create studio shot.");
+			}
+			return mapShot(row);
+		},
+		async deleteShot(shotId) {
+			const deleted = await database
+				.delete(studioScenarioShot)
+				.where(eq(studioScenarioShot.id, shotId))
+				.returning({ id: studioScenarioShot.id });
+			return deleted.length > 0;
+		},
+		async listShots() {
+			const rows = await database
+				.select()
+				.from(studioScenarioShot)
+				.orderBy(desc(studioScenarioShot.createdAt));
+			return rows.map(mapShot);
 		},
 	};
 }

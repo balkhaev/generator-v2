@@ -7,11 +7,17 @@ import type {
 	CreateScenarioInput,
 	LaunchRunInput,
 	MutationResult,
+	SaveShotInput,
 	ScenarioRecord,
 	ScenarioRunRecord,
+	ScenarioShotRecord,
 	UploadedInputAsset,
 } from "./shared";
-import { extractStudioRun, extractStudioScenario } from "./shared";
+import {
+	extractStudioRun,
+	extractStudioScenario,
+	extractStudioShot,
+} from "./shared";
 
 const apiBaseUrl = normalizeBaseUrl(env.NEXT_PUBLIC_SERVER_URL);
 
@@ -107,6 +113,36 @@ export async function enhanceStudioPrompt(
 	return { enhanced: payload.enhanced };
 }
 
+export async function saveStudioShot(
+	input: SaveShotInput
+): Promise<MutationResult<ScenarioShotRecord>> {
+	const payload = await requestStudioJson<unknown>(
+		`${apiBaseUrl}/api/scenario-shots`,
+		{
+			body: JSON.stringify(input),
+			method: "POST",
+		}
+	);
+	const snapshot = await getStudioSnapshot();
+	const scenarioNames = new Map(
+		snapshot.scenarios.map((scenario) => [scenario.id, scenario.name])
+	);
+
+	return {
+		data: extractStudioShot(payload, scenarioNames),
+		source: "server",
+	};
+}
+
+export async function deleteStudioShot(shotId: string): Promise<void> {
+	await requestStudioJson<{ ok?: boolean }>(
+		`${apiBaseUrl}/api/scenario-shots/${shotId}`,
+		{
+			method: "DELETE",
+		}
+	);
+}
+
 export async function syncStudioRun(
 	runId: string
 ): Promise<MutationResult<ScenarioRunRecord>> {
@@ -132,10 +168,14 @@ export type {
 	CreateScenarioInput,
 	LaunchRunInput,
 	MutationResult,
+	SaveShotInput,
 	ScenarioFormState,
 	ScenarioParamValue,
 	ScenarioRecord,
 	ScenarioRunRecord,
+	ScenarioShotRecord,
+	StudioShotArtifactKind,
+	StudioShotRecord,
 	UploadedInputAsset,
 	WorkflowDefinition,
 	WorkflowParameter,

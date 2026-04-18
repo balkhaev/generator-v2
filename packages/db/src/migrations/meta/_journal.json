@@ -50,6 +50,13 @@
       "when": 1776600000000,
       "tag": "0006_unify_lora_workflow_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1776519495189,
+      "tag": "0007_amused_franklin_richards",
+      "breakpoints": true
     }
   ]
 }

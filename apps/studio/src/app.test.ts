@@ -19,12 +19,14 @@ import type {
 	StudioRepository,
 	StudioRunEntity,
 	StudioScenarioEntity,
+	StudioShotEntity,
 } from "@/domain/studio";
 
 function createMemoryRepository(): StudioRepository {
 	const scenarios = new Map<string, StudioScenarioEntity>();
 	const runs = new Map<string, StudioRunEntity>();
 	const artifacts = new Map<string, StudioArtifactEntity[]>();
+	const shots = new Map<string, StudioShotEntity>();
 
 	return {
 		createRun(input) {
@@ -134,6 +136,24 @@ function createMemoryRepository(): StudioRepository {
 			};
 			scenarios.set(scenarioId, updated);
 			return Promise.resolve(updated);
+		},
+		createShot(input) {
+			const shot: StudioShotEntity = {
+				...input,
+				createdAt: new Date(),
+			};
+			shots.set(shot.id, shot);
+			return Promise.resolve(shot);
+		},
+		deleteShot(shotId) {
+			return Promise.resolve(shots.delete(shotId));
+		},
+		listShots() {
+			return Promise.resolve(
+				[...shots.values()].sort(
+					(a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+				)
+			);
 		},
 	};
 }
@@ -581,6 +601,8 @@ describe("studio backend", () => {
 			generatorRunId: null,
 			id: "run-1",
 			inputImageUrl: "https://assets.example.com/input.png",
+			inputPersonGenerationId: null,
+			inputPersonId: null,
 			providerEndpointId: "endpoint-1",
 			providerJobId: "job-1",
 			scenarioId: "scenario-1",

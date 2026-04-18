@@ -42,6 +42,8 @@ import {
 	studioRunStatusEnum,
 	studioScenario,
 	studioScenarioRelations,
+	studioScenarioShot,
+	studioScenarioShotRelations,
 } from "./schema/studio";
 
 const schema = {
@@ -72,6 +74,8 @@ const schema = {
 	studioRunStatusEnum,
 	studioScenario,
 	studioScenarioRelations,
+	studioScenarioShot,
+	studioScenarioShotRelations,
 	user,
 	userRelations,
 	verification,

@@ -15,7 +15,15 @@ import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import { cn } from "@generator/ui/lib/utils";
 import { AlertCircle, ChevronDown, Loader2, Plus, Wand2 } from "lucide-react";
-import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
+import {
+	type Dispatch,
+	type FormEvent,
+	type SetStateAction,
+	useEffect,
+	useId,
+	useMemo,
+	useState,
+} from "react";
 import { toast } from "sonner";
 
 import LoraStack from "./lora-stack";
@@ -204,7 +212,6 @@ function LoraSection({
 	selectedWorkflow,
 }: LoraSectionProps) {
 	const baseModelLabel = selectedWorkflow.baseModel ?? "any";
-	const showEmptyHint = !lorasError && availableLoras.length === 0;
 	return (
 		<section className="grid gap-2">
 			<div className="flex items-center justify-between gap-2">
@@ -229,24 +236,6 @@ function LoraSection({
 					<span>
 						Couldn't load LoRAs for <code>{baseModelLabel}</code>: {lorasError}
 					</span>
-				</div>
-			) : null}
-			{showEmptyHint ? (
-				<div className="rounded-md bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-					No LoRAs registered with base model{" "}
-					<code className="rounded bg-foreground/10 px-1">
-						{baseModelLabel}
-					</code>
-					.{" "}
-					<a
-						className="underline transition hover:text-foreground"
-						href={adminLorasHref}
-						rel="noreferrer noopener"
-						target="_blank"
-					>
-						Add one in admin
-					</a>{" "}
-					or paste a custom URL below.
 				</div>
 			) : null}
 			<LoraStack
@@ -395,7 +384,7 @@ interface ComposeFormProps {
 	hideFooter?: boolean;
 	isSubmitting: boolean;
 	lorasError?: string | null;
-	onFormChange: (form: ScenarioFormState) => void;
+	onFormChange: Dispatch<SetStateAction<ScenarioFormState | null>>;
 	onSubmit: () => Promise<void> | void;
 	onValidityChange?: (input: { isReady: boolean; errors: string[] }) => void;
 	workflows: WorkflowDefinition[];
@@ -546,9 +535,14 @@ export default function ComposeForm({
 	}
 
 	function handleParamChange(key: string, value: string) {
-		onFormChange({
-			...form,
-			params: { ...form.params, [key]: value },
+		onFormChange((current) => {
+			if (!current) {
+				return current;
+			}
+			return {
+				...current,
+				params: { ...current.params, [key]: value },
+			};
 		});
 	}
 

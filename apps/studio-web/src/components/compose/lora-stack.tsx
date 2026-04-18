@@ -100,17 +100,22 @@ function SlotPickerCard({
 	const showWeight = Boolean(weightConfig && onWeightChange);
 
 	return (
-		<div className="grid gap-2 rounded-lg border border-foreground/8 bg-background/40 p-2.5">
+		<div className="grid gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/8 p-2.5 shadow-sm dark:border-emerald-400/30 dark:bg-emerald-500/[0.08]">
 			<div className="flex items-start gap-2.5">
-				<div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-foreground/10">
-					<Sparkles
-						aria-hidden="true"
-						className="size-3.5 text-foreground/70"
-						strokeWidth={1.5}
-					/>
+				<div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300">
+					<Sparkles aria-hidden="true" className="size-3.5" strokeWidth={1.5} />
 				</div>
 				<div className="min-w-0 flex-1">
-					<p className="truncate font-medium text-[12px]">{entry.name}</p>
+					<div className="flex items-center gap-1.5">
+						<Check
+							aria-hidden="true"
+							className="size-3 text-emerald-600 dark:text-emerald-400"
+							strokeWidth={2.5}
+						/>
+						<p className="truncate font-medium text-[12px] text-foreground">
+							{entry.name}
+						</p>
+					</div>
 					{entry.description ? (
 						<p className="line-clamp-1 text-[10px] text-muted-foreground">
 							{entry.description}

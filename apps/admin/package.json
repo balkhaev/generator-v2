@@ -24,6 +24,7 @@
     "@generator/queue": "workspace:*",
     "@generator/storage": "workspace:*",
     "@generator/workflows": "workspace:*",
+    "better-auth": "catalog:",
     "zod": "catalog:",
     "hono": "^4.8.2"
   },

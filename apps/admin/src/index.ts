@@ -20,10 +20,13 @@ import { LoraRegistryService } from "@/domain/loras";
 import { PersonLoraTrainingControlService } from "@/domain/person-lora-training-control";
 import { resolveTrainingProviderAvailability } from "@/domain/training-provider-availability";
 import { createRedisTrainingProviderSettings } from "@/domain/training-provider-settings";
+import { UsersService } from "@/domain/users";
+import { createRedisWorkerSettingsReader } from "@/domain/worker-settings-store";
 import { createLoraSourceResolver } from "@/providers/lora-source-resolver";
 import { createPersonLoraTrainingQueueClient } from "@/queue/person-lora-training";
 import { createDrizzleAssetReleaseRepository } from "@/repositories/asset-releases";
 import { createDrizzleLoraRepository } from "@/repositories/loras";
+import { createDrizzleUserRepository } from "@/repositories/users";
 
 const generatorBaseUrl = getGeneratorApiUrl();
 const personsApiBaseUrl = env.PERSONS_API_URL;
@@ -64,6 +67,13 @@ const trainingProviderSettings = createRedisTrainingProviderSettings({
 	redisUrl,
 });
 
+/**
+ * Reader for the worker's settings heartbeat (see worker-settings-store.ts).
+ * Used by `/api/admin/settings` so the UI surfaces the worker's view of
+ * provider availability instead of the gateway's empty env.
+ */
+const workerSettingsReader = createRedisWorkerSettingsReader({ redisUrl });
+
 const loraRegistryService = new LoraRegistryService({
 	repository: createDrizzleLoraRepository(),
 	resolveSource: createLoraSourceResolver({
@@ -71,6 +81,10 @@ const loraRegistryService = new LoraRegistryService({
 		huggingFaceToken: env.HUGGINGFACE_TOKEN,
 	}).resolve,
 	s3Config,
+});
+
+const usersService = new UsersService({
+	repository: createDrizzleUserRepository(),
 });
 
 const app = createApp({
@@ -110,6 +124,8 @@ const app = createApp({
 		resolve: () => resolveTrainingProviderAvailability(env),
 	},
 	trainingProviderSettings,
+	usersService,
+	workerSettingsReader,
 });
 
 ensureDevUser();

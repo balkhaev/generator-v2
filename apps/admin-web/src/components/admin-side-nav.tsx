@@ -14,6 +14,7 @@ import {
 	Settings,
 	Sparkles,
 	Tags,
+	Users,
 	Workflow,
 } from "lucide-react";
 import type { Route } from "next";
@@ -63,6 +64,12 @@ const ITEMS: AdminSideNavItem[] = [
 		icon: PackageOpen,
 		label: "Releases",
 		description: "S3 rollouts",
+	},
+	{
+		href: "/users" as Route,
+		icon: Users,
+		label: "Users",
+		description: "Console operators",
 	},
 	{
 		href: "/settings" as Route,

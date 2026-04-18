@@ -37,7 +37,9 @@ bun --cwd packages/debug-tools run bundle --include-dashboard --include-studio-s
 
 ## Preferred Tactics
 
-- Use repo-local health checks before ad-hoc curl loops.
+- **Drive everything through MCP.** Используй тулы из `apps/mcp` (HTTP) и `packages/debug-tools` (stdio) вместо ad-hoc curl/psql. Полный гайд — скил `mcp-debug`.
+- Если нужного тула нет — сначала добавь его в MCP по инструкции `mcp-debug`, потом дебагай.
+- Use repo-local health checks (`service_health` MCP tool) before ad-hoc curl loops.
 - Prefer debug MCP tools `admin_dashboard_get` and `studio_snapshot_get` when you need structured snapshots.
 - Use `npx hono request` for Hono route validation when a route can be tested in-process.
-- When debugging a user-facing failure, trace the exact request path across services instead of checking only the first failing service.
+- When debugging a user-facing failure, trace the exact request path across services instead of checking only the first failing service. Передавай свой `x-debug-correlation-id` через `service_request` и грепай его в логах.

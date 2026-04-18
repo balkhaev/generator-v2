@@ -1,4 +1,7 @@
-import type { TrainingProviderSettingsSnapshot } from "@generator/contracts/admin";
+import type {
+	TrainingProviderAvailability,
+	TrainingProviderSettingsSnapshot,
+} from "@generator/contracts/admin";
 import { Hono } from "hono";
 
 import {
@@ -6,6 +9,10 @@ import {
 	type TrainingProviderName,
 	type TrainingProviderSettings,
 } from "@/domain/training-provider-settings";
+import {
+	isWorkerSnapshotFresh,
+	type WorkerSettingsReader,
+} from "@/domain/worker-settings-store";
 
 export interface TrainingProviderAvailabilityResolver {
 	resolve(): TrainingProviderSettingsSnapshot["availability"];
@@ -18,15 +25,31 @@ function isTrainingProvider(value: unknown): value is TrainingProviderName {
 	);
 }
 
+async function resolveAvailability(deps: {
+	availability: TrainingProviderAvailabilityResolver;
+	workerSettingsReader?: WorkerSettingsReader;
+}): Promise<TrainingProviderAvailability[]> {
+	if (deps.workerSettingsReader) {
+		const snapshot = await deps.workerSettingsReader.read();
+		if (snapshot && isWorkerSnapshotFresh(snapshot)) {
+			return snapshot.availability;
+		}
+	}
+	return deps.availability.resolve();
+}
+
 export function createTrainingProviderRoutes(deps: {
 	availability: TrainingProviderAvailabilityResolver;
 	settings: TrainingProviderSettings;
+	workerSettingsReader?: WorkerSettingsReader;
 }) {
 	const app = new Hono();
 
 	app.get("/", async (c) => {
-		const provider = await deps.settings.getProvider();
-		const availability = deps.availability.resolve();
+		const [provider, availability] = await Promise.all([
+			deps.settings.getProvider(),
+			resolveAvailability(deps),
+		]);
 		const snapshot: TrainingProviderSettingsSnapshot = {
 			availability,
 			provider,
@@ -56,7 +79,7 @@ export function createTrainingProviderRoutes(deps: {
 			);
 		}
 
-		const availability = deps.availability.resolve();
+		const availability = await resolveAvailability(deps);
 		const target = availability.find((entry) => entry.provider === provider);
 		if (target && !target.configured) {
 			return c.json(

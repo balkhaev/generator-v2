@@ -1,3 +1,23 @@
+# Project Agent Guide
+
+## Debug Through MCP First
+
+В этом репо есть собственные MCP-серверы, которые покрывают весь дебаг-контур:
+
+- `apps/mcp` — HTTP MCP (`POST /mcp`, bearer `MCP_AUTH_TOKEN`, порт `3010`). Тулы: health/`service_request`, generator workflows + execution submit/sync, test users (`test_user_upsert`/`test_user_get`), Kafka (cluster/topics/offsets/consumer groups/sample).
+- `packages/debug-tools` — stdio MCP + bundle CLI (`bun --cwd packages/debug-tools run mcp` / `… run bundle`). Health/admin dashboard/studio snapshot/generator execution/`collect_debug_bundle`.
+
+Правила для агента:
+
+1. Любой дебаг (упавший API, сломанная инференс-цепочка, странный auth, лаг в Kafka, тест-юзер для e2e) — **сначала через MCP-tool**. Никаких разовых `curl`, `psql`, `kafkacat`, `node -e` если уже есть тул.
+2. Если нужного тула нет — **расширяй MCP**, а не обходи его. Пошаговая инструкция (схема в `toolDefinitions`, хендлер, парсинг через хелперы, `createToolResult`, тест в `apps/mcp/src/app.test.ts`, `bun x ultracite fix`, `bun --cwd apps/mcp run check-types && bun test apps/mcp`) — в скиле `mcp-debug`.
+3. После добавления нового тула обнови `docs/debugging-toolchain.md`, чтобы следующий агент его нашёл.
+4. Корреляция между сервисами — через `x-debug-correlation-id`. При вызове `service_request` подставляй свой ID и грепай его в логах.
+
+Подробнее: скилы `mcp-debug` (общая политика и расширение), `backend-debug` (admin/generator/studio/persons), `inference-debug` (workflow → артефакт), `docs/debugging-toolchain.md`.
+
+---
+
 # Ultracite Code Standards
 
 This project uses **Ultracite**, a zero-config preset that enforces strict code quality standards through automated formatting and linting.

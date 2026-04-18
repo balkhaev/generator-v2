@@ -135,6 +135,42 @@ export interface AdminSetupStatus {
 	setupRequired: boolean;
 }
 
+export interface AdminUser {
+	accountsCount: number;
+	createdAt: string;
+	email: string;
+	emailVerified: boolean;
+	hasPassword: boolean;
+	id: string;
+	image: string | null;
+	name: string;
+	sessionsCount: number;
+	updatedAt: string;
+}
+
+export interface CreateAdminUserInput {
+	email: string;
+	emailVerified?: boolean;
+	image?: string | null;
+	name: string;
+	password: string;
+}
+
+export interface UpdateAdminUserInput {
+	email?: string;
+	emailVerified?: boolean;
+	image?: string | null;
+	name?: string;
+}
+
+export interface ResetAdminUserPasswordInput {
+	password: string;
+}
+
+export interface ListAdminUsersQuery {
+	search?: string;
+}
+
 export type TrainingProviderName = "fal" | "runpod";
 
 export interface TrainingProviderAvailability {
@@ -177,10 +213,25 @@ export interface GeneratorRuntimeSettings {
 	reconcileWatch: boolean;
 }
 
+/**
+ * Heartbeat-based health snapshot of the training worker. The gateway reads it
+ * from Redis to decide whose env values to trust for availability/runpod
+ * sections. If the worker hasn't published a heartbeat recently, UI shows a
+ * warning and falls back to gateway-local env (so single-process dev still
+ * works).
+ */
+export interface AdminWorkerHealthStatus {
+	ageSeconds: number | null;
+	isFresh: boolean;
+	lastSeenAt: string | null;
+	source: "worker" | "gateway-fallback";
+}
+
 export interface AdminSettingsSnapshot {
 	datasetBuilder: DatasetBuilderSettings;
 	generatorRuntime: GeneratorRuntimeSettings;
 	personsDefaults: PersonsWorkflowDefaults;
 	runpodTraining: RunpodTrainingSettings;
 	trainingProvider: TrainingProviderSettingsSnapshot;
+	workerHealth: AdminWorkerHealthStatus;
 }

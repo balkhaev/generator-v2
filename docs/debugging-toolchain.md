@@ -32,9 +32,24 @@ bun --cwd packages/debug-tools run mcp
 
 ## Repo-local MCP
 
+В репо два MCP-сервера. Агент обязан использовать тулы оттуда вместо разовых curl/psql/kafkacat. Если нужного нет — добавить в MCP, см. скил `mcp-debug` (`.agents/skills/mcp-debug/SKILL.md`).
+
+### `apps/mcp` — HTTP MCP (основной, prod-style)
+
+Транспорт: HTTP JSON-RPC, `POST /mcp`, bearer `MCP_AUTH_TOKEN`, порт `PORT` (по умолчанию `3010`). Health: `GET /api/health`. Точка входа: `apps/mcp/src/index.ts`, регистрация тулов: `apps/mcp/src/app.ts`.
+
+Тулы:
+
+- workspace/health: `workspace_summary`, `service_health`, `service_request`
+- generator: `generator_workflows_get`, `generator_execution_submit`, `generator_execution_sync`
+- test users: `test_user_upsert`, `test_user_get`
+- kafka: `kafka_cluster_info`, `kafka_topics_list`, `kafka_topic_offsets`, `kafka_consumer_groups_list`, `kafka_consumer_group_describe`, `kafka_topic_sample`
+
+### `packages/debug-tools` — stdio MCP + bundle CLI
+
 `packages/debug-tools/src/mcp-server.ts`
 
-Набор MCP tools:
+Тулы:
 
 - `workspace_summary`
 - `service_health`

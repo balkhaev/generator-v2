@@ -8,10 +8,15 @@ import { createRedisIdempotencyLock, withIdempotency } from "@generator/queue";
 import { resolveS3StorageConfig } from "@generator/storage";
 
 import { createPersonsApiClient } from "@/clients/persons-api";
+import { resolveTrainingProviderAvailability } from "@/domain/training-provider-availability";
 import {
 	createRedisTrainingProviderSettings,
 	type TrainingProviderName,
 } from "@/domain/training-provider-settings";
+import {
+	createRedisWorkerSettingsPublisher,
+	startWorkerSettingsHeartbeat,
+} from "@/domain/worker-settings-store";
 import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
 import { RunpodAiToolkitLoraTrainingRunner } from "@/providers/runpod-ai-toolkit-lora-training";
 import type { PersonLoraTrainingJobData } from "@/queue/person-lora-training";
@@ -91,6 +96,30 @@ const runpodRunner =
 const trainingProviderSettings = createRedisTrainingProviderSettings({
 	defaultProvider: defaultTrainingProvider,
 	redisUrl,
+});
+
+/**
+ * Heartbeat: publish the worker's settings snapshot to Redis so the gateway
+ * (which lacks training secrets) can render an accurate /api/admin/settings.
+ * Without this, UI shows "not configured" because gateway env doesn't have
+ * FAL_KEY/RUNPOD_API_KEY/RUNPOD_AI_TOOLKIT_ENDPOINT_ID.
+ */
+const workerSettingsPublisher = createRedisWorkerSettingsPublisher({
+	redisUrl,
+});
+const stopHeartbeat = startWorkerSettingsHeartbeat({
+	build: () => ({
+		availability: resolveTrainingProviderAvailability(env),
+		runpod: {
+			baseModel: env.RUNPOD_AI_TOOLKIT_BASE_MODEL,
+			endpointConfigured: Boolean(env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID),
+			endpointId: env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID ?? null,
+			pollMs: env.RUNPOD_AI_TOOLKIT_POLL_MS,
+			timeoutMs: env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS,
+		},
+	}),
+	logger: console,
+	publisher: workerSettingsPublisher,
 });
 
 const selectActiveRunner = async () => {
@@ -236,6 +265,8 @@ await new Promise<void>((resolve) => {
 		await trainingLock.close();
 		await recoveryLock.close();
 		await trainingProviderSettings.close();
+		stopHeartbeat();
+		await workerSettingsPublisher.close();
 		resolve();
 	};
 

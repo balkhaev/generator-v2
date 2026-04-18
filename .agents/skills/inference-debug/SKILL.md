@@ -27,10 +27,12 @@ bun --cwd packages/debug-tools run bundle --include-dashboard
 - terminal payload normalization
 - artifact URL extraction or storage mapping
 
-4. When you need precise remote introspection, use MCP tools:
+4. When you need precise remote introspection, use MCP tools (через `apps/mcp` или `packages/debug-tools`, см. скил `mcp-debug`):
 - `generator_workflows_get`
 - `generator_execution_submit`
 - `generator_execution_sync`
+
+Если нужного шага в MCP нет (например, специфичный provider sync, доступ к новой таблице, сэмпл из конкретного Kafka-топика) — добавь tool в `apps/mcp/src/app.ts` по инструкции из `mcp-debug`, не пиши одноразовый bash.
 
 ## What Good Looks Like
 

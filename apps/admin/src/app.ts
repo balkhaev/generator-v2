@@ -22,6 +22,8 @@ import type { AssetReleaseService } from "@/domain/asset-releases";
 import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
 import type { TrainingProviderSettings } from "@/domain/training-provider-settings";
+import type { UsersService } from "@/domain/users";
+import type { WorkerSettingsReader } from "@/domain/worker-settings-store";
 import {
 	type AdminSettingsEnvResolver,
 	createAdminSettingsRoutes,
@@ -34,6 +36,7 @@ import {
 	createTrainingProviderRoutes,
 	type TrainingProviderAvailabilityResolver,
 } from "@/routes/training-provider";
+import { createAdminUserRoutes } from "@/routes/users";
 
 interface AppVariables extends AuthVariables {
 	debugCorrelationId: string;
@@ -59,6 +62,8 @@ interface AppOptions {
 	studioBaseUrl: string;
 	trainingProviderAvailability?: TrainingProviderAvailabilityResolver;
 	trainingProviderSettings?: TrainingProviderSettings;
+	usersService?: UsersService;
+	workerSettingsReader?: WorkerSettingsReader;
 }
 
 const isPublicApiPath = createPublicPathMatcher({
@@ -149,6 +154,10 @@ export function createApp(options: AppOptions) {
 		);
 	}
 
+	if (options.usersService) {
+		app.route("/api/admin/users", createAdminUserRoutes(options.usersService));
+	}
+
 	if (
 		options.trainingProviderSettings &&
 		options.trainingProviderAvailability
@@ -158,6 +167,7 @@ export function createApp(options: AppOptions) {
 			createTrainingProviderRoutes({
 				availability: options.trainingProviderAvailability,
 				settings: options.trainingProviderSettings,
+				workerSettingsReader: options.workerSettingsReader,
 			})
 		);
 
@@ -168,6 +178,7 @@ export function createApp(options: AppOptions) {
 					availability: options.trainingProviderAvailability,
 					envResolver: options.adminSettingsEnvResolver,
 					settings: options.trainingProviderSettings,
+					workerSettingsReader: options.workerSettingsReader,
 				})
 			);
 		}

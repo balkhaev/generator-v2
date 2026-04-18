@@ -1066,7 +1066,7 @@ export default function CommandSidebar({
 	return (
 		<aside
 			className={cn(
-				"studio-surface flex min-h-0 min-w-0 flex-col overflow-hidden",
+				"studio-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
 				className
 			)}
 		>

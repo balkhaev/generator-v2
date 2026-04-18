@@ -2,6 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
 	env,
 	getGeneratorApiUrl,
+	getGeneratorInternalToken,
 	getKafkaEventBusConfig,
 } from "@generator/env/server";
 import { createKafkaEventConsumer, eventTopics } from "@generator/events";
@@ -16,7 +17,9 @@ const kafkaConfig = getKafkaEventBusConfig("studio-worker");
 
 const service = new StudioService(
 	createDrizzleStudioRepository(),
-	createGeneratorExecutionClient(getGeneratorApiUrl()),
+	createGeneratorExecutionClient(getGeneratorApiUrl(), {
+		internalToken: getGeneratorInternalToken(),
+	}),
 	console
 );
 

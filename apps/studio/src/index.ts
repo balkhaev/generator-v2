@@ -8,6 +8,7 @@ import {
 	env,
 	getGeneratorApiUrl,
 	getGeneratorCallbackToken,
+	getGeneratorInternalToken,
 	getRequiredCorsOrigins,
 } from "@generator/env/server";
 import { createGeneratorExecutionClient } from "@generator/generator-client-server";
@@ -32,7 +33,9 @@ const app = createApp({
 		token: getGeneratorCallbackToken(),
 	},
 	corsOrigins: getRequiredCorsOrigins(),
-	executionClient: createGeneratorExecutionClient(generatorBaseUrl),
+	executionClient: createGeneratorExecutionClient(generatorBaseUrl, {
+		internalToken: getGeneratorInternalToken(),
+	}),
 	generatorBaseUrl,
 	getSession: getRequestSession,
 	grokClient,

@@ -64,6 +64,16 @@ function isPersonDatasetGeneration(generation: PersonGenerationRecord) {
 	return generation.metadata?.isDatasetPhoto === true;
 }
 
+/**
+ * Адаптивный grid с тайлами фиксированной шириной — на узком aside даёт
+ * 3-4 колонки, на широком сайдбаре или мобильном пикере раскладывается
+ * соответственно. Без этого `grid-cols-4` + `aspect-square` на широком
+ * контейнере раздувает превью до 200+px и они визуально «наезжают» друг
+ * на друга при `max-h-*` overflow.
+ */
+const THUMB_GRID_CLASSES =
+	"grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1.5";
+
 interface IdentityTile {
 	id: string;
 	label: string;
@@ -104,7 +114,7 @@ function IdentityTiles({
 	return (
 		<div className="grid gap-1.5">
 			<SectionLabel>Identity</SectionLabel>
-			<div className="grid grid-cols-4 gap-1.5">
+			<div className={THUMB_GRID_CLASSES}>
 				{tiles.map((tile) => {
 					const isActive = currentUrl === tile.url;
 					return (
@@ -534,7 +544,9 @@ export default function PersonsInputPicker({
 			);
 		}
 		return (
-			<div className="grid max-h-60 grid-cols-4 gap-1.5 overflow-y-auto py-0.5">
+			<div
+				className={cn(THUMB_GRID_CLASSES, "max-h-60 overflow-y-auto py-0.5")}
+			>
 				{recentReferences.map((reference) => {
 					const isActive = currentUrl === reference.url;
 					return (
@@ -596,7 +608,7 @@ export default function PersonsInputPicker({
 			);
 		}
 		return (
-			<div className="grid max-h-48 grid-cols-3 gap-1.5 overflow-y-auto pr-1">
+			<div className={cn(THUMB_GRID_CLASSES, "max-h-72 overflow-y-auto pr-1")}>
 				{filteredPersons.map((person) => {
 					const isActive = selectedPersonId === person.id;
 					const thumbnail = person.photoUrl ?? person.referencePhotoUrl ?? null;
@@ -682,7 +694,7 @@ export default function PersonsInputPicker({
 				{readyGenerations.length > 0 ? (
 					<div className="grid gap-1.5">
 						<SectionLabel>Generations</SectionLabel>
-						<div className="grid max-h-40 grid-cols-4 gap-1.5 overflow-y-auto">
+						<div className={cn(THUMB_GRID_CLASSES, "max-h-72 overflow-y-auto")}>
 							{readyGenerations.map((generation) => {
 								const url = generation.previewUrl ?? generation.sourceUrl ?? "";
 								const isActive = currentUrl === url;
@@ -784,7 +796,9 @@ export default function PersonsInputPicker({
 			);
 		}
 		return (
-			<div className="grid max-h-60 grid-cols-4 gap-1.5 overflow-y-auto py-0.5">
+			<div
+				className={cn(THUMB_GRID_CLASSES, "max-h-60 overflow-y-auto py-0.5")}
+			>
 				{imageShots.map((shot) => {
 					const isActive = currentUrl === shot.artifactUrl;
 					return (

@@ -104,6 +104,38 @@ const toolDefinitions = [
 		name: "generator_workflows_get",
 	},
 	{
+		description:
+			"List LoRAs from the admin registry, optionally filtering by base model and status. Useful for debugging why a LoRA does not appear in studio compose.",
+		inputSchema: {
+			properties: {
+				baseModel: {
+					description:
+						"Filter by exact base model id (e.g. 'ltx-2-3', 'z-image-turbo').",
+					type: "string",
+				},
+				status: {
+					description: "'active' (default) or 'archived'.",
+					type: "string",
+				},
+			},
+			type: "object",
+		},
+		name: "lora_list",
+	},
+	{
+		description: "Fetch a single LoRA from the admin registry by id.",
+		inputSchema: {
+			properties: {
+				id: {
+					type: "string",
+				},
+			},
+			required: ["id"],
+			type: "object",
+		},
+		name: "lora_get",
+	},
+	{
 		description: "Submit a generator execution directly for debugging.",
 		inputSchema: {
 			properties: {
@@ -678,6 +710,63 @@ function postJson(path: string, payload: unknown) {
 	});
 }
 
+function fetchAdminLoras(query: string, token: string) {
+	return fetchServiceSnapshot(
+		"admin",
+		`/api/internal/loras${query ? `?${query}` : ""}`,
+		{
+			headers: {
+				authorization: `Bearer ${token}`,
+			},
+		}
+	);
+}
+
+async function handleLoraToolCall(
+	name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const token = process.env.TRAINING_CONTROL_TOKEN;
+	if (!token) {
+		return createErrorResponse(
+			id,
+			"TRAINING_CONTROL_TOKEN is not configured for the MCP server"
+		);
+	}
+
+	if (name === "lora_list") {
+		const params = new URLSearchParams();
+		const baseModel = parseOptionalString(argumentsPayload.baseModel);
+		const status = parseOptionalString(argumentsPayload.status);
+		if (baseModel) {
+			params.set("baseModel", baseModel);
+		}
+		if (status) {
+			params.set("status", status);
+		}
+		return createOkResponse(
+			id,
+			createToolResult(await fetchAdminLoras(params.toString(), token))
+		);
+	}
+
+	const targetId = parseOptionalString(argumentsPayload.id);
+	if (!targetId) {
+		return createErrorResponse(id, "id is required");
+	}
+	const snapshot = await fetchAdminLoras("", token);
+	const data = snapshot.body as { loras?: Array<{ id: string }> } | null;
+	const lora = data?.loras?.find((entry) => entry.id === targetId) ?? null;
+	return createOkResponse(
+		id,
+		createToolResult({
+			...snapshot,
+			body: { lora },
+		})
+	);
+}
+
 async function handleToolCall(message: JsonRpcRequest) {
 	const name = parseOptionalString(message.params?.name);
 	const argumentsPayload =
@@ -749,6 +838,9 @@ async function handleToolCall(message: JsonRpcRequest) {
 					await fetchServiceSnapshot("generator", "/api/workflows")
 				)
 			);
+		case "lora_list":
+		case "lora_get":
+			return handleLoraToolCall(name, argumentsPayload, id);
 		case "generator_execution_submit":
 			return createOkResponse(
 				id,

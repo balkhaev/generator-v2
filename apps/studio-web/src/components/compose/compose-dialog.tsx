@@ -41,9 +41,10 @@ const adminWebUrl = env.NEXT_PUBLIC_ADMIN_URL ?? "http://localhost:3001";
 const trailingSlashesPattern = /\/+$/u;
 const adminLorasHref = `${adminWebUrl.replace(trailingSlashesPattern, "")}/loras`;
 
-async function fetchStudioLoras(
-	baseModel?: string
-): Promise<LoraRegistryEntry[]> {
+async function fetchStudioLoras(baseModel?: string): Promise<{
+	error: string | null;
+	loras: LoraRegistryEntry[];
+}> {
 	const params = new URLSearchParams();
 	if (baseModel) {
 		params.set("baseModel", baseModel);
@@ -54,9 +55,11 @@ async function fetchStudioLoras(
 			`${studioApiBaseUrl}/api/loras${query ? `?${query}` : ""}`,
 			{ cache: "no-store", credentials: "include" }
 		);
-		return payload.loras;
-	} catch {
-		return [];
+		return { error: null, loras: payload.loras };
+	} catch (error) {
+		const message =
+			error instanceof Error ? error.message : "Failed to load LoRAs";
+		return { error: message, loras: [] };
 	}
 }
 
@@ -73,6 +76,7 @@ export default function ComposeDialog({
 		initialWorkflow ? createScenarioFormState(initialWorkflow) : null
 	);
 	const [availableLoras, setAvailableLoras] = useState<LoraRegistryEntry[]>([]);
+	const [lorasError, setLorasError] = useState<string | null>(null);
 	const [isSaving, setIsSaving] = useState(false);
 	const [validity, setValidity] = useState<{
 		errors: string[];
@@ -110,10 +114,12 @@ export default function ComposeDialog({
 		}
 
 		let cancelled = false;
-		fetchStudioLoras(selectedWorkflow?.baseModel).then((items) => {
-			if (!cancelled) {
-				setAvailableLoras(items);
+		fetchStudioLoras(selectedWorkflow?.baseModel).then((result) => {
+			if (cancelled) {
+				return;
 			}
+			setAvailableLoras(result.loras);
+			setLorasError(result.error);
 		});
 		return () => {
 			cancelled = true;
@@ -189,6 +195,7 @@ export default function ComposeDialog({
 							formId={formId}
 							hideFooter
 							isSubmitting={isSaving}
+							lorasError={lorasError}
 							onFormChange={setForm}
 							onSubmit={handleSubmit}
 							onValidityChange={handleValidityChange}

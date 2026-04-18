@@ -188,6 +188,7 @@ interface LoraSectionProps {
 	form: ScenarioFormState;
 	isOptional: boolean;
 	loraSlots: LoraSlotDefinition[];
+	lorasError: string | null;
 	onParamChange: (key: string, value: string) => void;
 	selectedWorkflow: WorkflowDefinition;
 }
@@ -198,9 +199,12 @@ function LoraSection({
 	form,
 	isOptional,
 	loraSlots,
+	lorasError,
 	onParamChange,
 	selectedWorkflow,
 }: LoraSectionProps) {
+	const baseModelLabel = selectedWorkflow.baseModel ?? "any";
+	const showEmptyHint = !lorasError && availableLoras.length === 0;
 	return (
 		<section className="grid gap-2">
 			<div className="flex items-center justify-between gap-2">
@@ -213,9 +217,38 @@ function LoraSection({
 					) : null}
 				</div>
 				<span className="text-[10px] text-muted-foreground">
-					{availableLoras.length} in registry
+					{availableLoras.length} for{" "}
+					<code className="rounded bg-foreground/[0.06] px-1">
+						{baseModelLabel}
+					</code>
 				</span>
 			</div>
+			{lorasError ? (
+				<div className="flex items-start gap-1.5 rounded-md bg-rose-500/10 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+					<AlertCircle className="mt-0.5 size-3 shrink-0" />
+					<span>
+						Couldn't load LoRAs for <code>{baseModelLabel}</code>: {lorasError}
+					</span>
+				</div>
+			) : null}
+			{showEmptyHint ? (
+				<div className="rounded-md bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+					No LoRAs registered with base model{" "}
+					<code className="rounded bg-foreground/10 px-1">
+						{baseModelLabel}
+					</code>
+					.{" "}
+					<a
+						className="underline transition hover:text-foreground"
+						href={adminLorasHref}
+						rel="noreferrer noopener"
+						target="_blank"
+					>
+						Add one in admin
+					</a>{" "}
+					or paste a custom URL below.
+				</div>
+			) : null}
 			<LoraStack
 				adminHref={adminLorasHref}
 				availableLoras={availableLoras}
@@ -361,6 +394,7 @@ interface ComposeFormProps {
 	formId?: string;
 	hideFooter?: boolean;
 	isSubmitting: boolean;
+	lorasError?: string | null;
 	onFormChange: (form: ScenarioFormState) => void;
 	onSubmit: () => Promise<void> | void;
 	onValidityChange?: (input: { isReady: boolean; errors: string[] }) => void;
@@ -374,6 +408,7 @@ export default function ComposeForm({
 	formId,
 	hideFooter = false,
 	isSubmitting,
+	lorasError = null,
 	onFormChange,
 	onSubmit,
 	onValidityChange,
@@ -560,6 +595,7 @@ export default function ComposeForm({
 					form={form}
 					isOptional={!selectedClassification.requiresLora}
 					loraSlots={loraSlots}
+					lorasError={lorasError}
 					onParamChange={handleParamChange}
 					selectedWorkflow={selectedWorkflow}
 				/>

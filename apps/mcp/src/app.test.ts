@@ -45,6 +45,8 @@ describe("mcp app", () => {
 		expect(toolNames).toContain("kafka_topic_sample");
 		expect(toolNames).toContain("test_user_upsert");
 		expect(toolNames).toContain("test_user_get");
+		expect(toolNames).toContain("lora_list");
+		expect(toolNames).toContain("lora_get");
 	});
 
 	it("returns public health without auth", async () => {

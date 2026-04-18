@@ -39,11 +39,27 @@ WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 mkdir -p "$WORKSPACE_DIR"
 cd "$WORKSPACE_DIR"
 
+BOOTSTRAP_LOG="${WORKSPACE_DIR}/pod-bootstrap.log"
+exec > >(tee -a "$BOOTSTRAP_LOG") 2>&1
+
 log "installing system dependencies"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null
-apt-get install -y --no-install-recommends git curl unzip ca-certificates >/dev/null
+apt-get install -y --no-install-recommends git curl unzip ca-certificates openssh-server >/dev/null
 log "system deps installed"
+
+if [ -n "${PUBLIC_KEY:-}" ]; then
+  log "configuring sshd for debugging"
+  mkdir -p /root/.ssh
+  chmod 700 /root/.ssh
+  printf '%s\n' "$PUBLIC_KEY" > /root/.ssh/authorized_keys
+  chmod 600 /root/.ssh/authorized_keys
+  mkdir -p /var/run/sshd
+  if [ -x /usr/sbin/sshd ]; then
+    /usr/sbin/sshd >/dev/null 2>&1 || true
+    log "sshd started in background"
+  fi
+fi
 
 if [ ! -d "$AI_TOOLKIT_PATH/.git" ]; then
   log "cloning ostris/ai-toolkit (ref=$AI_TOOLKIT_REF) into $AI_TOOLKIT_PATH"

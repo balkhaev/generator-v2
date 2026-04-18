@@ -200,8 +200,15 @@ export function createAdminLoraRoutes(service: LoraRegistryService) {
 		}
 	});
 
-	app.delete("/:id", async (c) => {
+	app.post("/:id/archive", async (c) => {
 		const entry = await service.archive(c.req.param("id"));
+		return entry
+			? c.json({ lora: entry })
+			: c.json({ error: "LoRA not found" }, 404);
+	});
+
+	app.delete("/:id", async (c) => {
+		const entry = await service.delete(c.req.param("id"));
 		return entry
 			? c.json({ lora: entry })
 			: c.json({ error: "LoRA not found" }, 404);

@@ -82,6 +82,7 @@ export interface UpdateLoraRecordInput {
 
 export interface LoraRepository {
 	create(input: CreateLoraRecordInput): Promise<LoraRegistryEntry>;
+	delete(id: string): Promise<LoraRegistryEntry | null>;
 	getById(id: string): Promise<LoraRegistryEntry | null>;
 	getBySlug(slug: string): Promise<LoraRegistryEntry | null>;
 	list(filter: ListLorasFilter): Promise<LoraRegistryEntry[]>;
@@ -139,6 +140,13 @@ export function createDrizzleLoraRepository(database: Db = db): LoraRepository {
 					? await query.where(and(...clauses)).orderBy(desc(lora.createdAt))
 					: await query.orderBy(desc(lora.createdAt));
 			return rows.map(mapLora);
+		},
+		async delete(id) {
+			const [row] = await database
+				.delete(lora)
+				.where(eq(lora.id, id))
+				.returning();
+			return row ? mapLora(row) : null;
 		},
 		async update(id, patch) {
 			const [row] = await database

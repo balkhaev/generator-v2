@@ -11,6 +11,7 @@ import {
 	GraduationCap,
 	type LucideIcon,
 	PackageOpen,
+	Settings,
 	Sparkles,
 	Tags,
 	Workflow,
@@ -62,6 +63,12 @@ const ITEMS: AdminSideNavItem[] = [
 		icon: PackageOpen,
 		label: "Releases",
 		description: "S3 rollouts",
+	},
+	{
+		href: "/settings" as Route,
+		icon: Settings,
+		label: "Settings",
+		description: "Inference & runtime",
 	},
 ];
 

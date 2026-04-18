@@ -1,5 +1,8 @@
 import type { GeneratorExecutionRecord } from "@generator/contracts/generator";
-import { isActivePersonLoraTrainingStatus } from "@generator/contracts/persons";
+import {
+	isActivePersonLoraTrainingStatus,
+	PERSONS_AVATAR_WORKFLOWS,
+} from "@generator/contracts/persons";
 import { env } from "@generator/env/server";
 import type { GeneratorExecutionClient } from "@generator/generator-client-server";
 import { z } from "zod";
@@ -218,8 +221,8 @@ export interface AvatarPreviewBatch {
 	prompts: string[];
 }
 
-const AVATAR_PREVIEW_WORKFLOW_KEY = "fal-flux2-turbo";
-const AVATAR_REFINE_WORKFLOW_KEY = "fal-flux2-dev-edit";
+const AVATAR_PREVIEW_WORKFLOW_KEY = PERSONS_AVATAR_WORKFLOWS.preview;
+const AVATAR_REFINE_WORKFLOW_KEY = PERSONS_AVATAR_WORKFLOWS.refine;
 
 export const startPersonLoraTrainingInputSchema = z.object({
 	outputName: optionalStringSchema,

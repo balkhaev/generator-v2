@@ -3,6 +3,7 @@
 import type { TrainingProviderName } from "@generator/contracts/admin";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { adminSettingsQueryKey } from "@/hooks/use-admin-settings";
 import {
 	fetchTrainingProvider,
 	updateTrainingProvider,
@@ -25,6 +26,7 @@ export function useUpdateTrainingProvider() {
 			updateTrainingProvider(provider),
 		onSuccess: (snapshot) => {
 			queryClient.setQueryData(trainingProviderQueryKey, snapshot);
+			queryClient.invalidateQueries({ queryKey: adminSettingsQueryKey });
 		},
 	});
 }

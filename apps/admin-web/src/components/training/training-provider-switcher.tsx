@@ -45,10 +45,12 @@ export function TrainingProviderSwitcher() {
 	const errorText =
 		mutation.error instanceof Error ? mutation.error.message : null;
 
+	const baseTitle = "LoRA training provider — full controls in Settings";
+
 	return (
 		<div
 			className="inline-flex items-center gap-2"
-			title={runpodHint ?? errorText ?? undefined}
+			title={runpodHint ?? errorText ?? baseTitle}
 		>
 			<span className="text-muted-foreground text-xs">Trainer</span>
 			<select

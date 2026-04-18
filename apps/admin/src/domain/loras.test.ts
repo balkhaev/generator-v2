@@ -49,6 +49,13 @@ function createInMemoryRepo(): LoraRepository & {
 			rows.set(entry.id, entry);
 			return Promise.resolve(entry);
 		},
+		delete(id) {
+			const existing = rows.get(id) ?? null;
+			if (existing) {
+				rows.delete(id);
+			}
+			return Promise.resolve(existing);
+		},
 		getById(id) {
 			return Promise.resolve(rows.get(id) ?? null);
 		},
@@ -268,6 +275,18 @@ describe("LoraRegistryService", () => {
 		expect(archived?.status).toBe("archived");
 		const restored = await service.update(entry.id, { status: "active" });
 		expect(restored?.status).toBe("active");
+	});
+
+	it("hard-deletes a LoRA", async () => {
+		const entry = await service.createFromUrl({
+			name: "Doomed",
+			sourceUrl: "https://example.com/d.safetensors",
+			baseModel: "z-image",
+		});
+		const removed = await service.delete(entry.id);
+		expect(removed?.id).toBe(entry.id);
+		expect(await service.getById(entry.id)).toBeNull();
+		expect(await service.delete(entry.id)).toBeNull();
 	});
 
 	it("throws when s3 is not configured", async () => {

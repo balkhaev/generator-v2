@@ -73,6 +73,14 @@ export async function updateLora(id: string, patch: UpdateLoraInput) {
 
 export async function archiveLora(id: string) {
 	const payload = await requestJson<{ lora: LoraRegistryEntry }>(
+		`${API_BASE_URL}/api/admin/loras/${id}/archive`,
+		{ method: "POST", credentials: "include" }
+	);
+	return payload.lora;
+}
+
+export async function deleteLora(id: string) {
+	const payload = await requestJson<{ lora: LoraRegistryEntry }>(
 		`${API_BASE_URL}/api/admin/loras/${id}`,
 		{ method: "DELETE", credentials: "include" }
 	);

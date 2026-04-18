@@ -22,6 +22,10 @@ import type { AssetReleaseService } from "@/domain/asset-releases";
 import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
 import type { TrainingProviderSettings } from "@/domain/training-provider-settings";
+import {
+	type AdminSettingsEnvResolver,
+	createAdminSettingsRoutes,
+} from "@/routes/admin-settings";
 import { createAssetReleasePresetRoutes } from "@/routes/asset-release-presets";
 import { createAssetReleaseRoutes } from "@/routes/asset-releases";
 import { createInternalRoutes } from "@/routes/internal";
@@ -36,6 +40,7 @@ interface AppVariables extends AuthVariables {
 }
 
 interface AppOptions {
+	adminSettingsEnvResolver?: AdminSettingsEnvResolver;
 	assetReleasePresetService?: AssetReleasePresetService;
 	assetReleaseService?: AssetReleaseService;
 	authHandler: (request: Request) => Response | Promise<Response>;
@@ -155,6 +160,17 @@ export function createApp(options: AppOptions) {
 				settings: options.trainingProviderSettings,
 			})
 		);
+
+		if (options.adminSettingsEnvResolver) {
+			app.route(
+				"/api/admin/settings",
+				createAdminSettingsRoutes({
+					availability: options.trainingProviderAvailability,
+					envResolver: options.adminSettingsEnvResolver,
+					settings: options.trainingProviderSettings,
+				})
+			);
+		}
 	}
 
 	const studioProxyRoutes = [

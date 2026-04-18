@@ -146,6 +146,10 @@ export class LoraRegistryService {
 		return this.repository.update(id, { status: "archived" });
 	}
 
+	delete(id: string): Promise<LoraRegistryEntry | null> {
+		return this.repository.delete(id);
+	}
+
 	private async uniqueSlug(baseSlug: string): Promise<string> {
 		let slug = baseSlug;
 		let suffix = 2;

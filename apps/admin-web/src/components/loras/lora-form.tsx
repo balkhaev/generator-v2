@@ -248,7 +248,7 @@ export default function LoraForm() {
 	const [selectedVersionId, setSelectedVersionId] = useState<number | null>(
 		null
 	);
-	const [baseModel, setBaseModel] = useState<LoraBaseModel>("z-image");
+	const [baseModel, setBaseModel] = useState<LoraBaseModel>("z-image-turbo");
 	const [defaultWeight, setDefaultWeight] = useState("1");
 	const [description, setDescription] = useState("");
 	const [importStartedAt, setImportStartedAt] = useState<number | null>(null);

@@ -20,6 +20,16 @@ export type ActivePersonLoraTrainingStatus =
 
 export const DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT = 20;
 
+/**
+ * Workflow keys, hardcoded inside the persons service for the avatar onboarding
+ * pipeline. Exposed here so that admin tooling can surface them in the
+ * settings page without depending on persons-internal modules.
+ */
+export const PERSONS_AVATAR_WORKFLOWS = {
+	preview: "fal-flux2-turbo",
+	refine: "fal-flux2-dev-edit",
+} as const;
+
 const PERSON_LORA_ACTIVE_TRAINING_STATUS_SET = new Set<string>(
 	PERSON_LORA_ACTIVE_TRAINING_STATUSES
 );

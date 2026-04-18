@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	archiveLora,
 	createLoraFromUrl,
+	deleteLora,
 	fetchAdminLoras,
 	previewLoraSource,
 	updateLora,
@@ -57,6 +58,16 @@ export function useArchiveLora() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: (id: string) => archiveLora(id),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["admin", "loras"] });
+		},
+	});
+}
+
+export function useDeleteLora() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (id: string) => deleteLora(id),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["admin", "loras"] });
 		},

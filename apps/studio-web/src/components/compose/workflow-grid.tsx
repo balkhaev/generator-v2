@@ -68,11 +68,13 @@ const approachMeta: Record<
 
 const familyTints: Record<BaseModelFamily, string> = {
 	flux: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+	qwen: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
 	sdxl: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
 	sd: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
 	"z-image": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
 	"image-other": "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400",
 	video: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+	audio: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
 	other: "bg-foreground/10 text-muted-foreground",
 };
 

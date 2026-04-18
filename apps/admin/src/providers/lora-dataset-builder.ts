@@ -10,9 +10,9 @@ import { downloadImageAsset } from "@generator/storage";
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const REQUEST_TIMEOUT_MS = 120_000;
-const FLUX_REFERENCE_EDIT_MODEL = "fal-ai/flux-2/edit";
-const DEFAULT_DATASET_POLL_MS = 5000;
-const DEFAULT_DATASET_TIMEOUT_MS = 10 * 60 * 1000;
+export const FLUX_REFERENCE_EDIT_MODEL = "fal-ai/flux-2/edit";
+export const DEFAULT_DATASET_POLL_MS = 5000;
+export const DEFAULT_DATASET_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 2000;
 
@@ -22,10 +22,10 @@ const fileExtensionPattern = /\.[^.]+$/u;
  * Параметры flux-2/edit, подобранные под максимальное сохранение идентичности.
  * Подробное обоснование см. в fal-zib-lora-training.ts (история выбора).
  */
-const IDENTITY_GUIDANCE_SCALE = 1.8;
+export const IDENTITY_GUIDANCE_SCALE = 1.8;
 const IDENTITY_INFERENCE_STEPS = 36;
 
-const IDENTITY_NEGATIVE_PROMPT =
+export const IDENTITY_NEGATIVE_PROMPT =
 	"different person, different face, altered identity, swapped face, plastic surgery look, doll face, cartoon, anime, distorted face, asymmetric face, melted features, blurry face, deformed eyes, extra fingers";
 
 interface ReferenceVariant {

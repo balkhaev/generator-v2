@@ -147,3 +147,40 @@ export interface TrainingProviderSettingsSnapshot {
 	availability: TrainingProviderAvailability[];
 	provider: TrainingProviderName;
 }
+
+export interface DatasetBuilderSettings {
+	guidanceScale: number;
+	model: string;
+	negativePromptPreview: string;
+	note: string;
+	pollMs: number;
+	timeoutMs: number;
+}
+
+export interface RunpodTrainingSettings {
+	baseModel: string;
+	endpointConfigured: boolean;
+	endpointId: string | null;
+	pollMs: number;
+	timeoutMs: number;
+}
+
+export interface PersonsWorkflowDefaults {
+	avatarPreviewWorkflow: string;
+	avatarRefineWorkflow: string;
+	avatarWorkflow: string;
+	loraWorkflow: string;
+}
+
+export interface GeneratorRuntimeSettings {
+	reconcileIntervalMs: number;
+	reconcileWatch: boolean;
+}
+
+export interface AdminSettingsSnapshot {
+	datasetBuilder: DatasetBuilderSettings;
+	generatorRuntime: GeneratorRuntimeSettings;
+	personsDefaults: PersonsWorkflowDefaults;
+	runpodTraining: RunpodTrainingSettings;
+	trainingProvider: TrainingProviderSettingsSnapshot;
+}

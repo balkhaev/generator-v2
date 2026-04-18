@@ -37,6 +37,8 @@ export interface StudioRunRecord {
 	inputImageUrl: string;
 	inputPersonGenerationId?: string | null;
 	inputPersonId?: string | null;
+	/** Персона, чей LoRA подставлен в params при запуске (Studio → Cast). */
+	loraPersonId?: string | null;
 	providerEndpointId?: string | null;
 	providerJobId?: string | null;
 	scenarioId: string;
@@ -48,6 +50,8 @@ export interface CreateStudioRunInput {
 	inputImageUrl?: string;
 	inputPersonGenerationId?: string | null;
 	inputPersonId?: string | null;
+	/** Подставить loraUrl этой персоны в params (нужен PERSONS_API_URL на studio-api). */
+	loraPersonId?: string | null;
 	scenarioId: string;
 }
 

@@ -53,6 +53,8 @@ interface AppOptions {
 	grokClient?: StudioGrokClient;
 	loggerImpl?: Pick<Console, "info" | "error" | "warn">;
 	loraReadRepository?: LoraReadRepository;
+	/** Base URL persons-api (same cookie domain) — для подстановки LoRA персоны в ран. */
+	personsApiBaseUrl?: string;
 	repository: StudioRepository;
 	s3Client?: S3ClientLike;
 	s3Config: S3StorageConfig;
@@ -91,6 +93,7 @@ interface StudioSnapshotResponse {
 		inputLabel: string;
 		inputPersonGenerationId?: string | null;
 		inputPersonId?: string | null;
+		loraPersonId?: string | null;
 		providerEndpointId?: string | null;
 		providerJobId?: string | null;
 		scenarioId: string;
@@ -203,6 +206,7 @@ async function createStudioSnapshot(
 			inputLabel: formatInputLabel(run.inputImageUrl),
 			inputPersonGenerationId: run.inputPersonGenerationId ?? null,
 			inputPersonId: run.inputPersonId ?? null,
+			loraPersonId: run.loraPersonId ?? null,
 			providerEndpointId: run.providerEndpointId ?? null,
 			providerJobId: run.providerJobId ?? null,
 			scenarioId: run.scenarioId,
@@ -228,7 +232,11 @@ export function createApp(options: AppOptions) {
 		options.repository,
 		options.executionClient,
 		options.loggerImpl,
-		options.callbackConfig
+		options.callbackConfig,
+		{
+			fetchImpl: options.fetchImpl,
+			personsApiBaseUrl: options.personsApiBaseUrl,
+		}
 	);
 	const fetchImpl = options.fetchImpl ?? fetch;
 

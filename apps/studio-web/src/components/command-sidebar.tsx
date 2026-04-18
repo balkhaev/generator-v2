@@ -1,5 +1,6 @@
 "use client";
 
+import type { PersonRecord } from "@generator/contracts/persons";
 import { env } from "@generator/env/web";
 import { requestJson } from "@generator/http/client";
 import { normalizeBaseUrl } from "@generator/http/shared";
@@ -12,6 +13,7 @@ import {
 	type ScenarioRunRecord,
 	syncStudioRun,
 	type UploadedInputAsset,
+	type WorkflowDefinition,
 } from "@generator/studio-client/client";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
@@ -50,9 +52,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import IconButton from "@/components/icon-button";
+import PersonLoraSwitcher from "@/components/person-lora-switcher";
 import PersonsInputPicker from "@/components/persons-input-picker";
 import { getMediaType } from "@/components/preview-surface";
 import type { ScenarioCardData } from "@/components/scenario-card-data";
+import { listPersons } from "@/lib/persons-api";
 
 interface CommandSidebarProps {
 	className?: string;
@@ -160,9 +164,16 @@ function createRunDraft(scenarioId: string): RunDraft {
 		inputImageUrl: "",
 		inputPersonGenerationId: null,
 		inputPersonId: null,
+		loraPersonId: null,
 		scenarioId,
 		uploadStorage: null,
 	};
+}
+
+function workflowSupportsPersonLora(workflow: WorkflowDefinition | null) {
+	return Boolean(
+		workflow?.parameters.some((parameter) => parameter.key === "loraUrl")
+	);
 }
 
 function getLatestScenarioInputImage(
@@ -863,6 +874,7 @@ export default function CommandSidebar({
 	const [linkedPerson, setLinkedPerson] = useState<LinkedPersonState>(null);
 	const [runFilter, setRunFilter] = useState<RunFilter>("all");
 	const [isRefreshing, setIsRefreshing] = useState(false);
+	const [studioPersons, setStudioPersons] = useState<PersonRecord[]>([]);
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const focusedRunId = searchParams.get("run");
@@ -950,6 +962,35 @@ export default function CommandSidebar({
 		};
 	}, [focusedRunId]);
 
+	useEffect(() => {
+		listPersons()
+			.then((result) => {
+				setStudioPersons(result.persons);
+			})
+			.catch(() => {
+				setStudioPersons([]);
+			});
+	}, []);
+
+	useEffect(() => {
+		if (!(selectedScenarioId && selectedScenarioWorkflow)) {
+			return;
+		}
+		if (workflowSupportsPersonLora(selectedScenarioWorkflow)) {
+			return;
+		}
+		setRunDrafts((current) => {
+			const draft = current[selectedScenarioId];
+			if (!draft?.loraPersonId) {
+				return current;
+			}
+			return {
+				...current,
+				[selectedScenarioId]: { ...draft, loraPersonId: null },
+			};
+		});
+	}, [selectedScenarioId, selectedScenarioWorkflow]);
+
 	const refreshSnapshot = useCallback(async () => {
 		setIsRefreshing(true);
 		try {
@@ -1025,6 +1066,9 @@ export default function CommandSidebar({
 			if (draft.inputPersonGenerationId) {
 				launchInput.inputPersonGenerationId = draft.inputPersonGenerationId;
 			}
+			if (draft.loraPersonId) {
+				launchInput.loraPersonId = draft.loraPersonId;
+			}
 			const result = await launchStudioRun(launchInput);
 			setSnapshot((current) => {
 				const next = {
@@ -1039,6 +1083,7 @@ export default function CommandSidebar({
 				[scenario.id]: {
 					...createRunDraft(scenario.id),
 					inputImageUrl: result.data.inputImageUrl,
+					loraPersonId: draft.loraPersonId ?? null,
 				},
 			}));
 			toast.success("Run queued.");
@@ -1070,29 +1115,54 @@ export default function CommandSidebar({
 				className
 			)}
 		>
-			<header className="flex shrink-0 items-center gap-1 border-foreground/6 border-b px-2 py-2 dark:border-foreground/10">
-				<div className="min-w-0 flex-1">
-					<ScenarioSwitcher
-						getScenarioHref={getScenarioHref}
-						onCreateScenario={onCreateScenario}
-						onSelect={selectScenario}
-						scenarios={scenarioCards}
-						selectedScenarioId={selectedScenarioId}
-					/>
+			<header className="flex shrink-0 flex-col border-foreground/6 border-b dark:border-foreground/10">
+				<div className="flex items-center gap-1 px-2 py-2">
+					<div className="min-w-0 flex-1">
+						<ScenarioSwitcher
+							getScenarioHref={getScenarioHref}
+							onCreateScenario={onCreateScenario}
+							onSelect={selectScenario}
+							scenarios={scenarioCards}
+							selectedScenarioId={selectedScenarioId}
+						/>
+					</div>
+					<IconButton
+						hint="Refresh snapshot"
+						label="Refresh snapshot"
+						onClick={() => {
+							refreshSnapshot().catch(() => undefined);
+						}}
+					>
+						{isRefreshing ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<RefreshCw className="size-3.5" />
+						)}
+					</IconButton>
 				</div>
-				<IconButton
-					hint="Refresh snapshot"
-					label="Refresh snapshot"
-					onClick={() => {
-						refreshSnapshot().catch(() => undefined);
-					}}
-				>
-					{isRefreshing ? (
-						<Loader2 className="size-3.5 animate-spin" />
-					) : (
-						<RefreshCw className="size-3.5" />
-					)}
-				</IconButton>
+				{selectedScenario &&
+				workflowSupportsPersonLora(selectedScenarioWorkflow) ? (
+					<div className="border-foreground/6 border-t px-2 pb-2 dark:border-foreground/10">
+						<PersonLoraSwitcher
+							onSelect={(personId) => {
+								if (!selectedScenario) {
+									return;
+								}
+								setRunDrafts((current) => ({
+									...current,
+									[selectedScenario.id]: {
+										...(current[selectedScenario.id] ??
+											createRunDraft(selectedScenario.id)),
+										loraPersonId: personId,
+										scenarioId: selectedScenario.id,
+									},
+								}));
+							}}
+							persons={studioPersons}
+							selectedPersonId={selectedRunDraft?.loraPersonId ?? null}
+						/>
+					</div>
+				) : null}
 			</header>
 
 			<div className="min-h-0 flex-1 overflow-y-auto">

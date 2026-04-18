@@ -20,7 +20,11 @@ const service = new StudioService(
 	createGeneratorExecutionClient(getGeneratorApiUrl(), {
 		internalToken: getGeneratorInternalToken(),
 	}),
-	console
+	console,
+	undefined,
+	{
+		personsApiBaseUrl: env.PERSONS_API_URL,
+	}
 );
 
 const eventConsumer = kafkaConfig

@@ -524,6 +524,7 @@ describe("studio backend", () => {
 			inputImageUrl: "https://assets.example.com/input.png",
 			inputPersonGenerationId: null,
 			inputPersonId: null,
+			loraPersonId: null,
 			providerEndpointId: "endpoint-1",
 			providerJobId: "job-1",
 			scenarioId: "scenario-1",

@@ -16,6 +16,7 @@ export function createRunRoutes(service: StudioService) {
 		try {
 			const payload = await c.req.json();
 			const run = await service.launchRun(payload, {
+				cookieHeader: c.req.header("cookie") ?? "",
 				debugCorrelationId: c.get("debugCorrelationId"),
 			});
 			return c.json({ run }, 201);

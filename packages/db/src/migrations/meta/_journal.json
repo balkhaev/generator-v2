@@ -64,6 +64,13 @@
       "when": 1776520733874,
       "tag": "0008_drop_asset_release_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1776527918254,
+      "tag": "0009_whole_titanium_man",
+      "breakpoints": true
     }
   ]
 }

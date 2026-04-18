@@ -71,7 +71,7 @@ function isPersonDatasetGeneration(generation: PersonGenerationRecord) {
  * контейнере раздувает превью до 200+px и они визуально «наезжают» друг
  * на друга при `max-h-*` overflow.
  */
-const THUMB_GRID_CLASSES =
+export const THUMB_GRID_CLASSES =
 	"grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1.5";
 
 interface IdentityTile {

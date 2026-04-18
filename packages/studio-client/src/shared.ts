@@ -64,6 +64,7 @@ export interface ScenarioRunRecord {
 	inputLabel: string;
 	inputPersonGenerationId: string | null;
 	inputPersonId: string | null;
+	loraPersonId?: string | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
 	scenarioId: string;
@@ -230,6 +231,7 @@ function normalizeRunRecord(
 		inputLabel: formatInputLabel(record.inputImageUrl),
 		inputPersonGenerationId: record.inputPersonGenerationId ?? null,
 		inputPersonId: record.inputPersonId ?? null,
+		loraPersonId: record.loraPersonId ?? null,
 		providerEndpointId: record.providerEndpointId ?? null,
 		providerJobId: record.providerJobId ?? null,
 		scenarioId: record.scenarioId,

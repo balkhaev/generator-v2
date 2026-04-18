@@ -41,6 +41,7 @@ const app = createApp({
 	grokClient,
 	loggerImpl: console,
 	loraReadRepository,
+	personsApiBaseUrl: env.PERSONS_API_URL,
 	repository,
 	s3Config: resolveS3StorageConfig(process.env),
 });

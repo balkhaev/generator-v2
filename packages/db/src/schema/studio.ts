@@ -57,6 +57,8 @@ export const studioRun = pgTable(
 		inputImageUrl: text("input_image_url").notNull(),
 		inputPersonId: text("input_person_id"),
 		inputPersonGenerationId: text("input_person_generation_id"),
+		/** Персона, чей LoRA подмешивается в params.loraUrl при запуске (Cast). */
+		loraPersonId: text("lora_person_id"),
 		providerEndpointId: text("provider_endpoint_id"),
 		providerJobId: text("provider_job_id"),
 		status: studioRunStatusEnum("status").notNull().default("queued"),
@@ -75,6 +77,7 @@ export const studioRun = pgTable(
 		index("studio_run_provider_job_id_idx").on(table.providerJobId),
 		index("studio_run_status_idx").on(table.status),
 		index("studio_run_input_person_id_idx").on(table.inputPersonId),
+		index("studio_run_lora_person_id_idx").on(table.loraPersonId),
 		uniqueIndex("studio_run_generator_run_uidx").on(table.generatorRunId),
 	]
 );

@@ -4,12 +4,14 @@ import type {
 	ScenarioParamValue,
 	SyncGeneratorExecutionInput,
 } from "@generator/contracts/generator";
+import type { PersonRecord } from "@generator/contracts/persons";
 import type {
 	StudioRunRecord,
 	StudioScenarioRecord,
 	StudioShotArtifactKind,
 	StudioShotRecord,
 } from "@generator/contracts/studio";
+import { normalizeBaseUrl } from "@generator/http/shared";
 import { getWorkflowDefinition } from "@generator/workflows";
 import { z } from "zod";
 
@@ -37,6 +39,7 @@ export const createStudioRunInputSchema = z.object({
 	inputImageUrl: z.url("Input image URL must be a valid URL").optional(),
 	inputPersonGenerationId: z.string().trim().min(1).optional().nullable(),
 	inputPersonId: z.string().trim().min(1).optional().nullable(),
+	loraPersonId: z.string().trim().min(1).optional().nullable(),
 	scenarioId: z.string().trim().min(1, "Scenario id is required"),
 });
 
@@ -95,6 +98,7 @@ export interface StudioRunEntity {
 	inputImageUrl: string;
 	inputPersonGenerationId: string | null;
 	inputPersonId: string | null;
+	loraPersonId: string | null;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
 	scenarioId: string;
@@ -157,6 +161,7 @@ export interface StudioRepository {
 				| "inputImageUrl"
 				| "inputPersonGenerationId"
 				| "inputPersonId"
+				| "loraPersonId"
 				| "providerEndpointId"
 				| "providerJobId"
 				| "status"
@@ -196,6 +201,11 @@ export interface StudioExecutionClient {
 }
 
 type StudioLogger = Pick<Console, "info" | "error">;
+
+type HttpFetch = (
+	input: string | URL | Request,
+	init?: RequestInit
+) => Promise<Response>;
 
 function toScenarioParamValue(value: unknown): ScenarioParamValue {
 	if (
@@ -243,6 +253,7 @@ function toStudioRunRecord(entity: StudioRunEntity): StudioRunRecord {
 		inputImageUrl: entity.inputImageUrl,
 		inputPersonGenerationId: entity.inputPersonGenerationId,
 		inputPersonId: entity.inputPersonId,
+		loraPersonId: entity.loraPersonId ?? null,
 		providerEndpointId: entity.providerEndpointId,
 		providerJobId: entity.providerJobId,
 		scenarioId: entity.scenarioId,
@@ -280,22 +291,64 @@ function mapExecutionToArtifacts(
 		}));
 }
 
+function workflowAcceptsOptionalLora(workflowKey: string) {
+	const definition = getWorkflowDefinition(workflowKey);
+	return Boolean(
+		definition?.parameterFields.some((field) => field.key === "loraUrl")
+	);
+}
+
+async function resolvePersonLoraUrl(params: {
+	cookieHeader: string;
+	fetchImpl: HttpFetch;
+	personId: string;
+	personsApiBaseUrl: string;
+}): Promise<string | null> {
+	const base = normalizeBaseUrl(params.personsApiBaseUrl);
+	const response = await params.fetchImpl(
+		`${base}/api/persons/${params.personId}`,
+		{
+			headers: {
+				accept: "application/json",
+				...(params.cookieHeader ? { cookie: params.cookieHeader } : {}),
+			},
+		}
+	);
+	if (!response.ok) {
+		const fragment = (await response.text()).slice(0, 220);
+		throw new BadRequestError(
+			`Could not load Cast person (${response.status}): ${fragment}`
+		);
+	}
+	const payload = (await response.json()) as { person: PersonRecord };
+	const url = payload.person.loraUrl?.trim();
+	return url && url.length > 0 ? url : null;
+}
+
 export class StudioService {
+	private readonly callbackConfig?: { token: string; url?: string };
 	private readonly executionClient: StudioExecutionClient;
 	private readonly logger: StudioLogger;
+	private readonly outboundFetch: HttpFetch;
+	private readonly personsApiBaseUrl?: string;
 	private readonly repository: StudioRepository;
-	private readonly callbackConfig?: { token: string; url?: string };
 
 	constructor(
 		repository: StudioRepository,
 		executionClient: StudioExecutionClient,
 		logger: StudioLogger = console,
-		callbackConfig?: { token: string; url?: string }
+		callbackConfig?: { token: string; url?: string },
+		resolver?: {
+			fetchImpl?: HttpFetch;
+			personsApiBaseUrl?: string;
+		}
 	) {
 		this.repository = repository;
 		this.executionClient = executionClient;
 		this.logger = logger;
 		this.callbackConfig = callbackConfig;
+		this.personsApiBaseUrl = resolver?.personsApiBaseUrl?.trim();
+		this.outboundFetch = resolver?.fetchImpl ?? fetch;
 	}
 
 	private resolveLatestExecution(
@@ -380,9 +433,46 @@ export class StudioService {
 		return run ? toStudioRunRecord(run) : null;
 	}
 
+	private async buildMergedExecutionParams(
+		scenario: StudioScenarioEntity,
+		parsed: z.infer<typeof createStudioRunInputSchema>,
+		cookieHeader: string
+	): Promise<Record<string, unknown>> {
+		const mergedExecutionParams: Record<string, unknown> = {
+			...(scenario.params as Record<string, unknown>),
+		};
+		if (!parsed.loraPersonId) {
+			return mergedExecutionParams;
+		}
+		if (!workflowAcceptsOptionalLora(scenario.workflowKey)) {
+			throw new BadRequestError(
+				"This scenario does not support applying a Cast person LoRA."
+			);
+		}
+		if (!this.personsApiBaseUrl) {
+			throw new BadRequestError(
+				"PERSONS_API_URL is not configured on studio-api; cannot resolve Cast LoRA."
+			);
+		}
+		const loraUrl = await resolvePersonLoraUrl({
+			cookieHeader,
+			fetchImpl: this.outboundFetch,
+			personId: parsed.loraPersonId,
+			personsApiBaseUrl: this.personsApiBaseUrl,
+		});
+		if (!loraUrl) {
+			throw new BadRequestError(
+				"Selected Cast person has no trained LoRA yet."
+			);
+		}
+		mergedExecutionParams.loraUrl = loraUrl;
+		return mergedExecutionParams;
+	}
+
 	async launchRun(
 		input: z.input<typeof createStudioRunInputSchema>,
 		options?: {
+			cookieHeader?: string;
 			debugCorrelationId?: string;
 		}
 	) {
@@ -398,6 +488,12 @@ export class StudioService {
 			);
 		}
 
+		const mergedExecutionParams = await this.buildMergedExecutionParams(
+			scenario,
+			parsed,
+			options?.cookieHeader ?? ""
+		);
+
 		const createdRun = await this.repository.createRun({
 			errorSummary: null,
 			generatorRunId: null,
@@ -405,6 +501,7 @@ export class StudioService {
 			inputImageUrl: parsed.inputImageUrl ?? "",
 			inputPersonGenerationId: parsed.inputPersonGenerationId ?? null,
 			inputPersonId: parsed.inputPersonId ?? null,
+			loraPersonId: parsed.loraPersonId ?? null,
 			providerEndpointId: null,
 			providerJobId: null,
 			scenarioId: scenario.id,
@@ -428,11 +525,11 @@ export class StudioService {
 				...(parsed.inputImageUrl
 					? { inputImageUrl: parsed.inputImageUrl }
 					: {}),
-				params: scenario.params,
+				params: mergedExecutionParams,
 				prompt: scenario.prompt,
 				workflowKey: scenario.workflowKey,
 			},
-			options
+			{ debugCorrelationId: options?.debugCorrelationId }
 		);
 
 		this.logger.info("studio.execution.create", {

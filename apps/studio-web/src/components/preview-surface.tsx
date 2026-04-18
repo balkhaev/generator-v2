@@ -24,11 +24,11 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import IconButton from "./icon-button";
+import VideoPlayer from "./video-player";
 
 const toolbarLinkClass =
 	"inline-flex size-7 items-center justify-center rounded-none text-muted-foreground transition hover:bg-muted hover:text-foreground";
 
-const emptyCaptionTrack = "data:text/vtt;charset=utf-8,WEBVTT";
 const videoExtensionPattern = /\.(mp4|mov|webm)(\?.*)?$/i;
 const videoDataUriPattern = /^data:video\//i;
 
@@ -73,26 +73,7 @@ async function copyTextToClipboard(value: string) {
 	throw new Error("Clipboard API is not available.");
 }
 
-function renderAssetPreview(asset: StudioMediaAsset) {
-	if (asset.mediaType === "video") {
-		return (
-			<video
-				className="h-full w-full bg-black/90 object-contain"
-				controls
-				preload="metadata"
-				src={asset.url}
-			>
-				<track
-					default
-					kind="captions"
-					label="Captions unavailable"
-					src={emptyCaptionTrack}
-					srcLang="en"
-				/>
-			</video>
-		);
-	}
-
+function renderImagePreview(asset: StudioMediaAsset) {
 	return (
 		<div
 			aria-label={asset.label}
@@ -100,6 +81,202 @@ function renderAssetPreview(asset: StudioMediaAsset) {
 			role="img"
 			style={{ backgroundImage: `url("${asset.url}")` }}
 		/>
+	);
+}
+
+function PreviewEmptyState() {
+	return (
+		<div className="studio-aurora flex h-full items-center justify-center">
+			<div className="grid max-w-xs gap-3 text-center">
+				<div className="mx-auto flex size-10 items-center justify-center rounded-xl bg-muted/15 dark:bg-muted/10">
+					<MonitorPlay
+						className="size-5 text-muted-foreground/60"
+						strokeWidth={1.5}
+					/>
+				</div>
+				<p className="text-muted-foreground text-sm">No media selected</p>
+				<p className="text-muted-foreground/60 text-xs leading-relaxed">
+					Upload a source image and queue a run to see results here. Use the
+					dock below to compose and launch.
+				</p>
+			</div>
+		</div>
+	);
+}
+
+function PreviewBadges({ asset }: { asset: StudioMediaAsset }) {
+	return (
+		<div className="absolute top-2 left-2 flex items-center gap-1.5">
+			<span
+				className={cn(
+					"rounded-full px-2 py-0.5 text-[11px]",
+					asset.mediaKind === "output"
+						? "bg-emerald-500/15 text-emerald-50 backdrop-blur-md"
+						: "bg-sky-500/15 text-sky-50 backdrop-blur-md"
+				)}
+			>
+				{asset.mediaKind}
+			</span>
+			<span className="inline-flex items-center gap-1 rounded-full bg-background/70 px-2 py-0.5 text-[11px] backdrop-blur-md">
+				{asset.mediaType === "video" ? (
+					<Film className="size-3" />
+				) : (
+					<ImageIcon className="size-3" />
+				)}
+				{asset.mediaType}
+			</span>
+		</div>
+	);
+}
+
+function PreviewToolbar({
+	asset,
+	isFullscreen,
+	isSavingShot,
+	onCopyUrl,
+	onSaveShot,
+	onToggleFullscreen,
+}: {
+	asset: StudioMediaAsset;
+	isFullscreen: boolean;
+	isSavingShot?: boolean;
+	onCopyUrl: () => void;
+	onSaveShot?: (asset: StudioMediaAsset) => void;
+	onToggleFullscreen: () => void;
+}) {
+	return (
+		<div className="absolute top-2 right-2 flex items-center gap-1 rounded-lg bg-background/70 px-1 py-1 backdrop-blur-md">
+			{onSaveShot && asset.mediaKind === "output" ? (
+				<IconButton
+					disabled={isSavingShot}
+					hint="Save as shot"
+					label="Save as shot"
+					onClick={() => onSaveShot(asset)}
+				>
+					{isSavingShot ? (
+						<Loader2 className="size-3.5 animate-spin" />
+					) : (
+						<Bookmark className="size-3.5" />
+					)}
+				</IconButton>
+			) : null}
+			<IconButton hint="Copy URL" label="Copy media URL" onClick={onCopyUrl}>
+				<Copy className="size-3.5" />
+			</IconButton>
+			<Tooltip>
+				<TooltipTrigger
+					render={
+						<a
+							aria-label="Open media in new tab"
+							className={toolbarLinkClass}
+							href={asset.url}
+							rel="noopener noreferrer"
+							target="_blank"
+						>
+							<ExternalLink className="size-3.5" />
+							<span className="sr-only">Open media in new tab</span>
+						</a>
+					}
+				/>
+				<TooltipContent>Open in new tab</TooltipContent>
+			</Tooltip>
+			<Tooltip>
+				<TooltipTrigger
+					render={
+						<a
+							aria-label="Download media"
+							className={toolbarLinkClass}
+							download={deriveDownloadName(asset)}
+							href={asset.url}
+							rel="noopener noreferrer"
+							target="_blank"
+						>
+							<Download className="size-3.5" />
+							<span className="sr-only">Download media</span>
+						</a>
+					}
+				/>
+				<TooltipContent>Download</TooltipContent>
+			</Tooltip>
+			<IconButton
+				hint={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+				label="Toggle fullscreen"
+				onClick={onToggleFullscreen}
+			>
+				<Maximize2 className="size-3.5" />
+			</IconButton>
+		</div>
+	);
+}
+
+function PreviewNavigation({
+	onNext,
+	onPrevious,
+}: {
+	onNext?: () => void;
+	onPrevious?: () => void;
+}) {
+	return (
+		<div className="absolute top-1/2 right-2 left-2 flex -translate-y-1/2 items-center justify-between">
+			<IconButton
+				disabled={!onPrevious}
+				hint="Previous (←)"
+				label="Previous media"
+				onClick={onPrevious}
+				size="icon"
+				variant="outline"
+			>
+				<ChevronLeft className="size-4" />
+			</IconButton>
+			<IconButton
+				disabled={!onNext}
+				hint="Next (→)"
+				label="Next media"
+				onClick={onNext}
+				size="icon"
+				variant="outline"
+			>
+				<ChevronRight className="size-4" />
+			</IconButton>
+		</div>
+	);
+}
+
+function PreviewCounter({
+	currentIndex,
+	totalAssets,
+}: {
+	currentIndex: number;
+	totalAssets: number;
+}) {
+	return (
+		<span className="shrink-0 rounded-full bg-foreground/[0.06] px-2 py-0.5 text-[10px] text-muted-foreground tabular-nums">
+			{currentIndex + 1} / {totalAssets}
+		</span>
+	);
+}
+
+function PreviewBottomInfo({
+	asset,
+	currentIndex,
+	totalAssets,
+}: {
+	asset: StudioMediaAsset;
+	currentIndex: number;
+	totalAssets: number;
+}) {
+	return (
+		<div className="absolute right-2 bottom-2 left-2 flex items-end justify-between gap-2 rounded-lg bg-background/80 px-3 py-2 backdrop-blur-lg dark:bg-background/60">
+			<div className="min-w-0">
+				<p className="truncate text-xs">{asset.label}</p>
+				<p className="truncate text-[11px] text-muted-foreground">
+					{asset.meta}
+				</p>
+			</div>
+			{totalAssets > 1 ? (
+				<PreviewCounter currentIndex={currentIndex} totalAssets={totalAssets} />
+			) : null}
+		</div>
 	);
 }
 
@@ -203,154 +380,52 @@ export default function PreviewSurface({
 			ref={containerRef}
 		>
 			{isEmpty ? (
-				(emptyState ?? (
-					<div className="studio-aurora flex h-full items-center justify-center">
-						<div className="grid max-w-xs gap-3 text-center">
-							<div className="mx-auto flex size-10 items-center justify-center rounded-xl bg-muted/15 dark:bg-muted/10">
-								<MonitorPlay
-									className="size-5 text-muted-foreground/60"
-									strokeWidth={1.5}
-								/>
-							</div>
-							<p className="text-muted-foreground text-sm">No media selected</p>
-							<p className="text-muted-foreground/60 text-xs leading-relaxed">
-								Upload a source image and queue a run to see results here. Use
-								the dock below to compose and launch.
-							</p>
-						</div>
-					</div>
-				))
+				(emptyState ?? <PreviewEmptyState />)
 			) : (
 				<>
 					<div className="relative flex h-full items-center justify-center overflow-hidden">
-						{renderAssetPreview(asset)}
+						{asset.mediaType === "video" ? (
+							<VideoPlayer
+								bottomBarExtra={
+									showNavigation ? (
+										<PreviewCounter
+											currentIndex={currentIndex}
+											totalAssets={totalAssets}
+										/>
+									) : null
+								}
+								key={asset.id}
+								label={asset.label}
+								meta={asset.meta}
+								src={asset.url}
+							/>
+						) : (
+							renderImagePreview(asset)
+						)}
 					</div>
 
 					{showNavigation ? (
-						<div className="absolute top-1/2 right-2 left-2 flex -translate-y-1/2 items-center justify-between">
-							<IconButton
-								disabled={!onPrevious}
-								hint="Previous (←)"
-								label="Previous media"
-								onClick={onPrevious}
-								size="icon"
-								variant="outline"
-							>
-								<ChevronLeft className="size-4" />
-							</IconButton>
-							<IconButton
-								disabled={!onNext}
-								hint="Next (→)"
-								label="Next media"
-								onClick={onNext}
-								size="icon"
-								variant="outline"
-							>
-								<ChevronRight className="size-4" />
-							</IconButton>
-						</div>
+						<PreviewNavigation onNext={onNext} onPrevious={onPrevious} />
 					) : null}
 
-					<div className="absolute top-2 left-2 flex items-center gap-1.5">
-						<span
-							className={cn(
-								"rounded-full px-2 py-0.5 text-[11px]",
-								asset.mediaKind === "output"
-									? "bg-emerald-500/15 text-emerald-50 backdrop-blur-md"
-									: "bg-sky-500/15 text-sky-50 backdrop-blur-md"
-							)}
-						>
-							{asset.mediaKind}
-						</span>
-						<span className="inline-flex items-center gap-1 rounded-full bg-background/70 px-2 py-0.5 text-[11px] backdrop-blur-md">
-							{asset.mediaType === "video" ? (
-								<Film className="size-3" />
-							) : (
-								<ImageIcon className="size-3" />
-							)}
-							{asset.mediaType}
-						</span>
-					</div>
+					<PreviewBadges asset={asset} />
 
-					<div className="absolute top-2 right-2 flex items-center gap-1 rounded-lg bg-background/70 px-1 py-1 backdrop-blur-md">
-						{onSaveShot && asset.mediaKind === "output" ? (
-							<IconButton
-								disabled={isSavingShot}
-								hint="Save as shot"
-								label="Save as shot"
-								onClick={() => onSaveShot(asset)}
-							>
-								{isSavingShot ? (
-									<Loader2 className="size-3.5 animate-spin" />
-								) : (
-									<Bookmark className="size-3.5" />
-								)}
-							</IconButton>
-						) : null}
-						<IconButton
-							hint="Copy URL"
-							label="Copy media URL"
-							onClick={handleCopyUrl}
-						>
-							<Copy className="size-3.5" />
-						</IconButton>
-						<Tooltip>
-							<TooltipTrigger
-								render={
-									<a
-										aria-label="Open media in new tab"
-										className={toolbarLinkClass}
-										href={asset.url}
-										rel="noopener noreferrer"
-										target="_blank"
-									>
-										<ExternalLink className="size-3.5" />
-										<span className="sr-only">Open media in new tab</span>
-									</a>
-								}
-							/>
-							<TooltipContent>Open in new tab</TooltipContent>
-						</Tooltip>
-						<Tooltip>
-							<TooltipTrigger
-								render={
-									<a
-										aria-label="Download media"
-										className={toolbarLinkClass}
-										download={deriveDownloadName(asset)}
-										href={asset.url}
-										rel="noopener noreferrer"
-										target="_blank"
-									>
-										<Download className="size-3.5" />
-										<span className="sr-only">Download media</span>
-									</a>
-								}
-							/>
-							<TooltipContent>Download</TooltipContent>
-						</Tooltip>
-						<IconButton
-							hint={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-							label="Toggle fullscreen"
-							onClick={handleToggleFullscreen}
-						>
-							<Maximize2 className="size-3.5" />
-						</IconButton>
-					</div>
+					<PreviewToolbar
+						asset={asset}
+						isFullscreen={isFullscreen}
+						isSavingShot={isSavingShot}
+						onCopyUrl={handleCopyUrl}
+						onSaveShot={onSaveShot}
+						onToggleFullscreen={handleToggleFullscreen}
+					/>
 
-					<div className="absolute right-2 bottom-2 left-2 flex items-end justify-between gap-2 rounded-lg bg-background/80 px-3 py-2 backdrop-blur-lg dark:bg-background/60">
-						<div className="min-w-0">
-							<p className="truncate text-xs">{asset.label}</p>
-							<p className="truncate text-[11px] text-muted-foreground">
-								{asset.meta}
-							</p>
-						</div>
-						{showNavigation ? (
-							<span className="shrink-0 rounded-full bg-foreground/[0.06] px-2 py-0.5 text-[10px] text-muted-foreground tabular-nums">
-								{currentIndex + 1} / {totalAssets}
-							</span>
-						) : null}
-					</div>
+					{asset.mediaType === "video" ? null : (
+						<PreviewBottomInfo
+							asset={asset}
+							currentIndex={currentIndex}
+							totalAssets={totalAssets}
+						/>
+					)}
 				</>
 			)}
 		</div>

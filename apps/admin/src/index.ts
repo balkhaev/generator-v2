@@ -30,6 +30,7 @@ import {
 	createRuntimeConfigSetup,
 	seedCredentialsFromEnv,
 	seedSettingsFromEnv,
+	seedSettingsFromLegacyRedis,
 } from "@/runtime-config/setup";
 
 const generatorBaseUrl = getGeneratorApiUrl();
@@ -189,21 +190,27 @@ if (runtimeConfigSetup) {
 		});
 	});
 
-	seedSettingsFromEnv(runtimeConfigSetup.store, {
-		settings: {
-			"prompt-enhance": {
-				openrouterModel: env.OPENROUTER_MODEL,
-				provider: env.PROMPT_ENHANCE_PROVIDER,
-			},
-			training: {
-				provider: env.TRAINING_PROVIDER,
-			},
-		},
-	}).catch((error) => {
-		console.warn("admin.runtime-config.seed_settings_failed_outer", {
-			message: error instanceof Error ? error.message : String(error),
+	// Migrate legacy Redis-backed admin settings first; the env seed below only
+	// runs for keys that are still missing afterwards.
+	seedSettingsFromLegacyRedis(runtimeConfigSetup.store, { redisUrl })
+		.then(() =>
+			seedSettingsFromEnv(runtimeConfigSetup.store, {
+				settings: {
+					"prompt-enhance": {
+						openrouterModel: env.OPENROUTER_MODEL,
+						provider: env.PROMPT_ENHANCE_PROVIDER,
+					},
+					training: {
+						provider: env.TRAINING_PROVIDER,
+					},
+				},
+			})
+		)
+		.catch((error) => {
+			console.warn("admin.runtime-config.seed_settings_failed_outer", {
+				message: error instanceof Error ? error.message : String(error),
+			});
 		});
-	});
 } else {
 	console.warn("admin.runtime-config.disabled", {
 		reason:

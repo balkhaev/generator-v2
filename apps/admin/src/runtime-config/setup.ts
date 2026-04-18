@@ -187,6 +187,124 @@ function isDomainNameLocal(value: string): value is DomainName {
 	return value in domains;
 }
 
+/**
+ * Migrates legacy admin Redis keys (the per-domain settings the admin UI used
+ * to write directly to Redis) into runtime_setting rows. Runs before the env
+ * seed so an explicitly chosen "openrouter" provider in Redis takes priority
+ * over the env-derived default. Idempotent: skips domain/key pairs that
+ * already exist in the runtime-config store.
+ *
+ * Once every consumer reads from runtime-config and the admin mirror is in
+ * place, this function can be deleted along with the Redis legacy keys.
+ */
+export async function seedSettingsFromLegacyRedis(
+	store: RuntimeConfigStore,
+	options: { redisUrl: string },
+	logger: Pick<Console, "info" | "warn"> = console
+): Promise<void> {
+	const redis = new IORedis(options.redisUrl, {
+		commandTimeout: 1500,
+		enableOfflineQueue: false,
+		lazyConnect: false,
+		maxRetriesPerRequest: 1,
+	});
+	redis.on("error", () => {
+		// Errors are surfaced via the read attempts below; suppress the global
+		// listener so a transient Redis hiccup doesn't crash boot.
+	});
+
+	const migrations: LegacyRedisMigration[] = [
+		{
+			domain: "prompt-enhance",
+			key: "provider",
+			redisKey: "admin:prompt-enhance-provider",
+		},
+		{
+			domain: "prompt-enhance",
+			key: "openrouterModel",
+			redisKey: "admin:prompt-enhance-openrouter-model",
+		},
+		{
+			domain: "training",
+			key: "provider",
+			redisKey: "admin:training-provider",
+		},
+	];
+
+	try {
+		for (const migration of migrations) {
+			await applyLegacyRedisMigration({
+				logger,
+				migration,
+				redis,
+				store,
+			});
+		}
+	} finally {
+		await redis.quit().catch(() => {
+			// Already closing.
+		});
+	}
+}
+
+interface LegacyRedisMigration {
+	coerce?: (value: string) => unknown;
+	domain: DomainName;
+	key: string;
+	redisKey: string;
+}
+
+async function applyLegacyRedisMigration(opts: {
+	logger: Pick<Console, "info" | "warn">;
+	migration: LegacyRedisMigration;
+	redis: IORedis;
+	store: RuntimeConfigStore;
+}): Promise<void> {
+	const { logger, migration, redis, store } = opts;
+	let raw: string | null;
+	try {
+		raw = await redis.get(migration.redisKey);
+	} catch (error) {
+		logger.warn?.("admin.runtime-config.legacy_redis_read_failed", {
+			message: error instanceof Error ? error.message : String(error),
+			redisKey: migration.redisKey,
+		});
+		return;
+	}
+	const trimmed = raw?.trim();
+	if (!trimmed) {
+		return;
+	}
+	const value = migration.coerce ? migration.coerce(trimmed) : trimmed;
+	const existing = await db
+		.select()
+		.from(runtimeSetting)
+		.where(
+			and(
+				eq(runtimeSetting.domain, migration.domain),
+				eq(runtimeSetting.key, migration.key)
+			)
+		);
+	if (existing.length > 0 && existing[0]?.value === value) {
+		return;
+	}
+	try {
+		await store.setSetting(migration.domain, migration.key, value);
+		logger.info?.("admin.runtime-config.seeded_setting_from_redis", {
+			domain: migration.domain,
+			key: migration.key,
+			previousValue: existing[0]?.value ?? null,
+			redisKey: migration.redisKey,
+		});
+	} catch (error) {
+		logger.warn?.("admin.runtime-config.seed_setting_from_redis_failed", {
+			domain: migration.domain,
+			key: migration.key,
+			message: error instanceof Error ? error.message : String(error),
+		});
+	}
+}
+
 function collectAllCredentialRefs(): CredentialRef[] {
 	const seen = new Set<string>();
 	const out: CredentialRef[] = [];

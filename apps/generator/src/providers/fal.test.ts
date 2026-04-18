@@ -220,6 +220,76 @@ describe("fal provider", () => {
 		).rejects.toThrow("Unauthorized: invalid API key");
 	});
 
+	it("throws on 422 with FastAPI-style detail array", async () => {
+		const fetchImpl = mock(() => {
+			return Promise.resolve(
+				new Response(
+					JSON.stringify({
+						detail: [
+							{
+								loc: ["body", "image_url"],
+								msg: "Input should be a valid URL",
+								type: "url_parsing",
+							},
+							{
+								loc: ["body", "num_frames"],
+								msg: "Input should be less than or equal to 161",
+								type: "less_than_equal",
+							},
+						],
+					}),
+					{
+						status: 422,
+						headers: { "content-type": "application/json" },
+					}
+				)
+			);
+		});
+
+		const client = createFalClient({
+			apiKey: "fal_test_key",
+			fetchImpl,
+		});
+
+		await expect(
+			client.submit({
+				__falModel: "fal-ai/wan/v2.2-a14b/image-to-video/lora",
+				image_url: "not-a-url",
+				prompt: "test",
+			})
+		).rejects.toThrow(
+			"body.image_url: Input should be a valid URL; body.num_frames: Input should be less than or equal to 161"
+		);
+	});
+
+	it("throws on 422 with nested error.message", async () => {
+		const fetchImpl = mock(() => {
+			return Promise.resolve(
+				new Response(
+					JSON.stringify({
+						error: { code: "validation_error", message: "Invalid resolution" },
+					}),
+					{
+						status: 422,
+						headers: { "content-type": "application/json" },
+					}
+				)
+			);
+		});
+
+		const client = createFalClient({
+			apiKey: "fal_test_key",
+			fetchImpl,
+		});
+
+		await expect(
+			client.submit({
+				__falModel: "fal-ai/wan/v2.2-a14b/text-to-video/lora",
+				prompt: "test",
+			})
+		).rejects.toThrow("Invalid resolution");
+	});
+
 	it("throws when __falModel is missing from payload", async () => {
 		const client = createFalClient({
 			apiKey: "fal_test_key",

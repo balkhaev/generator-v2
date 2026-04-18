@@ -326,10 +326,9 @@ describe("workflow registry", () => {
 				prompt: "a fast handheld shot through a busy market",
 			})
 		).toMatchObject({
-			__falModel: "fal-ai/ltx-2.3-22b/text-to-video/lora",
+			__falModel: "fal-ai/ltx-2.3-22b/text-to-video",
 			fps: 24,
 			generate_audio: true,
-			loras: [],
 			num_frames: 121,
 			num_inference_steps: 40,
 			prompt: "a fast handheld shot through a busy market",
@@ -337,39 +336,38 @@ describe("workflow registry", () => {
 		});
 	});
 
-	it("builds the fal-ltx-2-3 image-to-video payload with optional LoRA", () => {
+	it("builds the fal-ltx-2-3 image-to-video payload without LoRA fields", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-image-to-video");
 
-		expect(
-			workflow?.buildProviderInput({
-				inputImageUrl: "https://storage.example.com/reference.png",
-				params: {
-					endImageUrl: "",
-					fps: 24,
-					loraScale: 0.5,
-					loraUrl: "https://storage.example.com/ltx-lora.safetensors",
-					numFrames: 121,
-					numInferenceSteps: 40,
-					videoSize: "auto",
-				},
-				prompt: "animate the still image with a slow dolly push",
-			})
-		).toMatchObject({
-			__falModel: "fal-ai/ltx-2.3-22b/image-to-video/lora",
+		const payload = workflow?.buildProviderInput({
+			inputImageUrl: "https://storage.example.com/reference.png",
+			params: {
+				endImageUrl: "",
+				fps: 24,
+				loraScale: 0.5,
+				loraUrl: "https://storage.example.com/ltx-lora.safetensors",
+				numFrames: 121,
+				numInferenceSteps: 40,
+				videoSize: "auto",
+			},
+			prompt: "animate the still image with a slow dolly push",
+		});
+
+		expect(payload).toMatchObject({
+			__falModel: "fal-ai/ltx-2.3-22b/image-to-video",
 			fps: 24,
 			generate_audio: true,
 			image_url: "https://storage.example.com/reference.png",
-			loras: [
-				{
-					path: "https://storage.example.com/ltx-lora.safetensors",
-					scale: 0.5,
-				},
-			],
 			num_frames: 121,
 			num_inference_steps: 40,
 			prompt: "animate the still image with a slow dolly push",
 			video_size: "auto",
 		});
+		// LTX-2.3-22B does not expose a `/lora` submodel — make sure we never
+		// forward `loras`/`loraUrl`/`loraScale` to fal.
+		expect(payload).not.toHaveProperty("loras");
+		expect(payload).not.toHaveProperty("loraUrl");
+		expect(payload).not.toHaveProperty("loraScale");
 	});
 
 	it("extracts image urls from fal response format", () => {

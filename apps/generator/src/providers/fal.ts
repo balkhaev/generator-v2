@@ -25,16 +25,137 @@ export function normalizeFalStatus(status: string): InferenceStatus {
 	return normalized;
 }
 
-function extractErrorMessage(
-	body: Record<string, unknown>,
-	fallbackStatus: number
-): string {
-	for (const key of ["detail", "error", "message"]) {
+function pickValidationMessage(record: Record<string, unknown>): string | null {
+	if (typeof record.msg === "string" && record.msg.length > 0) {
+		return record.msg;
+	}
+	if (typeof record.message === "string" && record.message.length > 0) {
+		return record.message;
+	}
+	return null;
+}
+
+function formatDetailEntry(entry: unknown): string | null {
+	if (typeof entry === "string" && entry.length > 0) {
+		return entry;
+	}
+	if (!entry || typeof entry !== "object") {
+		return null;
+	}
+	const record = entry as Record<string, unknown>;
+	const msg = pickValidationMessage(record);
+	if (!msg) {
+		return null;
+	}
+	const rawLoc = record.loc;
+	let location = "";
+	if (Array.isArray(rawLoc)) {
+		const parts = rawLoc.filter(
+			(item): item is string | number =>
+				typeof item === "string" || typeof item === "number"
+		);
+		if (parts.length > 0) {
+			location = parts.join(".");
+		}
+	}
+	return location ? `${location}: ${msg}` : msg;
+}
+
+function joinDetailEntries(entries: unknown[]): string | null {
+	const parts = entries
+		.map(formatDetailEntry)
+		.filter((item): item is string => item !== null);
+	return parts.length > 0 ? parts.join("; ") : null;
+}
+
+function stringifyBodySnippet(body: Record<string, unknown>): string | null {
+	const keys = Object.keys(body);
+	if (keys.length === 0) {
+		return null;
+	}
+	try {
+		const encoded = JSON.stringify(body);
+		if (encoded.length <= 2000) {
+			return encoded;
+		}
+		return `${encoded.slice(0, 1997)}…`;
+	} catch {
+		return null;
+	}
+}
+
+function messageFromDetailField(detail: unknown): string | null {
+	if (typeof detail === "string" && detail.length > 0) {
+		return detail;
+	}
+	if (Array.isArray(detail)) {
+		return joinDetailEntries(detail);
+	}
+	if (detail && typeof detail === "object") {
+		try {
+			return JSON.stringify(detail);
+		} catch {
+			return null;
+		}
+	}
+	return null;
+}
+
+function messageFromNestedError(body: Record<string, unknown>): string | null {
+	const nestedError = body.error;
+	if (!nestedError || typeof nestedError !== "object") {
+		return null;
+	}
+	const message = (nestedError as { message?: unknown }).message;
+	if (typeof message === "string" && message.length > 0) {
+		return message;
+	}
+	return null;
+}
+
+function messageFromTopLevelStrings(
+	body: Record<string, unknown>
+): string | null {
+	for (const key of ["error", "message"] as const) {
 		const value = body[key];
 		if (typeof value === "string" && value.length > 0) {
 			return value;
 		}
 	}
+	return null;
+}
+
+function extractErrorMessage(
+	body: Record<string, unknown>,
+	fallbackStatus: number
+): string {
+	const fromDetail = messageFromDetailField(body.detail);
+	if (fromDetail) {
+		return fromDetail;
+	}
+
+	const fromNested = messageFromNestedError(body);
+	if (fromNested) {
+		return fromNested;
+	}
+
+	const fromTop = messageFromTopLevelStrings(body);
+	if (fromTop) {
+		return fromTop;
+	}
+
+	if (Array.isArray(body.errors)) {
+		const joined = joinDetailEntries(body.errors);
+		if (joined) {
+			return joined;
+		}
+	}
+
+	const snippet = stringifyBodySnippet(body);
+	if (snippet) {
+		return snippet;
+	}
+
 	return `fal.ai request failed with status ${fallbackStatus}`;
 }
 

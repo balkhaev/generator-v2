@@ -115,11 +115,9 @@ describe("fal workflow registry", () => {
 		});
 	});
 
-	it("always targets the /lora endpoints for wan/ltx and routes loras", () => {
+	it("targets the /lora endpoints for wan and routes loras", () => {
 		const wanT2v = getWorkflowDefinition("fal-wan-2-2-text-to-video");
 		const wanI2v = getWorkflowDefinition("fal-wan-2-2-image-to-video");
-		const ltxT2v = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
-		const ltxI2v = getWorkflowDefinition("fal-ltx-2-3-image-to-video");
 		const buildInput = (
 			workflow: ReturnType<typeof getWorkflowDefinition>,
 			extra: Record<string, unknown> = {}
@@ -136,16 +134,9 @@ describe("fal workflow registry", () => {
 		expect(buildInput(wanI2v)?.__falModel).toBe(
 			"fal-ai/wan/v2.2-a14b/image-to-video/lora"
 		);
-		expect(buildInput(ltxT2v)?.__falModel).toBe(
-			"fal-ai/ltx-2.3-22b/text-to-video/lora"
-		);
-		expect(buildInput(ltxI2v)?.__falModel).toBe(
-			"fal-ai/ltx-2.3-22b/image-to-video/lora"
-		);
 
 		// No LoRA → empty loras array.
 		expect((buildInput(wanT2v) as { loras: unknown[] }).loras).toEqual([]);
-		expect((buildInput(ltxT2v) as { loras: unknown[] }).loras).toEqual([]);
 
 		// With LoRA → single entry with optional scale.
 		const wanWithLora = buildInput(wanT2v, {
@@ -154,14 +145,37 @@ describe("fal workflow registry", () => {
 		expect(wanWithLora.loras).toEqual([
 			{ path: "https://example.com/lora.safetensors", scale: 1 },
 		]);
+	});
 
+	it("targets the base LTX-2.3 endpoints and never forwards LoRA fields", () => {
+		const ltxT2v = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
+		const ltxI2v = getWorkflowDefinition("fal-ltx-2-3-image-to-video");
+		const buildInput = (
+			workflow: ReturnType<typeof getWorkflowDefinition>,
+			extra: Record<string, unknown> = {}
+		) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "test",
+				inputImageUrl: "https://example.com/in.jpg",
+			}) as Record<string, unknown>;
+
+		expect(buildInput(ltxT2v)?.__falModel).toBe(
+			"fal-ai/ltx-2.3-22b/text-to-video"
+		);
+		expect(buildInput(ltxI2v)?.__falModel).toBe(
+			"fal-ai/ltx-2.3-22b/image-to-video"
+		);
+
+		// LTX-2.3-22B has no `/lora` submodel — `loras` must never be sent
+		// even if a legacy scenario still carries `loraUrl` in its params.
 		const ltxWithLora = buildInput(ltxI2v, {
 			loraUrl: "https://example.com/ltx-lora.safetensors",
 			loraScale: 0.7,
-		}) as { loras: unknown[] };
-		expect(ltxWithLora.loras).toEqual([
-			{ path: "https://example.com/ltx-lora.safetensors", scale: 0.7 },
-		]);
+		});
+		expect(ltxWithLora).not.toHaveProperty("loras");
+		expect(ltxWithLora).not.toHaveProperty("loraUrl");
+		expect(ltxWithLora).not.toHaveProperty("loraScale");
 	});
 
 	it("marks loraUrl fields as optional in enriched parameter list", () => {
@@ -172,8 +186,6 @@ describe("fal workflow registry", () => {
 			"fal-zimage-turbo-image-to-image",
 			"fal-wan-2-2-text-to-video",
 			"fal-wan-2-2-image-to-video",
-			"fal-ltx-2-3-text-to-video",
-			"fal-ltx-2-3-image-to-video",
 		];
 		for (const key of keys) {
 			const workflow = workflows.find((entry) => entry.key === key);
@@ -182,6 +194,22 @@ describe("fal workflow registry", () => {
 			);
 			expect(loraField?.optional).toBe(true);
 			expect(loraField?.kind).toBe("lora-url");
+		}
+	});
+
+	it("hides LoRA fields from LTX-2.3 parameter UI", () => {
+		const workflows = listWorkflows();
+		for (const key of [
+			"fal-ltx-2-3-text-to-video",
+			"fal-ltx-2-3-image-to-video",
+		]) {
+			const workflow = workflows.find((entry) => entry.key === key);
+			expect(
+				workflow?.parameterFields.some((field) => field.key === "loraUrl")
+			).toBe(false);
+			expect(
+				workflow?.parameterFields.some((field) => field.key === "loraScale")
+			).toBe(false);
 		}
 	});
 

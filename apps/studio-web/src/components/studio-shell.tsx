@@ -25,7 +25,7 @@ import { createWorkspaceNavigation } from "@generator/ui/lib/workspace-nav";
 import { Loader2, Trash2 } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import CommandSidebar from "@/components/command-sidebar";
 import ComposeDialog from "@/components/compose/compose-dialog";
@@ -446,19 +446,27 @@ export default function StudioShell({
 		(href: string) => router.replace(href as Route, { scroll: false }),
 		[router]
 	);
+	// Держим currentSearch в ref, чтобы builders/navigate сохраняли стабильную
+	// ссылку через ререндеры. Иначе любое изменение URL пересоздавало эти
+	// функции и стреляли useEffect-ы внутри useStudioSelection/useStudioMedia
+	// — даже когда фактически переключаться никуда не нужно.
+	const currentSearchRef = useRef(currentSearch);
+	useEffect(() => {
+		currentSearchRef.current = currentSearch;
+	}, [currentSearch]);
 	const selectionUrlBuilder = useCallback(
 		(input: {
 			assetId?: string | null;
 			personId?: string | null;
 			runId?: string | null;
 			scenarioId?: string | null;
-		}) => buildStudioHref(pathname, currentSearch, input),
-		[currentSearch, pathname]
+		}) => buildStudioHref(pathname, currentSearchRef.current, input),
+		[pathname]
 	);
 	const mediaUrlBuilder = useCallback(
 		(input: { assetId?: string | null; runId?: string | null }) =>
-			buildStudioHref(pathname, currentSearch, input),
-		[currentSearch, pathname]
+			buildStudioHref(pathname, currentSearchRef.current, input),
+		[pathname]
 	);
 
 	const {

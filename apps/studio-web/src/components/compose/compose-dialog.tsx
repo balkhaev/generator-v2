@@ -15,6 +15,7 @@ import {
 	buildCreateScenarioInput,
 	buildScenarioFormStateFromRecord,
 	createScenarioFormState,
+	type WorkflowDefinition,
 } from "@generator/studio-client/shared";
 import { Button } from "@generator/ui/components/button";
 import {
@@ -41,15 +42,21 @@ interface ComposeDialogProps {
 	snapshot: AdminSnapshot;
 }
 
+interface LorasState {
+	error: string | null;
+	loras: LoraRegistryEntry[];
+}
+
 const studioApiBaseUrl = normalizeBaseUrl(env.NEXT_PUBLIC_SERVER_URL);
 const adminWebUrl = env.NEXT_PUBLIC_ADMIN_URL ?? "http://localhost:3001";
 const trailingSlashesPattern = /\/+$/u;
 const adminLorasHref = `${adminWebUrl.replace(trailingSlashesPattern, "")}/loras`;
 
-async function fetchStudioLoras(baseModel?: string): Promise<{
-	error: string | null;
-	loras: LoraRegistryEntry[];
-}> {
+// Внутрипроцессный кеш по baseModel — чтобы повторное открытие модалки
+// сразу показывало список LoRAs без мерцания "0 LoRAs" → "N LoRAs".
+const lorasCache = new Map<string, LorasState>();
+
+async function fetchStudioLoras(baseModel?: string): Promise<LorasState> {
 	const params = new URLSearchParams();
 	if (baseModel) {
 		params.set("baseModel", baseModel);
@@ -66,6 +73,118 @@ async function fetchStudioLoras(baseModel?: string): Promise<{
 			error instanceof Error ? error.message : "Failed to load LoRAs";
 		return { error: message, loras: [] };
 	}
+}
+
+function useStudioLoras(baseModel: string | undefined, enabled: boolean) {
+	const cacheKey = baseModel ?? "__any__";
+	const cached = lorasCache.get(cacheKey);
+	const [state, setState] = useState<LorasState>(
+		cached ?? { error: null, loras: [] }
+	);
+
+	useEffect(() => {
+		if (!enabled) {
+			return;
+		}
+		// Если уже есть кеш — отдаём его сразу и НЕ перетираем пустотой.
+		const hit = lorasCache.get(cacheKey);
+		if (hit) {
+			setState(hit);
+		}
+		let cancelled = false;
+		fetchStudioLoras(baseModel).then((result) => {
+			lorasCache.set(cacheKey, result);
+			if (cancelled) {
+				return;
+			}
+			setState(result);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [baseModel, cacheKey, enabled]);
+
+	return state;
+}
+
+interface ComposeDialogBodyProps {
+	availableLoras: LoraRegistryEntry[];
+	editingScenario: ScenarioRecord | null;
+	formId: string;
+	initialWorkflow: WorkflowDefinition;
+	isSaving: boolean;
+	lorasError: string | null;
+	onSubmit: (form: ScenarioFormState, workflow: WorkflowDefinition) => void;
+	onValidityChange: (input: { errors: string[]; isReady: boolean }) => void;
+	onWorkflowChange: (workflow: WorkflowDefinition | null) => void;
+	workflows: WorkflowDefinition[];
+}
+
+function ComposeDialogBody({
+	availableLoras,
+	editingScenario,
+	formId,
+	initialWorkflow,
+	isSaving,
+	lorasError,
+	onSubmit,
+	onValidityChange,
+	onWorkflowChange,
+	workflows,
+}: ComposeDialogBodyProps) {
+	// Стартовое состояние формы вычисляем один раз при mount подкомпонента.
+	// ComposeDialog задаёт `key={editingScenarioId ?? "create"}`, поэтому при
+	// смене сценария тело пересоздаётся и useState получает свежий init —
+	// это убирает промежуточный рендер со старой формой и связанный flicker.
+	const [form, setForm] = useState<ScenarioFormState>(() =>
+		editingScenario
+			? buildScenarioFormStateFromRecord(editingScenario, initialWorkflow)
+			: createScenarioFormState(initialWorkflow)
+	);
+
+	const selectedWorkflow = useMemo(
+		() =>
+			workflows.find((workflow) => workflow.key === form.workflowKey) ??
+			initialWorkflow,
+		[form.workflowKey, initialWorkflow, workflows]
+	);
+
+	useEffect(() => {
+		onWorkflowChange(selectedWorkflow);
+	}, [onWorkflowChange, selectedWorkflow]);
+
+	return (
+		<DialogBody className="max-h-none flex-1 overflow-y-auto">
+			<ComposeForm
+				adminLorasHref={adminLorasHref}
+				availableLoras={availableLoras}
+				form={form}
+				formId={formId}
+				hideFooter
+				isSubmitting={isSaving}
+				lorasError={lorasError}
+				onFormChange={(next) => {
+					if (typeof next === "function") {
+						setForm((current) => {
+							const computed = (
+								next as (
+									prev: ScenarioFormState | null
+								) => ScenarioFormState | null
+							)(current);
+							return computed ?? current;
+						});
+						return;
+					}
+					if (next) {
+						setForm(next);
+					}
+				}}
+				onSubmit={() => onSubmit(form, selectedWorkflow)}
+				onValidityChange={onValidityChange}
+				workflows={workflows}
+			/>
+		</DialogBody>
+	);
 }
 
 export default function ComposeDialog({
@@ -90,69 +209,25 @@ export default function ComposeDialog({
 		}
 		return workflows[0] ?? null;
 	}, [editingScenario, workflows]);
-	const [form, setForm] = useState<ScenarioFormState | null>(() => {
-		if (editingScenario && initialWorkflow) {
-			return buildScenarioFormStateFromRecord(editingScenario, initialWorkflow);
-		}
-		return initialWorkflow ? createScenarioFormState(initialWorkflow) : null;
-	});
-	const [availableLoras, setAvailableLoras] = useState<LoraRegistryEntry[]>([]);
-	const [lorasError, setLorasError] = useState<string | null>(null);
+
+	// Активный workflow для подписи в футере. Подкомпонент сообщает его через
+	// колбэк, чтобы внешняя обвязка диалога не зависела от внутренней формы.
+	const [activeWorkflow, setActiveWorkflow] =
+		useState<WorkflowDefinition | null>(initialWorkflow);
+	useEffect(() => {
+		setActiveWorkflow(initialWorkflow);
+	}, [initialWorkflow]);
+
 	const [isSaving, setIsSaving] = useState(false);
 	const [validity, setValidity] = useState<{
 		errors: string[];
 		isReady: boolean;
 	}>({ errors: [], isReady: false });
 
-	const selectedWorkflow = useMemo(() => {
-		if (!form) {
-			return initialWorkflow;
-		}
-
-		return (
-			workflows.find((workflow) => workflow.key === form.workflowKey) ??
-			initialWorkflow
-		);
-	}, [form, initialWorkflow, workflows]);
-
-	useEffect(() => {
-		if (!open) {
-			return;
-		}
-
-		if (editingScenario && initialWorkflow) {
-			setForm(
-				buildScenarioFormStateFromRecord(editingScenario, initialWorkflow)
-			);
-			return;
-		}
-
-		setForm((current) => {
-			if (current) {
-				return current;
-			}
-
-			return initialWorkflow ? createScenarioFormState(initialWorkflow) : null;
-		});
-	}, [editingScenario, initialWorkflow, open]);
-
-	useEffect(() => {
-		if (!open) {
-			return;
-		}
-
-		let cancelled = false;
-		fetchStudioLoras(selectedWorkflow?.baseModel).then((result) => {
-			if (cancelled) {
-				return;
-			}
-			setAvailableLoras(result.loras);
-			setLorasError(result.error);
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [open, selectedWorkflow?.baseModel]);
+	const { error: lorasError, loras: availableLoras } = useStudioLoras(
+		activeWorkflow?.baseModel,
+		open
+	);
 
 	const handleValidityChange = useCallback(
 		(input: { errors: string[]; isReady: boolean }) => {
@@ -161,62 +236,79 @@ export default function ComposeDialog({
 		[]
 	);
 
-	async function handleSubmit() {
-		if (!(form && selectedWorkflow)) {
-			toast.error("Scenario form is unavailable.");
-			return;
-		}
+	const handleWorkflowChange = useCallback(
+		(workflow: WorkflowDefinition | null) => {
+			setActiveWorkflow(workflow);
+		},
+		[]
+	);
 
-		if (!(form.name.trim() && form.prompt.trim())) {
-			toast.error("Scenario name and prompt are required.");
-			return;
-		}
-
-		const payload = buildCreateScenarioInput(selectedWorkflow, {
-			...form,
-			name: form.name.trim(),
-			prompt: form.prompt.trim(),
-		});
-
-		setIsSaving(true);
-
-		try {
-			if (editingScenario) {
-				const result = await updateStudioScenario(editingScenario.id, payload);
-				const nextSnapshot: AdminSnapshot = {
-					...snapshot,
-					scenarios: snapshot.scenarios.map((scenario) =>
-						scenario.id === editingScenario.id ? result.data : scenario
-					),
-				};
-				onScenarioUpdated?.(nextSnapshot, editingScenario.id);
-				toast.success("Scenario updated.");
-				onOpenChange(false);
+	const handleSubmit = useCallback(
+		async (form: ScenarioFormState, workflow: WorkflowDefinition) => {
+			if (!(form.name.trim() && form.prompt.trim())) {
+				toast.error("Scenario name and prompt are required.");
 				return;
 			}
 
-			const result = await createStudioScenario(payload);
-			const nextSnapshot: AdminSnapshot = {
-				...snapshot,
-				scenarios: [result.data, ...snapshot.scenarios],
-			};
-			onScenarioCreated?.(nextSnapshot);
-			toast.success("Scenario saved.");
-			onOpenChange(false);
-			setForm(createScenarioFormState(selectedWorkflow));
-		} catch (saveError) {
-			toast.error(
-				saveError instanceof Error
-					? saveError.message
-					: "Unable to save scenario."
-			);
-		} finally {
-			setIsSaving(false);
-		}
-	}
+			const payload = buildCreateScenarioInput(workflow, {
+				...form,
+				name: form.name.trim(),
+				prompt: form.prompt.trim(),
+			});
+
+			setIsSaving(true);
+
+			try {
+				if (editingScenario) {
+					const result = await updateStudioScenario(
+						editingScenario.id,
+						payload
+					);
+					const nextSnapshot: AdminSnapshot = {
+						...snapshot,
+						scenarios: snapshot.scenarios.map((scenario) =>
+							scenario.id === editingScenario.id ? result.data : scenario
+						),
+					};
+					onScenarioUpdated?.(nextSnapshot, editingScenario.id);
+					toast.success("Scenario updated.");
+					onOpenChange(false);
+					return;
+				}
+
+				const result = await createStudioScenario(payload);
+				const nextSnapshot: AdminSnapshot = {
+					...snapshot,
+					scenarios: [result.data, ...snapshot.scenarios],
+				};
+				onScenarioCreated?.(nextSnapshot);
+				toast.success("Scenario saved.");
+				onOpenChange(false);
+			} catch (saveError) {
+				toast.error(
+					saveError instanceof Error
+						? saveError.message
+						: "Unable to save scenario."
+				);
+			} finally {
+				setIsSaving(false);
+			}
+		},
+		[
+			editingScenario,
+			onOpenChange,
+			onScenarioCreated,
+			onScenarioUpdated,
+			snapshot,
+		]
+	);
 
 	const hasWorkflows = workflows.length > 0;
 	const SubmitIcon = isEditing ? Save : Plus;
+	// key форсирует пересоздание тела при смене edit/create или сценария.
+	// Без этого пришлось бы синхронизировать форму через useEffect и иметь
+	// промежуточный рендер со старым состоянием — главный источник мерцания.
+	const bodyKey = `${editingScenario?.id ?? "create"}:${initialWorkflow?.key ?? "none"}`;
 
 	return (
 		<Dialog onOpenChange={onOpenChange} open={open}>
@@ -232,22 +324,22 @@ export default function ComposeDialog({
 					</DialogDescription>
 				</DialogHeader>
 
-				{form && hasWorkflows ? (
-					<DialogBody className="max-h-none flex-1 overflow-y-auto">
-						<ComposeForm
-							adminLorasHref={adminLorasHref}
-							availableLoras={availableLoras}
-							form={form}
-							formId={formId}
-							hideFooter
-							isSubmitting={isSaving}
-							lorasError={lorasError}
-							onFormChange={setForm}
-							onSubmit={handleSubmit}
-							onValidityChange={handleValidityChange}
-							workflows={workflows}
-						/>
-					</DialogBody>
+				{hasWorkflows && initialWorkflow ? (
+					<ComposeDialogBody
+						availableLoras={availableLoras}
+						editingScenario={editingScenario ?? null}
+						formId={formId}
+						initialWorkflow={initialWorkflow}
+						isSaving={isSaving}
+						key={bodyKey}
+						lorasError={lorasError}
+						onSubmit={(form, workflow) => {
+							handleSubmit(form, workflow).catch(() => undefined);
+						}}
+						onValidityChange={handleValidityChange}
+						onWorkflowChange={handleWorkflowChange}
+						workflows={workflows}
+					/>
 				) : (
 					<DialogBody className="max-h-none">
 						<div className="rounded-md bg-rose-500/10 px-3 py-2 text-rose-700 text-xs dark:text-rose-300">
@@ -265,7 +357,7 @@ export default function ComposeDialog({
 							</div>
 						) : (
 							<p className="truncate text-[11px] text-muted-foreground">
-								{selectedWorkflow?.name ?? "Select a workflow"}
+								{activeWorkflow?.name ?? "Select a workflow"}
 							</p>
 						)}
 					</div>

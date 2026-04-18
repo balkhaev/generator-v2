@@ -59,7 +59,7 @@ interface CommandSidebarProps {
 	onPersonRefreshed: (person: PersonRecord) => void;
 	onPickPerson: (personId: string) => void;
 	onPickScenario: (scenarioId: string) => void;
-	onSnapshotChange?: (snapshot: AdminSnapshot) => void;
+	onSnapshotChange: (snapshot: AdminSnapshot) => void;
 	persons: PersonRecord[];
 	scenarioCards: ScenarioCardData[];
 	selectedPerson: PersonRecord | null;
@@ -901,9 +901,14 @@ export default function CommandSidebar({
 	selectedPerson,
 	selectedPersonId,
 	selectedScenarioId,
-	snapshot: initialSnapshot,
+	snapshot,
 }: CommandSidebarProps) {
-	const [snapshot, setSnapshot] = useState<AdminSnapshot>(initialSnapshot);
+	// Раньше здесь был локальный useState<AdminSnapshot>(initialSnapshot) +
+	// useEffect(setSnapshot(initialSnapshot)). Это давало двойной ререндер на
+	// каждое обновление снапшота из родителя (auto-sync, launch run, save shot)
+	// — компонент сначала перерисовывался с новым prop, затем повторно после
+	// setSnapshot из эффекта, отсюда мерцание. Используем prop как единственный
+	// источник правды.
 	const [runDrafts, setRunDrafts] = useState<Record<string, RunDraft>>({});
 	const [submittingRunId, setSubmittingRunId] = useState<string | null>(null);
 	const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
@@ -959,22 +964,32 @@ export default function CommandSidebar({
 	).length;
 
 	useEffect(() => {
-		setSnapshot(initialSnapshot);
 		setRunDrafts((current) => {
-			const nextDrafts = { ...current };
-			for (const scenario of initialSnapshot.scenarios) {
-				nextDrafts[scenario.id] ??= createRunDraft(scenario.id);
-				nextDrafts[scenario.id] = {
-					...nextDrafts[scenario.id],
-					inputImageUrl:
-						nextDrafts[scenario.id].inputImageUrl ||
-						getLatestScenarioInputImage(initialSnapshot.runs, scenario.id),
-					scenarioId: scenario.id,
-				};
+			let changed = false;
+			const nextDrafts: Record<string, RunDraft> = { ...current };
+			for (const scenario of scenarios) {
+				const existing = nextDrafts[scenario.id];
+				if (!existing) {
+					nextDrafts[scenario.id] = {
+						...createRunDraft(scenario.id),
+						inputImageUrl: getLatestScenarioInputImage(runs, scenario.id),
+					};
+					changed = true;
+					continue;
+				}
+				if (!existing.inputImageUrl) {
+					const latest = getLatestScenarioInputImage(runs, scenario.id);
+					if (latest) {
+						nextDrafts[scenario.id] = { ...existing, inputImageUrl: latest };
+						changed = true;
+					}
+				}
 			}
-			return nextDrafts;
+			// Возвращаем тот же ref, если ничего не изменилось — иначе React
+			// делает лишний коммит при каждом auto-sync.
+			return changed ? nextDrafts : current;
 		});
-	}, [initialSnapshot]);
+	}, [runs, scenarios]);
 
 	useEffect(() => {
 		const targetRunId = focusedRunId;
@@ -1034,13 +1049,9 @@ export default function CommandSidebar({
 				scenario,
 			});
 			const result = await launchStudioRun(launchInput);
-			setSnapshot((current) => {
-				const next = {
-					...current,
-					runs: [result.data, ...current.runs],
-				};
-				onSnapshotChange?.(next);
-				return next;
+			onSnapshotChange({
+				...snapshot,
+				runs: [result.data, ...snapshot.runs],
 			});
 			setRunDrafts((current) => ({
 				...current,

@@ -16,7 +16,7 @@ import {
 	createAdminTrainingClient,
 	createKafkaAdminTrainingClient,
 } from "@/clients/admin-training";
-import { createGrokClient } from "@/clients/grok";
+import { createPersonsPromptEnhanceProxy } from "@/prompt-enhance-resolve";
 import { createDrizzlePersonsRepository } from "@/repositories/persons";
 
 const PORT = Number(process.env.PORT ?? 3003);
@@ -38,9 +38,7 @@ const operatorServerClient = env.PERSONS_OPERATOR_URL
 			internalToken: env.GENERATOR_INTERNAL_TOKEN,
 		})
 	: undefined;
-const grokClient = env.XAI_API_KEY
-	? createGrokClient({ apiKey: env.XAI_API_KEY })
-	: undefined;
+const grokClient = createPersonsPromptEnhanceProxy();
 
 const corsOriginsFromEnv = getCorsOrigins();
 const fallbackCorsOrigins = env.CORS_ORIGIN ? [env.CORS_ORIGIN] : [];

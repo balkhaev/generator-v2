@@ -146,6 +146,7 @@
         "@generator/events": "workspace:*",
         "@generator/generator-client-server": "workspace:*",
         "@generator/http": "workspace:*",
+        "@generator/runtime-config": "workspace:*",
         "@generator/storage": "workspace:*",
         "dotenv": "catalog:",
         "hono": "^4.8.2",

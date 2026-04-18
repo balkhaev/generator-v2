@@ -12,7 +12,12 @@ import { z } from "zod";
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const REQUEST_TIMEOUT_MS = 120_000;
-const DEFAULT_TRAINING_STEPS = 1500;
+/**
+ * 1500 шагов на 20-кадровом датасете давало заметный оверфит на синтетику
+ * (z-image-trainer запоминал артефакты flux-2/edit). 1200 даёт лучший баланс
+ * между усвоением идентичности и сохранением гибкости при инференсе.
+ */
+const DEFAULT_TRAINING_STEPS = 1200;
 const DEFAULT_TRAINING_POLL_MS = 30_000;
 const DEFAULT_TRAINING_TIMEOUT_MS = 90 * 60 * 1000;
 const DEFAULT_DATASET_POLL_MS = 5000;
@@ -23,12 +28,27 @@ const FLUX_REFERENCE_EDIT_MODEL = "fal-ai/flux-2/edit";
 const fileExtensionPattern = /\.[^.]+$/u;
 
 /**
- * Number of times the original reference photo is duplicated inside the dataset
- * (with different captions). The original is the only ground-truth identity in
- * the set — every synthetic variant adds drift. Weighting it more makes the
- * trainer treat that face as the canonical one.
+ * Параметры flux-2/edit, подобранные под максимальное сохранение идентичности.
+ *
+ * `guidance_scale` понижен с 2.5 до 1.8: при более высоком CFG модель
+ * агрессивнее переписывает лицо под текстовый промпт, добавляя «обобщённую»
+ * красоту вместо конкретных черт референса. 1.8 — нижний край, при котором
+ * композиция сцены ещё надёжно собирается.
+ *
+ * `num_inference_steps` поднят с 28 до 36 — лишние шаги уходят в полировку
+ * деталей лица, а не в перерисовку, и снижают вероятность артефактов глаз/носа,
+ * которые потом «вмораживаются» LoRA.
  */
-const ORIGINAL_PHOTO_DUPLICATES = 4;
+const IDENTITY_GUIDANCE_SCALE = 1.8;
+const IDENTITY_INFERENCE_STEPS = 36;
+
+/**
+ * Анти-дрейф для лица. flux-2/edit поддерживает negative_prompt у части
+ * вариантов; даже если параметр игнорируется конкретной версией модели,
+ * это безопасный no-op.
+ */
+const IDENTITY_NEGATIVE_PROMPT =
+	"different person, different face, altered identity, swapped face, plastic surgery look, doll face, cartoon, anime, distorted face, asymmetric face, melted features, blurry face, deformed eyes, extra fingers";
 
 interface ReferenceVariant {
 	caption: string;
@@ -51,123 +71,119 @@ const ORIGINAL_PHOTO_SLOTS = [
 	{ caption: "natural reference portrait" },
 	{ caption: "casual reference photo, natural daylight" },
 	{ caption: "personal reference snapshot" },
+	{ caption: "honest unretouched reference photograph" },
+	{ caption: "everyday reference portrait, indoor light" },
 ] as const satisfies readonly OriginalPhotoSlot[];
 
 /**
- * Dataset for LoRA identity training. Two groups:
+ * Синтетические вариации для тренировки идентичности через flux-2/edit.
  *
- *   1. SCENE variants (full/half-body, environmental) — teach the trainer
- *      that the trigger generalises across lighting, framing, wardrobe and
- *      backgrounds. Selected to be photographically NEUTRAL: no extreme
- *      shadows, no full profiles, no heavy color casts, no top-down/low-angle
- *      framings. Aggressive lighting and angles cause `flux-2/edit` to drift
- *      the face the most, which then poisons the LoRA.
+ * Жёсткие правила, по которым отобраны варианты:
  *
- *   2. FACE-ONLY variants — tight headshots from near-frontal angles on plain
- *      backgrounds. Provide pixel-density on the face so the trainer has
- *      enough signal to anchor identity, not just pose.
+ *   1. Только фронт и почти-фронт (≤ 15° поворот головы). flux-2/edit
+ *      сильнее всего дрейфит лицо именно на 3/4 и профилях — такие кадры
+ *      раньше встречались в датасете и портили консистентность LoRA.
+ *   2. Никакой выраженной мимики (нет laugh, открытого рта, прищура).
+ *      Сильные эмоции деформируют рот/глаза — модель усредняет.
+ *   3. Кадрирование — только close-up или head-and-shoulders / half-body.
+ *      Full-body убраны: на маленькой площади лица flux-2/edit «домысливает»
+ *      черты с минимальной верностью референсу.
+ *   4. Описания одежды/деталей — максимально нейтральные (plain top,
+ *      plain sweater). Чем меньше слов в промпте описывает не-сцену, тем
+ *      меньше места для перерисовки лица под несвязанный контекст.
+ *   5. Captions не описывают идентичность (eye color, hair color и т.п.) —
+ *      триггер-слово остаётся единственным «слотом», в который трейнер
+ *      может вписать лицо.
  *
- * Captions describe everything EXCEPT identity (no eye color, hair color, etc.)
- * so the trigger word is the only thing left to absorb the face.
+ * Identity-якорь («same exact person, identical face…») добавляется
+ * автоматически в `buildVariantPrompt`; здесь хранится только описание сцены.
  */
 const REFERENCE_DATASET_VARIANTS: readonly ReferenceVariant[] = [
 	{
 		caption:
-			"close-up beauty headshot, soft north-window light, neutral grey backdrop, eyes to camera, relaxed expression",
+			"close-up beauty headshot, soft window light, neutral grey backdrop, eyes to camera, relaxed expression",
 		prompt:
 			"close-up beauty headshot, soft diffused north-window light, neutral grey backdrop, eyes to camera, relaxed neutral expression",
 	},
 	{
 		caption:
-			"three-quarter portrait, golden hour sunlight, blurred park greenery in background, gentle smile, casual cotton t-shirt",
+			"medium outdoor portrait, golden hour, blurred park background, plain top, eyes to camera",
 		prompt:
-			"three-quarter outdoor portrait, warm golden hour sunlight, blurred park greenery in the background, gentle smile, casual cotton t-shirt",
+			"medium outdoor portrait, warm golden hour sunlight, blurred park greenery in the background, plain crew neck top, eyes to camera, relaxed neutral expression",
 	},
 	{
 		caption:
-			"full-body environmental shot, modern urban sidewalk, overcast soft daylight, standing pose, denim jacket and jeans",
+			"half-body urban portrait, overcast soft daylight, blurred street background, plain dark sweater, eyes to camera",
 		prompt:
-			"full-body environmental shot, modern urban sidewalk, overcast soft daylight, relaxed standing pose facing the camera, denim jacket and dark jeans",
+			"half-body environmental portrait, modern urban sidewalk fully blurred in the background, overcast soft daylight, plain dark sweater, eyes to camera, neutral expression",
 	},
 	{
 		caption:
-			"candid laughing portrait, sunny summer park, dappled afternoon light through leaves, head slightly tilted, white linen shirt",
+			"editorial half-body shot, clean white studio backdrop, soft beauty dish lighting, plain top, eyes to camera",
 		prompt:
-			"candid laughing portrait, sunny summer park, dappled afternoon sunlight through leaves, head slightly tilted, plain white linen shirt, eyes visible to camera",
+			"editorial half-body portrait, clean white seamless studio backdrop, soft beauty dish lighting from front, plain neutral top, eyes to camera, neutral relaxed expression",
 	},
 	{
 		caption:
-			"editorial fashion half-body, clean white cyclorama, soft beauty dish lighting, hand on hip, structured beige blazer",
+			"seated indoor portrait, warm ambient lamp light, plain interior background, plain knit top, eyes to camera",
 		prompt:
-			"editorial fashion half-body shot, clean white cyclorama studio, soft beauty dish lighting from front, hand resting on hip, structured beige blazer",
+			"relaxed seated indoor portrait, warm ambient lamp light, softly blurred plain interior background, plain knit top, eyes to camera, calm gentle expression",
 	},
 	{
 		caption:
-			"relaxed seated portrait, cozy living room couch, warm lamp ambient light, holding a ceramic mug, oversized knit sweater",
+			"interior half-body portrait, warm tungsten light, plain neutral background, plain dark top, eyes to camera",
 		prompt:
-			"relaxed seated portrait on a cozy living room couch, warm lamp ambient light, hands cradling a ceramic mug, oversized cream knit sweater",
+			"half-body interior portrait, soft warm tungsten lighting, plain neutral background, simple dark top, eyes to camera, gentle natural expression",
 	},
 	{
 		caption:
-			"bookstore aisle medium shot, warm tungsten interior lighting, head turned to camera, slight curious smile, simple sweater",
+			"high-key headshot, fresh morning daylight, no makeup, plain white tee, slight closed-mouth smile",
 		prompt:
-			"medium shot in a bookstore aisle between tall shelves, warm tungsten interior lighting, head turned toward camera, slight curious smile, simple sweater",
+			"high-key headshot in fresh morning daylight, plain off-white background, natural untouched skin with no visible makeup, plain white t-shirt, slight closed-mouth smile, eyes to camera",
 	},
 	{
 		caption:
-			"high-key bathroom mirror portrait, fresh morning daylight, natural skin without makeup, slight smile, plain white tee",
+			"half-body autumn outdoor portrait, soft overcast light, plain knit sweater, eyes to camera",
 		prompt:
-			"high-key bathroom mirror portrait, fresh morning daylight, natural untouched skin, no visible makeup, slight smile, plain white t-shirt",
+			"half-body outdoor autumn portrait, soft overcast diffuse light, blurred warm earthy background, plain knit sweater, eyes to camera, neutral expression",
 	},
 	{
 		caption:
-			"autumn park three-quarter shot, soft overcast light, golden fallen leaves on the ground, knit scarf, warm earthy palette",
+			"corporate headshot, medium grey background, soft frontal clamshell lighting, plain dark shirt, friendly closed-mouth smile",
 		prompt:
-			"three-quarter shot in an autumn park, soft overcast diffuse light, blurred golden leaves on the ground, woolen knit scarf, warm earthy color palette",
+			"professional corporate headshot, solid medium grey backdrop, soft frontal clamshell lighting, plain dark collared shirt, friendly closed-mouth smile, eyes to camera",
 	},
 	{
 		caption:
-			"professional corporate headshot, solid medium grey background, soft front clamshell lighting, friendly closed-mouth smile, dark navy collared shirt",
+			"cafe half-body portrait, soft window daylight, blurred wooden interior, plain top, eyes to camera",
 		prompt:
-			"professional corporate headshot, solid medium grey backdrop, soft frontal clamshell lighting, friendly closed-mouth smile, dark navy collared shirt",
+			"half-body cafe portrait, soft daylight from a large window, warm blurred wooden interior, plain neutral top, eyes to camera, neutral relaxed expression",
 	},
 	{
 		caption:
-			"environmental cafe portrait, large window soft daylight, wooden interior bokeh, hands resting on table, beige cardigan",
+			"bright kitchen half-body shot, soft morning daylight, plain top, eyes to camera",
 		prompt:
-			"environmental cafe portrait, soft daylight from a large window, warm wooden interior bokeh, hands resting on a small table, beige cardigan over a simple top",
+			"half-body shot in a bright modern kitchen, soft morning daylight from a large window, blurred plain interior background, plain top, eyes to camera, neutral expression",
 	},
 	{
 		caption:
-			"sunlit kitchen half-body shot, soft morning light from large window, leaning on a marble counter, cream knit sweater",
-		prompt:
-			"half-body shot in a bright modern kitchen, soft morning daylight from a large window, leaning casually on a marble counter, cream knit sweater, eyes to camera",
-	},
-	{
-		caption:
-			"tight frontal headshot, plain off-white background, soft frontal beauty light, eye level, neutral relaxed expression, eyes to camera",
+			"tight frontal headshot, off-white background, soft frontal beauty lighting, neutral relaxed expression, sharp focus on face",
 		prompt:
 			"tight frontal headshot of the face and shoulders, plain off-white seamless background, soft frontal beauty lighting, eye-level camera, neutral relaxed expression, both eyes clearly visible to camera, sharp focus on face",
 	},
-	{
-		caption:
-			"soft three-quarter face turn to camera-left, plain neutral background, even soft daylight, eye level, calm gentle expression",
-		prompt:
-			"soft three-quarter portrait with the face turned slightly to camera-left at roughly twenty degrees, plain neutral light grey background, even soft daylight, eye-level framing, calm gentle expression, both eyes visible, sharp focus on face",
-	},
-	{
-		caption:
-			"soft three-quarter face turn to camera-right, plain neutral background, even soft daylight, eye level, calm gentle expression",
-		prompt:
-			"soft three-quarter portrait with the face turned slightly to camera-right at roughly twenty degrees, plain neutral light grey background, even soft daylight, eye-level framing, calm gentle expression, both eyes visible, sharp focus on face",
-	},
-	{
-		caption:
-			"head and shoulders portrait, plain background, soft overcast light, eye level, gentle natural smile, eyes to camera",
-		prompt:
-			"head and shoulders portrait, plain neutral background, soft overcast diffuse light, eye-level camera, gentle natural closed-mouth smile, eyes to camera, sharp focus on face",
-	},
 ] as const;
+
+/**
+ * Сколько раз оригинальное референс-фото кладётся в датасет (с разными
+ * подписями). Оригинал — единственный пиксель-точный носитель идентичности,
+ * каждый синтетический вариант добавляет дрейф. Эти копии перевешивают
+ * синтетические кадры так, чтобы тренер «якорил» лицо именно на оригинале,
+ * а не на усреднении flux-2/edit-вариаций.
+ *
+ * Деривится из длины `ORIGINAL_PHOTO_SLOTS`, чтобы расхождение между
+ * счётчиком и фактическим количеством слотов было невозможно.
+ */
+const ORIGINAL_PHOTO_DUPLICATES = ORIGINAL_PHOTO_SLOTS.length;
 
 const REFERENCE_COUNT = REFERENCE_DATASET_VARIANTS.length;
 const ORIGINAL_DATASET_COUNT = ORIGINAL_PHOTO_DUPLICATES;
@@ -262,22 +278,31 @@ function inferGenderHint(description?: string): string | null {
 }
 
 const IDENTITY_PRESERVATION_HINT =
-	"identical facial features and identity to the reference image, photorealistic, natural skin, accurate likeness";
+	"exact same face and identity as the reference, identical facial features, identical eyes nose and mouth, identical face shape, photorealistic skin, accurate likeness, do not alter the face";
+
+const IDENTITY_PROMPT_PREFIX =
+	"same exact person from the reference image, identical face and identity";
 
 /**
- * Build the prompt for the reference image generator. The pixel-perfect
- * identity comes from the reference image itself (passed as image_urls), so
- * we intentionally avoid mixing in the user-provided description (which usually
- * also contains outfit and scene details) to keep variant diversity high.
+ * Build the prompt for the reference image generator.
+ *
+ * Pixel-точная идентичность приходит из самого референса (image_urls), поэтому
+ * мы намеренно НЕ подмешиваем сюда пользовательское `description` — оно обычно
+ * содержит детали внешности/одежды, которые конкурируют с реальной фотографией
+ * за внимание модели и провоцируют дрейф черт лица.
+ *
+ * Identity-якорь дублируется в начале и в конце промпта: edit-модели типа
+ * flux-2/edit чувствительны к позиции токенов, и одностороннее упоминание
+ * (только в конце, как было раньше) терялось среди описания сцены.
  */
 function buildVariantPrompt(input: {
 	referencePrompt?: string;
 	variant: ReferenceVariant;
 }) {
-	const identityHint = input.referencePrompt?.trim().length
+	const identitySuffix = input.referencePrompt?.trim().length
 		? `${input.referencePrompt.trim()}, ${IDENTITY_PRESERVATION_HINT}`
 		: IDENTITY_PRESERVATION_HINT;
-	return `${input.variant.prompt}, ${identityHint}`;
+	return `${IDENTITY_PROMPT_PREFIX}, ${input.variant.prompt}, ${identitySuffix}`;
 }
 
 function buildVariantCaption(input: {
@@ -447,18 +472,25 @@ async function falPollUntilDone(
 	throw new Error(`fal job timed out after ${timeoutMs}ms`);
 }
 
-async function generateReferenceImageFal(
+/**
+ * Один проход flux-2/edit. Возвращает URL сгенерированного изображения или
+ * `null`, если модель ничего не вернула (бывает при внутренних ошибках fal).
+ * Внешний retry стоит в `generateReferenceImageFalWithRetry` — он умеет
+ * перевызывать саму генерацию, а не только сетевой запрос.
+ */
+async function generateReferenceImageFalOnce(
 	apiKey: string,
 	imageUrl: string,
 	prompt: string
-): Promise<string> {
+): Promise<string | null> {
 	const submit = await falSubmit(apiKey, FLUX_REFERENCE_EDIT_MODEL, {
 		enable_prompt_expansion: false,
-		guidance_scale: 2.5,
+		guidance_scale: IDENTITY_GUIDANCE_SCALE,
 		image_size: "portrait_4_3",
 		image_urls: [imageUrl],
+		negative_prompt: IDENTITY_NEGATIVE_PROMPT,
 		num_images: 1,
-		num_inference_steps: 28,
+		num_inference_steps: IDENTITY_INFERENCE_STEPS,
 		output_format: "jpeg",
 		prompt,
 	});
@@ -470,11 +502,33 @@ async function generateReferenceImageFal(
 		DEFAULT_DATASET_POLL_MS
 	);
 	const images = result.images as Array<{ url?: string }> | undefined;
-	const url = images?.[0]?.url;
-	if (!url) {
-		throw new Error("fal flux/dev returned no images");
+	return images?.[0]?.url ?? null;
+}
+
+async function generateReferenceImageFal(
+	apiKey: string,
+	imageUrl: string,
+	prompt: string
+): Promise<string> {
+	let lastError: Error | null = null;
+	for (let attempt = 1; attempt <= DEFAULT_RETRY_ATTEMPTS; attempt += 1) {
+		try {
+			const url = await generateReferenceImageFalOnce(apiKey, imageUrl, prompt);
+			if (url) {
+				return url;
+			}
+			lastError = new Error("fal flux-2/edit returned no images");
+		} catch (error) {
+			lastError =
+				error instanceof Error
+					? error
+					: new Error("fal flux-2/edit request failed");
+		}
+		if (attempt < DEFAULT_RETRY_ATTEMPTS) {
+			await sleep(DEFAULT_RETRY_DELAY_MS);
+		}
 	}
-	return url;
+	throw lastError ?? new Error("fal flux-2/edit failed after retries");
 }
 
 export class FalZibLoraTrainingRunner {

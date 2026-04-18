@@ -53,6 +53,33 @@ export function createInternalRoutes(service: PersonsService) {
 		return c.json({ person });
 	});
 
+	app.post("/persons/:personId/cancel-lora-training", async (c) => {
+		const token = c.req
+			.header("authorization")
+			?.replace(bearerPrefixPattern, "");
+		if (!isAuthorized(token)) {
+			return c.json({ error: "Unauthorized callback" }, 401);
+		}
+
+		try {
+			const person = await service.cancelLoraTraining(c.req.param("personId"));
+			if (!person) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+			return c.json({ person });
+		} catch (error) {
+			return c.json(
+				{
+					error:
+						error instanceof Error
+							? error.message
+							: "Unable to cancel training.",
+				},
+				400
+			);
+		}
+	});
+
 	app.post("/persons/:personId/retrain-lora", async (c) => {
 		const token = c.req
 			.header("authorization")

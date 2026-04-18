@@ -25,6 +25,18 @@ export interface CreatePodInput {
 	env: Record<string, string>;
 	gpuCount?: number;
 	gpuTypeIds: string[];
+	/**
+	 * Как scheduler ранжирует `gpuTypeIds`:
+	 *   - `availability` (default по доке: docs.runpod.io/api-reference/pods/POST/pods)
+	 *     — берёт первый ДОСТУПНЫЙ из списка
+	 *   - `custom` — строгий порядок, fail если первый занят
+	 *
+	 * Дока говорит default = availability, но эмпирически (апрель 2026)
+	 * без явного указания scheduler возвращает 500 "no resources" даже
+	 * когда другие GPU из массива доступны. Поэтому мы передаём это
+	 * поле всегда явно из `createPod`.
+	 */
+	gpuTypePriority?: "availability" | "custom";
 	imageName: string;
 	interruptible?: boolean;
 	name: string;
@@ -88,12 +100,11 @@ export class RunpodPodClient {
 		};
 	}
 
-	private async createPodWithSpecificGpu(
-		input: CreatePodInput,
-		gpuTypeId: string
+	private async postCreatePod(
+		payload: CreatePodInput
 	): Promise<RunpodPodSnapshot> {
 		const response = await this.fetchImpl(`${this.baseUrl}/pods`, {
-			body: JSON.stringify({ ...input, gpuTypeIds: [gpuTypeId] }),
+			body: JSON.stringify(payload),
 			headers: this.authHeaders,
 			method: "POST",
 		});
@@ -105,33 +116,51 @@ export class RunpodPodClient {
 	/**
 	 * Создаёт RunPod pod, выбирая первый доступный GPU из `input.gpuTypeIds`.
 	 *
-	 * RunPod REST API при `gpuTypeIds: [gpuA, gpuB, ...]` НЕ гарантированно
-	 * фоллбэк'ит между типами — иногда возвращает 500
-	 * `This machine does not have the resources to deploy your pod`, даже
-	 * когда другой GPU из списка реально доступен (проверено эмпирически
-	 * на community cloud, апрель 2026). Поэтому делаем явный последовательный
-	 * перебор: пробуем каждый gpuTypeId отдельно, идём дальше при capacity-
-	 * ошибке, и возвращаем первый успешный pod. Не-capacity ошибки (auth,
-	 * валидация) пробрасываем сразу — нет смысла их повторять.
+	 * Основной путь — один POST с `gpuTypePriority: "availability"`. Согласно
+	 * docs.runpod.io/api-reference/pods/POST/pods это default-поведение
+	 * scheduler'а: он сам перебирает массив и берёт первый свободный.
+	 * Эмпирически (апрель 2026) без явного указания этого поля сервер
+	 * флакает с 500 "does not have the resources" даже когда другие GPU
+	 * из массива доступны — похоже на баг, что default не подставляется
+	 * на стороне RunPod. Передаём явно — проблема исчезает.
+	 *
+	 * Backstop: если даже с `availability` сервер вернул capacity-ошибку
+	 * (бывает при настоящей нехватке мощностей или флаках scheduler'а),
+	 * последовательно пробуем каждый gpuTypeId отдельно. Не-capacity
+	 * ошибки (auth, валидация) пробрасываем сразу — повторять бессмысленно.
 	 */
 	async createPod(input: CreatePodInput): Promise<RunpodPodSnapshot> {
 		if (input.gpuTypeIds.length === 0) {
 			throw new Error("RunPod /pods (create): gpuTypeIds is empty");
 		}
+		const payload: CreatePodInput = {
+			...input,
+			gpuTypePriority: input.gpuTypePriority ?? "availability",
+		};
+		try {
+			return await this.postCreatePod(payload);
+		} catch (err) {
+			if (!isNoCapacityError(err) || payload.gpuTypeIds.length === 1) {
+				throw err;
+			}
+		}
 		const errors: string[] = [];
-		for (const gpuTypeId of input.gpuTypeIds) {
+		for (const gpuTypeId of payload.gpuTypeIds) {
 			try {
-				return await this.createPodWithSpecificGpu(input, gpuTypeId);
+				return await this.postCreatePod({
+					...payload,
+					gpuTypeIds: [gpuTypeId],
+				});
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
 				if (!isNoCapacityError(err)) {
 					throw err;
 				}
+				const message = err instanceof Error ? err.message : String(err);
 				errors.push(`${gpuTypeId}: ${message}`);
 			}
 		}
 		throw new Error(
-			`RunPod /pods (create) failed for all ${input.gpuTypeIds.length} gpu types — no capacity:\n  - ${errors.join("\n  - ")}`
+			`RunPod /pods (create) failed for all ${payload.gpuTypeIds.length} gpu types — no capacity:\n  - ${errors.join("\n  - ")}`
 		);
 	}
 

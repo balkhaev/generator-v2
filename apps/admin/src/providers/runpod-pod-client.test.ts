@@ -6,6 +6,7 @@ const POD_CREATE_503_PATTERN = /RunPod \/pods \(create\) failed \(503/;
 const ALL_TYPES_FAILED_PATTERN =
 	/failed for all 2 gpu types[\s\S]*RTX 5090[\s\S]*RTX A5000/;
 const STATUS_401_PATTERN = /401/;
+const NO_RESOURCES_PATTERN = /does not have the resources/;
 
 interface FetchCall {
 	body: unknown;
@@ -80,6 +81,28 @@ describe("RunpodPodClient", () => {
 		const body = calls[0]?.body as Record<string, unknown>;
 		expect(body.imageName).toBe("runpod/pytorch:2.4.0");
 		expect(body.gpuTypeIds).toEqual(["NVIDIA RTX A4000"]);
+		// Always inject availability priority — RunPod scheduler doesn't apply
+		// the documented default reliably (verified empirically).
+		expect(body.gpuTypePriority).toBe("availability");
+	});
+
+	it("createPod respects explicit gpuTypePriority=custom", async () => {
+		const { calls, fetchImpl } = captureFetch(
+			new Response(JSON.stringify({ desiredStatus: "RUNNING", id: "pod-x" }), {
+				headers: { "content-type": "application/json" },
+				status: 201,
+			})
+		);
+		const client = new RunpodPodClient({ apiKey: "rpa", fetchImpl });
+		await client.createPod({
+			env: {},
+			gpuTypeIds: ["A", "B"],
+			gpuTypePriority: "custom",
+			imageName: "img",
+			name: "n",
+		});
+		const body = calls[0]?.body as Record<string, unknown>;
+		expect(body.gpuTypePriority).toBe("custom");
 	});
 
 	it("getPod fetches /v1/pods/{id} and surfaces desiredStatus", async () => {
@@ -116,11 +139,18 @@ describe("RunpodPodClient", () => {
 		).rejects.toThrow(POD_CREATE_503_PATTERN);
 	});
 
-	it("createPod falls back across gpu types when scheduler returns no-capacity", async () => {
-		// RunPod scheduler иногда возвращает 500 "does not have the resources"
-		// для конкретного gpu type, даже если другой из массива доступен. Клиент
-		// должен последовательно перебирать gpu types до первой удачи.
+	it("createPod falls back to per-gpu requests when bulk-availability fails", async () => {
+		// Главный путь — один POST с массивом + gpuTypePriority=availability.
+		// Если scheduler флакает (бывает) — клиент делает ещё N запросов, по одному
+		// gpu type на каждый. 1 bulk + 3 single = 4 attempts.
 		const responses: Response[] = [
+			new Response(
+				JSON.stringify({
+					error:
+						"create pod: This machine does not have the resources to deploy your pod",
+				}),
+				{ headers: { "content-type": "application/json" }, status: 500 }
+			),
 			new Response(
 				JSON.stringify({
 					error:
@@ -135,7 +165,7 @@ describe("RunpodPodClient", () => {
 				{ headers: { "content-type": "application/json" }, status: 500 }
 			),
 			new Response(
-				JSON.stringify({ desiredStatus: "RUNNING", id: "pod-on-third" }),
+				JSON.stringify({ desiredStatus: "RUNNING", id: "pod-on-l40s" }),
 				{ headers: { "content-type": "application/json" }, status: 201 }
 			),
 		];
@@ -164,14 +194,53 @@ describe("RunpodPodClient", () => {
 			name: "n",
 		});
 
-		expect(pod.id).toBe("pod-on-third");
-		expect(callIndex).toBe(3);
-		expect(
-			sentPayloads.map((p) => (p as { gpuTypeIds?: string[] }).gpuTypeIds?.[0])
-		).toEqual(["NVIDIA GeForce RTX 5090", "NVIDIA RTX A5000", "NVIDIA L40S"]);
+		expect(pod.id).toBe("pod-on-l40s");
+		expect(callIndex).toBe(4);
+		const sentGpus = sentPayloads.map(
+			(p) => (p as { gpuTypeIds?: string[] }).gpuTypeIds
+		);
+		// 1) bulk: все три, в исходном порядке
+		expect(sentGpus[0]).toEqual([
+			"NVIDIA GeForce RTX 5090",
+			"NVIDIA RTX A5000",
+			"NVIDIA L40S",
+		]);
+		// 2..4) single: по одному
+		expect(sentGpus[1]).toEqual(["NVIDIA GeForce RTX 5090"]);
+		expect(sentGpus[2]).toEqual(["NVIDIA RTX A5000"]);
+		expect(sentGpus[3]).toEqual(["NVIDIA L40S"]);
+	});
+
+	it("createPod with single gpu type does NOT enter sequential fallback", async () => {
+		// gpuTypeIds.length === 1 — фоллбэку нечего делать, должен сразу пробросить.
+		let callCount = 0;
+		const fetchImpl = mock(() => {
+			callCount++;
+			return Promise.resolve(
+				new Response(
+					JSON.stringify({
+						error:
+							"create pod: This machine does not have the resources to deploy your pod",
+					}),
+					{ headers: { "content-type": "application/json" }, status: 500 }
+				)
+			);
+		}) as unknown as typeof fetch;
+		const client = new RunpodPodClient({ apiKey: "rpa", fetchImpl });
+
+		await expect(
+			client.createPod({
+				env: {},
+				gpuTypeIds: ["NVIDIA GeForce RTX 5090"],
+				imageName: "img",
+				name: "n",
+			})
+		).rejects.toThrow(NO_RESOURCES_PATTERN);
+		expect(callCount).toBe(1);
 	});
 
 	it("createPod throws aggregated error when every gpu type lacks capacity", async () => {
+		// 1 bulk + 2 single = 3 capacity fails, дальше aggregated.
 		const fetchImpl = mock(() =>
 			Promise.resolve(
 				new Response(

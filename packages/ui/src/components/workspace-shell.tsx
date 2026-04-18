@@ -61,12 +61,15 @@ export function WorkspacePane({
 	);
 }
 
+export type WorkspaceContextWidth = "narrow" | "wide";
+
 export default function WorkspaceShell({
 	actions,
 	bottomDock,
 	children,
 	className,
 	context,
+	contextWidth = "narrow",
 	inspector,
 	navigation,
 	railFooter,
@@ -80,6 +83,7 @@ export default function WorkspaceShell({
 	children: ReactNode;
 	className?: string;
 	context?: ReactNode;
+	contextWidth?: WorkspaceContextWidth;
 	inspector?: ReactNode;
 	navigation: WorkspaceNavItem[];
 	railFooter?: ReactNode;
@@ -92,10 +96,14 @@ export default function WorkspaceShell({
 	const columnCount = (context ? 1 : 0) + 1 + (hasInspector ? 1 : 0);
 	const gridTemplate = (() => {
 		if (context && hasInspector) {
-			return "xl:grid-cols-[15rem_minmax(0,1fr)_20rem]";
+			return contextWidth === "wide"
+				? "xl:grid-cols-[22rem_minmax(0,1fr)_20rem]"
+				: "xl:grid-cols-[15rem_minmax(0,1fr)_20rem]";
 		}
 		if (context) {
-			return "xl:grid-cols-[14rem_minmax(0,1fr)]";
+			return contextWidth === "wide"
+				? "xl:grid-cols-[22rem_minmax(0,1fr)]"
+				: "xl:grid-cols-[14rem_minmax(0,1fr)]";
 		}
 		if (hasInspector) {
 			return "xl:grid-cols-[minmax(0,1fr)_20rem]";

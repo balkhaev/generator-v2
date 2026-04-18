@@ -17,7 +17,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import BottomDock from "@/components/bottom-dock";
+import CommandSidebar from "@/components/command-sidebar";
 import ComposeDialog from "@/components/compose/compose-dialog";
 import MediaStrip from "@/components/media-strip";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -25,11 +25,10 @@ import PreviewSurface, {
 	getMediaType,
 	type StudioMediaAsset,
 } from "@/components/preview-surface";
-import ScenarioConsole from "@/components/scenario-console";
-import ScenarioRail, {
-	type ScenarioCardData,
-	type ScenarioRailStatus,
-} from "@/components/scenario-rail";
+import type {
+	ScenarioCardData,
+	ScenarioRailStatus,
+} from "@/components/scenario-card-data";
 import { useRunAutoSync } from "@/components/use-run-auto-sync";
 import UserMenu from "@/components/user-menu";
 import { importGenerationToPerson } from "@/lib/persons-api";
@@ -465,32 +464,17 @@ export default function StudioShell({
 					<UserMenu email={sessionEmail} name={sessionName} />
 				</>
 			}
-			bottomDock={
-				<BottomDock
-					hint={
-						selectedScenarioCard
-							? selectedScenarioCard.name
-							: "Select a scenario to launch a run"
-					}
-					title="Console"
-				>
-					<ScenarioConsole
-						className="h-full"
-						onCreateScenario={handleCreateScenario}
-						onSnapshotChange={setSnapshot}
-						selectedScenarioId={selectedScenarioId}
-						snapshot={snapshot}
-					/>
-				</BottomDock>
-			}
 			context={
-				<ScenarioRail
-					getHref={getScenarioHref}
+				<CommandSidebar
+					getScenarioHref={getScenarioHref}
 					onCreateScenario={handleCreateScenario}
-					scenarios={scenarioCards}
+					onSnapshotChange={setSnapshot}
+					scenarioCards={scenarioCards}
 					selectedScenarioId={selectedScenarioId}
+					snapshot={snapshot}
 				/>
 			}
+			contextWidth="wide"
 			navigation={createWorkspaceNavigation("studio", {
 				admin: adminUrl,
 				persons: personsUrl,

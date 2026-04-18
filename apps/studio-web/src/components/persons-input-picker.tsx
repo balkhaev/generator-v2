@@ -4,7 +4,10 @@ import type {
 	PersonGenerationRecord,
 	PersonRecord,
 } from "@generator/contracts/persons";
-import type { UploadedInputAsset } from "@generator/studio-client/client";
+import type {
+	ScenarioShotRecord,
+	UploadedInputAsset,
+} from "@generator/studio-client/client";
 import { uploadStudioInputImage } from "@generator/studio-client/client";
 import { Button } from "@generator/ui/components/button";
 import { Input } from "@generator/ui/components/input";
@@ -17,6 +20,7 @@ import {
 import { cn } from "@generator/ui/lib/utils";
 import {
 	ArrowRight,
+	Bookmark,
 	ImageUp,
 	Link as LinkIcon,
 	Loader2,
@@ -42,13 +46,14 @@ export interface PersonInputPick {
 	url: string;
 }
 
-type PickerTab = "upload" | "url" | "recent" | "persons";
+type PickerTab = "upload" | "url" | "recent" | "persons" | "shots";
 
 const tabs: { icon: typeof Upload; id: PickerTab; label: string }[] = [
 	{ icon: ImageUp, id: "upload", label: "Upload" },
 	{ icon: LinkIcon, id: "url", label: "URL" },
 	{ icon: ArrowRight, id: "recent", label: "Recent" },
 	{ icon: UsersRound, id: "persons", label: "Persons" },
+	{ icon: Bookmark, id: "shots", label: "Shots" },
 ];
 
 const previewableUrlPattern = /^(https?:\/\/.{3,}|data:\w+\/)/;
@@ -64,6 +69,7 @@ export interface PersonsInputPickerProps {
 	currentUrl: string;
 	onPick: (pick: PersonInputPick) => void;
 	recentReferences: RecentReference[];
+	shots?: ScenarioShotRecord[];
 	storageLabel?: string | null;
 }
 
@@ -72,6 +78,7 @@ export default function PersonsInputPicker({
 	currentUrl,
 	onPick,
 	recentReferences,
+	shots = [],
 	storageLabel,
 }: PersonsInputPickerProps) {
 	const [activeTab, setActiveTab] = useState<PickerTab>("upload");
@@ -661,6 +668,57 @@ export default function PersonsInputPicker({
 		);
 	}
 
+	function renderShotsTab() {
+		const imageShots = shots.filter((shot) => shot.artifactKind === "image");
+		if (imageShots.length === 0) {
+			return (
+				<p className="rounded-lg bg-muted/10 px-3 py-3 text-center text-[11px] text-muted-foreground dark:bg-muted/5">
+					No saved shots yet. Save a shot from preview to reuse it here.
+				</p>
+			);
+		}
+		return (
+			<div className="grid max-h-60 grid-cols-4 gap-1.5 overflow-y-auto py-0.5">
+				{imageShots.map((shot) => {
+					const isActive = currentUrl === shot.artifactUrl;
+					return (
+						<Tooltip key={shot.id}>
+							<TooltipTrigger
+								render={
+									<button
+										aria-label={shot.scenarioName}
+										className={cn(
+											"group relative aspect-square overflow-hidden rounded-lg transition",
+											isActive
+												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
+												: "opacity-80 hover:opacity-100"
+										)}
+										onClick={() =>
+											onPick({
+												personGenerationId: null,
+												personId: null,
+												storage: null,
+												url: shot.artifactUrl,
+											})
+										}
+										type="button"
+									/>
+								}
+							>
+								<div
+									aria-hidden="true"
+									className="absolute inset-0 bg-center bg-cover"
+									style={{ backgroundImage: `url("${shot.artifactUrl}")` }}
+								/>
+							</TooltipTrigger>
+							<TooltipContent>{shot.scenarioName}</TooltipContent>
+						</Tooltip>
+					);
+				})}
+			</div>
+		);
+	}
+
 	function renderActiveTab() {
 		switch (activeTab) {
 			case "upload":
@@ -671,6 +729,8 @@ export default function PersonsInputPicker({
 				return renderRecentTab();
 			case "persons":
 				return renderPersonsTab();
+			case "shots":
+				return renderShotsTab();
 			default:
 				return null;
 		}

@@ -375,6 +375,22 @@
         "typescript": "^5",
       },
     },
+    "packages/runtime-config": {
+      "name": "@generator/runtime-config",
+      "version": "0.0.0",
+      "dependencies": {
+        "@generator/db": "workspace:*",
+        "@generator/queue": "workspace:*",
+        "drizzle-orm": "^0.45.1",
+        "ioredis": "^5.10.1",
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@generator/config": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "^5",
+      },
+    },
     "packages/storage": {
       "name": "@generator/storage",
       "version": "0.0.0",
@@ -659,6 +675,8 @@
     "@generator/http": ["@generator/http@workspace:packages/http"],
 
     "@generator/queue": ["@generator/queue@workspace:packages/queue"],
+
+    "@generator/runtime-config": ["@generator/runtime-config@workspace:packages/runtime-config"],
 
     "@generator/storage": ["@generator/storage@workspace:packages/storage"],
 

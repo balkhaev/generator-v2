@@ -180,13 +180,14 @@ const falWan22ImageToVideoParamsSchema = falWan22TextToVideoParamsSchema.extend(
 	}
 );
 
-// LTX-2.3 targets the LTX-2.3-22B base text/image-to-video endpoints. fal does
-// NOT expose a `/lora` submodel for LTX-2.3-22B (only `camera_lora` enum is
-// supported in-schema). Sending requests to a non-existent `/lora` submodel or
-// passing a `loras` array makes fal route to the parent group and then 422 on
-// status/result polling. We keep `loraUrl`/`loraScale` in the param schema for
-// backwards compatibility with existing scenarios but never forward them to
-// the provider.
+// LTX-2.3 22B has dedicated `/lora` submodels for both text/image-to-video that
+// accept a required `loras: LoRAInput[]` array (path + scale). These submodels
+// work without a real LoRA too — fal's example payload uses `path: ""`. We keep
+// the workflow keys as `fal-ltx-2-3-*` for backwards compatibility with existing
+// studio scenarios. The 22B schema uses CFG/STG/rescaling/modality knobs instead
+// of a single `guidance_scale`, and supports `scheduler`/`gradient_estimation_gamma`/
+// `distill_lora_*`. We expose only the most useful knobs in the UI and rely on
+// fal defaults for the rest.
 const falLtx23TextToVideoParamsSchema = z.object({
 	negativePrompt: z
 		.string()
@@ -206,6 +207,7 @@ const falLtx23TextToVideoParamsSchema = z.object({
 		.default("landscape_16_9"),
 	fps: z.number().int().min(8).max(60).default(24),
 	numInferenceSteps: z.number().int().min(1).max(60).default(40),
+	videoCfgScale: z.number().min(1).max(20).default(3),
 	generateAudio: z.boolean().default(true),
 	useMultiscale: z.boolean().default(true),
 	enablePromptExpansion: z.boolean().default(true),
@@ -950,9 +952,9 @@ export const workflowRegistry = {
 	"fal-ltx-2-3-text-to-video": {
 		baseModel: "ltx-2-3",
 		key: "fal-ltx-2-3-text-to-video",
-		name: "LTX 2.3",
+		name: "LTX 2.3 22B",
 		description:
-			"Text-to-video generation using LTX 2.3 22B by Lightricks on fal.ai.",
+			"Text-to-video generation using LTX 2.3 22B by Lightricks on fal.ai. Optionally accepts a LoRA URL.",
 		requiresInputImage: false,
 		parameterSchema: falLtx23TextToVideoParamsSchema,
 		parameterFields: [
@@ -989,11 +991,33 @@ export const workflowRegistry = {
 				type: "number",
 			},
 			{
+				description:
+					"Classifier-free guidance scale for the video stream (higher = more prompt adherence).",
+				key: "videoCfgScale",
+				label: "CFG scale",
+				type: "number",
+			},
+			{
 				description: "Negative prompt to discourage unwanted content.",
 				key: "negativePrompt",
 				label: "Negative prompt",
 				optional: true,
 				type: "text",
+			},
+			{
+				description:
+					"Optional public URL pointing to trained LTX 2 LoRA weights.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Strength of the LoRA effect (ignored when no LoRA set).",
+				key: "loraScale",
+				label: "LoRA scale",
+				type: "number",
 			},
 			{
 				description: "Optional deterministic seed.",
@@ -1004,18 +1028,21 @@ export const workflowRegistry = {
 		],
 		buildProviderInput: ({ params, prompt }) => {
 			const parsed = falLtx23TextToVideoParamsSchema.parse(params);
+			const loraPath = parsed.loraUrl ?? "";
 			return {
-				__falModel: "fal-ai/ltx-2.3-22b/text-to-video",
+				__falModel: "fal-ai/ltx-2.3-22b/text-to-video/lora",
 				prompt,
 				negative_prompt: parsed.negativePrompt,
 				num_frames: parsed.numFrames,
 				video_size: parsed.videoSize,
 				fps: parsed.fps,
 				num_inference_steps: parsed.numInferenceSteps,
+				video_cfg_scale: parsed.videoCfgScale,
 				generate_audio: parsed.generateAudio,
 				use_multiscale: parsed.useMultiscale,
 				enable_prompt_expansion: parsed.enablePromptExpansion,
 				enable_safety_checker: parsed.enableSafetyChecker,
+				loras: [{ path: loraPath, scale: parsed.loraScale }],
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},
@@ -1024,9 +1051,9 @@ export const workflowRegistry = {
 	"fal-ltx-2-3-image-to-video": {
 		baseModel: "ltx-2-3",
 		key: "fal-ltx-2-3-image-to-video",
-		name: "LTX 2.3 I2V",
+		name: "LTX 2.3 22B I2V",
 		description:
-			"Image-to-video generation using LTX 2.3 22B by Lightricks on fal.ai.",
+			"Image-to-video generation using LTX 2.3 22B by Lightricks on fal.ai. Optionally accepts a LoRA URL.",
 		requiresInputImage: true,
 		parameterSchema: falLtx23ImageToVideoParamsSchema,
 		parameterFields: [
@@ -1073,11 +1100,33 @@ export const workflowRegistry = {
 				type: "number",
 			},
 			{
+				description:
+					"Classifier-free guidance scale for the video stream (higher = more prompt adherence).",
+				key: "videoCfgScale",
+				label: "CFG scale",
+				type: "number",
+			},
+			{
 				description: "Negative prompt to discourage unwanted content.",
 				key: "negativePrompt",
 				label: "Negative prompt",
 				optional: true,
 				type: "text",
+			},
+			{
+				description:
+					"Optional public URL pointing to trained LTX 2 LoRA weights.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Strength of the LoRA effect (ignored when no LoRA set).",
+				key: "loraScale",
+				label: "LoRA scale",
+				type: "number",
 			},
 			{
 				description: "Optional deterministic seed.",
@@ -1088,8 +1137,9 @@ export const workflowRegistry = {
 		],
 		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
 			const parsed = falLtx23ImageToVideoParamsSchema.parse(params);
+			const loraPath = parsed.loraUrl ?? "";
 			return {
-				__falModel: "fal-ai/ltx-2.3-22b/image-to-video",
+				__falModel: "fal-ai/ltx-2.3-22b/image-to-video/lora",
 				image_url: inputImageUrl,
 				prompt,
 				negative_prompt: parsed.negativePrompt,
@@ -1097,10 +1147,12 @@ export const workflowRegistry = {
 				video_size: parsed.videoSize,
 				fps: parsed.fps,
 				num_inference_steps: parsed.numInferenceSteps,
+				video_cfg_scale: parsed.videoCfgScale,
 				generate_audio: parsed.generateAudio,
 				use_multiscale: parsed.useMultiscale,
 				enable_prompt_expansion: parsed.enablePromptExpansion,
 				enable_safety_checker: parsed.enableSafetyChecker,
+				loras: [{ path: loraPath, scale: parsed.loraScale }],
 				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};

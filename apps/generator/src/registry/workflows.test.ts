@@ -312,7 +312,7 @@ describe("workflow registry", () => {
 		});
 	});
 
-	it("builds the fal-ltx-2-3 text-to-video payload", () => {
+	it("builds the fal-ltx-2-3 text-to-video payload with empty loras when no URL provided", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
 
 		expect(
@@ -326,17 +326,19 @@ describe("workflow registry", () => {
 				prompt: "a fast handheld shot through a busy market",
 			})
 		).toMatchObject({
-			__falModel: "fal-ai/ltx-2.3-22b/text-to-video",
+			__falModel: "fal-ai/ltx-2.3-22b/text-to-video/lora",
 			fps: 24,
 			generate_audio: true,
+			loras: [{ path: "", scale: 1 }],
 			num_frames: 121,
 			num_inference_steps: 40,
 			prompt: "a fast handheld shot through a busy market",
+			video_cfg_scale: 3,
 			video_size: "landscape_16_9",
 		});
 	});
 
-	it("builds the fal-ltx-2-3 image-to-video payload without LoRA fields", () => {
+	it("builds the fal-ltx-2-3 image-to-video payload with optional LoRA", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-image-to-video");
 
 		const payload = workflow?.buildProviderInput({
@@ -354,20 +356,22 @@ describe("workflow registry", () => {
 		});
 
 		expect(payload).toMatchObject({
-			__falModel: "fal-ai/ltx-2.3-22b/image-to-video",
+			__falModel: "fal-ai/ltx-2.3-22b/image-to-video/lora",
 			fps: 24,
 			generate_audio: true,
 			image_url: "https://storage.example.com/reference.png",
+			loras: [
+				{
+					path: "https://storage.example.com/ltx-lora.safetensors",
+					scale: 0.5,
+				},
+			],
 			num_frames: 121,
 			num_inference_steps: 40,
 			prompt: "animate the still image with a slow dolly push",
+			video_cfg_scale: 3,
 			video_size: "auto",
 		});
-		// LTX-2.3-22B does not expose a `/lora` submodel — make sure we never
-		// forward `loras`/`loraUrl`/`loraScale` to fal.
-		expect(payload).not.toHaveProperty("loras");
-		expect(payload).not.toHaveProperty("loraUrl");
-		expect(payload).not.toHaveProperty("loraScale");
 	});
 
 	it("extracts image urls from fal response format", () => {

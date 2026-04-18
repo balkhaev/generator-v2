@@ -98,6 +98,7 @@ describe("fal workflow registry", () => {
 			loraScale: 1,
 			numFrames: 121,
 			numInferenceSteps: 40,
+			videoCfgScale: 3,
 			videoSize: "landscape_16_9",
 		});
 	});
@@ -111,6 +112,7 @@ describe("fal workflow registry", () => {
 			loraScale: 1,
 			numFrames: 121,
 			numInferenceSteps: 40,
+			videoCfgScale: 3,
 			videoSize: "auto",
 		});
 	});
@@ -147,7 +149,7 @@ describe("fal workflow registry", () => {
 		]);
 	});
 
-	it("targets the base LTX-2.3 endpoints and never forwards LoRA fields", () => {
+	it("targets the LTX-2.3 /lora endpoints and routes loras", () => {
 		const ltxT2v = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
 		const ltxI2v = getWorkflowDefinition("fal-ltx-2-3-image-to-video");
 		const buildInput = (
@@ -161,21 +163,26 @@ describe("fal workflow registry", () => {
 			}) as Record<string, unknown>;
 
 		expect(buildInput(ltxT2v)?.__falModel).toBe(
-			"fal-ai/ltx-2.3-22b/text-to-video"
+			"fal-ai/ltx-2.3-22b/text-to-video/lora"
 		);
 		expect(buildInput(ltxI2v)?.__falModel).toBe(
-			"fal-ai/ltx-2.3-22b/image-to-video"
+			"fal-ai/ltx-2.3-22b/image-to-video/lora"
 		);
 
-		// LTX-2.3-22B has no `/lora` submodel — `loras` must never be sent
-		// even if a legacy scenario still carries `loraUrl` in its params.
+		// Without a LoRA URL we must still send `loras` (fal requires the field)
+		// with an empty `path` — exactly as in fal's official example payload.
+		expect((buildInput(ltxT2v) as { loras: unknown[] }).loras).toEqual([
+			{ path: "", scale: 1 },
+		]);
+
+		// With LoRA → single entry with custom scale.
 		const ltxWithLora = buildInput(ltxI2v, {
 			loraUrl: "https://example.com/ltx-lora.safetensors",
 			loraScale: 0.7,
-		});
-		expect(ltxWithLora).not.toHaveProperty("loras");
-		expect(ltxWithLora).not.toHaveProperty("loraUrl");
-		expect(ltxWithLora).not.toHaveProperty("loraScale");
+		}) as { loras: unknown[] };
+		expect(ltxWithLora.loras).toEqual([
+			{ path: "https://example.com/ltx-lora.safetensors", scale: 0.7 },
+		]);
 	});
 
 	it("marks loraUrl fields as optional in enriched parameter list", () => {
@@ -197,19 +204,21 @@ describe("fal workflow registry", () => {
 		}
 	});
 
-	it("hides LoRA fields from LTX-2.3 parameter UI", () => {
+	it("exposes optional LoRA fields in LTX-2.3 parameter UI", () => {
 		const workflows = listWorkflows();
 		for (const key of [
 			"fal-ltx-2-3-text-to-video",
 			"fal-ltx-2-3-image-to-video",
 		]) {
 			const workflow = workflows.find((entry) => entry.key === key);
-			expect(
-				workflow?.parameterFields.some((field) => field.key === "loraUrl")
-			).toBe(false);
+			const loraField = workflow?.parameterFields.find(
+				(field) => field.key === "loraUrl"
+			);
+			expect(loraField?.optional).toBe(true);
+			expect(loraField?.kind).toBe("lora-url");
 			expect(
 				workflow?.parameterFields.some((field) => field.key === "loraScale")
-			).toBe(false);
+			).toBe(true);
 		}
 	});
 

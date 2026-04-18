@@ -10,53 +10,35 @@ export interface WorkflowClassification {
 	modality: Modality;
 }
 
-export interface WorkflowSelection {
+export interface WorkflowFilter {
 	approach: Approach;
-	baseModel: string | null;
-	hasLora: boolean;
 	modality: Modality;
-	workflowKey?: string;
 }
 
 export function classifyWorkflow(
 	workflow: WorkflowDefinition
 ): WorkflowClassification {
-	const key = workflow.key;
-	const isVideo = key.includes("video");
-	const isImageInput = workflow.requiresInputImage;
+	const isVideo = workflow.key.includes("video");
 	const loraParameters = workflow.parameters.filter(
 		(parameter) => parameter.kind === "lora-url"
 	);
 
 	return {
-		approach: isImageInput ? "image" : "text",
+		approach: workflow.requiresInputImage ? "image" : "text",
 		hasLora: loraParameters.length > 0,
 		maxLoraSlots: loraParameters.length,
 		modality: isVideo ? "video" : "image",
 	};
 }
 
-export function getAvailableBaseModels(
-	workflows: WorkflowDefinition[],
-	criteria: Pick<WorkflowSelection, "approach" | "modality">
-): string[] {
-	const seen = new Set<string>();
-	const ordered: string[] = [];
+export function getAvailableModalities(
+	workflows: WorkflowDefinition[]
+): Modality[] {
+	const seen = new Set<Modality>();
 	for (const workflow of workflows) {
-		const classification = classifyWorkflow(workflow);
-		if (
-			classification.modality !== criteria.modality ||
-			classification.approach !== criteria.approach
-		) {
-			continue;
-		}
-		const baseModel = workflow.baseModel ?? "other";
-		if (!seen.has(baseModel)) {
-			seen.add(baseModel);
-			ordered.push(baseModel);
-		}
+		seen.add(classifyWorkflow(workflow).modality);
 	}
-	return ordered;
+	return Array.from(seen);
 }
 
 export function getAvailableApproaches(
@@ -73,73 +55,31 @@ export function getAvailableApproaches(
 	return Array.from(seen);
 }
 
-export function supportsLora(
+export function filterWorkflows(
 	workflows: WorkflowDefinition[],
-	criteria: Pick<WorkflowSelection, "approach" | "baseModel" | "modality">
-): boolean {
-	return workflows.some((workflow) => {
-		const classification = classifyWorkflow(workflow);
-		const baseModel = workflow.baseModel ?? "other";
-		return (
-			classification.modality === criteria.modality &&
-			classification.approach === criteria.approach &&
-			(criteria.baseModel ? baseModel === criteria.baseModel : true) &&
-			classification.hasLora
-		);
-	});
-}
-
-export function findCandidateWorkflows(
-	workflows: WorkflowDefinition[],
-	criteria: Omit<WorkflowSelection, "workflowKey">
+	filter: WorkflowFilter
 ): WorkflowDefinition[] {
 	return workflows.filter((workflow) => {
 		const classification = classifyWorkflow(workflow);
-		const baseModel = workflow.baseModel ?? "other";
 		return (
-			classification.modality === criteria.modality &&
-			classification.approach === criteria.approach &&
-			(criteria.baseModel ? baseModel === criteria.baseModel : true) &&
-			classification.hasLora === criteria.hasLora
+			classification.modality === filter.modality &&
+			classification.approach === filter.approach
 		);
 	});
 }
 
-export function findWorkflow(
+export function pickDefaultWorkflow(
 	workflows: WorkflowDefinition[],
-	criteria: WorkflowSelection
+	filter: WorkflowFilter
 ): WorkflowDefinition | null {
-	const candidates = findCandidateWorkflows(workflows, criteria);
-
-	if (candidates.length > 0) {
-		if (criteria.workflowKey) {
-			const exact = candidates.find(
-				(workflow) => workflow.key === criteria.workflowKey
-			);
-			if (exact) {
-				return exact;
-			}
-		}
-		return candidates[0] ?? null;
+	const matches = filterWorkflows(workflows, filter);
+	if (matches.length === 0) {
+		return null;
 	}
-
-	if (criteria.hasLora) {
-		return findWorkflow(workflows, { ...criteria, hasLora: false });
-	}
-
-	return null;
-}
-
-export function describeWorkflowSelection(
-	workflow: WorkflowDefinition
-): WorkflowSelection {
-	const classification = classifyWorkflow(workflow);
-	return {
-		approach: classification.approach,
-		baseModel: workflow.baseModel ?? null,
-		hasLora: classification.hasLora,
-		modality: classification.modality,
-	};
+	const noLora = matches.find(
+		(workflow) => !classifyWorkflow(workflow).hasLora
+	);
+	return noLora ?? matches[0] ?? null;
 }
 
 export interface LoraSlotDefinition {

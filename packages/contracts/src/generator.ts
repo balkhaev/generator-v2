@@ -1,7 +1,7 @@
 import type { BaseModelId } from "./base-models";
 
 export type WorkflowParameterType = "text" | "number";
-export type WorkflowParameterKind = "lora-url";
+export type WorkflowParameterKind = "image-url" | "lora-url";
 export type WorkflowBaseModel = BaseModelId;
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 export type ScenarioParamValue = string | number | boolean | null;

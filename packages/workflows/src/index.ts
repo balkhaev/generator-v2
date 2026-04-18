@@ -1168,6 +1168,8 @@ function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
 			return { ...field, min: 0, max: 2, step: 0.05, optional: true };
 		case "extraLoraUrl":
 			return { ...field, optional: true };
+		case "endImageUrl":
+			return { ...field, kind: "image-url", optional: true };
 		case "seed":
 			return { ...field, min: 0, optional: true };
 		case "strength":

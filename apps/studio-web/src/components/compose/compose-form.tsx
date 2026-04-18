@@ -14,33 +14,23 @@ import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import { cn } from "@generator/ui/lib/utils";
-import {
-	AlertCircle,
-	ChevronDown,
-	Loader2,
-	Plus,
-	Sparkles,
-	Wand2,
-} from "lucide-react";
+import { AlertCircle, ChevronDown, Loader2, Plus, Wand2 } from "lucide-react";
 import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import LoraStack from "./lora-stack";
 import ParameterField from "./parameter-field";
+import WorkflowGrid from "./workflow-grid";
 import {
 	type Approach,
 	classifyWorkflow,
-	describeWorkflowSelection,
-	findCandidateWorkflows,
-	findWorkflow,
+	filterWorkflows,
 	getAvailableApproaches,
-	getAvailableBaseModels,
+	getAvailableModalities,
 	getLoraSlots,
 	type Modality,
-	supportsLora,
-	type WorkflowSelection,
+	pickDefaultWorkflow,
 } from "./workflow-matrix";
-import WorkflowSelector from "./workflow-selector";
 
 const PROMPT_LIMIT = 1500;
 
@@ -96,7 +86,8 @@ interface PartitionedParameters {
 }
 
 function partitionNonLoraParameters(
-	workflow: WorkflowDefinition
+	workflow: WorkflowDefinition,
+	options: { hideAspectRatio?: boolean } = {}
 ): PartitionedParameters {
 	const handledKeys = new Set<string>();
 	for (const parameter of workflow.parameters) {
@@ -128,6 +119,10 @@ function partitionNonLoraParameters(
 			parameter.key === "enableOutputSafetyChecker" ||
 			parameter.key === "enablePromptExpansion"
 		) {
+			continue;
+		}
+
+		if (options.hideAspectRatio && parameter.key === "aspectRatio") {
 			continue;
 		}
 
@@ -196,35 +191,6 @@ function getCharCounterTone(length: number, isOver: boolean) {
 	return "text-muted-foreground";
 }
 
-function buildSelectionFromForm(
-	workflow: WorkflowDefinition | null
-): WorkflowSelection | null {
-	if (!workflow) {
-		return null;
-	}
-	return describeWorkflowSelection(workflow);
-}
-
-function getAvailableModalities(workflows: WorkflowDefinition[]): Modality[] {
-	const seen = new Set<Modality>();
-	for (const workflow of workflows) {
-		seen.add(classifyWorkflow(workflow).modality);
-	}
-	return Array.from(seen);
-}
-
-function resolveBaseModel(
-	workflows: WorkflowDefinition[],
-	preferred: string | null,
-	criteria: { approach: Approach; modality: Modality }
-): string | null {
-	const baseModels = getAvailableBaseModels(workflows, criteria);
-	if (preferred && baseModels.includes(preferred)) {
-		return preferred;
-	}
-	return baseModels[0] ?? null;
-}
-
 function resolveApproach(
 	workflows: WorkflowDefinition[],
 	preferred: Approach,
@@ -235,64 +201,6 @@ function resolveApproach(
 		return preferred;
 	}
 	return approaches[0] ?? preferred;
-}
-
-interface LoraSectionProps {
-	adminLorasHref: string;
-	availableLoras: LoraRegistryEntry[];
-	form: ScenarioFormState;
-	hasLora: boolean;
-	loraSlots: ReturnType<typeof getLoraSlots>;
-	onEnableLora: () => void;
-	onParamChange: (key: string, value: string) => void;
-	workflow: WorkflowDefinition;
-}
-
-function LoraSection({
-	adminLorasHref,
-	availableLoras,
-	form,
-	hasLora,
-	loraSlots,
-	onEnableLora,
-	onParamChange,
-	workflow,
-}: LoraSectionProps) {
-	if (hasLora && loraSlots.length > 0) {
-		return (
-			<LoraStack
-				adminHref={adminLorasHref}
-				availableLoras={availableLoras}
-				form={form}
-				onParamChange={onParamChange}
-				slots={loraSlots}
-				workflow={workflow}
-			/>
-		);
-	}
-
-	return (
-		<button
-			className="flex items-center gap-2.5 rounded-lg border border-foreground/15 border-dashed bg-foreground/[0.02] px-3 py-2.5 text-left transition hover:border-foreground/25 hover:bg-foreground/[0.04]"
-			onClick={onEnableLora}
-			type="button"
-		>
-			<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-foreground/[0.06]">
-				<Sparkles
-					aria-hidden="true"
-					className="size-3.5 text-muted-foreground"
-					strokeWidth={1.6}
-				/>
-			</span>
-			<span className="grid flex-1">
-				<span className="font-medium text-[12px]">Add LoRA style</span>
-				<span className="text-[10px] text-muted-foreground">
-					Apply a custom character or style trained for this base model.
-				</span>
-			</span>
-			<Plus className="size-3.5 text-muted-foreground" />
-		</button>
-	);
 }
 
 interface ParametersGroupProps {
@@ -429,7 +337,9 @@ export default function ComposeForm({
 
 	const selectedWorkflow =
 		workflows.find((workflow) => workflow.key === form.workflowKey) ?? null;
-	const selection = buildSelectionFromForm(selectedWorkflow);
+	const selectedClassification = selectedWorkflow
+		? classifyWorkflow(selectedWorkflow)
+		: null;
 
 	const availableModalities = useMemo(
 		() => getAvailableModalities(workflows),
@@ -438,41 +348,32 @@ export default function ComposeForm({
 
 	const availableApproaches = useMemo(
 		() =>
-			selection ? getAvailableApproaches(workflows, selection.modality) : [],
-		[workflows, selection]
-	);
-
-	const availableBaseModels = useMemo(
-		() =>
-			selection
-				? getAvailableBaseModels(workflows, {
-						approach: selection.approach,
-						modality: selection.modality,
-					})
+			selectedClassification
+				? getAvailableApproaches(workflows, selectedClassification.modality)
 				: [],
-		[workflows, selection]
+		[workflows, selectedClassification]
 	);
 
-	const availableVariants = useMemo(() => {
-		if (!selection) {
+	const filteredWorkflows = useMemo(() => {
+		if (!selectedClassification) {
 			return [] as WorkflowDefinition[];
 		}
-		return findCandidateWorkflows(workflows, {
-			approach: selection.approach,
-			baseModel: selection.baseModel,
-			hasLora: selection.hasLora,
-			modality: selection.modality,
+		return filterWorkflows(workflows, {
+			approach: selectedClassification.approach,
+			modality: selectedClassification.modality,
 		});
-	}, [workflows, selection]);
-
-	const loraAvailable = useMemo(() => {
-		if (!selection) {
-			return false;
-		}
-		return supportsLora(workflows, selection);
-	}, [workflows, selection]);
+	}, [workflows, selectedClassification]);
 
 	const loraSlots = selectedWorkflow ? getLoraSlots(selectedWorkflow) : [];
+	const showLoraSection = Boolean(
+		selectedClassification?.hasLora && loraSlots.length > 0
+	);
+
+	const isImageToVideo = Boolean(
+		selectedClassification &&
+			selectedClassification.modality === "video" &&
+			selectedClassification.approach === "image"
+	);
 
 	const partitioned = useMemo(() => {
 		if (!selectedWorkflow) {
@@ -482,8 +383,10 @@ export default function ComposeForm({
 				sampling: [] as WorkflowParameter[],
 			};
 		}
-		return partitionNonLoraParameters(selectedWorkflow);
-	}, [selectedWorkflow]);
+		return partitionNonLoraParameters(selectedWorkflow, {
+			hideAspectRatio: isImageToVideo,
+		});
+	}, [selectedWorkflow, isImageToVideo]);
 
 	const errors = useMemo(() => {
 		if (!selectedWorkflow) {
@@ -504,8 +407,7 @@ export default function ComposeForm({
 		onValidityChange?.({ errors, isReady });
 	}, [errors, isReady, onValidityChange]);
 
-	function applySelection(nextSelection: WorkflowSelection) {
-		const nextWorkflow = findWorkflow(workflows, nextSelection);
+	function applyWorkflow(nextWorkflow: WorkflowDefinition | null) {
 		if (!nextWorkflow || nextWorkflow.key === form.workflowKey) {
 			return;
 		}
@@ -518,60 +420,47 @@ export default function ComposeForm({
 	}
 
 	function handleModalityChange(nextModality: Modality) {
-		if (!selection || nextModality === selection.modality) {
+		if (
+			!selectedClassification ||
+			nextModality === selectedClassification.modality
+		) {
 			return;
 		}
 		const nextApproach = resolveApproach(
 			workflows,
-			selection.approach,
+			selectedClassification.approach,
 			nextModality
 		);
-		const nextBaseModel = resolveBaseModel(workflows, selection.baseModel, {
-			approach: nextApproach,
-			modality: nextModality,
-		});
-		applySelection({
-			approach: nextApproach,
-			baseModel: nextBaseModel,
-			hasLora: false,
-			modality: nextModality,
-		});
+		applyWorkflow(
+			pickDefaultWorkflow(workflows, {
+				approach: nextApproach,
+				modality: nextModality,
+			})
+		);
 	}
 
 	function handleApproachChange(nextApproach: Approach) {
-		if (!selection || nextApproach === selection.approach) {
+		if (
+			!selectedClassification ||
+			nextApproach === selectedClassification.approach
+		) {
 			return;
 		}
-		const nextBaseModel = resolveBaseModel(workflows, selection.baseModel, {
-			approach: nextApproach,
-			modality: selection.modality,
-		});
-		applySelection({
-			...selection,
-			approach: nextApproach,
-			baseModel: nextBaseModel,
-		});
+		applyWorkflow(
+			pickDefaultWorkflow(workflows, {
+				approach: nextApproach,
+				modality: selectedClassification.modality,
+			})
+		);
 	}
 
-	function handleBaseModelChange(nextBaseModel: string) {
-		if (!selection || nextBaseModel === selection.baseModel) {
+	function handleWorkflowChange(nextWorkflowKey: string) {
+		if (nextWorkflowKey === form.workflowKey) {
 			return;
 		}
-		applySelection({ ...selection, baseModel: nextBaseModel });
-	}
-
-	function handleEnableLora() {
-		if (!selection || selection.hasLora) {
-			return;
-		}
-		applySelection({ ...selection, hasLora: true });
-	}
-
-	function handleVariantChange(nextWorkflowKey: string) {
-		if (!selection || nextWorkflowKey === form.workflowKey) {
-			return;
-		}
-		applySelection({ ...selection, workflowKey: nextWorkflowKey });
+		applyWorkflow(
+			workflows.find((workflow) => workflow.key === nextWorkflowKey) ?? null
+		);
 	}
 
 	function handleParamChange(key: string, value: string) {
@@ -592,7 +481,7 @@ export default function ComposeForm({
 		}
 	}
 
-	if (!(selectedWorkflow && selection)) {
+	if (!(selectedWorkflow && selectedClassification)) {
 		return (
 			<div className="rounded-lg bg-rose-500/10 px-3 py-2 text-rose-700 text-xs dark:text-rose-300">
 				No workflows are available.
@@ -604,29 +493,20 @@ export default function ComposeForm({
 		<form className="grid min-w-0 gap-5" id={formId} onSubmit={handleSubmit}>
 			<section className="grid gap-2">
 				<SectionLabel>Workflow</SectionLabel>
-				<WorkflowSelector
-					approach={selection.approach}
+				<WorkflowGrid
+					approach={selectedClassification.approach}
 					availableApproaches={availableApproaches}
-					availableBaseModels={availableBaseModels}
 					availableModalities={availableModalities}
-					availableVariants={availableVariants}
-					baseModel={selection.baseModel}
-					modality={selection.modality}
+					filteredWorkflows={filteredWorkflows}
+					modality={selectedClassification.modality}
 					onApproachChange={handleApproachChange}
-					onBaseModelChange={handleBaseModelChange}
 					onModalityChange={handleModalityChange}
-					onVariantChange={handleVariantChange}
+					onWorkflowChange={handleWorkflowChange}
 					selectedWorkflowKey={selectedWorkflow.key}
 				/>
-				<p className="rounded-lg bg-foreground/[0.03] px-2.5 py-1.5 text-[11px] text-muted-foreground">
-					<span className="font-medium text-foreground">
-						{selectedWorkflow.name}.
-					</span>{" "}
-					{selectedWorkflow.summary}
-				</p>
 			</section>
 
-			{loraAvailable ? (
+			{showLoraSection ? (
 				<section className="grid gap-2">
 					<div className="flex items-center justify-between gap-2">
 						<SectionLabel>Style LoRAs</SectionLabel>
@@ -634,14 +514,12 @@ export default function ComposeForm({
 							{availableLoras.length} in registry
 						</span>
 					</div>
-					<LoraSection
-						adminLorasHref={adminLorasHref}
+					<LoraStack
+						adminHref={adminLorasHref}
 						availableLoras={availableLoras}
 						form={form}
-						hasLora={selection.hasLora}
-						loraSlots={loraSlots}
-						onEnableLora={handleEnableLora}
 						onParamChange={handleParamChange}
+						slots={loraSlots}
 						workflow={selectedWorkflow}
 					/>
 				</section>
@@ -721,6 +599,11 @@ export default function ComposeForm({
 			{partitioned.output.length > 0 ? (
 				<section className="grid gap-2">
 					<SectionLabel>Output</SectionLabel>
+					{isImageToVideo ? (
+						<p className="rounded-lg bg-foreground/[0.03] px-3 py-2 text-[11px] text-muted-foreground">
+							Output keeps the source image proportions automatically.
+						</p>
+					) : null}
 					<ParametersGroup
 						form={form}
 						onParamChange={handleParamChange}

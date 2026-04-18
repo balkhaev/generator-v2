@@ -144,6 +144,32 @@ const serverSchema = {
 	HUGGINGFACE_TOKEN: z.string().min(1).optional(),
 	XAI_API_KEY: z.string().min(1).optional(),
 
+	// LoRA training provider selection.
+	// "fal" — текущий fal-ai/z-image-trainer пайплайн.
+	// "runpod" — экспериментальный ai-toolkit на RunPod serverless.
+	TRAINING_PROVIDER: z.enum(["fal", "runpod"]).default("fal"),
+
+	// RunPod (ai-toolkit serverless) — экспериментально.
+	RUNPOD_API_KEY: z.string().min(1).optional(),
+	RUNPOD_AI_TOOLKIT_ENDPOINT_ID: z.string().min(1).optional(),
+	RUNPOD_API_BASE_URL: z.url().default("https://api.runpod.ai/v2"),
+	RUNPOD_AI_TOOLKIT_TIMEOUT_MS: z.coerce
+		.number()
+		.int()
+		.positive()
+		.default(120 * 60 * 1000),
+	RUNPOD_AI_TOOLKIT_POLL_MS: z.coerce.number().int().positive().default(30_000),
+	RUNPOD_AI_TOOLKIT_BASE_MODEL: z
+		.enum([
+			"z-image",
+			"flux-dev",
+			"flux-schnell",
+			"flux2-dev",
+			"sdxl",
+			"qwen-image",
+		])
+		.default("z-image"),
+
 	// Public asset URLs (S3_PUBLIC_BASE_URL is canonical; S3_PUBLIC_URL and
 	// ASSET_PUBLIC_BASE_URL are accepted as aliases via normalizeS3RuntimeEnv).
 	S3_PUBLIC_BASE_URL: optionalUrlSchema,

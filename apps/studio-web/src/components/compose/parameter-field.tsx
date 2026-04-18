@@ -1,11 +1,14 @@
 "use client";
 
+import { uploadStudioInputImage } from "@generator/studio-client/client";
 import type { WorkflowParameter } from "@generator/studio-client/shared";
+import { ImageUploader } from "@generator/ui/components/image-uploader";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { cn } from "@generator/ui/lib/utils";
 import { Dice5 } from "lucide-react";
 import { useId } from "react";
+import { toast } from "sonner";
 
 import AspectPicker from "./aspect-picker";
 import RangeSlider from "./range-slider";
@@ -110,6 +113,21 @@ function ParameterControl({
 	parameter: WorkflowParameter;
 	value: string;
 }) {
+	if (parameter.kind === "image-url") {
+		return (
+			<ImageUploader
+				id={fieldId}
+				onChange={onChange}
+				onError={(message) => toast.error(message)}
+				upload={async (file) => {
+					const result = await uploadStudioInputImage({ file });
+					return { url: result.url };
+				}}
+				value={value}
+			/>
+		);
+	}
+
 	if (parameter.key === "imageSize" && parameter.enumValues) {
 		return (
 			<AspectPicker

@@ -231,6 +231,34 @@ export async function cancelPersonLoraTraining(personId: string) {
 	return payload.person;
 }
 
+export interface UploadedPersonsImage {
+	contentType: string;
+	fileName: string;
+	sizeBytes: number;
+	storage: "s3";
+	url: string;
+}
+
+export async function uploadPersonsImage(
+	file: File
+): Promise<UploadedPersonsImage> {
+	const formData = new FormData();
+	formData.append("file", file);
+
+	const response = await fetch(`${API_BASE_URL}/api/input-assets`, {
+		body: formData,
+		credentials: "include",
+		method: "POST",
+	});
+
+	if (!response.ok) {
+		throw new Error(await getErrorMessage(response));
+	}
+
+	const payload = (await response.json()) as { upload: UploadedPersonsImage };
+	return payload.upload;
+}
+
 export async function enhancePersonsPrompt(prompt: string): Promise<string> {
 	const payload = await requestJson<{ enhanced?: unknown }>(
 		`${API_BASE_URL}/api/enhance-prompt`,

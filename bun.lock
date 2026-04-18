@@ -279,6 +279,7 @@
     "packages/db": {
       "name": "@generator/db",
       "dependencies": {
+        "@generator/contracts": "workspace:*",
         "@generator/env": "workspace:*",
         "dotenv": "catalog:",
         "drizzle-orm": "^0.45.1",

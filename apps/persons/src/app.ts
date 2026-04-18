@@ -4,6 +4,7 @@ import {
 	createSessionMiddleware,
 } from "@generator/auth/middleware";
 import { createPublicPathMatcher } from "@generator/auth/public-paths";
+import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import {
 	DEBUG_CORRELATION_HEADER,
 	resolveDebugCorrelationId,
@@ -12,7 +13,6 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
-import type { AdminLoraClient } from "@/clients/admin-loras";
 import type { AdminTrainingClient } from "@/clients/admin-training";
 import type { GrokClient } from "@/clients/grok";
 import type { OperatorServerClient, PersonsRepository } from "@/domain/persons";
@@ -25,7 +25,6 @@ import { createLoraRoutes } from "@/routes/loras";
 import { createPersonRoutes } from "@/routes/persons";
 
 interface AppOptions {
-	adminLoraClient?: AdminLoraClient;
 	adminTrainingClient?: AdminTrainingClient;
 	authHandler?: (request: Request) => Response | Promise<Response>;
 	callbackConfig?: {
@@ -37,6 +36,7 @@ interface AppOptions {
 		request: Request
 	) => Promise<{ session: unknown; user: unknown } | null>;
 	grokClient?: GrokClient;
+	loraReadRepository?: LoraReadRepository;
 	operatorServerClient?: OperatorServerClient;
 	repository: PersonsRepository;
 }
@@ -109,8 +109,8 @@ export function createApp(options: AppOptions) {
 	app.route("/api/internal", createInternalRoutes(service));
 	app.route("/api/enhance-prompt", createEnhanceRoutes(options.grokClient));
 	app.route("/api/input-assets", createInputAssetRoutes());
-	if (options.adminLoraClient) {
-		app.route("/api/loras", createLoraRoutes(options.adminLoraClient));
+	if (options.loraReadRepository) {
+		app.route("/api/loras", createLoraRoutes(options.loraReadRepository));
 	}
 
 	app.onError((error, c) => {

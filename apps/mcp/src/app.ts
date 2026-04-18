@@ -216,6 +216,89 @@ const toolDefinitions = [
 	},
 	{
 		description:
+			"List all persons from the persons service (id, slug, status, lora training status).",
+		inputSchema: {
+			properties: {},
+			type: "object",
+		},
+		name: "persons_list",
+	},
+	{
+		description:
+			"Get full state of a single person, including dataset, generations and lora training history.",
+		inputSchema: {
+			properties: {
+				personId: {
+					type: "string",
+				},
+			},
+			required: ["personId"],
+			type: "object",
+		},
+		name: "persons_get",
+	},
+	{
+		description:
+			"Re-trigger LoRA training for an existing person. The person must already have a completed dataset (referencePhotoUrl). Use this for smoke-testing the training pipeline against the currently selected provider (fal/runpod).",
+		inputSchema: {
+			properties: {
+				outputName: {
+					description: "Optional override for the output LoRA name.",
+					type: "string",
+				},
+				personId: {
+					type: "string",
+				},
+				referencePrompt: {
+					description: "Optional override for the trigger phrase prompt.",
+					type: "string",
+				},
+				triggerWord: {
+					description: "Optional override for the trigger word/token.",
+					type: "string",
+				},
+			},
+			required: ["personId"],
+			type: "object",
+		},
+		name: "persons_retrain_lora",
+	},
+	{
+		description:
+			"Read the currently configured LoRA training provider and per-provider availability (env-vars status, source: worker vs gateway-fallback).",
+		inputSchema: {
+			properties: {},
+			type: "object",
+		},
+		name: "training_provider_get",
+	},
+	{
+		description:
+			"Switch the active LoRA training provider at runtime. Persists the choice in Redis. New jobs go to the new provider, in-flight jobs finish on their original provider.",
+		inputSchema: {
+			properties: {
+				provider: {
+					description: "'fal' or 'runpod'",
+					enum: ["fal", "runpod"],
+					type: "string",
+				},
+			},
+			required: ["provider"],
+			type: "object",
+		},
+		name: "training_provider_set",
+	},
+	{
+		description:
+			"Read the full admin settings snapshot (training provider, runpod endpoint, dataset builder, persons defaults, generator runtime, worker health).",
+		inputSchema: {
+			properties: {},
+			type: "object",
+		},
+		name: "admin_settings_get",
+	},
+	{
+		description:
 			"Describe the configured Kafka cluster, brokers, controller, and topic count.",
 		inputSchema: {
 			properties: {},
@@ -722,6 +805,143 @@ function fetchAdminLoras(query: string, token: string) {
 	);
 }
 
+function requireTrainingControlToken(id: JsonRpcResponse["id"]) {
+	const token = process.env.TRAINING_CONTROL_TOKEN;
+	if (!token) {
+		return {
+			error: createErrorResponse(
+				id,
+				"TRAINING_CONTROL_TOKEN is not configured for the MCP server"
+			),
+			token: null as string | null,
+		};
+	}
+	return { error: null, token };
+}
+
+async function handlePersonsToolCall(
+	name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const { error, token } = requireTrainingControlToken(id);
+	if (error) {
+		return error;
+	}
+
+	if (name === "persons_list") {
+		return createOkResponse(
+			id,
+			createToolResult(
+				await fetchServiceSnapshot("persons", "/api/internal/persons", {
+					headers: {
+						authorization: `Bearer ${token}`,
+					},
+				})
+			)
+		);
+	}
+
+	const personId = parseOptionalString(argumentsPayload.personId);
+	if (!personId) {
+		return createErrorResponse(id, "personId is required");
+	}
+
+	if (name === "persons_get") {
+		return createOkResponse(
+			id,
+			createToolResult(
+				await fetchServiceSnapshot(
+					"persons",
+					`/api/persons/${encodeURIComponent(personId)}`
+				)
+			)
+		);
+	}
+
+	if (name === "persons_retrain_lora") {
+		const body: Record<string, unknown> = {};
+		const outputName = parseOptionalString(argumentsPayload.outputName);
+		const referencePrompt = parseOptionalString(
+			argumentsPayload.referencePrompt
+		);
+		const triggerWord = parseOptionalString(argumentsPayload.triggerWord);
+		if (outputName) {
+			body.outputName = outputName;
+		}
+		if (referencePrompt) {
+			body.referencePrompt = referencePrompt;
+		}
+		if (triggerWord) {
+			body.triggerWord = triggerWord;
+		}
+		return createOkResponse(
+			id,
+			createToolResult(
+				await fetchServiceSnapshot(
+					"persons",
+					`/api/internal/persons/${encodeURIComponent(personId)}/retrain-lora`,
+					{
+						body: JSON.stringify(body),
+						headers: {
+							authorization: `Bearer ${token}`,
+							"content-type": "application/json",
+						},
+						method: "POST",
+					}
+				)
+			)
+		);
+	}
+
+	return createErrorResponse(id, `Unknown persons tool: ${name}`);
+}
+
+async function handleTrainingProviderToolCall(
+	name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	if (name === "training_provider_get") {
+		return createOkResponse(
+			id,
+			createToolResult(
+				await fetchServiceSnapshot("admin", "/api/admin/training-provider")
+			)
+		);
+	}
+
+	if (name === "training_provider_set") {
+		const provider = parseOptionalString(argumentsPayload.provider);
+		if (provider !== "fal" && provider !== "runpod") {
+			return createErrorResponse(id, "provider must be 'fal' or 'runpod'");
+		}
+		return createOkResponse(
+			id,
+			createToolResult(
+				await fetchServiceSnapshot("admin", "/api/admin/training-provider", {
+					body: JSON.stringify({ provider }),
+					headers: {
+						"content-type": "application/json",
+					},
+					method: "PUT",
+				})
+			)
+		);
+	}
+
+	if (name === "admin_settings_get") {
+		return createOkResponse(
+			id,
+			createToolResult(
+				await fetchServiceSnapshot("admin", "/api/admin/settings")
+			)
+		);
+	}
+
+	return createErrorResponse(id, `Unknown training-provider tool: ${name}`);
+}
+
 async function handleLoraToolCall(
 	name: string,
 	argumentsPayload: Record<string, unknown>,
@@ -767,6 +987,79 @@ async function handleLoraToolCall(
 	);
 }
 
+async function handleTestUserToolCall(
+	name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	if (name === "test_user_upsert") {
+		return createOkResponse(
+			id,
+			createToolResult(
+				await upsertTestUser({
+					email: parseOptionalString(argumentsPayload.email) ?? "",
+					emailVerified: parseOptionalBoolean(argumentsPayload.emailVerified),
+					name: parseOptionalString(argumentsPayload.name),
+					password: parseOptionalString(argumentsPayload.password) ?? "",
+				})
+			)
+		);
+	}
+
+	return createOkResponse(
+		id,
+		createToolResult(
+			await getTestUser({
+				email: parseOptionalString(argumentsPayload.email),
+				userId: parseOptionalString(argumentsPayload.userId),
+			})
+		)
+	);
+}
+
+async function handleGeneratorExecutionToolCall(
+	name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const path =
+		name === "generator_execution_submit"
+			? "/api/executions"
+			: "/api/executions/sync";
+	return createOkResponse(
+		id,
+		createToolResult(await postJson(path, argumentsPayload))
+	);
+}
+
+type ToolHandler = (
+	name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) => Promise<JsonRpcResponse>;
+
+const toolHandlers: Record<string, ToolHandler> = {
+	admin_settings_get: handleTrainingProviderToolCall,
+	generator_execution_submit: handleGeneratorExecutionToolCall,
+	generator_execution_sync: handleGeneratorExecutionToolCall,
+	lora_get: handleLoraToolCall,
+	lora_list: handleLoraToolCall,
+	test_user_get: handleTestUserToolCall,
+	test_user_upsert: handleTestUserToolCall,
+	training_provider_get: handleTrainingProviderToolCall,
+	training_provider_set: handleTrainingProviderToolCall,
+};
+
+function resolveToolHandler(name: string): ToolHandler | null {
+	if (name.startsWith("kafka_")) {
+		return handleKafkaToolCall;
+	}
+	if (name.startsWith("persons_")) {
+		return handlePersonsToolCall;
+	}
+	return toolHandlers[name] ?? null;
+}
+
 async function handleToolCall(message: JsonRpcRequest) {
 	const name = parseOptionalString(message.params?.name);
 	const argumentsPayload =
@@ -777,8 +1070,9 @@ async function handleToolCall(message: JsonRpcRequest) {
 		return createErrorResponse(id, "Tool name is required");
 	}
 
-	if (name.startsWith("kafka_")) {
-		return handleKafkaToolCall(name, argumentsPayload, id);
+	const handler = resolveToolHandler(name);
+	if (handler) {
+		return handler(name, argumentsPayload, id);
 	}
 
 	switch (name) {
@@ -836,43 +1130,6 @@ async function handleToolCall(message: JsonRpcRequest) {
 				id,
 				createToolResult(
 					await fetchServiceSnapshot("generator", "/api/workflows")
-				)
-			);
-		case "lora_list":
-		case "lora_get":
-			return handleLoraToolCall(name, argumentsPayload, id);
-		case "generator_execution_submit":
-			return createOkResponse(
-				id,
-				createToolResult(await postJson("/api/executions", argumentsPayload))
-			);
-		case "generator_execution_sync":
-			return createOkResponse(
-				id,
-				createToolResult(
-					await postJson("/api/executions/sync", argumentsPayload)
-				)
-			);
-		case "test_user_upsert":
-			return createOkResponse(
-				id,
-				createToolResult(
-					await upsertTestUser({
-						email: parseOptionalString(argumentsPayload.email) ?? "",
-						emailVerified: parseOptionalBoolean(argumentsPayload.emailVerified),
-						name: parseOptionalString(argumentsPayload.name),
-						password: parseOptionalString(argumentsPayload.password) ?? "",
-					})
-				)
-			);
-		case "test_user_get":
-			return createOkResponse(
-				id,
-				createToolResult(
-					await getTestUser({
-						email: parseOptionalString(argumentsPayload.email),
-						userId: parseOptionalString(argumentsPayload.userId),
-					})
 				)
 			);
 		default:

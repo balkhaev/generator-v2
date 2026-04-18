@@ -13,6 +13,7 @@ import type {
 	AssetReleaseSnapshot,
 } from "@generator/contracts/admin";
 import type { WorkflowSummary as ServerWorkflowSummary } from "@generator/contracts/generator";
+import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import { proxyHttpRequest } from "@generator/http/proxy";
 import {
 	DEBUG_CORRELATION_HEADER,
@@ -24,7 +25,6 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
-import type { AdminLoraClient } from "@/clients/admin-loras";
 import type { StudioGrokClient } from "@/clients/grok";
 import { AssetReleaseReadService } from "@/domain/asset-releases-read";
 import type { StudioExecutionClient, StudioRepository } from "@/domain/studio";
@@ -43,7 +43,6 @@ interface AppVariables extends AuthVariables {
 }
 
 interface AppOptions {
-	adminLoraClient?: AdminLoraClient;
 	assetReleaseReadService?: AssetReleaseReadService;
 	authHandler: (request: Request) => Response | Promise<Response>;
 	callbackConfig?: {
@@ -62,6 +61,7 @@ interface AppOptions {
 	) => Promise<{ session: unknown; user: unknown } | null>;
 	grokClient?: StudioGrokClient;
 	loggerImpl?: Pick<Console, "info" | "error" | "warn">;
+	loraReadRepository?: LoraReadRepository;
 	repository: StudioRepository;
 	s3Client?: S3ClientLike;
 	s3Config: S3StorageConfig;
@@ -137,6 +137,20 @@ function formatInputLabel(inputImageUrl: string) {
 
 function createPromptHint(workflowName: string) {
 	return `Describe the ${workflowName} shot, camera movement, and effect you want the generated clip to amplify.`;
+}
+
+function createNoopLoraReadRepository(): LoraReadRepository {
+	return {
+		getById() {
+			return Promise.resolve(null);
+		},
+		getBySlug() {
+			return Promise.resolve(null);
+		},
+		list() {
+			return Promise.resolve([]);
+		},
+	};
 }
 
 function stringifyParamValue(value: unknown) {
@@ -303,22 +317,12 @@ export function createApp(options: AppOptions) {
 	app.route("/api/runs", createRunRoutes(service));
 	app.route("/api/internal", createInternalRoutes(service));
 	app.route("/api/enhance-prompt", createEnhanceRoutes(options.grokClient));
-	if (options.adminLoraClient) {
-		app.route("/api/loras", createLoraRoutes(options.adminLoraClient));
-	} else {
-		options.loggerImpl?.warn(
-			"[studio] adminLoraClient is not configured; /api/loras will return 503"
-		);
-		app.all("/api/loras", (c) =>
-			c.json(
-				{
-					error:
-						"LoRA registry is not configured on the server (ADMIN_API_URL is missing).",
-				},
-				503
-			)
-		);
-	}
+	app.route(
+		"/api/loras",
+		createLoraRoutes(
+			options.loraReadRepository ?? createNoopLoraReadRepository()
+		)
+	);
 	app.route(
 		"/api/input-assets",
 		createInputAssetRoutes({

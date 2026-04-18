@@ -1,4 +1,8 @@
 import type { GeneratorExecutionRecord } from "@generator/contracts/generator";
+import {
+	LORA_BASE_MODELS,
+	type LoraRegistryEntry,
+} from "@generator/contracts/loras";
 import { Kafka, logLevel, type Producer, type SASLOptions } from "kafkajs";
 import { z } from "zod";
 
@@ -25,15 +29,44 @@ const contextSchema = z.record(z.string(), z.unknown());
 
 export const eventTopics = {
 	generatorExecutionUpdates: "generator.execution.updates.v1",
+	loraRegistryChanges: "loras.registry.changes.v1",
 	personLoraTrainingRequests: "persons.lora-training.requests.v1",
 	personLoraTrainingUpdates: "persons.lora-training.updates.v1",
 } as const;
 
 export const eventNames = {
 	generatorExecutionUpdated: "generator.execution.updated",
+	loraRegistryChanged: "loras.registry.changed",
 	personLoraTrainingRequested: "persons.lora-training.requested",
 	personLoraTrainingUpdated: "persons.lora-training.updated",
 } as const;
+
+const loraRegistryEntrySchema = z.object({
+	baseModel: z.enum(LORA_BASE_MODELS),
+	createdAt: z.string(),
+	defaultWeight: z.number(),
+	description: z.string(),
+	id: z.string().min(1),
+	name: z.string(),
+	s3Key: z.string(),
+	s3Url: z.string(),
+	sizeBytes: z.number(),
+	slug: z.string(),
+	sourceProvider: z.enum(["civitai", "huggingface", "direct"]).optional(),
+	sourceUrl: z.string().nullable(),
+	status: z.enum(["active", "archived"]),
+	updatedAt: z.string(),
+}) satisfies z.ZodType<LoraRegistryEntry>;
+
+export const loraRegistryChangeKinds = [
+	"created",
+	"updated",
+	"archived",
+	"restored",
+	"deleted",
+] as const;
+
+export type LoraRegistryChangeKind = (typeof loraRegistryChangeKinds)[number];
 
 const personLoraTrainingRequestSchema = z.object({
 	debugCorrelationId: z.string().optional(),
@@ -52,12 +85,22 @@ const eventEnvelopeBaseSchema = z.object({
 	id: z.string().min(1),
 	name: z.enum([
 		eventNames.generatorExecutionUpdated,
+		eventNames.loraRegistryChanged,
 		eventNames.personLoraTrainingRequested,
 		eventNames.personLoraTrainingUpdated,
 	]),
 	occurredAt: z.string().datetime(),
 	source: z.string().min(1),
 	version: z.literal(1),
+});
+
+export const loraRegistryChangedEventSchema = eventEnvelopeBaseSchema.extend({
+	data: z.object({
+		change: z.enum(loraRegistryChangeKinds),
+		context: contextSchema.default({}),
+		lora: loraRegistryEntrySchema,
+	}),
+	name: z.literal(eventNames.loraRegistryChanged),
 });
 
 export const generatorExecutionUpdatedEventSchema =
@@ -86,6 +129,7 @@ export const personLoraTrainingRequestedEventSchema =
 
 export const eventEnvelopeSchema = z.discriminatedUnion("name", [
 	generatorExecutionUpdatedEventSchema,
+	loraRegistryChangedEventSchema,
 	personLoraTrainingRequestedEventSchema,
 	personLoraTrainingUpdatedEventSchema,
 ]);
@@ -93,6 +137,9 @@ export const eventEnvelopeSchema = z.discriminatedUnion("name", [
 export type EventEnvelope = z.infer<typeof eventEnvelopeSchema>;
 export type GeneratorExecutionUpdatedEvent = z.infer<
 	typeof generatorExecutionUpdatedEventSchema
+>;
+export type LoraRegistryChangedEvent = z.infer<
+	typeof loraRegistryChangedEventSchema
 >;
 export type PersonLoraTrainingUpdatedEvent = z.infer<
 	typeof personLoraTrainingUpdatedEventSchema
@@ -109,6 +156,11 @@ export interface EventPublisher {
 	publishGeneratorExecutionUpdated(input: {
 		context?: Record<string, unknown>;
 		execution: GeneratorExecutionRecord;
+	}): Promise<void>;
+	publishLoraRegistryChanged(input: {
+		change: LoraRegistryChangeKind;
+		context?: Record<string, unknown>;
+		lora: LoraRegistryEntry;
 	}): Promise<void>;
 	publishPersonLoraTrainingRequested(
 		input: PersonLoraTrainingRequest
@@ -199,6 +251,9 @@ export function createNoopEventPublisher(): EventPublisher {
 		async publishGeneratorExecutionUpdated() {
 			await Promise.resolve();
 		},
+		async publishLoraRegistryChanged() {
+			await Promise.resolve();
+		},
 		async publishPersonLoraTrainingRequested() {
 			await Promise.resolve();
 		},
@@ -277,6 +332,18 @@ export function createKafkaEventPublisher(
 				event
 			);
 		},
+		async publishLoraRegistryChanged(input) {
+			const event = createEnvelope(
+				eventNames.loraRegistryChanged,
+				options.source,
+				{
+					change: input.change,
+					context: input.context ?? {},
+					lora: input.lora,
+				}
+			);
+			await publish(eventTopics.loraRegistryChanges, input.lora.id, event);
+		},
 		async publishPersonLoraTrainingUpdated(input) {
 			const event = createEnvelope(
 				eventNames.personLoraTrainingUpdated,
@@ -311,6 +378,7 @@ export interface EventConsumerHandlers {
 	onGeneratorExecutionUpdated?: (
 		event: GeneratorExecutionUpdatedEvent
 	) => Promise<void>;
+	onLoraRegistryChanged?: (event: LoraRegistryChangedEvent) => Promise<void>;
 	onPersonLoraTrainingRequested?: (
 		event: PersonLoraTrainingRequestedEvent
 	) => Promise<void>;
@@ -330,6 +398,14 @@ async function dispatchParsedEvent(
 		handlers.onGeneratorExecutionUpdated
 	) {
 		await handlers.onGeneratorExecutionUpdated(parsed);
+		return;
+	}
+
+	if (
+		parsed.name === eventNames.loraRegistryChanged &&
+		handlers.onLoraRegistryChanged
+	) {
+		await handlers.onLoraRegistryChanged(parsed);
 		return;
 	}
 

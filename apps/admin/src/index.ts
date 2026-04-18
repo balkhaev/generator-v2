@@ -7,9 +7,11 @@ import {
 import {
 	env,
 	getGeneratorApiUrl,
+	getKafkaEventBusConfig,
 	getRequiredCorsOrigins,
 	getStudioApiUrl,
 } from "@generator/env/server";
+import { createKafkaEventPublisher } from "@generator/events";
 import { tryResolveS3StorageConfig } from "@generator/storage";
 import { createApp } from "@/app";
 import { getAdminDashboardSnapshot } from "@/dashboard";
@@ -74,7 +76,14 @@ const trainingProviderSettings = createRedisTrainingProviderSettings({
  */
 const workerSettingsReader = createRedisWorkerSettingsReader({ redisUrl });
 
+const kafkaConfig = getKafkaEventBusConfig("admin-api");
+const eventPublisher = kafkaConfig
+	? createKafkaEventPublisher(kafkaConfig, { source: "admin-api" })
+	: undefined;
+
 const loraRegistryService = new LoraRegistryService({
+	eventPublisher,
+	logger: console,
 	repository: createDrizzleLoraRepository(),
 	resolveSource: createLoraSourceResolver({
 		civitaiApiKey: env.CIVITAI_API_KEY,
@@ -82,6 +91,18 @@ const loraRegistryService = new LoraRegistryService({
 	}).resolve,
 	s3Config,
 });
+
+if (eventPublisher) {
+	const shutdown = () => {
+		eventPublisher.close().catch((error) => {
+			console.error("admin.events-publisher.shutdown.error", {
+				message: error instanceof Error ? error.message : "unknown",
+			});
+		});
+	};
+	process.on("SIGTERM", shutdown);
+	process.on("SIGINT", shutdown);
+}
 
 const usersService = new UsersService({
 	repository: createDrizzleUserRepository(),
@@ -118,6 +139,10 @@ const app = createApp({
 			RUNPOD_AI_TOOLKIT_ENDPOINT_ID: env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID,
 			RUNPOD_AI_TOOLKIT_POLL_MS: env.RUNPOD_AI_TOOLKIT_POLL_MS,
 			RUNPOD_AI_TOOLKIT_TIMEOUT_MS: env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS,
+			RUNPOD_POD_BOOTSTRAP_URL: env.RUNPOD_POD_BOOTSTRAP_URL,
+			RUNPOD_POD_GPU_TYPE_IDS: env.RUNPOD_POD_GPU_TYPE_IDS,
+			RUNPOD_POD_IMAGE_NAME: env.RUNPOD_POD_IMAGE_NAME,
+			RUNPOD_TRAINING_MODE: env.RUNPOD_TRAINING_MODE,
 		}),
 	},
 	trainingProviderAvailability: {

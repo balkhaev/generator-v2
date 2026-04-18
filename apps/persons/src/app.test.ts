@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { LoraRegistryEntry } from "@generator/contracts/loras";
+import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import { GENERATOR_CALLBACK_TOKEN_HEADER } from "@generator/http/shared";
 
 import { createApp } from "@/app";
-import type { AdminLoraClient } from "@/clients/admin-loras";
 import type { AdminTrainingClient } from "@/clients/admin-training";
 import type {
 	OperatorServerClient,
@@ -245,15 +245,28 @@ function createAdminTrainingClient(): AdminTrainingClient {
 	};
 }
 
-function createAdminLoraClient(entries: LoraRegistryEntry[]): AdminLoraClient {
+function createMemoryLoraReadRepository(
+	entries: LoraRegistryEntry[]
+): LoraReadRepository {
 	return {
-		listLoras(options = {}) {
+		getById(id) {
+			return Promise.resolve(entries.find((entry) => entry.id === id) ?? null);
+		},
+		getBySlug(slug) {
+			return Promise.resolve(
+				entries.find((entry) => entry.slug === slug) ?? null
+			);
+		},
+		list(filter = {}) {
 			return Promise.resolve(
 				entries.filter((entry) => {
-					if (options.baseModel && entry.baseModel !== options.baseModel) {
+					if (filter.baseModel && entry.baseModel !== filter.baseModel) {
 						return false;
 					}
-					return entry.status === "active";
+					if (filter.status && entry.status !== filter.status) {
+						return false;
+					}
+					return true;
 				})
 			);
 		},
@@ -1037,8 +1050,8 @@ describe("persons api", () => {
 		];
 
 		const app = createApp({
-			adminLoraClient: createAdminLoraClient(entries),
 			corsOrigins: ["http://localhost:3004"],
+			loraReadRepository: createMemoryLoraReadRepository(entries),
 			repository: createMemoryRepository(),
 		});
 
@@ -1060,20 +1073,26 @@ describe("persons api", () => {
 		expect(zLoras[0]?.id).toBe("lora-z");
 	});
 
-	it("returns 502 when admin registry client fails", async () => {
+	it("returns 500 when LoRA read repository fails", async () => {
 		const app = createApp({
-			adminLoraClient: {
-				listLoras() {
-					return Promise.reject(new Error("upstream boom"));
+			corsOrigins: ["http://localhost:3004"],
+			loraReadRepository: {
+				getById() {
+					return Promise.resolve(null);
+				},
+				getBySlug() {
+					return Promise.resolve(null);
+				},
+				list() {
+					return Promise.reject(new Error("db boom"));
 				},
 			},
-			corsOrigins: ["http://localhost:3004"],
 			repository: createMemoryRepository(),
 		});
 
 		const response = await app.request("http://localhost/api/loras");
-		expect(response.status).toBe(502);
+		expect(response.status).toBe(500);
 		const payload = (await response.json()) as { error: string };
-		expect(payload.error).toBe("upstream boom");
+		expect(payload.error).toBe("db boom");
 	});
 });

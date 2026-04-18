@@ -149,10 +149,18 @@ const serverSchema = {
 	// "runpod" — экспериментальный ai-toolkit на RunPod serverless.
 	TRAINING_PROVIDER: z.enum(["fal", "runpod"]).default("fal"),
 
-	// RunPod (ai-toolkit serverless) — экспериментально.
+	// RunPod (ai-toolkit) — экспериментально.
+	// Mode "serverless" использует custom RunPod Serverless endpoint (нужно
+	// деплоить свой handler). Mode "pod" поднимает on-demand GPU Pod из готового
+	// pytorch-образа и гоняет ai-toolkit через bootstrap-скрипт.
 	RUNPOD_API_KEY: z.string().min(1).optional(),
+	RUNPOD_TRAINING_MODE: z.enum(["serverless", "pod"]).default("pod"),
+
+	// Serverless-only.
 	RUNPOD_AI_TOOLKIT_ENDPOINT_ID: z.string().min(1).optional(),
 	RUNPOD_API_BASE_URL: z.url().default("https://api.runpod.ai/v2"),
+
+	// Shared (применимо к обоим режимам).
 	RUNPOD_AI_TOOLKIT_TIMEOUT_MS: z.coerce
 		.number()
 		.int()
@@ -169,6 +177,28 @@ const serverSchema = {
 			"qwen-image",
 		])
 		.default("z-image"),
+
+	// Pod-mode-only.
+	RUNPOD_REST_API_BASE_URL: z.url().default("https://rest.runpod.io/v1"),
+	RUNPOD_POD_IMAGE_NAME: z
+		.string()
+		.min(1)
+		.default("runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"),
+	RUNPOD_POD_GPU_TYPE_IDS: z
+		.string()
+		.min(1)
+		.default("NVIDIA RTX A4000,NVIDIA GeForce RTX 4090,NVIDIA RTX A5000")
+		.describe("Comma-separated list of acceptable RunPod GPU type ids."),
+	RUNPOD_POD_CONTAINER_DISK_GB: z.coerce.number().int().positive().default(60),
+	RUNPOD_POD_VOLUME_GB: z.coerce.number().int().positive().default(60),
+	RUNPOD_POD_CLOUD_TYPE: z.enum(["SECURE", "COMMUNITY"]).default("SECURE"),
+	RUNPOD_POD_BOOTSTRAP_URL: z
+		.url()
+		.optional()
+		.describe(
+			"Public URL of pod-bootstrap.sh executed inside the pod. Defaults to the script committed in tools/runpod-ai-toolkit on the main branch."
+		),
+	RUNPOD_POD_NETWORK_VOLUME_ID: z.string().min(1).optional(),
 
 	// Public asset URLs (S3_PUBLIC_BASE_URL is canonical; S3_PUBLIC_URL and
 	// ASSET_PUBLIC_BASE_URL are accepted as aliases via normalizeS3RuntimeEnv).
@@ -279,19 +309,8 @@ export function getGeneratorInternalToken() {
 	return env.GENERATOR_INTERNAL_TOKEN;
 }
 
-export function getTrainingControlToken() {
-	return env.TRAINING_CONTROL_TOKEN;
-}
-
 export function getStudioApiUrl() {
 	return getRequiredEnvValue(env.STUDIO_API_URL, "STUDIO_API_URL");
-}
-
-export function getAdminApiUrl() {
-	return getRequiredEnvValue(
-		env.ADMIN_API_URL ?? env.STUDIO_ADMIN_URL,
-		"ADMIN_API_URL"
-	);
 }
 
 export function getKafkaEventBusConfig(clientIdSuffix: string) {

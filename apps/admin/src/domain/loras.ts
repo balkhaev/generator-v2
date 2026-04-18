@@ -7,6 +7,7 @@ import type {
 	PreviewLoraSourceInput,
 	UpdateLoraInput,
 } from "@generator/contracts/loras";
+import type { EventPublisher, LoraRegistryChangeKind } from "@generator/events";
 import {
 	cacheExternalLoraToS3,
 	type S3StorageConfig,
@@ -37,7 +38,9 @@ interface LoraServiceDeps {
 		s3Config: S3StorageConfig,
 		options?: { headers?: Record<string, string> }
 	) => Promise<{ key: string; sizeBytes: number; url: string }>;
+	eventPublisher?: EventPublisher;
 	generateId?: () => string;
+	logger?: Pick<Console, "error" | "warn">;
 	repository: LoraRepository;
 	resolveSource?: LoraSourceResolver["resolve"];
 	s3Config?: S3StorageConfig;
@@ -49,6 +52,8 @@ export class LoraRegistryService {
 	private readonly cacheLora: NonNullable<LoraServiceDeps["cacheLora"]>;
 	private readonly generateId: () => string;
 	private readonly resolveSource: LoraSourceResolver["resolve"];
+	private readonly eventPublisher?: EventPublisher;
+	private readonly logger?: Pick<Console, "error" | "warn">;
 
 	constructor(deps: LoraServiceDeps) {
 		this.repository = deps.repository;
@@ -57,6 +62,26 @@ export class LoraRegistryService {
 		this.generateId = deps.generateId ?? (() => randomUUID());
 		this.resolveSource =
 			deps.resolveSource ?? createLoraSourceResolver().resolve;
+		this.eventPublisher = deps.eventPublisher;
+		this.logger = deps.logger;
+	}
+
+	private async emitChange(
+		change: LoraRegistryChangeKind,
+		lora: LoraRegistryEntry | null
+	): Promise<void> {
+		if (!(this.eventPublisher && lora)) {
+			return;
+		}
+		try {
+			await this.eventPublisher.publishLoraRegistryChanged({ change, lora });
+		} catch (error) {
+			this.logger?.error("loras.registry.publish-failed", {
+				change,
+				loraId: lora.id,
+				message: error instanceof Error ? error.message : "unknown",
+			});
+		}
 	}
 
 	async createFromUrl(
@@ -78,7 +103,7 @@ export class LoraRegistryService {
 		const cached = await this.cacheLora(source.downloadUrl, this.s3Config, {
 			headers: source.downloadHeaders,
 		});
-		return this.repository.create({
+		const created = await this.repository.create({
 			id: this.generateId(),
 			slug,
 			name,
@@ -91,6 +116,8 @@ export class LoraRegistryService {
 			sizeBytes: cached.sizeBytes,
 			defaultWeight: input.defaultWeight ?? 1,
 		});
+		await this.emitChange("created", created);
+		return created;
 	}
 
 	async previewSource(
@@ -135,19 +162,25 @@ export class LoraRegistryService {
 		return this.repository.getById(id);
 	}
 
-	update(
+	async update(
 		id: string,
 		patch: UpdateLoraInput
 	): Promise<LoraRegistryEntry | null> {
-		return this.repository.update(id, patch);
+		const updated = await this.repository.update(id, patch);
+		await this.emitChange("updated", updated);
+		return updated;
 	}
 
-	archive(id: string): Promise<LoraRegistryEntry | null> {
-		return this.repository.update(id, { status: "archived" });
+	async archive(id: string): Promise<LoraRegistryEntry | null> {
+		const archived = await this.repository.update(id, { status: "archived" });
+		await this.emitChange("archived", archived);
+		return archived;
 	}
 
-	delete(id: string): Promise<LoraRegistryEntry | null> {
-		return this.repository.delete(id);
+	async delete(id: string): Promise<LoraRegistryEntry | null> {
+		const deleted = await this.repository.delete(id);
+		await this.emitChange("deleted", deleted);
+		return deleted;
 	}
 
 	private async uniqueSlug(baseSlug: string): Promise<string> {

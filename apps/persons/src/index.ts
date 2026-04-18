@@ -3,6 +3,7 @@ import {
 	getRequestSession,
 	handleAuthRequest,
 } from "@generator/auth";
+import { createLoraReadRepository } from "@generator/db/repositories/lora-read";
 import {
 	env,
 	getCorsOrigins,
@@ -11,7 +12,6 @@ import {
 import { createKafkaEventPublisher } from "@generator/events";
 import { createGeneratorExecutionClient } from "@generator/generator-client-server";
 import { createApp } from "@/app";
-import { createAdminLoraClient } from "@/clients/admin-loras";
 import {
 	createAdminTrainingClient,
 	createKafkaAdminTrainingClient,
@@ -32,9 +32,7 @@ const adminTrainingHttpClient = env.PERSONS_ADMIN_URL
 const adminTrainingClient = eventPublisher
 	? createKafkaAdminTrainingClient(eventPublisher, adminTrainingHttpClient)
 	: adminTrainingHttpClient;
-const adminLoraClient = env.PERSONS_ADMIN_URL
-	? createAdminLoraClient(env.PERSONS_ADMIN_URL, env.TRAINING_CONTROL_TOKEN)
-	: undefined;
+const loraReadRepository = createLoraReadRepository();
 const operatorServerClient = env.PERSONS_OPERATOR_URL
 	? createGeneratorExecutionClient(env.PERSONS_OPERATOR_URL, {
 			internalToken: env.GENERATOR_INTERNAL_TOKEN,
@@ -50,7 +48,6 @@ const effectiveCorsOrigins =
 	corsOriginsFromEnv.length > 0 ? corsOriginsFromEnv : fallbackCorsOrigins;
 
 const app = createApp({
-	adminLoraClient,
 	adminTrainingClient,
 	authHandler: handleAuthRequest,
 	callbackConfig: {
@@ -59,6 +56,7 @@ const app = createApp({
 	corsOrigins: effectiveCorsOrigins,
 	getSession: getRequestSession,
 	grokClient,
+	loraReadRepository,
 	operatorServerClient,
 	repository,
 });

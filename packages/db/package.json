@@ -26,6 +26,7 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@generator/contracts": "workspace:*",
     "@generator/env": "workspace:*",
     "dotenv": "catalog:",
     "drizzle-orm": "^0.45.1",

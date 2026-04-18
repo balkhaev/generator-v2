@@ -48,6 +48,21 @@ export interface RunpodPodClientOptions {
 	fetchImpl?: typeof fetch;
 }
 
+const NO_CAPACITY_PATTERN =
+	/no instances|does not have the resources|no resources|out of stock|no available|capacity/iu;
+
+/**
+ * Признак ошибки RunPod, которая по сути значит "сейчас этот тип GPU
+ * не получится поднять, попробуй другой". Используется для fallback'а на
+ * следующий gpu type в `createPod`.
+ */
+function isNoCapacityError(err: unknown): boolean {
+	if (!(err instanceof Error)) {
+		return false;
+	}
+	return NO_CAPACITY_PATTERN.test(err.message);
+}
+
 /**
  * Минимальный клиент к RunPod REST API (https://rest.runpod.io/v1) для pod-режима.
  * Покрывает только то, что нужно admin-worker-у: create / get / delete pod.
@@ -73,15 +88,51 @@ export class RunpodPodClient {
 		};
 	}
 
-	async createPod(input: CreatePodInput): Promise<RunpodPodSnapshot> {
+	private async createPodWithSpecificGpu(
+		input: CreatePodInput,
+		gpuTypeId: string
+	): Promise<RunpodPodSnapshot> {
 		const response = await this.fetchImpl(`${this.baseUrl}/pods`, {
-			body: JSON.stringify(input),
+			body: JSON.stringify({ ...input, gpuTypeIds: [gpuTypeId] }),
 			headers: this.authHeaders,
 			method: "POST",
 		});
 		await ensureOk(response, "RunPod /pods (create)");
 		const body = await response.json();
 		return RUNPOD_POD_SCHEMA.parse(body);
+	}
+
+	/**
+	 * Создаёт RunPod pod, выбирая первый доступный GPU из `input.gpuTypeIds`.
+	 *
+	 * RunPod REST API при `gpuTypeIds: [gpuA, gpuB, ...]` НЕ гарантированно
+	 * фоллбэк'ит между типами — иногда возвращает 500
+	 * `This machine does not have the resources to deploy your pod`, даже
+	 * когда другой GPU из списка реально доступен (проверено эмпирически
+	 * на community cloud, апрель 2026). Поэтому делаем явный последовательный
+	 * перебор: пробуем каждый gpuTypeId отдельно, идём дальше при capacity-
+	 * ошибке, и возвращаем первый успешный pod. Не-capacity ошибки (auth,
+	 * валидация) пробрасываем сразу — нет смысла их повторять.
+	 */
+	async createPod(input: CreatePodInput): Promise<RunpodPodSnapshot> {
+		if (input.gpuTypeIds.length === 0) {
+			throw new Error("RunPod /pods (create): gpuTypeIds is empty");
+		}
+		const errors: string[] = [];
+		for (const gpuTypeId of input.gpuTypeIds) {
+			try {
+				return await this.createPodWithSpecificGpu(input, gpuTypeId);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				if (!isNoCapacityError(err)) {
+					throw err;
+				}
+				errors.push(`${gpuTypeId}: ${message}`);
+			}
+		}
+		throw new Error(
+			`RunPod /pods (create) failed for all ${input.gpuTypeIds.length} gpu types — no capacity:\n  - ${errors.join("\n  - ")}`
+		);
 	}
 
 	async getPod(podId: string): Promise<RunpodPodSnapshot> {

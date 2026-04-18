@@ -16,6 +16,7 @@ import {
 import { env } from "@generator/env/web";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
+import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
@@ -66,10 +67,9 @@ import {
 	createPerson,
 	deleteGeneration,
 	deletePerson,
-	fetchLoras,
+	enhancePersonsPrompt,
 	generateWithLora,
 	getPersonsDashboard,
-	type LoraRegistryEntry,
 	type PersonGenerationRecord,
 	type PersonRecord,
 	requestAvatarPreviews,
@@ -81,17 +81,8 @@ import {
 const textareaClassName =
 	"flex min-h-20 w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
 
-const selectClassName =
-	"flex h-9 w-full rounded-lg border border-input bg-transparent px-3 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
-
 const LORA_OPTIMISTIC_GENERATION_PREFIX = "__optimistic:lora:";
-const trailingSlashesPattern = /\/+$/u;
 const DEFAULT_ADMIN_URL = "http://localhost:3001";
-const adminBaseUrl = (env.NEXT_PUBLIC_ADMIN_URL ?? DEFAULT_ADMIN_URL).replace(
-	trailingSlashesPattern,
-	""
-);
-const adminLorasHref = `${adminBaseUrl}/loras`;
 
 interface LightboxState {
 	images: string[];
@@ -1007,27 +998,11 @@ function LoraActions({
 		prompt: string,
 		options?: {
 			enhance?: boolean;
-			extraLoraUrl?: string;
-			extraLoraWeight?: number;
 		}
 	) => void;
 }) {
 	const [loraPrompt, setLoraPrompt] = useState("");
 	const [enhanceLoraPrompt, setEnhanceLoraPrompt] = useState(false);
-	const [extraLoraId, setExtraLoraId] = useState("");
-	const [extraLoraWeight, setExtraLoraWeight] = useState("");
-	const [availableLoras, setAvailableLoras] = useState<LoraRegistryEntry[]>([]);
-	useEffect(() => {
-		let cancelled = false;
-		fetchLoras("z-image").then((items) => {
-			if (!cancelled) {
-				setAvailableLoras(items);
-			}
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, []);
 	const training = readPersonLoraTrainingMeta(person);
 	const hasLora = Boolean(person.loraUrl);
 	const effectiveStatus = getPersonLoraTrainingDisplayStatus(training, hasLora);
@@ -1075,9 +1050,20 @@ function LoraActions({
 
 			{hasLora ? (
 				<div className="grid gap-2">
-					<Label className="text-xs" htmlFor="loraPrompt">
-						Generate with LoRA
-					</Label>
+					<div className="flex items-center justify-between gap-2">
+						<Label className="text-xs" htmlFor="loraPrompt">
+							Generate with LoRA
+						</Label>
+						<EnhancePromptButton
+							enhance={enhancePersonsPrompt}
+							onEnhanced={(enhanced) => {
+								setLoraPrompt(enhanced);
+								toast.success("Prompt enhanced with Grok");
+							}}
+							onError={(message) => toast.error(message)}
+							prompt={loraPrompt}
+						/>
+					</div>
 					<textarea
 						className={textareaClassName}
 						id="loraPrompt"
@@ -1085,60 +1071,6 @@ function LoraActions({
 						placeholder="portrait photo, studio lighting..."
 						value={loraPrompt}
 					/>
-					<div className="grid gap-2 rounded-lg border border-border/60 bg-muted/20 p-3">
-						<div className="grid gap-1.5">
-							<Label className="text-xs" htmlFor="extraLoraId">
-								Extra LoRA
-							</Label>
-							<select
-								className={selectClassName}
-								id="extraLoraId"
-								onChange={(event) => {
-									const nextId = event.target.value;
-									setExtraLoraId(nextId);
-									const entry = availableLoras.find(
-										(item) => item.id === nextId
-									);
-									if (entry) {
-										setExtraLoraWeight(String(entry.defaultWeight));
-									}
-								}}
-								value={extraLoraId}
-							>
-								<option value="">None</option>
-								{availableLoras.map((entry) => (
-									<option key={entry.id} value={entry.id}>
-										{entry.name}
-									</option>
-								))}
-							</select>
-							<p className="text-[11px] text-muted-foreground/70">
-								Managed in{" "}
-								<a
-									className="underline"
-									href={adminLorasHref}
-									rel="noreferrer noopener"
-									target="_blank"
-								>
-									admin · LoRAs
-								</a>
-								.
-							</p>
-						</div>
-						{extraLoraId ? (
-							<div className="grid gap-1.5">
-								<Label className="text-xs" htmlFor="extraLoraWeight">
-									Extra LoRA weight
-								</Label>
-								<Input
-									id="extraLoraWeight"
-									onChange={(event) => setExtraLoraWeight(event.target.value)}
-									placeholder="0.05"
-									value={extraLoraWeight}
-								/>
-							</div>
-						) : null}
-					</div>
 					<EnhanceWithGrokToggle
 						checked={enhanceLoraPrompt}
 						id={`enhanceLoraPrompt-${person.id}`}
@@ -1148,18 +1080,8 @@ function LoraActions({
 					<Button
 						disabled={!loraPrompt.trim()}
 						onClick={() => {
-							const selectedEntry = availableLoras.find(
-								(item) => item.id === extraLoraId
-							);
-							const parsedExtraLoraWeight = Number.parseFloat(extraLoraWeight);
-							const resolvedExtraLoraUrl = selectedEntry?.s3Url;
-							const fallbackWeight = selectedEntry?.defaultWeight ?? 0.05;
 							onGenerateWithLora(loraPrompt.trim(), {
 								enhance: enhanceLoraPrompt,
-								extraLoraUrl: resolvedExtraLoraUrl,
-								extraLoraWeight: Number.isFinite(parsedExtraLoraWeight)
-									? parsedExtraLoraWeight
-									: fallbackWeight,
 							});
 							setLoraPrompt("");
 							setEnhanceLoraPrompt(false);
@@ -1310,8 +1232,6 @@ function PersonDetailView({
 		prompt: string,
 		options?: {
 			enhance?: boolean;
-			extraLoraUrl?: string;
-			extraLoraWeight?: number;
 		}
 	) => void;
 }) {
@@ -1661,9 +1581,20 @@ function CreatePersonForm({
 							/>
 						</div>
 						<div className="grid gap-1.5">
-							<Label className="text-xs" htmlFor="description">
-								Description
-							</Label>
+							<div className="flex items-center justify-between gap-2">
+								<Label className="text-xs" htmlFor="description">
+									Description
+								</Label>
+								<EnhancePromptButton
+									enhance={enhancePersonsPrompt}
+									onEnhanced={(enhanced) => {
+										onFieldChange("description", enhanced);
+										toast.success("Description enhanced with Grok");
+									}}
+									onError={(message) => toast.error(message)}
+									prompt={formState.description ?? ""}
+								/>
+							</div>
 							<textarea
 								className={textareaClassName}
 								id="description"
@@ -1844,9 +1775,20 @@ function ManagePersonForm({
 							/>
 						</div>
 						<div className="grid gap-1.5">
-							<Label className="text-xs" htmlFor="editDescription">
-								Description
-							</Label>
+							<div className="flex items-center justify-between gap-2">
+								<Label className="text-xs" htmlFor="editDescription">
+									Description
+								</Label>
+								<EnhancePromptButton
+									enhance={enhancePersonsPrompt}
+									onEnhanced={(enhanced) => {
+										onFieldChange("description", enhanced);
+										toast.success("Description enhanced with Grok");
+									}}
+									onError={(message) => toast.error(message)}
+									prompt={formState.description}
+								/>
+							</div>
 							<textarea
 								className={textareaClassName}
 								id="editDescription"
@@ -2241,8 +2183,6 @@ export default function PersonsWorkspace({
 		prompt: string,
 		options?: {
 			enhance?: boolean;
-			extraLoraUrl?: string;
-			extraLoraWeight?: number;
 		}
 	) {
 		if (!selectedPerson) {

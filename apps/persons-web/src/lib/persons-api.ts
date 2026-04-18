@@ -184,6 +184,23 @@ export async function requestAvatarPreviews(input: {
 	return payload.batch;
 }
 
+export async function refineAvatarPreviews(input: {
+	sourcePrompt: string;
+	sourceImageUrl: string;
+	instruction: string;
+	count?: number;
+}): Promise<AvatarPreviewBatch> {
+	const payload = await requestJson<{
+		batch: AvatarPreviewBatch;
+		execution: GeneratorExecutionRecord;
+	}>(`${API_BASE_URL}/api/persons/avatar-previews/refine`, {
+		method: "POST",
+		body: JSON.stringify(input),
+		headers: { "content-type": "application/json" },
+	});
+	return payload.batch;
+}
+
 export async function getAvatarPreview(executionId: string) {
 	const payload = await requestJson<{ execution: GeneratorExecutionRecord }>(
 		`${API_BASE_URL}/api/persons/avatar-previews/${executionId}`,
@@ -212,6 +229,23 @@ export async function cancelPersonLoraTraining(personId: string) {
 		}
 	);
 	return payload.person;
+}
+
+export async function enhancePersonsPrompt(prompt: string): Promise<string> {
+	const payload = await requestJson<{ enhanced?: unknown }>(
+		`${API_BASE_URL}/api/enhance-prompt`,
+		{
+			method: "POST",
+			body: JSON.stringify({ prompt }),
+			headers: { "content-type": "application/json" },
+		}
+	);
+
+	if (typeof payload.enhanced !== "string" || payload.enhanced.trim() === "") {
+		throw new Error("Enhance response did not contain enhanced text.");
+	}
+
+	return payload.enhanced;
 }
 
 export async function fetchLoras(

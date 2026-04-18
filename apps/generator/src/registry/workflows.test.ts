@@ -127,6 +127,40 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("omits image_size for fal-flux2-dev-edit when set to auto", () => {
+		const workflow = getWorkflowDefinition("fal-flux2-dev-edit");
+
+		const result = workflow?.buildProviderInput({
+			inputImageUrl: "https://storage.example.com/source.png",
+			params: {
+				imageSize: "auto",
+			},
+			prompt: "make it cinematic",
+		});
+
+		expect(result).toMatchObject({
+			__falModel: "fal-ai/flux-2/edit",
+			image_urls: ["https://storage.example.com/source.png"],
+		});
+		expect(result).not.toHaveProperty("image_size");
+	});
+
+	it("passes explicit image_size for fal-flux2-dev-edit when not auto", () => {
+		const workflow = getWorkflowDefinition("fal-flux2-dev-edit");
+
+		const result = workflow?.buildProviderInput({
+			inputImageUrl: "https://storage.example.com/source.png",
+			params: {
+				imageSize: "landscape_16_9",
+			},
+			prompt: "make it cinematic",
+		});
+
+		expect(result).toMatchObject({
+			image_size: "landscape_16_9",
+		});
+	});
+
 	it("builds the fal-flux-dev payload", () => {
 		const workflow = getWorkflowDefinition("fal-flux-dev");
 

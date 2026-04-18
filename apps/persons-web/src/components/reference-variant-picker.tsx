@@ -15,6 +15,7 @@ import {
 	Loader2,
 	RefreshCw,
 	Sparkles,
+	Wand2,
 } from "lucide-react";
 import type { Route } from "next";
 import Image from "next/image";
@@ -29,6 +30,7 @@ import {
 import {
 	createPerson,
 	getAvatarPreview,
+	refineAvatarPreviews,
 	requestAvatarPreviews,
 	trainPersonLora,
 } from "@/lib/persons-api";
@@ -199,6 +201,73 @@ function aggregateStatus(
 		progressPct: Math.round(totalPct / executionIds.length),
 		someSucceeded,
 	};
+}
+
+function RefinePanel({
+	instruction,
+	isDisabled,
+	isRefining,
+	onChangeInstruction,
+	onRefine,
+	selectedVariant,
+}: {
+	instruction: string;
+	isDisabled: boolean;
+	isRefining: boolean;
+	onChangeInstruction: (value: string) => void;
+	onRefine: () => void;
+	selectedVariant: VariantItem | null;
+}) {
+	const canSubmit =
+		!isDisabled && Boolean(selectedVariant) && instruction.trim().length > 0;
+	const helperText = selectedVariant
+		? "Grok сравнит исходный промт выбранного фото с вашими правками и перегенерирует вариант на основе этой картинки."
+		: "Сначала выберите фото, которое хотите доработать.";
+
+	return (
+		<section className="grid gap-2 rounded-2xl border border-border/40 bg-muted/10 p-4 dark:bg-muted/5">
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<div className="flex items-center gap-2 text-sm">
+					<Wand2 className="size-4 text-violet-500" />
+					<span className="font-medium">Refine with Grok</span>
+				</div>
+				{selectedVariant?.prompt ? (
+					<InfoTooltip
+						contentClassName="max-w-md"
+						label="Show selected variant prompt"
+						side="bottom"
+					>
+						{selectedVariant.prompt}
+					</InfoTooltip>
+				) : null}
+			</div>
+			<p className="text-muted-foreground text-xs leading-relaxed">
+				{helperText}
+			</p>
+			<textarea
+				className="flex min-h-16 w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-xs outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
+				disabled={isDisabled || !selectedVariant}
+				onChange={(event) => onChangeInstruction(event.target.value)}
+				placeholder="Например: смени локацию на пляж на закате, добавь льняное платье цвета слоновой кости, длинные распущенные волосы…"
+				value={instruction}
+			/>
+			<div className="flex justify-end">
+				<Button
+					disabled={!canSubmit}
+					onClick={onRefine}
+					size="sm"
+					variant="outline"
+				>
+					{isRefining ? (
+						<Loader2 className="size-3.5 animate-spin" />
+					) : (
+						<Wand2 className="size-3.5" />
+					)}
+					Refine selected
+				</Button>
+			</div>
+		</section>
+	);
 }
 
 function HeaderActions({
@@ -423,13 +492,206 @@ function usePollExecutions(executionIds: string[] | null) {
 	return { executions, pollError };
 }
 
+function PageHeader({
+	draft,
+	hasFailedAll,
+	isCreating,
+	isReady,
+	isRegenerating,
+	onCancel,
+	onConfirm,
+	onRegenerate,
+	selectedUrl,
+}: {
+	draft: PersonReferenceDraft;
+	hasFailedAll: boolean;
+	isCreating: boolean;
+	isReady: boolean;
+	isRegenerating: boolean;
+	onCancel: () => void;
+	onConfirm: () => void;
+	onRegenerate: () => void;
+	selectedUrl: string | null;
+}) {
+	const referenceGuidance = draft.enhanced
+		? "Grok обогатил промт и сгенерировал четыре разных образа. Выберите подходящий референс для пайплайна LoRA."
+		: "We generated a few options based on your description. Choose one to use as the reference for the LoRA training pipeline.";
+	const enhancedPrompts =
+		draft.enhanced && draft.prompts && draft.prompts.length > 0
+			? draft.prompts
+			: null;
+
+	return (
+		<header className="grid gap-2">
+			<button
+				className="inline-flex w-fit items-center gap-1.5 text-muted-foreground text-xs transition hover:text-foreground"
+				onClick={onCancel}
+				type="button"
+			>
+				<ArrowLeft className="size-3.5" />
+				Back to cast
+			</button>
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<div className="grid gap-1">
+					<span className="text-muted-foreground/50 text-xs uppercase tracking-wider">
+						New person · {draft.form.name || "Untitled"}
+					</span>
+					<div className="flex items-center gap-2">
+						<h1 className="font-medium text-2xl tracking-tight">
+							Pick a reference photo
+						</h1>
+						<InfoTooltip label="Show reference guidance" side="right">
+							{referenceGuidance}
+						</InfoTooltip>
+					</div>
+				</div>
+				<HeaderActions
+					hasFailedAll={hasFailedAll}
+					isCreating={isCreating}
+					isReady={isReady}
+					isRegenerating={isRegenerating}
+					onConfirm={onConfirm}
+					onRegenerate={onRegenerate}
+					selectedUrl={selectedUrl}
+				/>
+			</div>
+			<div className="flex w-fit items-center gap-2 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-muted-foreground text-xs">
+				<span className="font-medium text-foreground/80">Prompt</span>
+				<InfoTooltip
+					contentClassName="max-w-md"
+					label="Show source prompt"
+					side="bottom"
+				>
+					{draft.prompt}
+				</InfoTooltip>
+			</div>
+			{enhancedPrompts ? (
+				<details className="rounded-lg border border-border/40 bg-muted/10 px-3 py-2 text-muted-foreground text-xs">
+					<summary className="cursor-pointer font-medium text-foreground/80">
+						Grok variants ({enhancedPrompts.length})
+					</summary>
+					<ol className="mt-2 grid list-decimal gap-1 pl-4">
+						{enhancedPrompts.map((prompt, index) => (
+							<li key={`${index}-${prompt.slice(0, 16)}`}>{prompt}</li>
+						))}
+					</ol>
+				</details>
+			) : null}
+		</header>
+	);
+}
+
+function useConfirmHandler({
+	draft,
+	selectedUrl,
+	variants,
+}: {
+	draft: PersonReferenceDraft | null;
+	selectedUrl: string | null;
+	variants: VariantItem[];
+}) {
+	const router = useRouter();
+	const [isCreating, setIsCreating] = useState(false);
+
+	const handleConfirm = useCallback(async () => {
+		if (!(draft && selectedUrl) || isCreating) {
+			return;
+		}
+		setIsCreating(true);
+		try {
+			const variant = variants.find((item) => item.url === selectedUrl);
+			const description =
+				variant?.prompt && variant.prompt.length > 0
+					? variant.prompt
+					: draft.form.description;
+			const nextPerson = await createPerson({
+				...draft.form,
+				description,
+				referencePhotoUrl: selectedUrl,
+			});
+			toast.success("Person created");
+			clearDraft();
+
+			try {
+				await trainPersonLora(nextPerson.id);
+				toast.success("LoRA pipeline started");
+			} catch {
+				toast.info(
+					"Person created. Start the pipeline manually from the detail view."
+				);
+			}
+
+			router.push(`/person/${nextPerson.slug}` as Route);
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Unable to create person"
+			);
+			setIsCreating(false);
+		}
+	}, [draft, isCreating, router, selectedUrl, variants]);
+
+	return { handleConfirm, isCreating };
+}
+
+function useRefineHandler({
+	draft,
+	instruction,
+	onSuccess,
+	selectedUrl,
+	variants,
+}: {
+	draft: PersonReferenceDraft | null;
+	instruction: string;
+	onSuccess: (nextDraft: PersonReferenceDraft) => void;
+	selectedUrl: string | null;
+	variants: VariantItem[];
+}) {
+	const [isRefining, setIsRefining] = useState(false);
+
+	const handleRefine = useCallback(async () => {
+		if (!draft || isRefining) {
+			return;
+		}
+		const variant = variants.find((item) => item.url === selectedUrl);
+		const trimmedInstruction = instruction.trim();
+		if (!(variant && trimmedInstruction)) {
+			return;
+		}
+		const sourcePrompt = variant.prompt?.trim() || draft.prompt;
+		setIsRefining(true);
+		try {
+			const next = await refineAvatarPreviews({
+				sourcePrompt,
+				sourceImageUrl: variant.url,
+				instruction: trimmedInstruction,
+				count: 4,
+			});
+			onSuccess({
+				...draft,
+				enhanced: true,
+				executionIds: next.executions.map((execution) => execution.id),
+				prompts: next.prompts,
+			});
+			toast.success("Refining variant with Grok");
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Failed to refine variant"
+			);
+		} finally {
+			setIsRefining(false);
+		}
+	}, [draft, instruction, isRefining, onSuccess, selectedUrl, variants]);
+
+	return { handleRefine, isRefining };
+}
+
 export default function ReferenceVariantPicker() {
 	const router = useRouter();
 	const [draft, setDraft] = useState<PersonReferenceDraft | null>(null);
 	const [isHydrated, setIsHydrated] = useState(false);
 	const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
-	const [isCreating, setIsCreating] = useState(false);
 	const [isRegenerating, setIsRegenerating] = useState(false);
+	const [refineInstruction, setRefineInstruction] = useState("");
 
 	useEffect(() => {
 		setIsHydrated(true);
@@ -472,6 +734,21 @@ export default function ReferenceVariantPicker() {
 		});
 	}, [variants]);
 
+	const handleRefineSuccess = useCallback((nextDraft: PersonReferenceDraft) => {
+		writeDraft(nextDraft);
+		setSelectedUrl(null);
+		setDraft(nextDraft);
+		setRefineInstruction("");
+	}, []);
+
+	const { handleRefine, isRefining } = useRefineHandler({
+		draft,
+		instruction: refineInstruction,
+		onSuccess: handleRefineSuccess,
+		selectedUrl,
+		variants,
+	});
+
 	const handleRegenerate = useCallback(async () => {
 		if (!draft || isRegenerating) {
 			return;
@@ -502,44 +779,11 @@ export default function ReferenceVariantPicker() {
 		}
 	}, [draft, isRegenerating]);
 
-	const handleConfirm = useCallback(async () => {
-		if (!(draft && selectedUrl) || isCreating) {
-			return;
-		}
-		setIsCreating(true);
-		try {
-			const selectedVariant = variants.find(
-				(variant) => variant.url === selectedUrl
-			);
-			const description =
-				selectedVariant?.prompt && selectedVariant.prompt.length > 0
-					? selectedVariant.prompt
-					: draft.form.description;
-			const nextPerson = await createPerson({
-				...draft.form,
-				description,
-				referencePhotoUrl: selectedUrl,
-			});
-			toast.success("Person created");
-			clearDraft();
-
-			try {
-				await trainPersonLora(nextPerson.id);
-				toast.success("LoRA pipeline started");
-			} catch {
-				toast.info(
-					"Person created. Start the pipeline manually from the detail view."
-				);
-			}
-
-			router.push(`/person/${nextPerson.slug}` as Route);
-		} catch (error) {
-			toast.error(
-				error instanceof Error ? error.message : "Unable to create person"
-			);
-			setIsCreating(false);
-		}
-	}, [draft, selectedUrl, isCreating, router, variants]);
+	const { handleConfirm, isCreating } = useConfirmHandler({
+		draft,
+		selectedUrl,
+		variants,
+	});
 
 	const handleCancel = useCallback(() => {
 		clearDraft();
@@ -557,68 +801,20 @@ export default function ReferenceVariantPicker() {
 	const failedExecution = draft.executionIds
 		.map((id) => executions[id])
 		.find((execution) => execution?.status === "failed");
-	const referenceGuidance = draft.enhanced
-		? "Grok обогатил промт и сгенерировал четыре разных образа. Выберите подходящий референс для пайплайна LoRA."
-		: "We generated a few options based on your description. Choose one to use as the reference for the LoRA training pipeline.";
 
 	return (
 		<main className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-8 sm:px-6 sm:py-12">
-			<header className="grid gap-2">
-				<button
-					className="inline-flex w-fit items-center gap-1.5 text-muted-foreground text-xs transition hover:text-foreground"
-					onClick={handleCancel}
-					type="button"
-				>
-					<ArrowLeft className="size-3.5" />
-					Back to cast
-				</button>
-				<div className="flex flex-wrap items-center justify-between gap-3">
-					<div className="grid gap-1">
-						<span className="text-muted-foreground/50 text-xs uppercase tracking-wider">
-							New person · {draft.form.name || "Untitled"}
-						</span>
-						<div className="flex items-center gap-2">
-							<h1 className="font-medium text-2xl tracking-tight">
-								Pick a reference photo
-							</h1>
-							<InfoTooltip label="Show reference guidance" side="right">
-								{referenceGuidance}
-							</InfoTooltip>
-						</div>
-					</div>
-					<HeaderActions
-						hasFailedAll={hasFailedAll}
-						isCreating={isCreating}
-						isReady={isReady}
-						isRegenerating={isRegenerating}
-						onConfirm={handleConfirm}
-						onRegenerate={handleRegenerate}
-						selectedUrl={selectedUrl}
-					/>
-				</div>
-				<div className="flex w-fit items-center gap-2 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-muted-foreground text-xs">
-					<span className="font-medium text-foreground/80">Prompt</span>
-					<InfoTooltip
-						contentClassName="max-w-md"
-						label="Show source prompt"
-						side="bottom"
-					>
-						{draft.prompt}
-					</InfoTooltip>
-				</div>
-				{draft.enhanced && draft.prompts && draft.prompts.length > 0 ? (
-					<details className="rounded-lg border border-border/40 bg-muted/10 px-3 py-2 text-muted-foreground text-xs">
-						<summary className="cursor-pointer font-medium text-foreground/80">
-							Grok variants ({draft.prompts.length})
-						</summary>
-						<ol className="mt-2 grid list-decimal gap-1 pl-4">
-							{draft.prompts.map((prompt, index) => (
-								<li key={`${index}-${prompt.slice(0, 16)}`}>{prompt}</li>
-							))}
-						</ol>
-					</details>
-				) : null}
-			</header>
+			<PageHeader
+				draft={draft}
+				hasFailedAll={hasFailedAll}
+				isCreating={isCreating}
+				isReady={isReady}
+				isRegenerating={isRegenerating}
+				onCancel={handleCancel}
+				onConfirm={handleConfirm}
+				onRegenerate={handleRegenerate}
+				selectedUrl={selectedUrl}
+			/>
 
 			{pollError ? (
 				<div className="rounded-lg bg-amber-500/10 px-3 py-2 text-amber-700 text-xs dark:text-amber-300">
@@ -642,6 +838,19 @@ export default function ReferenceVariantPicker() {
 					onSelect={setSelectedUrl}
 					selectedUrl={selectedUrl}
 					variants={variants}
+				/>
+			) : null}
+
+			{isReady && variants.length > 0 ? (
+				<RefinePanel
+					instruction={refineInstruction}
+					isDisabled={isRegenerating || isCreating}
+					isRefining={isRefining}
+					onChangeInstruction={setRefineInstruction}
+					onRefine={handleRefine}
+					selectedVariant={
+						variants.find((variant) => variant.url === selectedUrl) ?? null
+					}
 				/>
 			) : null}
 		</main>

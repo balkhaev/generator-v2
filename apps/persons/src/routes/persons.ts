@@ -55,6 +55,25 @@ export function createPersonRoutes(service: PersonsService) {
 		}
 	});
 
+	app.post("/avatar-previews/refine", async (c) => {
+		try {
+			const payload = await c.req.json();
+			const batch = await service.refineAvatarPreviews(payload, {
+				debugCorrelationId: c.get("debugCorrelationId"),
+			});
+			return c.json(
+				{
+					batch,
+					execution: batch.executions[0],
+				},
+				201
+			);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
 	app.get("/avatar-previews/:executionId", async (c) => {
 		try {
 			const execution = await service.getAvatarPreview(

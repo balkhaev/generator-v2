@@ -86,6 +86,35 @@ User brief:
 ${basePrompt}
 """`;
 
+const REFINE_USER_PROMPT_TEMPLATE = (basePrompt: string, instruction: string) =>
+	`The user already generated a portrait from the ORIGINAL prompt below and now
+wants targeted edits described in EDIT INSTRUCTIONS. Your job is to produce a
+single new portrait prompt that:
+- Preserves the subject identity, archetype, mood, ethnicity, hair, body type,
+  age and overall vibe of the ORIGINAL prompt — this is the same person being
+  re-shot, not a new character.
+- Applies every change requested in the EDIT INSTRUCTIONS, overriding any
+  conflicting detail from the ORIGINAL (wardrobe, setting, lighting, pose,
+  expression, accessories, lens, color palette, etc.).
+- Keeps all hard rules from the system prompt: face fully visible (both eyes,
+  sharp, well-lit), open natural pose, editorial / candid composition, named
+  lens, photoreal anchoring, SFW.
+- If the EDIT INSTRUCTIONS are written in any language other than English,
+  silently translate them; the final prompt is always English.
+
+Return only the rewritten prompt text — single comma-separated paragraph,
+no JSON, no quotes, no markdown, no preamble.
+
+ORIGINAL prompt:
+"""
+${basePrompt}
+"""
+
+EDIT INSTRUCTIONS from the user:
+"""
+${instruction}
+"""`;
+
 interface ChatCompletionResponse {
 	choices?: Array<{
 		message?: {
@@ -99,9 +128,15 @@ export interface GrokExpandPromptOptions {
 	prompt: string;
 }
 
+export interface GrokRefinePromptOptions {
+	basePrompt: string;
+	instruction: string;
+}
+
 export interface GrokClient {
 	enhancePrompt(prompt: string): Promise<string>;
 	expandPrompt(options: GrokExpandPromptOptions): Promise<string[]>;
+	refinePrompt(options: GrokRefinePromptOptions): Promise<string>;
 }
 
 interface GrokClientOptions {
@@ -207,6 +242,20 @@ export function createGrokClient(options: GrokClientOptions): GrokClient {
 				VARIANT_USER_PROMPT_TEMPLATE(trimmed, safeCount)
 			);
 			return parsePromptArray(content, safeCount);
+		},
+		async refinePrompt({ basePrompt, instruction }) {
+			const trimmedBase = basePrompt.trim();
+			const trimmedInstruction = instruction.trim();
+			if (!trimmedBase) {
+				throw new Error("Cannot refine an empty base prompt");
+			}
+			if (!trimmedInstruction) {
+				throw new Error("Cannot refine without edit instructions");
+			}
+			const content = await chat(
+				REFINE_USER_PROMPT_TEMPLATE(trimmedBase, trimmedInstruction)
+			);
+			return stripCodeFences(content).replace(/^"|"$/g, "");
 		},
 	};
 }

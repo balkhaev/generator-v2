@@ -201,6 +201,17 @@ export const requestAvatarPreviewsInputSchema = z.object({
 	enhance: z.boolean().optional().default(false),
 });
 
+export const refineAvatarPreviewsInputSchema = z.object({
+	sourcePrompt: z.string().trim().min(1, "Source prompt is required"),
+	sourceImageUrl: z.url("Source image URL must be a valid URL"),
+	instruction: z
+		.string()
+		.trim()
+		.min(1, "Edit instruction is required")
+		.max(2000, "Edit instruction is too long"),
+	count: z.number().int().min(1).max(4).default(4),
+});
+
 export interface AvatarPreviewBatch {
 	enhanced: boolean;
 	executions: GeneratorExecutionRecord[];
@@ -208,6 +219,7 @@ export interface AvatarPreviewBatch {
 }
 
 const AVATAR_PREVIEW_WORKFLOW_KEY = "fal-flux2-turbo";
+const AVATAR_REFINE_WORKFLOW_KEY = "fal-flux2-dev-edit";
 
 export const startPersonLoraTrainingInputSchema = z.object({
 	outputName: optionalStringSchema,
@@ -662,6 +674,50 @@ export class PersonsService {
 		);
 
 		return { enhanced: true, executions, prompts };
+	}
+
+	async refineAvatarPreviews(
+		input: z.input<typeof refineAvatarPreviewsInputSchema>,
+		options?: {
+			debugCorrelationId?: string;
+		}
+	): Promise<AvatarPreviewBatch> {
+		const parsed = refineAvatarPreviewsInputSchema.parse(input);
+		if (!this.operatorServerClient) {
+			throw new Error("Generator integration is not configured");
+		}
+		if (!this.grokClient) {
+			throw new Error("Prompt refinement is not configured on this server.");
+		}
+
+		const refinedPrompt = await this.grokClient.refinePrompt({
+			basePrompt: parsed.sourcePrompt,
+			instruction: parsed.instruction,
+		});
+		const finalPrompt =
+			refinedPrompt.trim().length > 0 ? refinedPrompt : parsed.sourcePrompt;
+
+		const execution = await this.operatorServerClient.createExecution(
+			{
+				workflowKey: AVATAR_REFINE_WORKFLOW_KEY,
+				prompt: finalPrompt,
+				inputImageUrl: parsed.sourceImageUrl,
+				params: {
+					imageSize: "auto",
+					guidanceScale: 2.5,
+					numInferenceSteps: 28,
+					numImages: parsed.count,
+					enableSafetyChecker: false,
+				},
+			},
+			{ debugCorrelationId: options?.debugCorrelationId }
+		);
+
+		return {
+			enhanced: true,
+			executions: [execution],
+			prompts: [finalPrompt],
+		};
 	}
 
 	private async buildEnhancedPrompts(

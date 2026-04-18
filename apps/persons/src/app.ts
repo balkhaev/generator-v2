@@ -17,6 +17,7 @@ import type { AdminTrainingClient } from "@/clients/admin-training";
 import type { GrokClient } from "@/clients/grok";
 import type { OperatorServerClient, PersonsRepository } from "@/domain/persons";
 import { PersonsService } from "@/domain/persons";
+import { createEnhanceRoutes } from "@/routes/enhance";
 import { createIntegrationRoutes } from "@/routes/integrations";
 import { createInternalRoutes } from "@/routes/internal";
 import { createLoraRoutes } from "@/routes/loras";
@@ -105,6 +106,7 @@ export function createApp(options: AppOptions) {
 	app.route("/api/persons", createPersonRoutes(service));
 	app.route("/api/integrations", createIntegrationRoutes(service));
 	app.route("/api/internal", createInternalRoutes(service));
+	app.route("/api/enhance-prompt", createEnhanceRoutes(options.grokClient));
 	if (options.adminLoraClient) {
 		app.route("/api/loras", createLoraRoutes(options.adminLoraClient));
 	}

@@ -22,7 +22,10 @@
  *   - убрать RUNPOD_TRAINING_MODE/RUNPOD_POD_* из packages/env/src/server.ts,
  *   - убрать ветку pod-mode из apps/admin/src/worker.ts.
  *
- * Recovery (resume after admin-worker crash) пока НЕ реализован.
+ * Recovery: при рестарте admin-worker мы можем подобрать запущенный pod
+ * по providerJobId (=podId) и продолжить poll loop. Это делает
+ * `resumeFromProviderJob` ниже + соответствующий sweep в
+ * `recovery/training-recovery.ts`.
  */
 
 import { setTimeout as sleep } from "node:timers/promises";
@@ -85,6 +88,24 @@ export const startRunpodPodTrainingSchema = z.object({
 });
 
 type StartInput = z.infer<typeof startRunpodPodTrainingSchema>;
+
+export const resumeRunpodPodTrainingSchema = z.object({
+	debugCorrelationId: z.string().trim().min(1).optional(),
+	loraS3Key: z.string().trim().min(1).optional(),
+	outputName: z.string().trim().min(1),
+	personId: z.string().trim().min(1),
+	personSlug: z.string().trim().min(1),
+	providerJobId: z.string().trim().min(1),
+	referenceImageCount: z.number().int().nonnegative(),
+	referenceImageTargetCount: z.number().int().positive(),
+	referenceImageUrls: z.array(z.string()).default([]),
+	trainingRunId: z.string().trim().min(1),
+	trainingStartedAt: z.string().trim().min(1),
+	trainingSteps: z.number().int().positive(),
+	triggerWord: z.string().trim().min(1),
+});
+
+type ResumeInput = z.infer<typeof resumeRunpodPodTrainingSchema>;
 
 type TrainingEventStatus =
 	| "queued"
@@ -590,6 +611,122 @@ export class RunpodPodLoraTrainingRunner {
 		} finally {
 			if (podId) {
 				await this.podClient.deletePod(podId);
+			}
+		}
+	}
+
+	/**
+	 * Подхватывает уже запущенный RunPod pod (создан предыдущей инкарнацией
+	 * worker'а) и продолжает poll loop до EXITED. Используется boot-time
+	 * recovery sweep в `recovery/training-recovery.ts`.
+	 *
+	 * Контракт совпадает с `run`:
+	 *   - на успех — публикует `ready` event с уже известным loraUrl;
+	 *   - на падение — `failed` event;
+	 *   - в любом случае удаляет pod через REST API.
+	 */
+	async resumeFromProviderJob(input: ResumeInput): Promise<void> {
+		const parsed = resumeRunpodPodTrainingSchema.parse(input);
+		const trainingStartedMs = Date.parse(parsed.trainingStartedAt);
+		if (!Number.isFinite(trainingStartedMs)) {
+			throw new Error(
+				`Invalid trainingStartedAt for resume: ${parsed.trainingStartedAt}`
+			);
+		}
+
+		const loraS3Key =
+			parsed.loraS3Key ??
+			`${LORA_S3_PREFIX}/${sanitizeSegment(parsed.outputName)}-${parsed.trainingRunId.slice(0, 8)}.safetensors`;
+		const loraPublicUrl = buildPublicAssetUrl(this.s3Config, loraS3Key);
+
+		this.logger.info("runpod-pod.resume", {
+			personId: parsed.personId,
+			podId: parsed.providerJobId,
+			trainingRunId: parsed.trainingRunId,
+		});
+
+		try {
+			await this.pollUntilExited({
+				datasetUrl: "",
+				debugCorrelationId: parsed.debugCorrelationId,
+				outputName: parsed.outputName,
+				personId: parsed.personId,
+				podId: parsed.providerJobId,
+				referenceImageCount: parsed.referenceImageCount,
+				referenceImageTargetCount: parsed.referenceImageTargetCount,
+				referenceImageUrls: parsed.referenceImageUrls,
+				trainingRunId: parsed.trainingRunId,
+				trainingStartedAt: parsed.trainingStartedAt,
+				trainingStartedMs,
+				trainingSteps: parsed.trainingSteps,
+				triggerWord: parsed.triggerWord,
+			});
+
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					completedAt: new Date().toISOString(),
+					debug: {
+						baseModel: this.baseModel,
+						loraS3Key,
+						podId: parsed.providerJobId,
+						recovered: true,
+						recoveredAt: new Date().toISOString(),
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					loraUrl: loraPublicUrl,
+					phase: "ready",
+					progressPct: 100,
+					providerJobId: parsed.providerJobId,
+					providerRequestId: parsed.providerJobId,
+					providerStatus: "EXITED",
+					referenceImageCount: parsed.referenceImageCount,
+					referenceImageTargetCount: parsed.referenceImageTargetCount,
+					referenceImageUrls: parsed.referenceImageUrls,
+					status: "ready",
+					trainingElapsedMs: Date.now() - trainingStartedMs,
+					trainingRunId: parsed.trainingRunId,
+					trainingStartedAt: parsed.trainingStartedAt,
+					trainingSteps: parsed.trainingSteps,
+					triggerWord: parsed.triggerWord,
+					uploadMethod: "s3",
+				},
+			});
+		} catch (error) {
+			const errorSummary =
+				error instanceof Error
+					? error.message
+					: "RunPod pod-mode resume failed";
+			this.logger.error("runpod-pod.resume-failed", {
+				error: errorSummary,
+				personId: parsed.personId,
+				podId: parsed.providerJobId,
+			});
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debugCorrelationId: parsed.debugCorrelationId,
+					errorSummary,
+					failedAt: new Date().toISOString(),
+					lastEventAt: new Date().toISOString(),
+					phase: "failed",
+					providerJobId: parsed.providerJobId,
+					status: "failed",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord: parsed.triggerWord,
+				},
+			});
+			throw error;
+		} finally {
+			try {
+				await this.podClient.deletePod(parsed.providerJobId);
+			} catch (deleteError) {
+				this.logger.error("runpod-pod.resume-delete-failed", {
+					message:
+						deleteError instanceof Error ? deleteError.message : "unknown",
+					podId: parsed.providerJobId,
+				});
 			}
 		}
 	}

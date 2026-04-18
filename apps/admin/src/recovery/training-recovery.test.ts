@@ -181,7 +181,7 @@ describe("recoverInterruptedTrainings", () => {
 		expect(resumeCalled).toBe(false);
 	});
 
-	it("ignores non-fal providers, missing job ids, and cancelled runs", async () => {
+	it("ignores unknown providers, missing job ids, and cancelled runs", async () => {
 		const lock = createIdempotencyLock({
 			keyPrefix: "test",
 			store: createInMemoryStore(),
@@ -191,7 +191,7 @@ describe("recoverInterruptedTrainings", () => {
 
 		const summary = await recoverInterruptedTrainings({
 			client: buildClient([
-				buildPerson("non-fal", { provider: "replicate" }),
+				buildPerson("non-supported", { provider: "replicate" }),
 				buildPerson("no-job", { providerJobId: null }),
 				buildPerson("cancelled", { phase: "cancelled" }),
 				buildPerson("queued", { status: "queued" }),
@@ -241,6 +241,97 @@ describe("recoverInterruptedTrainings", () => {
 			failed: 1,
 			recovered: 1,
 			skipped: 0,
+		});
+	});
+
+	it("resumes a stale runpod-pod run via the dedicated runner", async () => {
+		const lock = createIdempotencyLock({
+			keyPrefix: "test",
+			store: createInMemoryStore(),
+			ttlSeconds: 60,
+		});
+		const calls: Array<{
+			outputName: string;
+			personSlug: string;
+			providerJobId: string;
+			trainingRunId: string;
+		}> = [];
+
+		const summary = await recoverInterruptedTrainings({
+			client: buildClient([
+				buildPerson("zeta", {
+					provider: "runpod-pod",
+					providerJobId: "pod-zeta",
+				}),
+			]),
+			logger: createSilentLogger(),
+			now: () => FIXED_NOW,
+			recoveryLock: lock,
+			runner: {
+				resumeFromProviderJob: () =>
+					Promise.reject(
+						new Error("fal runner must not be invoked for runpod-pod runs")
+					),
+			},
+			runpodPodRunner: {
+				resumeFromProviderJob: (input) => {
+					calls.push({
+						outputName: input.outputName,
+						personSlug: input.personSlug,
+						providerJobId: input.providerJobId,
+						trainingRunId: input.trainingRunId,
+					});
+					return Promise.resolve();
+				},
+			},
+		});
+
+		expect(summary).toEqual({
+			attempted: 1,
+			failed: 0,
+			recovered: 1,
+			skipped: 0,
+		});
+		expect(calls).toEqual([
+			{
+				outputName: "zeta-output",
+				personSlug: "zeta",
+				providerJobId: "pod-zeta",
+				trainingRunId: "run-zeta",
+			},
+		]);
+	});
+
+	it("skips runpod-pod runs when the dedicated runner is missing", async () => {
+		const lock = createIdempotencyLock({
+			keyPrefix: "test",
+			store: createInMemoryStore(),
+			ttlSeconds: 60,
+		});
+
+		const summary = await recoverInterruptedTrainings({
+			client: buildClient([
+				buildPerson("zeta", {
+					provider: "runpod-pod",
+					providerJobId: "pod-zeta",
+				}),
+			]),
+			logger: createSilentLogger(),
+			now: () => FIXED_NOW,
+			recoveryLock: lock,
+			runner: {
+				resumeFromProviderJob: () =>
+					Promise.reject(
+						new Error("fal runner must not be invoked for runpod-pod runs")
+					),
+			},
+		});
+
+		expect(summary).toEqual({
+			attempted: 0,
+			failed: 0,
+			recovered: 0,
+			skipped: 1,
 		});
 	});
 

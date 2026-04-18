@@ -8,6 +8,7 @@ import { type IdempotencyLock, withIdempotency } from "@generator/queue";
 
 import type { PersonsApiClient } from "@/clients/persons-api";
 import type { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
+import type { RunpodPodLoraTrainingRunner } from "@/providers/runpod-pod-lora-training";
 
 /**
  * Number of milliseconds without any training event after which we consider a
@@ -26,6 +27,10 @@ export interface TrainingRecoveryDeps {
 	now?: () => number;
 	recoveryLock: IdempotencyLock;
 	runner: Pick<FalZibLoraTrainingRunner, "resumeFromProviderJob">;
+	runpodPodRunner?: Pick<
+		RunpodPodLoraTrainingRunner,
+		"resumeFromProviderJob"
+	> | null;
 	stalenessThresholdMs?: number;
 }
 
@@ -36,14 +41,18 @@ export interface TrainingRecoverySummary {
 	skipped: number;
 }
 
+type RecoveryProvider = "fal" | "runpod-pod";
+
 interface RecoveryCandidate {
 	datasetUrl: string | null;
 	debugCorrelationId?: string;
 	genderHint: string | null;
 	lastEventAt: string;
+	loraS3Key: string | null;
 	outputName: string;
 	personId: string;
 	personSlug: string;
+	provider: RecoveryProvider;
 	providerJobId: string;
 	referenceImageCount: number;
 	referenceImageTargetCount: number;
@@ -65,20 +74,35 @@ function readDebugString(
 	return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function isResumableTraining(training: PersonLoraTrainingMeta): boolean {
-	if (training.provider !== "fal") {
-		return false;
+function resumableProvider(
+	training: PersonLoraTrainingMeta
+): RecoveryProvider | null {
+	if (training.provider === "fal") {
+		return "fal";
+	}
+	if (training.provider === "runpod-pod") {
+		return "runpod-pod";
+	}
+	return null;
+}
+
+function isResumableTraining(
+	training: PersonLoraTrainingMeta
+): RecoveryProvider | null {
+	const provider = resumableProvider(training);
+	if (!provider) {
+		return null;
 	}
 	if (!isActivePersonLoraTrainingStatus(training.status)) {
-		return false;
+		return null;
 	}
 	if (training.status !== "training" && training.status !== "publishing") {
-		return false;
+		return null;
 	}
 	if (training.phase === "cancelled" || training.cancelledAt) {
-		return false;
+		return null;
 	}
-	return true;
+	return provider;
 }
 
 interface ResumableFields {
@@ -142,7 +166,8 @@ function pickRecoveryCandidate(
 	nowMs: number,
 	stalenessMs: number
 ): RecoveryCandidate | null {
-	if (!isResumableTraining(training)) {
+	const provider = isResumableTraining(training);
+	if (!provider) {
 		return null;
 	}
 
@@ -169,9 +194,11 @@ function pickRecoveryCandidate(
 				: undefined,
 		genderHint: readDebugString(debug, "genderHint"),
 		lastEventAt,
+		loraS3Key: readDebugString(debug, "loraS3Key"),
 		outputName: fields.outputName,
 		personId: person.id,
 		personSlug: person.slug,
+		provider,
 		providerJobId: fields.providerJobId,
 		referenceImageCount: training.referenceImageCount ?? 0,
 		referenceImageTargetCount:
@@ -240,6 +267,16 @@ export async function recoverInterruptedTrainings(
 			continue;
 		}
 
+		if (candidate.provider === "runpod-pod" && !deps.runpodPodRunner) {
+			summary.skipped += 1;
+			logger.warn("admin.recovery.resume-skipped", {
+				personId: candidate.personId,
+				reason: "runpod-pod runner not configured",
+				trainingRunId: candidate.trainingRunId,
+			});
+			continue;
+		}
+
 		summary.attempted += 1;
 
 		try {
@@ -251,9 +288,34 @@ export async function recoverInterruptedTrainings(
 						lastEventAt: candidate.lastEventAt,
 						personId: candidate.personId,
 						personSlug: candidate.personSlug,
+						provider: candidate.provider,
 						providerJobId: candidate.providerJobId,
 						trainingRunId: candidate.trainingRunId,
 					});
+					if (candidate.provider === "runpod-pod") {
+						const runner = deps.runpodPodRunner;
+						if (!runner) {
+							throw new Error(
+								"runpod-pod runner is not configured; recovery cannot proceed"
+							);
+						}
+						await runner.resumeFromProviderJob({
+							debugCorrelationId: candidate.debugCorrelationId,
+							loraS3Key: candidate.loraS3Key ?? undefined,
+							outputName: candidate.outputName,
+							personId: candidate.personId,
+							personSlug: candidate.personSlug,
+							providerJobId: candidate.providerJobId,
+							referenceImageCount: candidate.referenceImageCount,
+							referenceImageTargetCount: candidate.referenceImageTargetCount,
+							referenceImageUrls: candidate.referenceImageUrls,
+							trainingRunId: candidate.trainingRunId,
+							trainingStartedAt: candidate.trainingStartedAt,
+							trainingSteps: candidate.trainingSteps,
+							triggerWord: candidate.triggerWord,
+						});
+						return;
+					}
 					await deps.runner.resumeFromProviderJob({
 						datasetUrl: candidate.datasetUrl,
 						debugCorrelationId: candidate.debugCorrelationId,

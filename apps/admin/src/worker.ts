@@ -292,6 +292,7 @@ if (personsApiUrl) {
 		logger: console,
 		recoveryLock,
 		runner: falRunner,
+		runpodPodRunner,
 	}).catch((error: unknown) => {
 		console.error("admin.recovery.boot-sweep-failed", {
 			message: error instanceof Error ? error.message : "unknown",

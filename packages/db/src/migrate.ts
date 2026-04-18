@@ -96,9 +96,13 @@ export async function runMigrations(): Promise<RunMigrationsResult> {
 		"DATABASE_MIGRATION_LOCK_ID",
 		DEFAULT_MIGRATION_LOCK_ID
 	);
-	const migrationsFolder = fileURLToPath(
-		new URL("./migrations", import.meta.url)
-	);
+	// Бандлеры (tsdown) ломают import.meta.url, поэтому даём явный
+	// override через env. По умолчанию ищем рядом с этим файлом — это
+	// работает при запуске raw-TS из `packages/db/src` (legacy-режим
+	// RUN_DB_MIGRATIONS=yes на admin/studio).
+	const migrationsFolder =
+		process.env.DATABASE_MIGRATIONS_FOLDER?.trim() ||
+		fileURLToPath(new URL("./migrations", import.meta.url));
 	const startedAt = Date.now();
 
 	console.info("[db:migrate] waiting for database", {

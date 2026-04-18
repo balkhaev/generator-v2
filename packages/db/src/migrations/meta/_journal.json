@@ -71,6 +71,13 @@
       "when": 1776527918254,
       "tag": "0009_whole_titanium_man",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1776528000000,
+      "tag": "0010_repair_studio_run_person_columns",
+      "breakpoints": true
     }
   ]
 }

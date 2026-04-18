@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { runMigrations } from "@generator/db/migrate";
 import { Hono } from "hono";
 import { Pool } from "pg";
@@ -73,6 +77,139 @@ app.get("/api/ready", (c) => {
 
 app.get("/api/status", (c) => c.json(status));
 
+const triggerToken = process.env.MIGRATE_TRIGGER_TOKEN?.trim();
+const BEARER_PREFIX_RE = /^Bearer\s+/iu;
+const LEADING_SLASH_RE = /^\//u;
+
+function isAuthorized(c: {
+	req: { header: (name: string) => string | undefined };
+}) {
+	if (!triggerToken) {
+		return true;
+	}
+	const header = c.req.header("authorization") ?? "";
+	const provided = header.replace(BEARER_PREFIX_RE, "");
+	return provided === triggerToken;
+}
+
+function getMigrationsFolder() {
+	return (
+		process.env.DATABASE_MIGRATIONS_FOLDER?.trim() ||
+		"/app/packages/db/src/migrations"
+	);
+}
+
+interface JournalEntry {
+	idx: number;
+	tag: string;
+	when: number;
+}
+
+interface JournalFile {
+	entries: JournalEntry[];
+}
+
+// Полная пересинхронизация drizzle.__drizzle_migrations с _journal.json:
+// для каждой записи журнала читаем соответствующий .sql файл, считаем
+// sha256 (так же как делает сам drizzle migrator), внутри одной транзакции
+// очищаем таблицу и переинсертим строки с правильными `hash` и
+// `created_at = when`. После этого drizzle на следующем запуске видит, что
+// все миграции уже применены, и ничего не делает — а будущие миграции с
+// нормальным `when` (≈ `Date.now()`) применяются нативно, без хаков.
+//
+// Используется один раз для починки окружения, в которое drizzle тихо
+// «применил» меньше миграций, чем должен был (например, из-за раздутого
+// `when` у промежуточной миграции). Защищён MIGRATE_TRIGGER_TOKEN.
+app.post("/api/resync-journal", async (c) => {
+	if (!isAuthorized(c)) {
+		return c.json({ error: "unauthorized" }, 401);
+	}
+	const databaseUrl = process.env.DATABASE_URL;
+	if (!databaseUrl) {
+		return c.json({ error: "DATABASE_URL is not set" }, 500);
+	}
+
+	const migrationsFolder = getMigrationsFolder();
+	let entries: JournalEntry[];
+	let rows: { tag: string; hash: string; created_at: number }[];
+	try {
+		const journalRaw = await readFile(
+			join(migrationsFolder, "meta", "_journal.json"),
+			"utf8"
+		);
+		const parsed = JSON.parse(journalRaw) as JournalFile;
+		entries = parsed.entries.slice().sort((a, b) => a.when - b.when);
+		rows = await Promise.all(
+			entries.map(async (entry) => {
+				const sql = await readFile(
+					join(migrationsFolder, `${entry.tag}.sql`),
+					"utf8"
+				);
+				return {
+					tag: entry.tag,
+					hash: createHash("sha256").update(sql).digest("hex"),
+					created_at: entry.when,
+				};
+			})
+		);
+	} catch (error) {
+		return c.json(
+			{
+				error: `failed to read journal: ${error instanceof Error ? error.message : String(error)}`,
+			},
+			500
+		);
+	}
+
+	if (status.state === "running") {
+		return c.json(
+			{ error: "migrations are already running, retry later", status },
+			409
+		);
+	}
+
+	const pool = new Pool({
+		connectionString: databaseUrl,
+		max: 1,
+		connectionTimeoutMillis: 5000,
+		idleTimeoutMillis: 1000,
+	});
+	const client = await pool.connect();
+	try {
+		await client.query("begin");
+		await client.query("create schema if not exists drizzle");
+		await client.query(
+			`create table if not exists drizzle.__drizzle_migrations (
+				id serial primary key,
+				hash text not null,
+				created_at bigint
+			)`
+		);
+		await client.query("truncate drizzle.__drizzle_migrations");
+		for (const row of rows) {
+			await client.query(
+				"insert into drizzle.__drizzle_migrations (hash, created_at) values ($1, $2)",
+				[row.hash, row.created_at]
+			);
+		}
+		await client.query("commit");
+	} catch (error) {
+		await client.query("rollback").catch((rollbackError) => {
+			console.error("[db-migrate] resync rollback failed", { rollbackError });
+		});
+		client.release();
+		await pool.end();
+		return c.json(
+			{ error: error instanceof Error ? error.message : String(error) },
+			500
+		);
+	}
+	client.release();
+	await pool.end();
+
+	return c.json({ resynced: rows });
+});
+
 // Удалить N последних записей из drizzle.__drizzle_migrations и
 // перезапустить миграции. Нужен в редких случаях, когда journal.json
 // содержит записи с `when` меньше последнего применённого `created_at`,
@@ -81,12 +218,8 @@ app.get("/api/status", (c) => c.json(status));
 // миграции (поэтому они должны быть идемпотентными или ещё не применёнными).
 // Защищён MIGRATE_TRIGGER_TOKEN.
 app.post("/api/repair-journal", async (c) => {
-	if (triggerToken) {
-		const header = c.req.header("authorization") ?? "";
-		const provided = header.replace(BEARER_PREFIX_RE, "");
-		if (provided !== triggerToken) {
-			return c.json({ error: "unauthorized" }, 401);
-		}
+	if (!isAuthorized(c)) {
+		return c.json({ error: "unauthorized" }, 401);
 	}
 	const body = (await c.req.json().catch(() => ({}))) as {
 		drop_last_n?: number;
@@ -143,12 +276,8 @@ app.post("/api/repair-journal", async (c) => {
 // drizzle.__drizzle_migrations, какие колонки реально есть в studio_run.
 // Защищён тем же `MIGRATE_TRIGGER_TOKEN`, чтобы не светить наружу.
 app.get("/api/db-info", async (c) => {
-	if (triggerToken) {
-		const header = c.req.header("authorization") ?? "";
-		const provided = header.replace(BEARER_PREFIX_RE, "");
-		if (provided !== triggerToken) {
-			return c.json({ error: "unauthorized" }, 401);
-		}
+	if (!isAuthorized(c)) {
+		return c.json({ error: "unauthorized" }, 401);
 	}
 	const databaseUrl = process.env.DATABASE_URL;
 	if (!databaseUrl) {
@@ -198,16 +327,9 @@ app.get("/api/db-info", async (c) => {
 
 // Триггер повторного прогона миграций без редеплоя контейнера. Защищён
 // bearer-токеном `MIGRATE_TRIGGER_TOKEN`, если он задан.
-const triggerToken = process.env.MIGRATE_TRIGGER_TOKEN?.trim();
-const BEARER_PREFIX_RE = /^Bearer\s+/iu;
-const LEADING_SLASH_RE = /^\//u;
 app.post("/api/migrate", (c) => {
-	if (triggerToken) {
-		const header = c.req.header("authorization") ?? "";
-		const provided = header.replace(BEARER_PREFIX_RE, "");
-		if (provided !== triggerToken) {
-			return c.json({ error: "unauthorized" }, 401);
-		}
+	if (!isAuthorized(c)) {
+		return c.json({ error: "unauthorized" }, 401);
 	}
 	if (status.state === "running") {
 		return c.json({ error: "migrations are already running", status }, 409);

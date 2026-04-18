@@ -47,7 +47,7 @@
     {
       "idx": 6,
       "version": "7",
-      "when": 1776600000000,
+      "when": 1776510800000,
       "tag": "0006_unify_lora_workflow_keys",
       "breakpoints": true
     },
@@ -70,13 +70,6 @@
       "version": "7",
       "when": 1776527918254,
       "tag": "0009_whole_titanium_man",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1776700000000,
-      "tag": "0010_repair_studio_run_person_columns",
       "breakpoints": true
     }
   ]

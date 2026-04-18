@@ -306,9 +306,16 @@ function buildStageState(input: {
 	currentIdx: number;
 	failedStageId: PersonLoraStageId | null;
 	isFailed: boolean;
+	isReady: boolean;
 	stageId: PersonLoraStageId;
 }): PersonLoraStageState {
-	const { currentIdx, failedStageId, isFailed, stageId } = input;
+	const { currentIdx, failedStageId, isFailed, isReady, stageId } = input;
+	// `ready` is a terminal status: every stage block must be fully filled,
+	// otherwise the trailing "Ready" block would render as "active 30%" even
+	// though the LoRA is already published and the user can use it.
+	if (isReady) {
+		return "done";
+	}
 	if (failedStageId === stageId) {
 		return "failed";
 	}
@@ -406,6 +413,7 @@ export function getPersonLoraTrainingStages(input: {
 	const referenceImageTarget = getPersonLoraReferenceImageTarget(training);
 
 	const isFailed = effectiveStatus === "failed";
+	const isReady = effectiveStatus === "ready";
 	const failedStageId: PersonLoraStageId | null = isFailed
 		? (PERSON_LORA_FAILED_STAGE_FROM_PHASE[training?.phase ?? ""] ?? "training")
 		: null;
@@ -444,24 +452,28 @@ export function getPersonLoraTrainingStages(input: {
 		currentIdx,
 		failedStageId,
 		isFailed,
+		isReady,
 		stageId: "queued",
 	});
 	const datasetState = buildStageState({
 		currentIdx,
 		failedStageId,
 		isFailed,
+		isReady,
 		stageId: "dataset",
 	});
 	const trainingState = buildStageState({
 		currentIdx,
 		failedStageId,
 		isFailed,
+		isReady,
 		stageId: "training",
 	});
 	const readyState = buildStageState({
 		currentIdx,
 		failedStageId,
 		isFailed,
+		isReady,
 		stageId: "ready",
 	});
 

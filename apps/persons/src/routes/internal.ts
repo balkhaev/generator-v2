@@ -38,6 +38,21 @@ export function createInternalRoutes(service: PersonsService) {
 		return c.json({ persons: await service.listPersons() });
 	});
 
+	app.get("/persons/:personId", async (c) => {
+		const token = c.req
+			.header("authorization")
+			?.replace(bearerPrefixPattern, "");
+		if (!isAuthorized(token)) {
+			return c.json({ error: "Unauthorized callback" }, 401);
+		}
+
+		const person = await service.getPersonById(c.req.param("personId"));
+		if (!person) {
+			return c.json({ error: "Person not found" }, 404);
+		}
+		return c.json({ person });
+	});
+
 	app.post("/persons/:personId/retrain-lora", async (c) => {
 		const token = c.req
 			.header("authorization")

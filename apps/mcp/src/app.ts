@@ -853,7 +853,12 @@ async function handlePersonsToolCall(
 			createToolResult(
 				await fetchServiceSnapshot(
 					"persons",
-					`/api/persons/${encodeURIComponent(personId)}`
+					`/api/internal/persons/${encodeURIComponent(personId)}`,
+					{
+						headers: {
+							authorization: `Bearer ${token}`,
+						},
+					}
 				)
 			)
 		);

@@ -11,11 +11,13 @@
   "dependencies": {
     "@generator/db": "workspace:*",
     "@generator/env": "workspace:*",
-    "hono": "^4.8.2"
+    "hono": "^4.8.2",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@generator/config": "workspace:*",
     "@types/bun": "catalog:",
+    "@types/pg": "^8.20.0",
     "tsdown": "^0.16.5",
     "typescript": "^5"
   }

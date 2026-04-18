@@ -1,5 +1,6 @@
 import { runMigrations } from "@generator/db/migrate";
 import { Hono } from "hono";
+import { Pool } from "pg";
 
 interface MigrationStatus {
 	completedAt: string | null;
@@ -72,10 +73,69 @@ app.get("/api/ready", (c) => {
 
 app.get("/api/status", (c) => c.json(status));
 
+// Диагностический snapshot текущего состояния БД с точки зрения этого
+// контейнера: какая host:port:db, какие миграции зарегистрированы в
+// drizzle.__drizzle_migrations, какие колонки реально есть в studio_run.
+// Защищён тем же `MIGRATE_TRIGGER_TOKEN`, чтобы не светить наружу.
+app.get("/api/db-info", async (c) => {
+	if (triggerToken) {
+		const header = c.req.header("authorization") ?? "";
+		const provided = header.replace(BEARER_PREFIX_RE, "");
+		if (provided !== triggerToken) {
+			return c.json({ error: "unauthorized" }, 401);
+		}
+	}
+	const databaseUrl = process.env.DATABASE_URL;
+	if (!databaseUrl) {
+		return c.json({ error: "DATABASE_URL is not set" }, 500);
+	}
+	const pool = new Pool({
+		connectionString: databaseUrl,
+		max: 1,
+		connectionTimeoutMillis: 5000,
+		idleTimeoutMillis: 1000,
+	});
+	try {
+		const url = new URL(databaseUrl);
+		const conn = await pool.query<{
+			db: string;
+			host: string;
+			user: string;
+			port: number;
+		}>(
+			"select current_database() as db, inet_server_addr()::text as host, current_user as user, inet_server_port() as port"
+		);
+		const migrations = await pool.query<{ hash: string; created_at: string }>(
+			"select hash, created_at::text from drizzle.__drizzle_migrations order by created_at desc limit 30"
+		);
+		const studioRunCols = await pool.query<{
+			column_name: string;
+			data_type: string;
+		}>(
+			"select column_name, data_type from information_schema.columns where table_schema='public' and table_name='studio_run' order by ordinal_position"
+		);
+		return c.json({
+			database_url_host: `${url.hostname}:${url.port || 5432}/${url.pathname.replace(LEADING_SLASH_RE, "")}`,
+			server: conn.rows[0],
+			migrations_journal_count: migrations.rowCount,
+			migrations_journal: migrations.rows,
+			studio_run_columns: studioRunCols.rows,
+		});
+	} catch (error) {
+		return c.json(
+			{ error: error instanceof Error ? error.message : String(error) },
+			500
+		);
+	} finally {
+		await pool.end();
+	}
+});
+
 // Триггер повторного прогона миграций без редеплоя контейнера. Защищён
 // bearer-токеном `MIGRATE_TRIGGER_TOKEN`, если он задан.
 const triggerToken = process.env.MIGRATE_TRIGGER_TOKEN?.trim();
 const BEARER_PREFIX_RE = /^Bearer\s+/iu;
+const LEADING_SLASH_RE = /^\//u;
 app.post("/api/migrate", (c) => {
 	if (triggerToken) {
 		const header = c.req.header("authorization") ?? "";

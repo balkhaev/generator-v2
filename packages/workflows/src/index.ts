@@ -211,7 +211,9 @@ const falLtx23TextToVideoParamsSchema = z.object({
 	generateAudio: z.boolean().default(true),
 	useMultiscale: z.boolean().default(true),
 	enablePromptExpansion: z.boolean().default(true),
-	enableSafetyChecker: z.boolean().default(true),
+	// fal's input moderation is very strict on portraits / person LoRAs; default off
+	// so studio runs match our other fal workflows (Flux/Wan). Callers can opt in.
+	enableSafetyChecker: z.boolean().default(false),
 	seed: z.number().int().nonnegative().optional(),
 	loraUrl: optionalUrlParamSchema,
 	loraScale: z.number().min(0).max(2).default(1),
@@ -954,7 +956,7 @@ export const workflowRegistry = {
 		key: "fal-ltx-2-3-text-to-video",
 		name: "LTX 2.3 22B",
 		description:
-			"Text-to-video generation using LTX 2.3 22B by Lightricks on fal.ai. Optionally accepts a LoRA URL.",
+			"Text-to-video generation using LTX 2.3 22B by Lightricks on fal.ai. Optionally accepts a LoRA URL. Input moderation (fal safety checker) is off by default for person / LoRA workflows; enable it in scenario params if you need it.",
 		requiresInputImage: false,
 		parameterSchema: falLtx23TextToVideoParamsSchema,
 		parameterFields: [
@@ -1053,7 +1055,7 @@ export const workflowRegistry = {
 		key: "fal-ltx-2-3-image-to-video",
 		name: "LTX 2.3 22B I2V",
 		description:
-			"Image-to-video generation using LTX 2.3 22B by Lightricks on fal.ai. Optionally accepts a LoRA URL.",
+			"Image-to-video generation using LTX 2.3 22B by Lightricks on fal.ai. Optionally accepts a LoRA URL. Input moderation (fal safety checker) is off by default for person / LoRA workflows; enable it in scenario params if you need it.",
 		requiresInputImage: true,
 		parameterSchema: falLtx23ImageToVideoParamsSchema,
 		parameterFields: [

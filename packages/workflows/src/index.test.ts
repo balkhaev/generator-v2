@@ -94,6 +94,7 @@ describe("fal workflow registry", () => {
 		expect(workflow).toBeDefined();
 		expect(workflow?.baseModel).toBe("ltx-2-3");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			enableSafetyChecker: false,
 			fps: 24,
 			loraScale: 1,
 			numFrames: 121,
@@ -108,6 +109,7 @@ describe("fal workflow registry", () => {
 		expect(workflow).toBeDefined();
 		expect(workflow?.baseModel).toBe("ltx-2-3");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			enableSafetyChecker: false,
 			fps: 24,
 			loraScale: 1,
 			numFrames: 121,

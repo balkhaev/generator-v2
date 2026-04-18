@@ -327,6 +327,7 @@ describe("workflow registry", () => {
 			})
 		).toMatchObject({
 			__falModel: "fal-ai/ltx-2.3-22b/text-to-video/lora",
+			enable_safety_checker: false,
 			fps: 24,
 			generate_audio: true,
 			loras: [{ path: "", scale: 1 }],
@@ -357,6 +358,7 @@ describe("workflow registry", () => {
 
 		expect(payload).toMatchObject({
 			__falModel: "fal-ai/ltx-2.3-22b/image-to-video/lora",
+			enable_safety_checker: false,
 			fps: 24,
 			generate_audio: true,
 			image_url: "https://storage.example.com/reference.png",

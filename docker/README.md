@@ -202,3 +202,7 @@ Drizzle migrator применяет миграцию только если её 
 Локально `docker compose up -d` поднимает Kafka на `localhost:9092`.
 Внутри Docker-сети сервисы должны использовать `KAFKA_BROKERS=generator-kafka:9092`
 или имя сервиса compose, например `kafka:9092`.
+
+## Coolify: Studio и Cast LoRA (persons)
+
+Для подстановки LoRA персоны на **studio-api** нужен `PERSONS_API_URL` и согласованные с persons сессионные cookie; во **studio-web** отдельно — публичный `NEXT_PUBLIC_PERSONS_API_URL` для браузера. В Coolify предпочтительно задавать server-to-server URL через **имя сервиса в compose** или shared variables, а не хардкодить внешние домены там, где достаточно внутренней сети. Подробный чеклист: [docs/coolify-studio-persons-lora.md](../docs/coolify-studio-persons-lora.md).

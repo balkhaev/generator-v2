@@ -124,6 +124,7 @@ export function buildAdminSettingsSnapshot(
 		grokConfigured: false,
 		openRouterConfigured: false,
 		openRouterModel: "openai/gpt-4o-mini",
+		openRouterModelEnvDefault: "openai/gpt-4o-mini",
 		provider: "grok",
 	};
 

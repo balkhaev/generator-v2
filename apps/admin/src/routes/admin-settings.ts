@@ -1,3 +1,4 @@
+import type { PromptEnhanceSettingsSnapshot } from "@generator/contracts/admin";
 import { Hono } from "hono";
 
 import {
@@ -19,7 +20,7 @@ export function createAdminSettingsRoutes(deps: {
 	promptEnhanceEnv?: {
 		grokConfigured: boolean;
 		openRouterConfigured: boolean;
-		openRouterModel: string;
+		openRouterModelEnvDefault: string;
 	};
 	promptEnhanceSettings?: PromptEnhanceSettings;
 	settings: TrainingProviderSettings;
@@ -33,13 +34,18 @@ export function createAdminSettingsRoutes(deps: {
 			deps.workerSettingsReader?.read() ?? Promise.resolve(null),
 		]);
 
-		const promptEnhance =
-			deps.promptEnhanceSettings && deps.promptEnhanceEnv
-				? {
-						...deps.promptEnhanceEnv,
-						provider: await deps.promptEnhanceSettings.getProvider(),
-					}
-				: undefined;
+		let promptEnhance: PromptEnhanceSettingsSnapshot | undefined;
+		if (deps.promptEnhanceSettings && deps.promptEnhanceEnv) {
+			const [promptProvider, openRouterModel] = await Promise.all([
+				deps.promptEnhanceSettings.getProvider(),
+				deps.promptEnhanceSettings.getOpenRouterModel(),
+			]);
+			promptEnhance = {
+				...deps.promptEnhanceEnv,
+				openRouterModel,
+				provider: promptProvider,
+			};
+		}
 
 		const snapshot = buildAdminSettingsSnapshot({
 			availability: deps.availability.resolve(),

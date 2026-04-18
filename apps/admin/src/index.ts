@@ -43,6 +43,7 @@ const trainingProviderSettings = createRedisTrainingProviderSettings({
 });
 
 const promptEnhanceSettings = createRedisPromptEnhanceSettings({
+	defaultOpenRouterModel: env.OPENROUTER_MODEL,
 	defaultProvider: env.PROMPT_ENHANCE_PROVIDER,
 	redisUrl,
 });
@@ -125,13 +126,14 @@ const app = createApp({
 	promptEnhanceEnv: {
 		grokConfigured: Boolean(env.XAI_API_KEY?.trim()),
 		openRouterConfigured: Boolean(env.OPENROUTER_API_KEY?.trim()),
-		openRouterModel: env.OPENROUTER_MODEL,
+		openRouterModelEnvDefault: env.OPENROUTER_MODEL,
 	},
 	promptEnhanceSettings,
 	trainingProviderAvailability: {
 		resolve: () => resolveTrainingProviderAvailability(env),
 	},
 	trainingProviderSettings,
+	openRouterModelsApiKey: env.OPENROUTER_API_KEY ?? null,
 	usersService,
 	workerSettingsReader,
 });

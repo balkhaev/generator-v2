@@ -34,6 +34,7 @@ import {
 } from "@/routes/admin-settings";
 import { createInternalRoutes } from "@/routes/internal";
 import { createAdminLoraRoutes } from "@/routes/loras";
+import { createOpenRouterModelsRoutes } from "@/routes/openrouter-models";
 import { createPromptEnhanceProviderRoutes } from "@/routes/prompt-enhance-provider";
 import {
 	createTrainingProviderRoutes,
@@ -60,10 +61,12 @@ interface AppOptions {
 	loadSetupStatus: () => Promise<AdminSetupStatus>;
 	loggerImpl?: Pick<Console, "info" | "error">;
 	loraRegistryService?: LoraRegistryService;
+	/** Опционально — для заголовка Authorization при запросе каталога моделей OpenRouter. */
+	openRouterModelsApiKey?: string | null;
 	promptEnhanceEnv?: {
 		grokConfigured: boolean;
 		openRouterConfigured: boolean;
-		openRouterModel: string;
+		openRouterModelEnvDefault: string;
 	};
 	promptEnhanceSettings?: PromptEnhanceSettings;
 	s3Config?: S3StorageConfig;
@@ -125,6 +128,14 @@ export function createApp(options: AppOptions) {
 				options.internalControlToken
 			),
 			isPublicPath: isPublicApiPath,
+		})
+	);
+
+	app.route(
+		"/api/admin/openrouter-models",
+		createOpenRouterModelsRoutes({
+			fetchImpl,
+			openRouterApiKey: options.openRouterModelsApiKey,
 		})
 	);
 

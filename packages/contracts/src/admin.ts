@@ -162,10 +162,16 @@ export interface AdminWorkerHealthStatus {
 }
 
 export interface PromptEnhanceSettingsSnapshot {
-	/** Ключи (XAI / OpenRouter) должны быть в env **studio-api**; здесь только выбор провайдера из Redis. */
+	/** Ключи (XAI / OpenRouter) должны быть в env **studio-api**; провайдер и модель OpenRouter — в Redis. */
 	grokConfigured: boolean;
 	openRouterConfigured: boolean;
+	/**
+	 * Фактический slug модели для enhance (Redis `admin:prompt-enhance-openrouter-model`,
+	 * иначе совпадает с `openRouterModelEnvDefault`).
+	 */
 	openRouterModel: string;
+	/** Значение OPENROUTER_MODEL в env (fallback при пустом Redis). */
+	openRouterModelEnvDefault: string;
 	provider: PromptEnhanceProviderName;
 }
 

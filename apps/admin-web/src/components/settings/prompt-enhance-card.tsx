@@ -4,10 +4,14 @@ import type {
 	PromptEnhanceProviderName,
 	PromptEnhanceSettingsSnapshot,
 } from "@generator/contracts/admin";
+import { Button } from "@generator/ui/components/button";
+import { Input } from "@generator/ui/components/input";
 import { cn } from "@generator/ui/lib/utils";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import { SettingsCard, SettingsRow } from "@/components/settings/settings-card";
+import { useOpenRouterModels } from "@/hooks/use-openrouter-models";
 import { useUpdatePromptEnhanceProvider } from "@/hooks/use-prompt-enhance-provider";
 
 const PROVIDER_LABELS: Record<PromptEnhanceProviderName, string> = {
@@ -16,9 +20,9 @@ const PROVIDER_LABELS: Record<PromptEnhanceProviderName, string> = {
 };
 
 const PROVIDER_DESCRIPTIONS: Record<PromptEnhanceProviderName, string> = {
-	grok: "Uses XAI_API_KEY on studio-api (model grok-4-fast).",
+	grok: "Uses XAI_API_KEY on studio-api (grok-4-fast).",
 	openrouter:
-		"Uses OPENROUTER_API_KEY and OPENROUTER_MODEL on studio-api. OpenAI-compatible chat + vision.",
+		"Uses OPENROUTER_API_KEY on studio-api. Pick any model slug below (stored in Redis).",
 };
 
 const PROVIDERS: PromptEnhanceProviderName[] = ["grok", "openrouter"];
@@ -29,6 +33,30 @@ interface PromptEnhanceCardProps {
 
 export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
 	const mutation = useUpdatePromptEnhanceProvider();
+	const [catalogRequested, setCatalogRequested] = useState(false);
+	const [modelDraft, setModelDraft] = useState(settings.openRouterModel);
+	const [modelFilter, setModelFilter] = useState("");
+
+	const modelsQuery = useOpenRouterModels({ enabled: catalogRequested });
+
+	useEffect(() => {
+		setModelDraft(settings.openRouterModel);
+	}, [settings.openRouterModel]);
+
+	const filteredModels = useMemo(() => {
+		const list = modelsQuery.data ?? [];
+		const q = modelFilter.trim().toLowerCase();
+		if (!q) {
+			return list.slice(0, 200);
+		}
+		return list
+			.filter(
+				(m) =>
+					m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)
+			)
+			.slice(0, 200);
+	}, [modelsQuery.data, modelFilter]);
+
 	const errorText =
 		mutation.error instanceof Error ? mutation.error.message : null;
 
@@ -38,11 +66,11 @@ export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
 				mutation.isPending ? (
 					<div className="inline-flex items-center gap-1 text-muted-foreground text-xs">
 						<Loader2 className="size-3 animate-spin" />
-						Switching…
+						Saving…
 					</div>
 				) : null
 			}
-			description="Controls Studio «Enhance» and vision rewrite for scenarios. Selection is stored in Redis (same DB as training provider switch). API keys must be set on studio-api."
+			description="Provider and OpenRouter model slug are stored in Redis. studio-api must have the matching API keys."
 			title="Studio prompt enhancement"
 		>
 			<div className="grid gap-2">
@@ -65,7 +93,7 @@ export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
 							)}
 							disabled={disabled}
 							key={name}
-							onClick={() => mutation.mutate(name)}
+							onClick={() => mutation.mutate({ provider: name })}
 							type="button"
 						>
 							<div className="mt-0.5">
@@ -117,15 +145,108 @@ export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
 				</div>
 			) : null}
 
-			<div className="mt-4 grid gap-0">
+			<div className="mt-4 grid gap-2">
 				<div className="font-mono text-[10px] text-muted-foreground/70 uppercase tracking-[0.2em]">
-					OpenRouter
+					OpenRouter model
 				</div>
 				<SettingsRow
-					hint="OPENROUTER_MODEL on studio-api (and gateway for this readout)"
-					label="Model slug"
-					value={settings.openRouterModel}
+					hint="Fallback when Redis has no model (OPENROUTER_MODEL on studio-api)"
+					label="Env default (studio)"
+					value={settings.openRouterModelEnvDefault}
 				/>
+				<div className="flex flex-wrap items-end gap-2">
+					<div className="grid min-w-0 flex-1 gap-1">
+						<span className="text-[10px] text-muted-foreground">
+							Active slug (Redis)
+						</span>
+						<Input
+							className="h-8 font-mono text-xs"
+							onChange={(e) => setModelDraft(e.target.value)}
+							placeholder="openai/gpt-4o-mini"
+							value={modelDraft}
+						/>
+					</div>
+					<Button
+						className="h-8 shrink-0"
+						disabled={
+							mutation.isPending ||
+							modelDraft.trim() === "" ||
+							modelDraft.trim() === settings.openRouterModel
+						}
+						onClick={() =>
+							mutation.mutate({ openRouterModel: modelDraft.trim() })
+						}
+						size="sm"
+						type="button"
+						variant="secondary"
+					>
+						Save model
+					</Button>
+				</div>
+				<div className="flex flex-wrap items-center gap-2">
+					<Button
+						className="h-8 gap-1"
+						onClick={() => {
+							if (catalogRequested) {
+								modelsQuery.refetch().catch(() => {
+									// Errors surface via modelsQuery.isError
+								});
+							} else {
+								setCatalogRequested(true);
+							}
+						}}
+						size="sm"
+						type="button"
+						variant="outline"
+					>
+						{modelsQuery.isFetching ? (
+							<Loader2 className="size-3 animate-spin" />
+						) : (
+							<RefreshCw className="size-3" />
+						)}
+						Load catalog
+					</Button>
+					{modelsQuery.isError ? (
+						<span className="text-destructive text-xs">
+							{modelsQuery.error instanceof Error
+								? modelsQuery.error.message
+								: "Failed to load models"}
+						</span>
+					) : null}
+				</div>
+				{catalogRequested && modelsQuery.data && modelsQuery.data.length > 0 ? (
+					<div className="grid gap-1">
+						<Input
+							className="h-8 text-xs"
+							onChange={(e) => setModelFilter(e.target.value)}
+							placeholder="Filter catalog…"
+							value={modelFilter}
+						/>
+						<select
+							aria-label="OpenRouter models from catalog"
+							className="max-h-40 min-h-32 w-full rounded-md border border-input bg-background px-2 py-1 font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
+							onChange={(e) => setModelDraft(e.target.value)}
+							size={Math.min(12, Math.max(4, filteredModels.length + 1))}
+							value={
+								filteredModels.some((m) => m.id === modelDraft)
+									? modelDraft
+									: ""
+							}
+						>
+							<option value="">— pick from catalog —</option>
+							{filteredModels.map((m) => (
+								<option key={m.id} value={m.id}>
+									{m.name} — {m.id}
+								</option>
+							))}
+						</select>
+						<p className="text-[10px] text-muted-foreground">
+							{filteredModels.length} models shown
+							{modelFilter.trim() ? " (filtered)" : ""}. Pick a row, then «Save
+							model».
+						</p>
+					</div>
+				) : null}
 			</div>
 		</SettingsCard>
 	);

@@ -21,6 +21,9 @@ describe("buildAdminSettingsSnapshot", () => {
 		expect(snapshot.trainingProvider.provider).toBe("fal");
 		expect(snapshot.promptEnhance.provider).toBe("grok");
 		expect(snapshot.promptEnhance.openRouterModel).toBe("openai/gpt-4o-mini");
+		expect(snapshot.promptEnhance.openRouterModelEnvDefault).toBe(
+			"openai/gpt-4o-mini"
+		);
 		expect(snapshot.trainingProvider.availability).toHaveLength(2);
 		expect(snapshot.runpodTraining.endpointConfigured).toBe(false);
 		expect(snapshot.runpodTraining.baseModel).toBe("z-image");

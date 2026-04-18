@@ -707,24 +707,6 @@ function ScenarioSwitcher({
 					) : null}
 				</PopoverContent>
 			</Popover>
-			{selected && onEditScenario ? (
-				<IconButton
-					hint="Edit scenario"
-					label="Edit scenario"
-					onClick={() => onEditScenario(selected.id)}
-				>
-					<Pencil className="size-3.5" />
-				</IconButton>
-			) : null}
-			{selected && onDeleteScenario ? (
-				<IconButton
-					hint="Delete scenario"
-					label="Delete scenario"
-					onClick={() => onDeleteScenario(selected.id)}
-				>
-					<Trash2 className="size-3.5" />
-				</IconButton>
-			) : null}
 			{onCreateScenario ? (
 				<IconButton
 					hint="Compose new scenario"

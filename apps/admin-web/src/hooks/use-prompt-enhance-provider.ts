@@ -9,8 +9,10 @@ import { updatePromptEnhanceProvider } from "@/lib/prompt-enhance-provider-clien
 export function useUpdatePromptEnhanceProvider() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (provider: PromptEnhanceProviderName) =>
-			updatePromptEnhanceProvider(provider),
+		mutationFn: (input: {
+			openRouterModel?: string;
+			provider?: PromptEnhanceProviderName;
+		}) => updatePromptEnhanceProvider(input),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: adminSettingsQueryKey });
 		},

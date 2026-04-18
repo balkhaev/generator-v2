@@ -43,6 +43,8 @@ import {
 	Plus,
 	RefreshCw,
 	Search,
+	UserRound,
+	UsersRound,
 } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
@@ -51,7 +53,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import IconButton from "@/components/icon-button";
-import PersonLoraSwitcher from "@/components/person-lora-switcher";
 import PersonsInputPicker from "@/components/persons-input-picker";
 import { getMediaType } from "@/components/preview-surface";
 import type { ScenarioCardData } from "@/components/scenario-card-data";
@@ -349,16 +350,110 @@ function ScenarioSwitcherItem({
 	);
 }
 
+function CastLoraInline({
+	onSelect,
+	persons,
+	selectedPersonId,
+}: {
+	onSelect: (personId: string | null) => void;
+	persons: PersonRecord[];
+	selectedPersonId: string | null;
+}) {
+	const trainable = persons.filter((person) => Boolean(person.loraUrl));
+	const selected = persons.find((p) => p.id === selectedPersonId) ?? null;
+
+	if (trainable.length === 0 && !selected) {
+		return (
+			<div className="flex items-center gap-2 rounded-md bg-muted/15 px-2 py-1.5 text-[10px] text-muted-foreground">
+				<UsersRound className="size-3 shrink-0" />
+				<span className="min-w-0 truncate">
+					No trained Cast LoRAs available.
+				</span>
+			</div>
+		);
+	}
+
+	return (
+		<div className="grid gap-1.5">
+			<div className="flex items-center justify-between gap-2 px-0.5">
+				<span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+					Cast LoRA
+				</span>
+				{selected ? (
+					<button
+						className="text-[10px] text-muted-foreground underline transition hover:text-foreground"
+						onClick={() => onSelect(null)}
+						type="button"
+					>
+						Clear
+					</button>
+				) : (
+					<span className="text-[10px] text-muted-foreground/70">optional</span>
+				)}
+			</div>
+			<div className="flex max-w-full gap-1 overflow-x-auto pb-1">
+				<button
+					aria-pressed={selectedPersonId === null}
+					className={cn(
+						"flex size-10 shrink-0 items-center justify-center rounded-md border transition",
+						selectedPersonId === null
+							? "border-foreground bg-foreground/10"
+							: "border-foreground/10 hover:bg-muted/15"
+					)}
+					onClick={() => onSelect(null)}
+					title="No Cast LoRA"
+					type="button"
+				>
+					<UsersRound className="size-3.5 text-muted-foreground" />
+				</button>
+				{trainable.map((person) => {
+					const thumb = person.photoUrl ?? person.referencePhotoUrl ?? null;
+					const isActive = person.id === selectedPersonId;
+					return (
+						<button
+							aria-pressed={isActive}
+							className={cn(
+								"relative size-10 shrink-0 overflow-hidden rounded-md border transition",
+								isActive
+									? "border-foreground ring-1 ring-foreground"
+									: "border-foreground/10 opacity-80 hover:opacity-100"
+							)}
+							key={person.id}
+							onClick={() => onSelect(person.id)}
+							title={person.name}
+							type="button"
+						>
+							{thumb ? (
+								<div
+									aria-hidden="true"
+									className="absolute inset-0 bg-center bg-cover"
+									style={{ backgroundImage: `url("${thumb}")` }}
+								/>
+							) : (
+								<UserRound className="absolute top-1/2 left-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/60" />
+							)}
+						</button>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
 function ScenarioSwitcher({
+	castLoraSlot,
 	getScenarioHref,
 	onCreateScenario,
 	onSelect,
+	personLoraSelected,
 	scenarios,
 	selectedScenarioId,
 }: {
+	castLoraSlot: React.ReactNode;
 	getScenarioHref: (scenarioId: string) => Route;
 	onCreateScenario?: () => void;
 	onSelect: (scenarioId: string) => void;
+	personLoraSelected: PersonRecord | null;
 	scenarios: ScenarioCardData[];
 	selectedScenarioId: string | null;
 }) {
@@ -379,8 +474,13 @@ function ScenarioSwitcher({
 		);
 	}, [query, scenarios]);
 
+	const personThumb =
+		personLoraSelected?.photoUrl ??
+		personLoraSelected?.referencePhotoUrl ??
+		null;
+
 	return (
-		<div className="flex items-center gap-1">
+		<div className="flex min-w-0 items-center gap-1">
 			<Popover onOpenChange={setOpen} open={open}>
 				<PopoverTrigger
 					render={
@@ -423,6 +523,25 @@ function ScenarioSwitcher({
 										: `${scenarios.length} scenarios`}
 								</p>
 							</div>
+							{personLoraSelected ? (
+								<span
+									className="relative size-6 shrink-0 overflow-hidden rounded-md ring-1 ring-foreground/30"
+									title={`Cast: ${personLoraSelected.name}`}
+								>
+									<span className="sr-only">
+										Cast LoRA: {personLoraSelected.name}
+									</span>
+									{personThumb ? (
+										<span
+											aria-hidden="true"
+											className="absolute inset-0 bg-center bg-cover"
+											style={{ backgroundImage: `url("${personThumb}")` }}
+										/>
+									) : (
+										<UserRound className="absolute top-1/2 left-1/2 size-3 -translate-x-1/2 -translate-y-1/2 text-muted-foreground" />
+									)}
+								</span>
+							) : null}
 							<ChevronDown
 								aria-hidden="true"
 								className={cn(
@@ -471,6 +590,11 @@ function ScenarioSwitcher({
 							</ul>
 						)}
 					</div>
+					{castLoraSlot ? (
+						<div className="border-foreground/8 border-t pt-2">
+							{castLoraSlot}
+						</div>
+					) : null}
 					{onCreateScenario ? (
 						<Button
 							onClick={() => {
@@ -560,19 +684,19 @@ function RunCard({
 	return (
 		<article
 			className={cn(
-				"grid gap-2 rounded-lg bg-muted/8 p-2.5 transition dark:bg-muted/5",
+				"grid min-w-0 gap-2 rounded-lg bg-muted/8 p-2.5 transition dark:bg-muted/5",
 				isFocused && "ring-1 ring-foreground/30"
 			)}
 		>
-			<div className="flex items-start justify-between gap-2">
-				<div className="min-w-0">
+			<div className="flex min-w-0 items-start justify-between gap-2">
+				<div className="min-w-0 flex-1">
 					<p className="truncate text-[11px]">{run.scenarioName}</p>
 					<p className="truncate text-[10px] text-muted-foreground">
 						{formatRelativeTime(run.createdAt)} ·{" "}
 						{run.providerJobId ?? "pending"}
 					</p>
 				</div>
-				<div className="flex items-center gap-1">
+				<div className="flex shrink-0 items-center gap-1">
 					<StatusPill status={run.status} />
 					<IconButton
 						hint={isCopied ? "Copied" : "Copy run id"}
@@ -613,9 +737,21 @@ function RunCard({
 			<RunLiveProgress run={run} />
 
 			{run.errorSummary ? (
-				<p className="rounded-lg bg-rose-500/10 px-2 py-1 text-[10px] text-rose-700 dark:text-rose-300">
-					{run.errorSummary}
-				</p>
+				<Tooltip>
+					<TooltipTrigger
+						render={
+							<p
+								className="line-clamp-2 cursor-help break-words rounded-lg bg-rose-500/10 px-2 py-1 text-[10px] text-rose-700 [overflow-wrap:anywhere] dark:text-rose-300"
+								title={run.errorSummary}
+							>
+								{run.errorSummary}
+							</p>
+						}
+					/>
+					<TooltipContent className="max-w-sm break-words leading-relaxed [overflow-wrap:anywhere]">
+						{run.errorSummary}
+					</TooltipContent>
+				</Tooltip>
 			) : null}
 
 			<div className="flex flex-wrap items-center gap-1">
@@ -830,9 +966,9 @@ function ActivitySection({
 	);
 
 	return (
-		<section className="flex flex-col">
-			<div className="flex items-center justify-between gap-2 px-3 py-2">
-				<div className="flex items-center gap-1.5">
+		<section className="flex min-w-0 flex-col">
+			<div className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
+				<div className="flex shrink-0 items-center gap-1.5">
 					<SectionLabel>Activity</SectionLabel>
 					<span className="rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[10px] text-muted-foreground tabular-nums">
 						{scenarioRuns.length}
@@ -845,7 +981,7 @@ function ActivitySection({
 				/>
 			</div>
 
-			<div className="px-3 pb-3">
+			<div className="min-w-0 px-3 pb-3">
 				{filteredRuns.length === 0 ? (
 					<EmptyState
 						hint={
@@ -858,7 +994,7 @@ function ActivitySection({
 						}
 					/>
 				) : (
-					<div className="grid gap-2">
+					<div className="grid min-w-0 gap-2">
 						{filteredRuns.map((run) => (
 							<RunCard
 								isCopied={copiedRunId === run.id}
@@ -1105,6 +1241,30 @@ export default function CommandSidebar({
 		(!requiresInputImage || Boolean(selectedRunDraft?.inputImageUrl?.trim()));
 	const storageLabel = getStorageLabel(selectedRunDraft?.uploadStorage ?? null);
 
+	const supportsPersonLora =
+		Boolean(selectedScenario) &&
+		workflowSupportsPersonLora(selectedScenarioWorkflow);
+	const selectedPersonLora = supportsPersonLora
+		? (studioPersons.find(
+				(person) => person.id === selectedRunDraft?.loraPersonId
+			) ?? null)
+		: null;
+
+	function handleSelectPersonLora(personId: string | null) {
+		if (!selectedScenario) {
+			return;
+		}
+		setRunDrafts((current) => ({
+			...current,
+			[selectedScenario.id]: {
+				...(current[selectedScenario.id] ??
+					createRunDraft(selectedScenario.id)),
+				loraPersonId: personId,
+				scenarioId: selectedScenario.id,
+			},
+		}));
+	}
+
 	return (
 		<aside
 			className={cn(
@@ -1113,12 +1273,22 @@ export default function CommandSidebar({
 			)}
 		>
 			<header className="flex shrink-0 flex-col border-foreground/6 border-b dark:border-foreground/10">
-				<div className="flex items-center gap-1 px-2 py-2">
+				<div className="flex min-w-0 items-center gap-1 px-2 py-2">
 					<div className="min-w-0 flex-1">
 						<ScenarioSwitcher
+							castLoraSlot={
+								supportsPersonLora ? (
+									<CastLoraInline
+										onSelect={handleSelectPersonLora}
+										persons={studioPersons}
+										selectedPersonId={selectedRunDraft?.loraPersonId ?? null}
+									/>
+								) : null
+							}
 							getScenarioHref={getScenarioHref}
 							onCreateScenario={onCreateScenario}
 							onSelect={selectScenario}
+							personLoraSelected={selectedPersonLora}
 							scenarios={scenarioCards}
 							selectedScenarioId={selectedScenarioId}
 						/>
@@ -1137,32 +1307,9 @@ export default function CommandSidebar({
 						)}
 					</IconButton>
 				</div>
-				{selectedScenario &&
-				workflowSupportsPersonLora(selectedScenarioWorkflow) ? (
-					<div className="border-foreground/6 border-t px-2 pb-2 dark:border-foreground/10">
-						<PersonLoraSwitcher
-							onSelect={(personId) => {
-								if (!selectedScenario) {
-									return;
-								}
-								setRunDrafts((current) => ({
-									...current,
-									[selectedScenario.id]: {
-										...(current[selectedScenario.id] ??
-											createRunDraft(selectedScenario.id)),
-										loraPersonId: personId,
-										scenarioId: selectedScenario.id,
-									},
-								}));
-							}}
-							persons={studioPersons}
-							selectedPersonId={selectedRunDraft?.loraPersonId ?? null}
-						/>
-					</div>
-				) : null}
 			</header>
 
-			<div className="min-h-0 flex-1 overflow-y-auto">
+			<div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
 				{selectedScenario ? (
 					<LaunchSection
 						activeRunCount={activeRunCount}

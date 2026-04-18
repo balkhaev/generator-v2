@@ -35,6 +35,7 @@ import {
 	buildPublicAssetUrl,
 	buildZipFromBuffers,
 	createPresignedPutUrl,
+	createS3Client,
 	type S3StorageConfig,
 	uploadZipToS3,
 } from "@generator/storage";
@@ -275,6 +276,87 @@ export class RunpodPodLoraTrainingRunner {
 		this.volumeInGb = options.volumeInGb ?? 60;
 	}
 
+	/**
+	 * Достаёт текущее `metadata.training` персоны через persons-api. Используется
+	 * для idempotency-guard: чтобы повторный Kafka-event на тот же
+	 * (personId, trainingRunId) не плодил второй RunPod pod, если первый ещё
+	 * жив или уже долил артефакт.
+	 *
+	 * Возвращает `null`, если персона не найдена / persons-api недоступен /
+	 * training meta отсутствует — в этом случае вызов пройдёт по обычному пути.
+	 */
+	private async fetchPersonTrainingMeta(personId: string): Promise<{
+		providerJobId: string | null;
+		status: string | null;
+		trainingRunId: string | null;
+	} | null> {
+		if (!this.personsApiBaseUrl) {
+			return null;
+		}
+		try {
+			const response = await this.fetchImpl(
+				`${this.personsApiBaseUrl}/api/internal/persons/${encodeURIComponent(personId)}`,
+				{
+					headers: {
+						authorization: `Bearer ${this.trainingControlToken}`,
+					},
+				}
+			);
+			if (response.status === 404 || !response.ok) {
+				return null;
+			}
+			const body = (await response.json()) as {
+				person?: { metadata?: Record<string, unknown> };
+			};
+			const metadata = body.person?.metadata;
+			if (!metadata || typeof metadata !== "object") {
+				return null;
+			}
+			const training = (metadata as Record<string, unknown>).training;
+			if (
+				!training ||
+				typeof training !== "object" ||
+				Array.isArray(training)
+			) {
+				return null;
+			}
+			const t = training as Record<string, unknown>;
+			return {
+				providerJobId:
+					typeof t.providerJobId === "string" ? t.providerJobId : null,
+				status: typeof t.status === "string" ? t.status : null,
+				trainingRunId:
+					typeof t.trainingRunId === "string" ? t.trainingRunId : null,
+			};
+		} catch (error) {
+			this.logger.error("runpod-pod.fetch-person-failed", {
+				message: error instanceof Error ? error.message : String(error),
+				personId,
+			});
+			return null;
+		}
+	}
+
+	/**
+	 * HEAD-запрос к S3 через Bun.S3Client. Возвращает `{ exists, size }`,
+	 * `exists=false` если объект не найден или произошла любая ошибка stat'а.
+	 * Используется для верификации, что pod действительно долил `.safetensors`,
+	 * прежде чем мы маркируем training как `ready` (и наоборот — после внешнего
+	 * TERMINATED, чтобы не флапать готовый артефакт).
+	 */
+	private async checkLoraArtifactInS3(s3Key: string): Promise<{
+		exists: boolean;
+		size: number | null;
+	}> {
+		try {
+			const client = createS3Client(this.s3Config);
+			const stat = await client.file(s3Key).stat();
+			return { exists: true, size: stat.size ?? null };
+		} catch {
+			return { exists: false, size: null };
+		}
+	}
+
 	private async sendTrainingEvent(input: {
 		event: TrainingEventPayload;
 		personId: string;
@@ -320,8 +402,55 @@ export class RunpodPodLoraTrainingRunner {
 		});
 	}
 
-	async run(input: StartInput): Promise<void> {
-		const parsed = startRunpodPodTrainingSchema.parse(input);
+	/**
+	 * Idempotency guard: при повторной доставке Kafka-event'а на тот же
+	 * (personId, trainingRunId) проверяем persons-api: если уже записан
+	 * providerJobId со статусом generating/training и сам RunPod-pod ещё
+	 * жив (≠TERMINATED) — это duplicate. Возвращает `true`, если вызывающий
+	 * должен молча выйти и оставить существующий poll-loop / recovery sweep.
+	 */
+	private async shouldIgnoreDuplicateKafkaStart(
+		parsed: StartInput
+	): Promise<boolean> {
+		const existingTraining = await this.fetchPersonTrainingMeta(
+			parsed.personId
+		);
+		if (
+			!existingTraining ||
+			existingTraining.trainingRunId !== parsed.trainingRunId ||
+			!existingTraining.providerJobId ||
+			!existingTraining.status ||
+			(existingTraining.status !== "training" &&
+				existingTraining.status !== "generating")
+		) {
+			return false;
+		}
+		try {
+			const existingPod = await this.podClient.getPod(
+				existingTraining.providerJobId
+			);
+			const podStatus = existingPod.desiredStatus ?? "RUNNING";
+			if (podStatus === "TERMINATED") {
+				return false;
+			}
+			this.logger.info("runpod-pod.duplicate-event-ignored", {
+				existingPodId: existingTraining.providerJobId,
+				personId: parsed.personId,
+				podStatus,
+				trainingRunId: parsed.trainingRunId,
+			});
+			return true;
+		} catch (error) {
+			this.logger.info("runpod-pod.idempotency-pod-not-found", {
+				existingPodId: existingTraining.providerJobId,
+				message: error instanceof Error ? error.message : String(error),
+				personId: parsed.personId,
+			});
+			return false;
+		}
+	}
+
+	private async executeRunpodPodTraining(parsed: StartInput): Promise<void> {
 		const triggerWord =
 			parsed.triggerWord ?? buildDefaultTriggerWord(parsed.personSlug);
 		const genderHint = inferGenderHint(parsed.description);
@@ -554,6 +683,7 @@ export class RunpodPodLoraTrainingRunner {
 			await this.pollUntilExited({
 				datasetUrl,
 				debugCorrelationId: parsed.debugCorrelationId,
+				loraS3Key,
 				outputName,
 				personId: parsed.personId,
 				podId,
@@ -569,6 +699,23 @@ export class RunpodPodLoraTrainingRunner {
 				trainingStartedMs,
 				trainingSteps,
 				triggerWord,
+			});
+
+			// Verify .safetensors actually landed in S3 — pod иногда уходит в EXITED
+			// раньше, чем долил артефакт (OOM, торч-краш и т.п.). Без этой проверки
+			// мы маркировали бы тренировку как `ready` с loraUrl, по которому
+			// файла нет.
+			const artifactCheck = await this.checkLoraArtifactInS3(loraS3Key);
+			if (!artifactCheck.exists) {
+				throw new Error(
+					`RunPod pod ${podId} exited but lora artifact missing in S3 (${loraS3Key}). Check pod logs.`
+				);
+			}
+			this.logger.info("runpod-pod.artifact-verified", {
+				loraS3Key,
+				personId: parsed.personId,
+				podId,
+				sizeBytes: artifactCheck.size,
 			});
 
 			await this.sendTrainingEvent({
@@ -637,6 +784,14 @@ export class RunpodPodLoraTrainingRunner {
 		}
 	}
 
+	async run(input: StartInput): Promise<void> {
+		const parsed = startRunpodPodTrainingSchema.parse(input);
+		if (await this.shouldIgnoreDuplicateKafkaStart(parsed)) {
+			return;
+		}
+		await this.executeRunpodPodTraining(parsed);
+	}
+
 	/**
 	 * Подхватывает уже запущенный RunPod pod (создан предыдущей инкарнацией
 	 * worker'а) и продолжает poll loop до EXITED. Используется boot-time
@@ -671,6 +826,7 @@ export class RunpodPodLoraTrainingRunner {
 			await this.pollUntilExited({
 				datasetUrl: "",
 				debugCorrelationId: parsed.debugCorrelationId,
+				loraS3Key,
 				outputName: parsed.outputName,
 				personId: parsed.personId,
 				podId: parsed.providerJobId,
@@ -682,6 +838,19 @@ export class RunpodPodLoraTrainingRunner {
 				trainingStartedMs,
 				trainingSteps: parsed.trainingSteps,
 				triggerWord: parsed.triggerWord,
+			});
+
+			const artifactCheck = await this.checkLoraArtifactInS3(loraS3Key);
+			if (!artifactCheck.exists) {
+				throw new Error(
+					`RunPod pod ${parsed.providerJobId} exited but lora artifact missing in S3 (${loraS3Key}). Check pod logs.`
+				);
+			}
+			this.logger.info("runpod-pod.resume-artifact-verified", {
+				loraS3Key,
+				personId: parsed.personId,
+				podId: parsed.providerJobId,
+				sizeBytes: artifactCheck.size,
 			});
 
 			await this.sendTrainingEvent({
@@ -756,6 +925,7 @@ export class RunpodPodLoraTrainingRunner {
 	private async pollUntilExited(input: {
 		datasetUrl: string;
 		debugCorrelationId?: string;
+		loraS3Key: string;
 		outputName: string;
 		personId: string;
 		podId: string;
@@ -778,6 +948,20 @@ export class RunpodPodLoraTrainingRunner {
 				return pod;
 			}
 			if (status === "TERMINATED") {
+				// Pod снесли извне (вручную / через MCP / quota). Прежде чем падать,
+				// проверим S3 — pod_runner мог успеть долить .safetensors до того, как
+				// его снесли (типичный случай: pod успешно завершил тренировку, ушёл
+				// в idle перед exit, кто-то ткнул "delete"). Тогда трактуем как ready.
+				const artifactCheck = await this.checkLoraArtifactInS3(input.loraS3Key);
+				if (artifactCheck.exists) {
+					this.logger.info("runpod-pod.terminated-but-artifact-ready", {
+						loraS3Key: input.loraS3Key,
+						personId: input.personId,
+						podId: input.podId,
+						sizeBytes: artifactCheck.size,
+					});
+					return pod;
+				}
 				throw new Error(
 					"RunPod pod was terminated externally before training finished"
 				);

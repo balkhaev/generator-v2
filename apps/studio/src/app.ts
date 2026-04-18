@@ -57,8 +57,9 @@ interface AppOptions {
 	personsApiBaseUrl?: string;
 	repository: StudioRepository;
 	/**
-	 * По умолчанию — Grok vs OpenRouter из Redis (`admin:prompt-enhance-provider`)
-	 * и env на studio-api. Переопределение для тестов.
+	 * По умолчанию — провайдер и ключи берутся через runtime-config snapshot
+	 * c admin-api (см. `prompt-enhance-resolve.ts`); env остаётся как fallback,
+	 * если admin-api недоступен. Параметр оставлен для подмены в тестах.
 	 */
 	resolvePromptEnhanceClient?: () => Promise<PromptEnhanceClient | undefined>;
 	s3Client?: S3ClientLike;

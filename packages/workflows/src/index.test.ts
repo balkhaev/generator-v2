@@ -33,7 +33,7 @@ describe("fal workflow registry", () => {
 			numInferenceSteps: 28,
 			guidanceScale: 3.5,
 			numImages: 1,
-			enableSafetyChecker: true,
+			enableSafetyChecker: false,
 		});
 	});
 
@@ -47,7 +47,7 @@ describe("fal workflow registry", () => {
 			aspectRatio: "16:9",
 			enableOutputSafetyChecker: false,
 			enablePromptExpansion: false,
-			enableSafetyChecker: true,
+			enableSafetyChecker: false,
 			framesPerSecond: 16,
 			guidanceScale: 3.5,
 			guidanceScale2: 4,
@@ -74,7 +74,7 @@ describe("fal workflow registry", () => {
 			aspectRatio: "auto",
 			enableOutputSafetyChecker: false,
 			enablePromptExpansion: false,
-			enableSafetyChecker: true,
+			enableSafetyChecker: false,
 			framesPerSecond: 16,
 			guidanceScale: 3.5,
 			guidanceScale2: 3.5,

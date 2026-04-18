@@ -69,7 +69,10 @@ const falFluxSchnellParamsSchema = z.object({
 	numInferenceSteps: z.number().int().min(1).max(12).default(4),
 	numImages: z.number().int().min(1).max(4).default(1),
 	seed: z.number().int().nonnegative().optional(),
-	enableSafetyChecker: z.boolean().default(true),
+	// fal's input moderation is very strict on portraits / person LoRAs;
+	// default off so studio runs match our other fal workflows. Callers can
+	// opt in per-execution.
+	enableSafetyChecker: z.boolean().default(false),
 });
 
 const optionalUrlParamSchema = z.preprocess(
@@ -97,7 +100,10 @@ const falFluxDevParamsSchema = z.object({
 	guidanceScale: z.number().min(1).max(20).default(3.5),
 	numImages: z.number().int().min(1).max(4).default(1),
 	seed: z.number().int().nonnegative().optional(),
-	enableSafetyChecker: z.boolean().default(true),
+	// fal's input moderation is very strict on portraits / person LoRAs;
+	// default off so studio runs match our other fal workflows. Callers can
+	// opt in per-execution.
+	enableSafetyChecker: z.boolean().default(false),
 	loraUrl: optionalUrlParamSchema,
 	loraScale: z.number().min(0).max(2).default(1),
 });
@@ -161,7 +167,10 @@ const falWan22TextToVideoParamsSchema = z.object({
 	resolution: z.enum(["480p", "580p", "720p"]).default("720p"),
 	aspectRatio: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
 	numInferenceSteps: z.number().int().min(1).max(50).default(27),
-	enableSafetyChecker: z.boolean().default(true),
+	// fal's input moderation is very strict on portraits / person LoRAs;
+	// default off so studio runs match our other fal workflows (LTX/Flux).
+	// Callers can opt in per-execution.
+	enableSafetyChecker: z.boolean().default(false),
 	enableOutputSafetyChecker: z.boolean().default(false),
 	enablePromptExpansion: z.boolean().default(false),
 	acceleration: z.enum(["none", "regular"]).default("regular"),

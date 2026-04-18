@@ -85,6 +85,13 @@
       "when": 1776542369963,
       "tag": "0011_brave_ezekiel",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1776547289690,
+      "tag": "0012_runtime_config_tables",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,27 @@
+{
+  "name": "@generator/runtime-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./crypto": "./src/crypto.ts",
+    "./domains": "./src/domains.ts",
+    "./store": "./src/store.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@generator/db": "workspace:*",
+    "@generator/queue": "workspace:*",
+    "drizzle-orm": "^0.45.1",
+    "ioredis": "^5.10.1",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@generator/config": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "^5"
+  }
+}

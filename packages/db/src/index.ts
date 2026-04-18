@@ -23,6 +23,7 @@ import {
 	personGenerationStatusEnum,
 	personRelations,
 } from "./schema/persons";
+import { integrationCredential, runtimeSetting } from "./schema/runtime-config";
 import {
 	studioArtifact,
 	studioArtifactRelations,
@@ -40,6 +41,7 @@ const schema = {
 	accountRelations,
 	generatorExecution,
 	generatorExecutionStatusEnum,
+	integrationCredential,
 	lora,
 	loraStatusEnum,
 	person,
@@ -48,6 +50,7 @@ const schema = {
 	personGenerationRelations,
 	personGenerationStatusEnum,
 	personRelations,
+	runtimeSetting,
 	session,
 	sessionRelations,
 	studioArtifact,
@@ -68,7 +71,7 @@ export function createDb(connectionString: string) {
 	return drizzle(connectionString, { schema });
 }
 
-type Database = ReturnType<typeof createDb>;
+export type Database = ReturnType<typeof createDb>;
 
 let cachedDb: Database | null = null;
 

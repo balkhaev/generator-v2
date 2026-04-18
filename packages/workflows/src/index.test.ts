@@ -52,7 +52,8 @@ describe("fal workflow registry", () => {
 			guidanceScale: 3.5,
 			guidanceScale2: 4,
 			interpolatorModel: "film",
-			loraScale: 1,
+			loraScaleHigh: 1,
+			loraScaleLow: 1,
 			numFrames: 81,
 			numInferenceSteps: 27,
 			numInterpolatedFrames: 1,
@@ -78,7 +79,8 @@ describe("fal workflow registry", () => {
 			guidanceScale: 3.5,
 			guidanceScale2: 3.5,
 			interpolatorModel: "film",
-			loraScale: 1,
+			loraScaleHigh: 1,
+			loraScaleLow: 1,
 			numFrames: 81,
 			numInferenceSteps: 27,
 			numInterpolatedFrames: 1,
@@ -142,12 +144,37 @@ describe("fal workflow registry", () => {
 		// No LoRA → empty loras array.
 		expect((buildInput(wanT2v) as { loras: unknown[] }).loras).toEqual([]);
 
-		// With LoRA → single entry with optional scale.
-		const wanWithLora = buildInput(wanT2v, {
-			loraUrl: "https://example.com/lora.safetensors",
+		// High-noise only → single entry routed to the high transformer.
+		const wanWithHigh = buildInput(wanT2v, {
+			loraUrlHigh: "https://example.com/lora-high.safetensors",
 		}) as { loras: unknown[] };
-		expect(wanWithLora.loras).toEqual([
-			{ path: "https://example.com/lora.safetensors", scale: 1 },
+		expect(wanWithHigh.loras).toEqual([
+			{
+				path: "https://example.com/lora-high.safetensors",
+				scale: 1,
+				transformer: "high",
+			},
+		]);
+
+		// Both slots populated → two entries with explicit transformer routing
+		// and individual scales.
+		const wanWithPair = buildInput(wanT2v, {
+			loraUrlHigh: "https://example.com/lora-high.safetensors",
+			loraScaleHigh: 0.8,
+			loraUrlLow: "https://example.com/lora-low.safetensors",
+			loraScaleLow: 0.6,
+		}) as { loras: unknown[] };
+		expect(wanWithPair.loras).toEqual([
+			{
+				path: "https://example.com/lora-high.safetensors",
+				scale: 0.8,
+				transformer: "high",
+			},
+			{
+				path: "https://example.com/lora-low.safetensors",
+				scale: 0.6,
+				transformer: "low",
+			},
 		]);
 	});
 
@@ -193,8 +220,6 @@ describe("fal workflow registry", () => {
 			"fal-flux-dev",
 			"fal-zimage-turbo",
 			"fal-zimage-turbo-image-to-image",
-			"fal-wan-2-2-text-to-video",
-			"fal-wan-2-2-image-to-video",
 		];
 		for (const key of keys) {
 			const workflow = workflows.find((entry) => entry.key === key);
@@ -203,6 +228,33 @@ describe("fal workflow registry", () => {
 			);
 			expect(loraField?.optional).toBe(true);
 			expect(loraField?.kind).toBe("lora-url");
+		}
+	});
+
+	it("exposes paired high+low lora-url fields for fal-wan-2-2 workflows", () => {
+		const workflows = listWorkflows();
+		for (const key of [
+			"fal-wan-2-2-text-to-video",
+			"fal-wan-2-2-image-to-video",
+		]) {
+			const workflow = workflows.find((entry) => entry.key === key);
+			expect(workflow).toBeDefined();
+			const high = workflow?.parameterFields.find(
+				(field) => field.key === "loraUrlHigh"
+			);
+			const low = workflow?.parameterFields.find(
+				(field) => field.key === "loraUrlLow"
+			);
+			expect(high?.kind).toBe("lora-url");
+			expect(high?.optional).toBe(true);
+			expect(low?.kind).toBe("lora-url");
+			expect(low?.optional).toBe(true);
+			expect(
+				workflow?.parameterFields.some((field) => field.key === "loraScaleHigh")
+			).toBe(true);
+			expect(
+				workflow?.parameterFields.some((field) => field.key === "loraScaleLow")
+			).toBe(true);
 		}
 	});
 

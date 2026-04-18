@@ -75,6 +75,153 @@ describe("createLoraSourceResolver", () => {
 		expect(source.versionName).toBe("v1");
 	});
 
+	it("detects high/low pair across modelVersions for Wan 2.2", async () => {
+		const resolver = createLoraSourceResolver({
+			fetchImpl() {
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							id: 42,
+							name: "Cinematic Wan",
+							type: "LORA",
+							modelVersions: [
+								{
+									id: 100,
+									name: "v1 High Noise",
+									baseModel: "Wan Video 2.2 I2V-A14B",
+									files: [
+										{
+											downloadUrl: "https://civitai.com/api/download/100",
+											name: "cinematic-high.safetensors",
+											primary: true,
+											sizeKb: 4096,
+										},
+									],
+								},
+								{
+									id: 101,
+									name: "v1 Low Noise",
+									baseModel: "Wan Video 2.2 I2V-A14B",
+									files: [
+										{
+											downloadUrl: "https://civitai.com/api/download/101",
+											name: "cinematic-low.safetensors",
+											primary: true,
+											sizeKb: 4096,
+										},
+									],
+								},
+							],
+						}),
+						{ status: 200 }
+					)
+				);
+			},
+		});
+
+		const source = await resolver.resolve({
+			baseModel: "wan-2-2",
+			sourceUrl: "https://civitai.com/models/42?modelVersionId=100",
+		});
+
+		expect(source.baseModel).toBe("wan-2-2");
+		expect(source.variant).toBe("high");
+		expect(source.pairedFiles).toBeDefined();
+		expect(source.pairedFiles).toHaveLength(2);
+		const high = source.pairedFiles?.find((file) => file.variant === "high");
+		const low = source.pairedFiles?.find((file) => file.variant === "low");
+		expect(high?.downloadUrl).toBe("https://civitai.com/api/download/100");
+		expect(low?.downloadUrl).toBe("https://civitai.com/api/download/101");
+	});
+
+	it("detects high/low pair from sibling files of the same Wan version", async () => {
+		const resolver = createLoraSourceResolver({
+			fetchImpl() {
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							id: 43,
+							name: "Wan Pair In One Version",
+							type: "LORA",
+							modelVersions: [
+								{
+									id: 200,
+									name: "v1",
+									baseModel: "Wan Video 2.2 I2V-A14B",
+									files: [
+										{
+											downloadUrl: "https://civitai.com/api/download/200-h",
+											name: "pair_HighNoise.safetensors",
+											primary: true,
+											sizeKb: 4096,
+										},
+										{
+											downloadUrl: "https://civitai.com/api/download/200-l",
+											name: "pair_LowNoise.safetensors",
+											sizeKb: 4096,
+										},
+									],
+								},
+							],
+						}),
+						{ status: 200 }
+					)
+				);
+			},
+		});
+
+		const source = await resolver.resolve({
+			baseModel: "wan-2-2",
+			sourceUrl: "https://civitai.com/models/43?modelVersionId=200",
+		});
+
+		expect(source.pairedFiles).toHaveLength(2);
+		const high = source.pairedFiles?.find((file) => file.variant === "high");
+		const low = source.pairedFiles?.find((file) => file.variant === "low");
+		expect(high?.downloadUrl).toBe("https://civitai.com/api/download/200-h");
+		expect(low?.downloadUrl).toBe("https://civitai.com/api/download/200-l");
+	});
+
+	it("does not produce pairedFiles for non dual-expert base models", async () => {
+		const resolver = createLoraSourceResolver({
+			fetchImpl() {
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							id: 44,
+							name: "Flux LoRA",
+							type: "LORA",
+							modelVersions: [
+								{
+									id: 300,
+									name: "v1",
+									baseModel: "Flux.1 D",
+									files: [
+										{
+											downloadUrl: "https://civitai.com/api/download/300",
+											name: "flux.safetensors",
+											primary: true,
+											sizeKb: 1024,
+										},
+									],
+								},
+							],
+						}),
+						{ status: 200 }
+					)
+				);
+			},
+		});
+
+		const source = await resolver.resolve({
+			baseModel: "flux",
+			sourceUrl: "https://civitai.com/models/44?modelVersionId=300",
+		});
+
+		expect(source.pairedFiles).toBeUndefined();
+		expect(source.variant).toBeUndefined();
+	});
+
 	it("builds Hugging Face resolve URLs from repo URLs and file paths", async () => {
 		const source = await createLoraSourceResolver({
 			huggingFaceToken: "hf-token",

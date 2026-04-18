@@ -391,7 +391,7 @@ export default function LoraForm() {
 					description,
 					importAsPair,
 					name,
-					previewData,
+					previewData: previewData ?? null,
 					selectedVersionId,
 					trimmedSourceUrl,
 				})

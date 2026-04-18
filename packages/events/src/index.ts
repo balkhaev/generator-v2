@@ -48,6 +48,7 @@ const loraRegistryEntrySchema = z.object({
 	description: z.string(),
 	id: z.string().min(1),
 	name: z.string(),
+	pairGroupId: z.string().nullable(),
 	s3Key: z.string(),
 	s3Url: z.string(),
 	sizeBytes: z.number(),
@@ -56,6 +57,7 @@ const loraRegistryEntrySchema = z.object({
 	sourceUrl: z.string().nullable(),
 	status: z.enum(["active", "archived"]),
 	updatedAt: z.string(),
+	variant: z.enum(["high", "low", "both"]).nullable(),
 }) satisfies z.ZodType<LoraRegistryEntry>;
 
 export const loraRegistryChangeKinds = [

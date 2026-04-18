@@ -422,9 +422,14 @@ function buildCivitaiApiUrl(sourceUrl: URL, path: string): string {
 // Heuristic detection of high/low expert affinity from version/file naming.
 // Civitai authors usually call them e.g. "Wan 2.2 I2V High Noise" or have file
 // names like `*_HighNoise.safetensors`. We match `high noise`, standalone
-// `high`, the same for `low`, and a few common abbreviations.
-const variantHighPattern = /\bhigh(?:[\s_-]*noise)?\b|hn\b|h-?noise/iu;
-const variantLowPattern = /\blow(?:[\s_-]*noise)?\b|ln\b|l-?noise/iu;
+// `high`, the same for `low`, and a few common abbreviations. Note that `_`
+// counts as a word character in JS regex, so we match boundaries against
+// non-alphanumeric characters explicitly to handle `pair_HighNoise.safetensors`
+// style file names.
+const variantHighPattern =
+	/(?:^|[^a-z0-9])(?:high(?:[\s_-]*noise)?|hn|h-?noise)(?=[^a-z0-9]|$)/iu;
+const variantLowPattern =
+	/(?:^|[^a-z0-9])(?:low(?:[\s_-]*noise)?|ln|l-?noise)(?=[^a-z0-9]|$)/iu;
 
 function detectVariantFromText(
 	value: string | undefined

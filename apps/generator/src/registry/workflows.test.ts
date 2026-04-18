@@ -279,8 +279,10 @@ describe("workflow registry", () => {
 					framesPerSecond: 16,
 					guidanceScale: 3.5,
 					guidanceScale2: 3.5,
-					loraScale: 0.8,
-					loraUrl: "https://storage.example.com/wan-lora.safetensors",
+					loraScaleHigh: 0.8,
+					loraScaleLow: 0.6,
+					loraUrlHigh: "https://storage.example.com/wan-lora-high.safetensors",
+					loraUrlLow: "https://storage.example.com/wan-lora-low.safetensors",
 					numFrames: 81,
 					numInferenceSteps: 27,
 					resolution: "720p",
@@ -298,8 +300,14 @@ describe("workflow registry", () => {
 			image_url: "https://storage.example.com/reference.png",
 			loras: [
 				{
-					path: "https://storage.example.com/wan-lora.safetensors",
+					path: "https://storage.example.com/wan-lora-high.safetensors",
 					scale: 0.8,
+					transformer: "high",
+				},
+				{
+					path: "https://storage.example.com/wan-lora-low.safetensors",
+					scale: 0.6,
+					transformer: "low",
 				},
 			],
 			num_frames: 81,

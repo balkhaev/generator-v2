@@ -6,8 +6,8 @@ import {
 	getPersonLoraReferenceImageCount,
 	getPersonLoraReferenceImageTarget,
 	getPersonLoraTrainingDisplayStatus,
-	getPersonLoraTrainingPhaseLabel,
 	getPersonLoraTrainingProgressPct,
+	getPersonLoraTrainingStages,
 	isActivePersonLoraTrainingStatus,
 	type PersonLoraTrainingMeta,
 	type PersonLoraTrainingStatus,
@@ -17,8 +17,10 @@ import { env } from "@generator/env/web";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
+import { ImageUploader } from "@generator/ui/components/image-uploader";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
+import { LoraStageProgress } from "@generator/ui/components/lora-stage-progress";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import {
 	Tooltip,
@@ -76,6 +78,7 @@ import {
 	trainPersonLora,
 	type UpdatePersonInput,
 	updatePerson,
+	uploadPersonsImage,
 } from "@/lib/persons-api";
 
 const textareaClassName =
@@ -743,72 +746,24 @@ function getLoraStatusIcon(
 	return null;
 }
 
-function getLoraProgressBarClass(
-	effectiveStatus: PersonLoraTrainingStatus | "ready" | undefined
-) {
-	if (effectiveStatus === "failed") {
-		return "bg-rose-500/80";
-	}
-	if (effectiveStatus === "ready") {
-		return "bg-emerald-500/80";
-	}
-	return "bg-[linear-gradient(90deg,rgba(14,165,233,0.65),rgba(139,92,246,0.8),rgba(245,158,11,0.8))]";
-}
-
-function getLoraStageClassName(stage: { active: boolean; done: boolean }) {
-	if (stage.done) {
-		return "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300";
-	}
-	if (stage.active) {
-		return "border-violet-500/30 bg-violet-500/8 text-violet-700 dark:text-violet-300";
-	}
-	return "border-border/50 bg-background/40 text-muted-foreground";
-}
-
 function LoraTrainingStatusPanel({
 	effectiveStatus,
+	hasLora,
 	isTraining,
-	phaseLabel,
 	progressPct,
 	referenceImageCount,
 	referenceImageTarget,
 	training,
 }: {
 	effectiveStatus: PersonLoraTrainingStatus | "ready";
+	hasLora: boolean;
 	isTraining: boolean;
-	phaseLabel: string;
 	progressPct: number;
 	referenceImageCount: number;
 	referenceImageTarget: number;
 	training: PersonLoraTrainingMeta | null;
 }) {
-	const stageItems = [
-		{
-			active: effectiveStatus === "queued",
-			done: true,
-			label: "Queued",
-		},
-		{
-			active: effectiveStatus === "generating",
-			done:
-				effectiveStatus === "training" ||
-				effectiveStatus === "publishing" ||
-				effectiveStatus === "ready" ||
-				effectiveStatus === "failed",
-			label: "Dataset",
-		},
-		{
-			active:
-				effectiveStatus === "training" || effectiveStatus === "publishing",
-			done: effectiveStatus === "ready" || effectiveStatus === "failed",
-			label: "Training",
-		},
-		{
-			active: effectiveStatus === "ready",
-			done: effectiveStatus === "ready",
-			label: "Ready",
-		},
-	];
+	const stages = getPersonLoraTrainingStages({ hasLora, training });
 	const elapsed = formatDurationMs(training?.trainingElapsedMs);
 	const lastEventAt = training?.lastEventAt ?? training?.updatedAt ?? null;
 
@@ -832,40 +787,15 @@ function LoraTrainingStatusPanel({
 						</span>
 					) : null}
 				</div>
-				<span className="font-medium text-xs">{progressPct}%</span>
-			</div>
-
-			<div className="grid gap-2">
-				<div className="flex items-center justify-between gap-2 text-[11px]">
-					<span className="text-muted-foreground">{phaseLabel}</span>
+				<div className="flex items-center gap-2 text-xs">
 					{training?.provider ? (
 						<span className="text-muted-foreground">{training.provider}</span>
 					) : null}
-				</div>
-				<div className="h-2 overflow-hidden rounded-full bg-muted/30 dark:bg-muted/15">
-					<div
-						className={cn(
-							"h-full rounded-full transition-[width] duration-500",
-							getLoraProgressBarClass(effectiveStatus)
-						)}
-						style={{ width: `${progressPct}%` }}
-					/>
+					<span className="font-medium tabular-nums">{progressPct}%</span>
 				</div>
 			</div>
 
-			<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-				{stageItems.map((stage) => (
-					<div
-						className={cn(
-							"rounded-lg border px-2.5 py-2 text-[11px] transition-colors",
-							getLoraStageClassName(stage)
-						)}
-						key={stage.label}
-					>
-						{stage.label}
-					</div>
-				))}
-			</div>
+			<LoraStageProgress stages={stages} />
 
 			<div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
 				{referenceImageCount > 0 ? (
@@ -1028,7 +958,6 @@ function LoraActions({
 	const hasLora = Boolean(person.loraUrl);
 	const effectiveStatus = getPersonLoraTrainingDisplayStatus(training, hasLora);
 	const progressPct = getPersonLoraTrainingProgressPct(training, hasLora);
-	const phaseLabel = getPersonLoraTrainingPhaseLabel(training, hasLora);
 	const referenceImageCount = getPersonLoraReferenceImageCount(training);
 	const referenceImageTarget = getPersonLoraReferenceImageTarget(training);
 	const isTraining = isActivePersonLoraTrainingStatus(effectiveStatus);
@@ -1044,8 +973,8 @@ function LoraActions({
 					{effectiveStatus ? (
 						<LoraTrainingStatusPanel
 							effectiveStatus={effectiveStatus}
+							hasLora={hasLora}
 							isTraining={isTraining}
-							phaseLabel={phaseLabel}
 							progressPct={progressPct}
 							referenceImageCount={referenceImageCount}
 							referenceImageTarget={referenceImageTarget}
@@ -1634,14 +1563,16 @@ function CreatePersonForm({
 						</div>
 						<div className="grid gap-1.5">
 							<Label className="text-xs" htmlFor="referencePhotoUrl">
-								Reference photo URL
+								Reference photo
 							</Label>
-							<Input
+							<ImageUploader
 								id="referencePhotoUrl"
-								onChange={(event) =>
-									onFieldChange("referencePhotoUrl", event.target.value)
-								}
-								placeholder="https://..."
+								onChange={(url) => onFieldChange("referencePhotoUrl", url)}
+								onError={(message) => toast.error(message)}
+								upload={async (file) => {
+									const result = await uploadPersonsImage(file);
+									return { url: result.url };
+								}}
 								value={formState.referencePhotoUrl ?? ""}
 							/>
 						</div>
@@ -1827,13 +1758,16 @@ function ManagePersonForm({
 						</div>
 						<div className="grid gap-1.5">
 							<Label className="text-xs" htmlFor="editReferencePhotoUrl">
-								Reference photo URL
+								Reference photo
 							</Label>
-							<Input
+							<ImageUploader
 								id="editReferencePhotoUrl"
-								onChange={(event) =>
-									onFieldChange("referencePhotoUrl", event.target.value)
-								}
+								onChange={(url) => onFieldChange("referencePhotoUrl", url)}
+								onError={(message) => toast.error(message)}
+								upload={async (file) => {
+									const result = await uploadPersonsImage(file);
+									return { url: result.url };
+								}}
 								value={formState.referencePhotoUrl}
 							/>
 						</div>

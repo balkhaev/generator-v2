@@ -264,6 +264,257 @@ export function getPersonLoraReferenceImageTarget(
 	return DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT;
 }
 
+export type PersonLoraStageId = "queued" | "dataset" | "training" | "ready";
+export type PersonLoraStageState = "pending" | "active" | "done" | "failed";
+
+export interface PersonLoraStageItem {
+	detail: string | null;
+	id: PersonLoraStageId;
+	label: string;
+	progressPct: number;
+	state: PersonLoraStageState;
+}
+
+const PERSON_LORA_STAGE_ORDER: readonly PersonLoraStageId[] = [
+	"queued",
+	"dataset",
+	"training",
+	"ready",
+];
+
+const PERSON_LORA_STATUS_TO_STAGE_INDEX: Record<
+	PersonLoraTrainingStatus | "ready",
+	number
+> = {
+	failed: 3,
+	generating: 1,
+	publishing: 2,
+	queued: 0,
+	ready: 3,
+	training: 2,
+};
+
+const PERSON_LORA_FAILED_STAGE_FROM_PHASE: Record<string, PersonLoraStageId> = {
+	"generating-references": "dataset",
+	"publishing-lora": "ready",
+	"polling-training": "training",
+	"starting-training": "training",
+	"uploading-dataset": "dataset",
+};
+
+function buildStageState(input: {
+	currentIdx: number;
+	failedStageId: PersonLoraStageId | null;
+	isFailed: boolean;
+	stageId: PersonLoraStageId;
+}): PersonLoraStageState {
+	const { currentIdx, failedStageId, isFailed, stageId } = input;
+	if (failedStageId === stageId) {
+		return "failed";
+	}
+	const stageIdx = PERSON_LORA_STAGE_ORDER.indexOf(stageId);
+	if (isFailed) {
+		const failedIdx = PERSON_LORA_STAGE_ORDER.indexOf(
+			failedStageId ?? "training"
+		);
+		return stageIdx < failedIdx ? "done" : "pending";
+	}
+	if (stageIdx < currentIdx) {
+		return "done";
+	}
+	if (stageIdx === currentIdx) {
+		return "active";
+	}
+	return "pending";
+}
+
+function progressForStageState(
+	state: PersonLoraStageState,
+	activeProgress: number
+) {
+	if (state === "done") {
+		return 100;
+	}
+	if (state === "active" || state === "failed") {
+		return activeProgress;
+	}
+	return 0;
+}
+
+function getTrainingStageDetail(input: {
+	progressPct: number;
+	providerStatus: string | null | undefined;
+	state: PersonLoraStageState;
+	trainingSteps: number | null;
+}): string | null {
+	const { progressPct, providerStatus, state, trainingSteps } = input;
+	if (state === "done" && trainingSteps) {
+		return `${trainingSteps}/${trainingSteps} steps`;
+	}
+	if (state === "failed" && trainingSteps) {
+		return `target ${trainingSteps} steps`;
+	}
+	if (state !== "active") {
+		return null;
+	}
+	if (trainingSteps) {
+		const estimatedSteps = Math.min(
+			trainingSteps,
+			Math.round((progressPct / 100) * trainingSteps)
+		);
+		return `~${estimatedSteps}/${trainingSteps} steps`;
+	}
+	if (providerStatus) {
+		return providerStatus.toLowerCase();
+	}
+	return null;
+}
+
+function getReadyStageDetail(input: {
+	effectiveStatus: PersonLoraTrainingStatus | "ready";
+	state: PersonLoraStageState;
+}): string | null {
+	if (input.state === "done") {
+		return "weights ready";
+	}
+	if (input.state === "active") {
+		return input.effectiveStatus === "publishing"
+			? "publishing weights"
+			: "finalizing";
+	}
+	return null;
+}
+
+/**
+ * Compute per-stage progress for the LoRA training pipeline.
+ *
+ * The pipeline is rendered as four sequential blocks (Queued → Dataset →
+ * Training → Ready), each acting as its own progress bar. fal/z-image-trainer
+ * does not expose a current-step counter via the queue status endpoint, so the
+ * "Training" block estimates step progress from elapsed time relative to a
+ * 45-minute soft window — same heuristic used by `getPersonLoraTrainingProgressPct`,
+ * but normalized into the local [0, 100] range of the block.
+ */
+export function getPersonLoraTrainingStages(input: {
+	hasLora: boolean;
+	training: PersonLoraTrainingMeta | null;
+}): PersonLoraStageItem[] {
+	const { hasLora, training } = input;
+	const effectiveStatus =
+		getPersonLoraTrainingDisplayStatus(training, hasLora) ?? "queued";
+	const referenceImageCount = getPersonLoraReferenceImageCount(training);
+	const referenceImageTarget = getPersonLoraReferenceImageTarget(training);
+
+	const isFailed = effectiveStatus === "failed";
+	const failedStageId: PersonLoraStageId | null = isFailed
+		? (PERSON_LORA_FAILED_STAGE_FROM_PHASE[training?.phase ?? ""] ?? "training")
+		: null;
+	const currentIdx = PERSON_LORA_STATUS_TO_STAGE_INDEX[effectiveStatus] ?? 0;
+
+	const trainingSteps =
+		typeof training?.trainingSteps === "number" && training.trainingSteps > 0
+			? training.trainingSteps
+			: null;
+	const elapsedMs =
+		typeof training?.trainingElapsedMs === "number" &&
+		Number.isFinite(training.trainingElapsedMs)
+			? Math.max(0, training.trainingElapsedMs)
+			: 0;
+	const trainingActiveProgress = clampProgressPct(
+		Math.max(
+			5,
+			Math.min(1, elapsedMs / PROVIDER_TRAINING_SOFT_PROGRESS_WINDOW_MS) * 100
+		)
+	);
+
+	const datasetRefsLabel =
+		referenceImageTarget > 0
+			? `${referenceImageCount}/${referenceImageTarget} refs`
+			: `${referenceImageCount} refs`;
+
+	const datasetRatio =
+		referenceImageTarget > 0
+			? Math.min(1, referenceImageCount / referenceImageTarget)
+			: 0;
+	const datasetActiveProgress = clampProgressPct(
+		Math.max(5, datasetRatio * 100)
+	);
+
+	const queuedState = buildStageState({
+		currentIdx,
+		failedStageId,
+		isFailed,
+		stageId: "queued",
+	});
+	const datasetState = buildStageState({
+		currentIdx,
+		failedStageId,
+		isFailed,
+		stageId: "dataset",
+	});
+	const trainingState = buildStageState({
+		currentIdx,
+		failedStageId,
+		isFailed,
+		stageId: "training",
+	});
+	const readyState = buildStageState({
+		currentIdx,
+		failedStageId,
+		isFailed,
+		stageId: "ready",
+	});
+
+	const trainingProgressPct = progressForStageState(
+		trainingState,
+		trainingActiveProgress
+	);
+	const readyActiveProgress = effectiveStatus === "publishing" ? 60 : 30;
+	const datasetShowDetail =
+		datasetState === "active" ||
+		datasetState === "done" ||
+		datasetState === "failed";
+
+	return [
+		{
+			detail: queuedState === "active" ? "waiting for worker" : null,
+			id: "queued",
+			label: "Queued",
+			progressPct: progressForStageState(queuedState, 60),
+			state: queuedState,
+		},
+		{
+			detail: datasetShowDetail ? datasetRefsLabel : null,
+			id: "dataset",
+			label: "Dataset",
+			progressPct: progressForStageState(datasetState, datasetActiveProgress),
+			state: datasetState,
+		},
+		{
+			detail: getTrainingStageDetail({
+				progressPct: trainingProgressPct,
+				providerStatus: training?.providerStatus,
+				state: trainingState,
+				trainingSteps,
+			}),
+			id: "training",
+			label: "Training",
+			progressPct: trainingProgressPct,
+			state: trainingState,
+		},
+		{
+			detail: getReadyStageDetail({
+				effectiveStatus,
+				state: readyState,
+			}),
+			id: "ready",
+			label: "Ready",
+			progressPct: progressForStageState(readyState, readyActiveProgress),
+			state: readyState,
+		},
+	];
+}
+
 export interface CreatePersonInput {
 	datasetUrl?: string;
 	description?: string;

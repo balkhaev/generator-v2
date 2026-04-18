@@ -1,7 +1,11 @@
 "use client";
 
 import type { DashboardLoraTrainingSnapshot } from "@generator/contracts/admin";
-import type { PersonLoraTrainingMeta } from "@generator/contracts/persons";
+import {
+	getPersonLoraTrainingStages,
+	type PersonLoraTrainingMeta,
+} from "@generator/contracts/persons";
+import { LoraStageProgress } from "@generator/ui/components/lora-stage-progress";
 import { StatusBadge } from "@generator/ui/components/status-badge";
 import { formatDateTime, formatRelativeTime } from "@generator/ui/lib/format";
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
@@ -11,12 +15,10 @@ import {
 	getDerivedProgressPct,
 	getDisplayTrainingStatus,
 	getReferenceImageCount,
-	getTrainingPhaseLabel,
 	isActiveTrainingStatus,
 } from "@/lib/training";
 
 import TrainingHistory from "./training-history";
-import TrainingProgress from "./training-progress";
 
 function statusIcon(status: string | undefined) {
 	if (!status) {
@@ -186,7 +188,7 @@ export default function TrainingCard({
 			? training.referenceImageTargetCount
 			: null;
 	const recentHistory = training?.history?.slice(-4).reverse() ?? [];
-	const phaseLabel = getTrainingPhaseLabel(training, hasLora);
+	const stages = getPersonLoraTrainingStages({ hasLora, training });
 	const Icon = statusIcon(status);
 
 	return (
@@ -213,12 +215,15 @@ export default function TrainingCard({
 				</div>
 			</div>
 
-			<TrainingProgress
-				phaseLabel={phaseLabel}
-				progressPct={progressPct}
-				provider={training?.provider ?? undefined}
-				status={status}
-			/>
+			<div className="grid gap-2">
+				<div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+					<span>{training?.provider ?? "—"}</span>
+					<span className="font-medium text-foreground tabular-nums">
+						{progressPct}%
+					</span>
+				</div>
+				<LoraStageProgress stages={stages} />
+			</div>
 			<MetaChips
 				referenceImageCount={referenceImageCount}
 				referenceImageTargetCount={referenceImageTargetCount}

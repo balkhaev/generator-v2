@@ -26,6 +26,10 @@ import { createLoraSourceResolver } from "@/providers/lora-source-resolver";
 import { createPersonLoraTrainingQueueClient } from "@/queue/person-lora-training";
 import { createDrizzleLoraRepository } from "@/repositories/loras";
 import { createDrizzleUserRepository } from "@/repositories/users";
+import {
+	createRuntimeConfigSetup,
+	seedCredentialsFromEnv,
+} from "@/runtime-config/setup";
 
 const generatorBaseUrl = getGeneratorApiUrl();
 const personsApiBaseUrl = env.PERSONS_API_URL;
@@ -87,6 +91,36 @@ const usersService = new UsersService({
 	repository: createDrizzleUserRepository(),
 });
 
+const runtimeConfigSetup = env.CONFIG_MASTER_KEY
+	? createRuntimeConfigSetup({
+			masterKey: env.CONFIG_MASTER_KEY,
+			redisUrl,
+		})
+	: null;
+
+if (runtimeConfigSetup) {
+	// Best-effort backfill from env. Non-blocking: store runs against the same
+	// Postgres as the rest of admin, so a transient failure here is logged but
+	// shouldn't prevent the API from coming up.
+	seedCredentialsFromEnv(runtimeConfigSetup.store, {
+		credentials: {
+			fal: { apiKey: env.FAL_KEY },
+			openrouter: { apiKey: env.OPENROUTER_API_KEY },
+			runpod: { apiKey: env.RUNPOD_API_KEY },
+			xai: { apiKey: env.XAI_API_KEY },
+		},
+	}).catch((error) => {
+		console.warn("admin.runtime-config.seed_failed_outer", {
+			message: error instanceof Error ? error.message : String(error),
+		});
+	});
+} else {
+	console.warn("admin.runtime-config.disabled", {
+		reason:
+			"CONFIG_MASTER_KEY is not set; runtime-config admin routes are disabled.",
+	});
+}
+
 const app = createApp({
 	authHandler: handleAuthRequest,
 	corsOrigins: getRequiredCorsOrigins(),
@@ -134,6 +168,12 @@ const app = createApp({
 	},
 	trainingProviderSettings,
 	openRouterModelsApiKey: env.OPENROUTER_API_KEY ?? null,
+	runtimeConfig: runtimeConfigSetup
+		? {
+				deps: runtimeConfigSetup,
+				internalToken: env.RUNTIME_CONFIG_INTERNAL_TOKEN ?? undefined,
+			}
+		: undefined,
 	usersService,
 	workerSettingsReader,
 });

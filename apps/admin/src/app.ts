@@ -37,6 +37,11 @@ import { createAdminLoraRoutes } from "@/routes/loras";
 import { createOpenRouterModelsRoutes } from "@/routes/openrouter-models";
 import { createPromptEnhanceProviderRoutes } from "@/routes/prompt-enhance-provider";
 import {
+	createRuntimeConfigAdminRoutes,
+	createRuntimeConfigInternalRoutes,
+	type RuntimeConfigRoutesDeps,
+} from "@/routes/runtime-config";
+import {
 	createTrainingProviderRoutes,
 	type TrainingProviderAvailabilityResolver,
 } from "@/routes/training-provider";
@@ -69,6 +74,11 @@ interface AppOptions {
 		openRouterModelEnvDefault: string;
 	};
 	promptEnhanceSettings?: PromptEnhanceSettings;
+	runtimeConfig?: {
+		deps: RuntimeConfigRoutesDeps;
+		/** Token shared with consumer services for /api/internal/runtime-config. */
+		internalToken?: string;
+	};
 	s3Config?: S3StorageConfig;
 	studioBaseUrl: string;
 	trainingProviderAvailability?: TrainingProviderAvailabilityResolver;
@@ -209,6 +219,22 @@ export function createApp(options: AppOptions) {
 				options.loraRegistryService
 			)
 		);
+	}
+
+	if (options.runtimeConfig) {
+		app.route(
+			"/api/admin/integrations",
+			createRuntimeConfigAdminRoutes(options.runtimeConfig.deps)
+		);
+		if (options.runtimeConfig.internalToken) {
+			app.route(
+				"/api/internal/runtime-config",
+				createRuntimeConfigInternalRoutes({
+					store: options.runtimeConfig.deps.store,
+					token: options.runtimeConfig.internalToken,
+				})
+			);
+		}
 	}
 
 	if (options.loraRegistryService) {

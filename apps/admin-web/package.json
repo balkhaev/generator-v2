@@ -13,6 +13,7 @@
     "@generator/contracts": "workspace:*",
     "@generator/env": "workspace:*",
     "@generator/http": "workspace:*",
+    "@generator/runtime-config": "workspace:*",
     "@generator/ui": "workspace:*",
     "@tanstack/react-form": "^1.28.0",
     "@tanstack/react-query": "^5.99.0",

@@ -273,6 +273,14 @@ const serverSchema = {
 
 	// MCP debug server
 	MCP_AUTH_TOKEN: z.string().min(1).optional(),
+
+	// Runtime-config (admin-api as single source of truth for credentials and
+	// per-domain settings). CONFIG_MASTER_KEY lives only in admin-api and never
+	// in any other service. RUNTIME_CONFIG_INTERNAL_TOKEN is a shared bearer
+	// token between admin-api (which serves /api/internal/runtime-config) and
+	// every consumer (studio, persons, ...) that fetches snapshots.
+	CONFIG_MASTER_KEY: z.string().min(1).optional(),
+	RUNTIME_CONFIG_INTERNAL_TOKEN: z.string().min(1).optional(),
 };
 
 function createServerEnv(

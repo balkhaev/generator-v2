@@ -8,6 +8,7 @@ import { RefreshCw } from "lucide-react";
 
 import { DatasetBuilderCard } from "@/components/settings/dataset-builder-card";
 import { GeneratorRuntimeCard } from "@/components/settings/generator-runtime-card";
+import { IntegrationsCard } from "@/components/settings/integrations-card";
 import { PersonsDefaultsCard } from "@/components/settings/persons-defaults-card";
 import { PromptEnhanceCard } from "@/components/settings/prompt-enhance-card";
 import { TrainingProviderCard } from "@/components/settings/training-provider-card";
@@ -46,6 +47,7 @@ export default function SettingsContent({
 			<div className="min-h-0 overflow-y-auto px-4 py-4">
 				{snapshot ? (
 					<div className="grid gap-4 lg:grid-cols-2">
+						<IntegrationsCard />
 						<TrainingProviderCard
 							runpod={snapshot.runpodTraining}
 							settings={snapshot.trainingProvider}

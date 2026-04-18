@@ -93,7 +93,10 @@ export default function VideoPlayer({
 	return (
 		<div className="relative flex h-full w-full items-center justify-center">
 			<video
-				className="h-full w-full bg-black/90 object-contain"
+				className="h-full w-full cursor-pointer bg-black/90 object-contain"
+				onClick={() => {
+					togglePlay();
+				}}
 				onDurationChange={(event) => {
 					const next = event.currentTarget.duration;
 					setDuration(Number.isFinite(next) ? next : 0);

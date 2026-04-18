@@ -58,6 +58,7 @@ const tabs: { icon: typeof Upload; id: PickerTab; label: string }[] = [
 ];
 
 const previewableUrlPattern = /^(https?:\/\/.{3,}|data:\w+\/)/;
+const DEFAULT_PREVIEW_ASPECT = "9 / 16";
 
 /** LoRA dataset prep photos — same rule as persons-web Cast detail. */
 function isPersonDatasetGeneration(generation: PersonGenerationRecord) {
@@ -192,8 +193,32 @@ export default function PersonsInputPicker({
 	const fileInputId = useId();
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 	const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [previewAspect, setPreviewAspect] = useState<string>(
+		DEFAULT_PREVIEW_ASPECT
+	);
 
 	const hasValidPreview = previewableUrlPattern.test(currentUrl);
+
+	useEffect(() => {
+		if (!hasValidPreview) {
+			setPreviewAspect(DEFAULT_PREVIEW_ASPECT);
+			return;
+		}
+		let cancelled = false;
+		const probe = new globalThis.Image();
+		probe.onload = () => {
+			if (cancelled) {
+				return;
+			}
+			if (probe.naturalWidth > 0 && probe.naturalHeight > 0) {
+				setPreviewAspect(`${probe.naturalWidth} / ${probe.naturalHeight}`);
+			}
+		};
+		probe.src = currentUrl;
+		return () => {
+			cancelled = true;
+		};
+	}, [currentUrl, hasValidPreview]);
 
 	useEffect(() => {
 		if (activeTab !== "persons" || persons.length > 0) {
@@ -420,8 +445,9 @@ export default function PersonsInputPicker({
 		return (
 			<div className="group relative overflow-hidden rounded-xl border border-foreground/8">
 				<div
-					className="aspect-video bg-center bg-cover bg-muted/10 bg-no-repeat"
+					className="mx-auto max-h-[60vh] w-full bg-center bg-contain bg-muted/10 bg-no-repeat"
 					style={{
+						aspectRatio: previewAspect,
 						backgroundImage: `url("${currentUrl}")`,
 					}}
 				/>

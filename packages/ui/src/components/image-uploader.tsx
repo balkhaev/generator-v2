@@ -6,6 +6,7 @@ import {
 	type ClipboardEvent,
 	type DragEvent,
 	useCallback,
+	useEffect,
 	useId,
 	useRef,
 	useState,
@@ -13,6 +14,7 @@ import {
 
 const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
 const DEFAULT_ACCEPT = "image/*";
+const DEFAULT_PREVIEW_ASPECT = "9 / 16";
 
 const httpUrlPattern = /^https?:\/\//i;
 
@@ -55,6 +57,30 @@ export function ImageUploader({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [isUploading, setUploading] = useState(false);
 	const [isDragOver, setDragOver] = useState(false);
+	const [previewAspect, setPreviewAspect] = useState<string>(
+		DEFAULT_PREVIEW_ASPECT
+	);
+
+	useEffect(() => {
+		if (!(value && isPreviewUrl(value))) {
+			setPreviewAspect(DEFAULT_PREVIEW_ASPECT);
+			return;
+		}
+		let cancelled = false;
+		const probe = new globalThis.Image();
+		probe.onload = () => {
+			if (cancelled) {
+				return;
+			}
+			if (probe.naturalWidth > 0 && probe.naturalHeight > 0) {
+				setPreviewAspect(`${probe.naturalWidth} / ${probe.naturalHeight}`);
+			}
+		};
+		probe.src = value;
+		return () => {
+			cancelled = true;
+		};
+	}, [value]);
 
 	const handleFile = useCallback(
 		async (file: File | null | undefined) => {
@@ -164,8 +190,11 @@ export function ImageUploader({
 					onPaste={handlePaste}
 				>
 					<div
-						className="aspect-video bg-center bg-cover bg-muted/10 bg-no-repeat"
-						style={{ backgroundImage: `url("${value}")` }}
+						className="mx-auto max-h-[70vh] w-full bg-center bg-contain bg-muted/10 bg-no-repeat"
+						style={{
+							aspectRatio: previewAspect,
+							backgroundImage: `url("${value}")`,
+						}}
 					/>
 					<div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-1.5 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-2 pt-8 pb-2">
 						<button

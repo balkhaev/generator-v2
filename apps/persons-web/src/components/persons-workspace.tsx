@@ -366,7 +366,7 @@ function GenerationPreview({
 		const progressPct = getGenerationProgressPct(generation);
 
 		return (
-			<div className="flex aspect-[4/3] items-center justify-center rounded-lg bg-muted/10 px-5 dark:bg-muted/5">
+			<div className="flex aspect-[3/4] items-center justify-center rounded-lg bg-muted/10 px-5 dark:bg-muted/5">
 				<div className="flex w-full max-w-44 flex-col items-stretch gap-2.5">
 					<div className="flex justify-center">
 						<Loader2 className="size-6 animate-spin text-muted-foreground/50" />
@@ -434,11 +434,19 @@ function GenerationPreview({
 	}
 
 	return (
-		<div className="overflow-hidden rounded-lg">
+		<div className="overflow-hidden rounded-lg bg-black/5 dark:bg-black/20">
 			<video
-				className="aspect-video w-full object-contain"
+				className="mx-auto h-auto max-h-[80vh] w-full object-contain"
 				controls
+				onLoadedMetadata={(event) => {
+					const node = event.currentTarget;
+					const parent = node.parentElement;
+					if (parent && node.videoWidth > 0 && node.videoHeight > 0) {
+						parent.style.aspectRatio = `${node.videoWidth}/${node.videoHeight}`;
+					}
+				}}
 				src={generation.sourceUrl}
+				style={{ aspectRatio: "9 / 16" }}
 			>
 				<track
 					default

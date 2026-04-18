@@ -1,6 +1,9 @@
 "use client";
 
-import type { LoraRegistryEntry } from "@generator/contracts/loras";
+import type {
+	LoraRegistryEntry,
+	LoraVariant,
+} from "@generator/contracts/loras";
 import type {
 	ScenarioFormState,
 	WorkflowDefinition,
@@ -74,6 +77,21 @@ function findOpenSlotIndex(resolved: ResolvedSlot[]) {
 	return resolved.findIndex((slot) => !slot.url);
 }
 
+// Map a LoRA variant to the matching slot urlKey. Wan 2.2 workflows expose
+// `loraUrlHigh` and `loraUrlLow`; everything else uses a single `loraUrl`.
+function getSlotIndexForVariant(
+	resolved: ResolvedSlot[],
+	variant: LoraVariant | null
+): number {
+	if (!variant || variant === "both") {
+		return -1;
+	}
+	const targetSuffix = variant === "high" ? "High" : "Low";
+	return resolved.findIndex((slot) =>
+		slot.definition.urlKey.endsWith(targetSuffix)
+	);
+}
+
 function SlotPickerCard({
 	adminHref,
 	availableLoras,
@@ -115,6 +133,11 @@ function SlotPickerCard({
 						<p className="truncate font-medium text-[12px] text-foreground">
 							{entry.name}
 						</p>
+						{entry.variant && entry.variant !== "both" ? (
+							<span className="rounded-full border border-emerald-500/40 px-1.5 py-0.5 font-medium text-[9px] text-emerald-700 uppercase tracking-wide dark:text-emerald-300">
+								{entry.variant === "high" ? "High noise" : "Low noise"}
+							</span>
+						) : null}
 					</div>
 					{entry.description ? (
 						<p className="line-clamp-1 text-[10px] text-muted-foreground">
@@ -235,6 +258,12 @@ interface PickerPopoverProps {
 	onClose: () => void;
 	onPickEntry: (entry: LoraRegistryEntry) => void;
 	onPickUrl: (url: string) => void;
+	/**
+	 * Restricts the picker to entries matching this variant. Used for wan 2.2
+	 * workflows where each slot targets a specific transformer (high/low) and
+	 * we want to surface only relevant LoRAs for the slot being filled.
+	 */
+	restrictVariant?: LoraVariant;
 }
 
 function PickerPopover({
@@ -244,6 +273,7 @@ function PickerPopover({
 	onClose,
 	onPickEntry,
 	onPickUrl,
+	restrictVariant,
 }: PickerPopoverProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [query, setQuery] = useState("");
@@ -273,9 +303,22 @@ function PickerPopover({
 
 	const filtered = useMemo(() => {
 		const normalized = query.trim().toLowerCase();
-		const visible = availableLoras.filter(
-			(entry) => !excludedUrls.has(entry.s3Url)
-		);
+		const visible = availableLoras.filter((entry) => {
+			if (excludedUrls.has(entry.s3Url)) {
+				return false;
+			}
+			// Show entries marked for this transformer plus `both`/null which
+			// can be loaded into either side.
+			if (
+				restrictVariant &&
+				entry.variant &&
+				entry.variant !== "both" &&
+				entry.variant !== restrictVariant
+			) {
+				return false;
+			}
+			return true;
+		});
 		if (!normalized) {
 			return visible;
 		}
@@ -285,7 +328,7 @@ function PickerPopover({
 				entry.slug.toLowerCase().includes(normalized) ||
 				entry.description.toLowerCase().includes(normalized)
 		);
-	}, [availableLoras, excludedUrls, query]);
+	}, [availableLoras, excludedUrls, query, restrictVariant]);
 
 	function handleAddCustom() {
 		const trimmed = customUrl.trim();
@@ -400,6 +443,147 @@ function PickerPopover({
 	);
 }
 
+function resolveSlotWeightBindings(
+	slot: ResolvedSlot,
+	form: ScenarioFormState,
+	onParamChange: (key: string, value: string) => void
+): {
+	numericWeight?: number;
+	onWeightChange?: (next: number) => void;
+	weightConfig?: { max: number; min: number; step: number };
+	weightLabel: string;
+} {
+	const weightConfig =
+		slot.weightParameter &&
+		slot.weightParameter.min !== undefined &&
+		slot.weightParameter.max !== undefined
+			? {
+					max: slot.weightParameter.max,
+					min: slot.weightParameter.min,
+					step: slot.weightParameter.step ?? 0.05,
+				}
+			: undefined;
+
+	const weightValue = slot.weightParameter
+		? Number(form.params[slot.weightParameter.key])
+		: undefined;
+	const numericWeight = Number.isFinite(weightValue)
+		? (weightValue as number)
+		: undefined;
+
+	const onWeightChange = slot.weightParameter
+		? (next: number) =>
+				onParamChange(
+					(slot.weightParameter as WorkflowParameter).key,
+					String(next)
+				)
+		: undefined;
+
+	return {
+		numericWeight,
+		onWeightChange,
+		weightConfig,
+		weightLabel: slot.weightParameter?.label ?? "Weight",
+	};
+}
+
+function LoraFilledSlotContents({
+	adminHref,
+	availableLoras,
+	form,
+	onClearSlot,
+	onParamChange,
+	slot,
+}: {
+	adminHref: string;
+	availableLoras: LoraRegistryEntry[];
+	form: ScenarioFormState;
+	onClearSlot: (urlKey: string) => void;
+	onParamChange: (key: string, value: string) => void;
+	slot: ResolvedSlot;
+}) {
+	const matchedEntry =
+		availableLoras.find((entry) => entry.s3Url === slot.url) ?? null;
+	const w = resolveSlotWeightBindings(slot, form, onParamChange);
+	if (matchedEntry) {
+		return (
+			<SlotPickerCard
+				adminHref={adminHref}
+				availableLoras={availableLoras}
+				entry={matchedEntry}
+				onClear={() => onClearSlot(slot.definition.urlKey)}
+				onWeightChange={w.onWeightChange}
+				weight={w.numericWeight}
+				weightConfig={w.weightConfig}
+				weightLabel={w.weightLabel}
+			/>
+		);
+	}
+	return (
+		<CustomUrlSlot
+			onClear={() => onClearSlot(slot.definition.urlKey)}
+			onWeightChange={w.onWeightChange}
+			url={slot.url}
+			weight={w.numericWeight}
+			weightConfig={w.weightConfig}
+			weightLabel={w.weightLabel}
+		/>
+	);
+}
+
+function LoraEmptySlotPickerRow({
+	adminHref,
+	availableLoras,
+	excludedUrls,
+	isMultiSlot,
+	onPickEntry,
+	onPickUrl,
+	openSlotKey,
+	restrictVariant,
+	setOpenSlotKey,
+	slot,
+	slotIndex,
+}: {
+	adminHref: string;
+	availableLoras: LoraRegistryEntry[];
+	excludedUrls: Set<string>;
+	isMultiSlot: boolean;
+	onPickEntry: (entry: LoraRegistryEntry, slotIndex: number) => void;
+	onPickUrl: (url: string, slotIndex: number) => void;
+	openSlotKey: string | null;
+	restrictVariant?: LoraVariant;
+	setOpenSlotKey: (key: string | null) => void;
+	slot: ResolvedSlot;
+	slotIndex: number;
+}) {
+	const isOpen = openSlotKey === slot.definition.urlKey;
+	return (
+		<div className="relative">
+			<Button
+				className="w-full justify-center gap-1.5"
+				onClick={() => setOpenSlotKey(isOpen ? null : slot.definition.urlKey)}
+				size="sm"
+				type="button"
+				variant="outline"
+			>
+				<Plus className="size-3.5" />
+				{isMultiSlot ? `Add ${slot.definition.label}` : "Add LoRA"}
+			</Button>
+			{isOpen ? (
+				<PickerPopover
+					adminHref={adminHref}
+					availableLoras={availableLoras}
+					excludedUrls={excludedUrls}
+					onClose={() => setOpenSlotKey(null)}
+					onPickEntry={(entry) => onPickEntry(entry, slotIndex)}
+					onPickUrl={(url) => onPickUrl(url, slotIndex)}
+					restrictVariant={restrictVariant}
+				/>
+			) : null}
+		</div>
+	);
+}
+
 export default function LoraStack({
 	adminHref,
 	availableLoras,
@@ -408,7 +592,7 @@ export default function LoraStack({
 	slots,
 	workflow,
 }: LoraStackProps) {
-	const [pickerOpen, setPickerOpen] = useState(false);
+	const [openSlotKey, setOpenSlotKey] = useState<string | null>(null);
 
 	const resolved = useMemo(
 		() => resolveSlots(slots, workflow, form),
@@ -420,11 +604,8 @@ export default function LoraStack({
 	const canAdd = openSlotIndex >= 0;
 	const excludedUrls = new Set(filledSlots.map((slot) => slot.url));
 
-	function handleAdd(url: string, defaultWeight?: number) {
-		if (!canAdd) {
-			return;
-		}
-		const slot = resolved[openSlotIndex];
+	function fillSlot(slotIndex: number, url: string, defaultWeight?: number) {
+		const slot = resolved[slotIndex];
 		if (!slot) {
 			return;
 		}
@@ -435,115 +616,133 @@ export default function LoraStack({
 			slot.weightParameter.min !== undefined &&
 			slot.weightParameter.max !== undefined
 		) {
-			const target = Math.min(
+			const clamped = Math.min(
 				Math.max(defaultWeight, slot.weightParameter.min),
 				slot.weightParameter.max
 			);
-			onParamChange(slot.weightParameter.key, String(target));
+			onParamChange(slot.weightParameter.key, String(clamped));
 		}
-		setPickerOpen(false);
 	}
 
-	function handlePickEntry(entry: LoraRegistryEntry) {
-		handleAdd(entry.s3Url, entry.defaultWeight);
+	function autoFillPaired(entry: LoraRegistryEntry, sourceSlotIndex: number) {
+		// Wan 2.2 LoRAs are imported as a high+low pair sharing a pairGroupId.
+		// When the user picks one, find the matching variant and place it into
+		// the opposite slot so they don't have to repeat the search.
+		if (!(entry.pairGroupId && entry.variant) || entry.variant === "both") {
+			return;
+		}
+		const paired = availableLoras.find(
+			(other) =>
+				other.id !== entry.id &&
+				other.pairGroupId === entry.pairGroupId &&
+				other.variant &&
+				other.variant !== entry.variant &&
+				other.variant !== "both"
+		);
+		if (!paired) {
+			return;
+		}
+		const pairedSlotIndex = getSlotIndexForVariant(resolved, paired.variant);
+		if (pairedSlotIndex >= 0 && pairedSlotIndex !== sourceSlotIndex) {
+			fillSlot(pairedSlotIndex, paired.s3Url, paired.defaultWeight);
+		}
+	}
+
+	function handlePickEntryForSlot(entry: LoraRegistryEntry, slotIndex: number) {
+		fillSlot(slotIndex, entry.s3Url, entry.defaultWeight);
+		autoFillPaired(entry, slotIndex);
+		setOpenSlotKey(null);
+	}
+
+	function handlePickUrlForSlot(url: string, slotIndex: number) {
+		fillSlot(slotIndex, url);
+		setOpenSlotKey(null);
 	}
 
 	function handleClearSlot(urlKey: string) {
 		onParamChange(urlKey, "");
 	}
 
+	// Workflows like Wan 2.2 expose two LoRA slots — one per transformer.
+	// In that case we render each slot as its own section with its own picker
+	// instead of the single "Add LoRA" button used by single-slot workflows.
+	const isMultiSlot = slots.length > 1;
+
+	function getSlotVariant(slot: ResolvedSlot): LoraVariant | undefined {
+		if (slot.definition.urlKey.endsWith("High")) {
+			return "high";
+		}
+		if (slot.definition.urlKey.endsWith("Low")) {
+			return "low";
+		}
+		return;
+	}
+
+	function renderSlotContents(slot: ResolvedSlot, slotIndex: number) {
+		if (slot.url) {
+			return (
+				<LoraFilledSlotContents
+					adminHref={adminHref}
+					availableLoras={availableLoras}
+					form={form}
+					onClearSlot={handleClearSlot}
+					onParamChange={onParamChange}
+					slot={slot}
+				/>
+			);
+		}
+		return (
+			<LoraEmptySlotPickerRow
+				adminHref={adminHref}
+				availableLoras={availableLoras}
+				excludedUrls={excludedUrls}
+				isMultiSlot={isMultiSlot}
+				onPickEntry={handlePickEntryForSlot}
+				onPickUrl={handlePickUrlForSlot}
+				openSlotKey={openSlotKey}
+				restrictVariant={getSlotVariant(slot)}
+				setOpenSlotKey={setOpenSlotKey}
+				slot={slot}
+				slotIndex={slotIndex}
+			/>
+		);
+	}
+
 	return (
 		<div className="grid gap-2">
-			<div className="grid gap-2">
-				{resolved.map((slot) => {
-					if (!slot.url) {
-						return null;
-					}
-					const matchedEntry =
-						availableLoras.find((entry) => entry.s3Url === slot.url) ?? null;
-
-					const weightConfig =
-						slot.weightParameter &&
-						slot.weightParameter.min !== undefined &&
-						slot.weightParameter.max !== undefined
-							? {
-									max: slot.weightParameter.max,
-									min: slot.weightParameter.min,
-									step: slot.weightParameter.step ?? 0.05,
-								}
-							: undefined;
-
-					const weightValue = slot.weightParameter
-						? Number(form.params[slot.weightParameter.key])
-						: undefined;
-					const numericWeight = Number.isFinite(weightValue)
-						? (weightValue as number)
-						: undefined;
-
-					const onWeightChange = slot.weightParameter
-						? (next: number) =>
-								onParamChange(
-									(slot.weightParameter as WorkflowParameter).key,
-									String(next)
-								)
-						: undefined;
-
-					if (matchedEntry) {
-						return (
-							<SlotPickerCard
-								adminHref={adminHref}
-								availableLoras={availableLoras}
-								entry={matchedEntry}
-								key={slot.definition.urlKey}
-								onClear={() => handleClearSlot(slot.definition.urlKey)}
-								onWeightChange={onWeightChange}
-								weight={numericWeight}
-								weightConfig={weightConfig}
-								weightLabel={slot.weightParameter?.label ?? "Weight"}
-							/>
-						);
-					}
-
-					return (
-						<CustomUrlSlot
-							key={slot.definition.urlKey}
-							onClear={() => handleClearSlot(slot.definition.urlKey)}
-							onWeightChange={onWeightChange}
-							url={slot.url}
-							weight={numericWeight}
-							weightConfig={weightConfig}
-							weightLabel={slot.weightParameter?.label ?? "Weight"}
-						/>
-					);
-				})}
-			</div>
-
-			<div className="relative">
-				<Button
-					className="w-full justify-center gap-1.5"
-					disabled={!canAdd}
-					onClick={() => setPickerOpen((current) => !current)}
-					size="sm"
-					type="button"
-					variant="outline"
-				>
-					<Plus className="size-3.5" />
-					{canAdd
-						? `Add LoRA${slots.length > 1 ? ` (${filledSlots.length}/${slots.length})` : ""}`
-						: `Maximum ${slots.length} LoRA${slots.length === 1 ? "" : "s"}`}
-				</Button>
-
-				{pickerOpen ? (
-					<PickerPopover
-						adminHref={adminHref}
-						availableLoras={availableLoras}
-						excludedUrls={excludedUrls}
-						onClose={() => setPickerOpen(false)}
-						onPickEntry={handlePickEntry}
-						onPickUrl={(url) => handleAdd(url)}
-					/>
-				) : null}
-			</div>
+			{isMultiSlot ? (
+				<div className="grid gap-2">
+					{resolved.map((slot, slotIndex) => (
+						<div className="grid gap-1.5" key={slot.definition.urlKey}>
+							<div className="flex items-center justify-between gap-2 px-0.5">
+								<span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
+									{slot.definition.label}
+									{slot.definition.optional ? (
+										<span className="ml-1 text-[9px] text-muted-foreground/60 normal-case">
+											optional
+										</span>
+									) : null}
+								</span>
+							</div>
+							{renderSlotContents(slot, slotIndex)}
+						</div>
+					))}
+				</div>
+			) : (
+				<div className="grid gap-2">
+					{resolved.map((slot, slotIndex) => (
+						<div key={slot.definition.urlKey}>
+							{renderSlotContents(slot, slotIndex)}
+						</div>
+					))}
+				</div>
+			)}
+			{!isMultiSlot && filledSlots.length > 0 && canAdd ? (
+				<div className="text-[10px] text-muted-foreground">
+					{filledSlots.length}/{slots.length} slot
+					{slots.length === 1 ? "" : "s"} filled
+				</div>
+			) : null}
 		</div>
 	);
 }

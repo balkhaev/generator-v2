@@ -36,6 +36,8 @@ function createInMemoryRepo(): LoraRepository & {
 			s3Url: input.s3Url,
 			sizeBytes: input.sizeBytes,
 			defaultWeight: input.defaultWeight,
+			variant: input.variant ?? null,
+			pairGroupId: input.pairGroupId ?? null,
 			status: "active",
 			createdAt: now,
 			updatedAt: now,
@@ -49,6 +51,14 @@ function createInMemoryRepo(): LoraRepository & {
 			rows.set(entry.id, entry);
 			return Promise.resolve(entry);
 		},
+		createMany(inputs) {
+			const created = inputs.map((input) => {
+				const entry = toEntry(input);
+				rows.set(entry.id, entry);
+				return entry;
+			});
+			return Promise.resolve(created);
+		},
 		delete(id) {
 			const existing = rows.get(id) ?? null;
 			if (existing) {
@@ -58,6 +68,12 @@ function createInMemoryRepo(): LoraRepository & {
 		},
 		getById(id) {
 			return Promise.resolve(rows.get(id) ?? null);
+		},
+		getByPairGroupId(pairGroupId) {
+			const result = Array.from(rows.values()).filter(
+				(entry) => entry.pairGroupId === pairGroupId
+			);
+			return Promise.resolve(result);
 		},
 		getBySlug(slug) {
 			for (const entry of rows.values()) {
@@ -97,12 +113,34 @@ function createInMemoryRepo(): LoraRepository & {
 					? {}
 					: { defaultWeight: patch.defaultWeight }),
 				...(patch.status === undefined ? {} : { status: patch.status }),
+				...(patch.variant === undefined ? {} : { variant: patch.variant }),
+				...(patch.pairGroupId === undefined
+					? {}
+					: { pairGroupId: patch.pairGroupId }),
 				updatedAt: new Date().toISOString(),
 			};
 			rows.set(id, next);
 			return Promise.resolve(next);
 		},
 	};
+}
+
+function expectSingle(
+	value: LoraRegistryEntry | LoraRegistryEntry[]
+): LoraRegistryEntry {
+	if (Array.isArray(value)) {
+		throw new Error("Expected single LoRA entry, received an array.");
+	}
+	return value;
+}
+
+function expectMany(
+	value: LoraRegistryEntry | LoraRegistryEntry[]
+): LoraRegistryEntry[] {
+	if (!Array.isArray(value)) {
+		throw new Error("Expected multiple LoRA entries, received a single one.");
+	}
+	return value;
 }
 
 describe("slugify", () => {
@@ -146,11 +184,13 @@ describe("LoraRegistryService", () => {
 	});
 
 	it("creates a LoRA from URL and caches it to S3", async () => {
-		const entry = await service.createFromUrl({
-			name: "Mystic XXX",
-			sourceUrl: "https://civitai.com/api/download/123/mystic.safetensors",
-			baseModel: "z-image",
-		});
+		const entry = expectSingle(
+			await service.createFromUrl({
+				name: "Mystic XXX",
+				sourceUrl: "https://civitai.com/api/download/123/mystic.safetensors",
+				baseModel: "z-image",
+			})
+		);
 
 		expect(entry.slug).toBe("mystic-xxx");
 		expect(entry.baseModel).toBe("z-image");
@@ -158,6 +198,8 @@ describe("LoraRegistryService", () => {
 		expect(entry.s3Url).toBe("https://cdn.test/loras/mystic.safetensors");
 		expect(entry.status).toBe("active");
 		expect(entry.defaultWeight).toBe(1);
+		expect(entry.variant).toBeNull();
+		expect(entry.pairGroupId).toBeNull();
 		expect(cachedArgs).toHaveLength(1);
 	});
 
@@ -186,10 +228,12 @@ describe("LoraRegistryService", () => {
 				}),
 		});
 
-		const entry = await service.createFromUrl({
-			sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
-			baseModel: "flux",
-		});
+		const entry = expectSingle(
+			await service.createFromUrl({
+				sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+				baseModel: "flux",
+			})
+		);
 
 		expect(entry.name).toBe("Provider LoRA");
 		expect(entry.description).toBe("Provider metadata");
@@ -203,16 +247,20 @@ describe("LoraRegistryService", () => {
 	});
 
 	it("creates unique slugs on conflict", async () => {
-		const first = await service.createFromUrl({
-			name: "Same Name",
-			sourceUrl: "https://example.com/a.safetensors",
-			baseModel: "flux",
-		});
-		const second = await service.createFromUrl({
-			name: "Same Name",
-			sourceUrl: "https://example.com/b.safetensors",
-			baseModel: "flux",
-		});
+		const first = expectSingle(
+			await service.createFromUrl({
+				name: "Same Name",
+				sourceUrl: "https://example.com/a.safetensors",
+				baseModel: "flux",
+			})
+		);
+		const second = expectSingle(
+			await service.createFromUrl({
+				name: "Same Name",
+				sourceUrl: "https://example.com/b.safetensors",
+				baseModel: "flux",
+			})
+		);
 
 		expect(first.slug).toBe("same-name");
 		expect(second.slug).toBe("same-name-2");
@@ -229,11 +277,13 @@ describe("LoraRegistryService", () => {
 	});
 
 	it("lists only active entries by default", async () => {
-		const entry = await service.createFromUrl({
-			name: "Alpha",
-			sourceUrl: "https://example.com/a.safetensors",
-			baseModel: "z-image",
-		});
+		const entry = expectSingle(
+			await service.createFromUrl({
+				name: "Alpha",
+				sourceUrl: "https://example.com/a.safetensors",
+				baseModel: "z-image",
+			})
+		);
 		await service.archive(entry.id);
 		await service.createFromUrl({
 			name: "Beta",
@@ -266,11 +316,13 @@ describe("LoraRegistryService", () => {
 	});
 
 	it("archives and can be toggled back via update", async () => {
-		const entry = await service.createFromUrl({
-			name: "Toggler",
-			sourceUrl: "https://example.com/t.safetensors",
-			baseModel: "sdxl",
-		});
+		const entry = expectSingle(
+			await service.createFromUrl({
+				name: "Toggler",
+				sourceUrl: "https://example.com/t.safetensors",
+				baseModel: "sdxl",
+			})
+		);
 		const archived = await service.archive(entry.id);
 		expect(archived?.status).toBe("archived");
 		const restored = await service.update(entry.id, { status: "active" });
@@ -278,11 +330,13 @@ describe("LoraRegistryService", () => {
 	});
 
 	it("hard-deletes a LoRA", async () => {
-		const entry = await service.createFromUrl({
-			name: "Doomed",
-			sourceUrl: "https://example.com/d.safetensors",
-			baseModel: "z-image",
-		});
+		const entry = expectSingle(
+			await service.createFromUrl({
+				name: "Doomed",
+				sourceUrl: "https://example.com/d.safetensors",
+				baseModel: "z-image",
+			})
+		);
 		const removed = await service.delete(entry.id);
 		expect(removed?.id).toBe(entry.id);
 		expect(await service.getById(entry.id)).toBeNull();
@@ -298,5 +352,101 @@ describe("LoraRegistryService", () => {
 				baseModel: "flux",
 			})
 		).rejects.toThrow("S3 is not configured");
+	});
+
+	it("defaults variant to 'both' for dual-expert single imports", async () => {
+		const entry = expectSingle(
+			await service.createFromUrl({
+				name: "Wan Solo",
+				sourceUrl: "https://example.com/wan-solo.safetensors",
+				baseModel: "wan-2-2",
+			})
+		);
+		expect(entry.variant).toBe("both");
+		expect(entry.pairGroupId).toBeNull();
+	});
+
+	it("appends a noise suffix when variant is high/low for a single import", async () => {
+		const entry = expectSingle(
+			await service.createFromUrl({
+				name: "Sky LoRA",
+				sourceUrl: "https://example.com/sky-high.safetensors",
+				baseModel: "wan-2-2",
+				variant: "high",
+			})
+		);
+		expect(entry.name).toBe("Sky LoRA (High Noise)");
+		expect(entry.variant).toBe("high");
+	});
+
+	it("creates a high+low pair sharing the same pairGroupId", async () => {
+		const created = expectMany(
+			await service.createFromUrl({
+				name: "Cinematic Look",
+				sourceUrl: "https://example.com/look-high.safetensors",
+				baseModel: "wan-2-2",
+				variant: "high",
+				pair: {
+					sourceUrl: "https://example.com/look-low.safetensors",
+					variant: "low",
+				},
+			})
+		);
+		expect(created).toHaveLength(2);
+		const [primary, secondary] = created;
+		expect(primary?.variant).toBe("high");
+		expect(secondary?.variant).toBe("low");
+		expect(primary?.pairGroupId).toBeTruthy();
+		expect(primary?.pairGroupId).toBe(secondary?.pairGroupId);
+		expect(primary?.name).toBe("Cinematic Look (High Noise)");
+		expect(secondary?.name).toBe("Cinematic Look (Low Noise)");
+		expect(primary?.slug).not.toBe(secondary?.slug);
+		expect(cachedArgs).toHaveLength(2);
+
+		if (primary) {
+			const paired = await service.getPairedLora(primary);
+			expect(paired?.id).toBe(secondary?.id ?? "");
+		}
+	});
+
+	it("rejects pair import for non dual-expert base models", async () => {
+		await expect(
+			service.createFromUrl({
+				name: "Flux Pair",
+				sourceUrl: "https://example.com/flux-high.safetensors",
+				baseModel: "flux",
+				variant: "high",
+				pair: {
+					sourceUrl: "https://example.com/flux-low.safetensors",
+					variant: "low",
+				},
+			})
+		).rejects.toThrow("dual-expert");
+	});
+
+	it("rejects pair import when both entries share the same variant", async () => {
+		await expect(
+			service.createFromUrl({
+				name: "Bad Pair",
+				sourceUrl: "https://example.com/bad-high.safetensors",
+				baseModel: "wan-2-2",
+				variant: "high",
+				pair: {
+					sourceUrl: "https://example.com/bad-high-2.safetensors",
+					variant: "high",
+				},
+			})
+		).rejects.toThrow("different variants");
+	});
+
+	it("returns null from getPairedLora when entry is not part of a pair", async () => {
+		const solo = expectSingle(
+			await service.createFromUrl({
+				name: "Solo",
+				sourceUrl: "https://example.com/solo.safetensors",
+				baseModel: "z-image",
+			})
+		);
+		expect(await service.getPairedLora(solo)).toBeNull();
 	});
 });

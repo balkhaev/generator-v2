@@ -92,9 +92,15 @@ export function LorasInspector() {
 	const selectedId = searchParams?.get("id") ?? null;
 	const { data: loras = [] } = useAdminLoras();
 	const selected = loras.find((entry) => entry.id === selectedId) ?? null;
+	const paired = selected?.pairGroupId
+		? (loras.find(
+				(entry) =>
+					entry.id !== selected.id && entry.pairGroupId === selected.pairGroupId
+			) ?? null)
+		: null;
 	return (
 		<div className="h-full overflow-hidden rounded-lg border border-foreground/6 bg-background/80 backdrop-blur-xl dark:border-foreground/10 dark:bg-background/60">
-			<LoraDetail lora={selected} />
+			<LoraDetail lora={selected} paired={paired} />
 		</div>
 	);
 }

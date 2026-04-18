@@ -69,6 +69,11 @@ export default function LoraRow({
 						<StatusBadge tone="neutral">
 							{getBaseModelLabel(lora.baseModel)}
 						</StatusBadge>
+						{lora.variant && lora.variant !== "both" ? (
+							<StatusBadge tone={lora.variant === "high" ? "info" : "accent"}>
+								{lora.variant === "high" ? "high noise" : "low noise"}
+							</StatusBadge>
+						) : null}
 						{lora.status === "archived" ? (
 							<StatusBadge tone="warning">archived</StatusBadge>
 						) : null}

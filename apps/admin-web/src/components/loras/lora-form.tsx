@@ -2,6 +2,7 @@
 
 import { groupBaseModelsByFamily } from "@generator/contracts/base-models";
 import type {
+	CreateLoraFromUrlInput,
 	LoraBaseModel,
 	LoraSourcePreview,
 	LoraSourcePreviewVariant,
@@ -75,6 +76,42 @@ function getImportProgress(elapsedSeconds: number) {
 		return importProgressSteps[2];
 	}
 	return importProgressSteps[3];
+}
+
+function buildCreateLoraFromUrlInput(args: {
+	baseModel: LoraBaseModel;
+	defaultWeight: number;
+	description: string;
+	importAsPair: boolean;
+	name: string;
+	previewData: LoraSourcePreview | null;
+	selectedVersionId: number | null;
+	trimmedSourceUrl: string;
+}): CreateLoraFromUrlInput {
+	const pairedFiles = args.previewData?.pairedFiles ?? [];
+	const wantsPair = pairedFiles.length === 2 && args.importAsPair;
+	const high = pairedFiles.find((file) => file.variant === "high");
+	const low = pairedFiles.find((file) => file.variant === "low");
+	return {
+		name: args.name.trim() || undefined,
+		sourceUrl: wantsPair && high ? high.sourceUrl : args.trimmedSourceUrl,
+		sourceVersionId:
+			wantsPair && high
+				? high.sourceVersionId
+				: (args.selectedVersionId ?? undefined),
+		baseModel: args.baseModel,
+		defaultWeight: Number.isFinite(args.defaultWeight) ? args.defaultWeight : 1,
+		description: args.description.trim() || undefined,
+		variant: wantsPair ? "high" : undefined,
+		pair:
+			wantsPair && low
+				? {
+						sourceUrl: low.sourceUrl,
+						sourceVersionId: low.sourceVersionId,
+						variant: "low",
+					}
+				: undefined,
+	};
 }
 
 function ImportProgress({ elapsedSeconds }: { elapsedSeconds: number }) {
@@ -254,6 +291,7 @@ export default function LoraForm() {
 	const [importStartedAt, setImportStartedAt] = useState<number | null>(null);
 	const [elapsedSeconds, setElapsedSeconds] = useState(0);
 	const [formOpen, setFormOpen] = useState(false);
+	const [importAsPair, setImportAsPair] = useState(true);
 	const trimmedSourceUrl = sourceUrl.trim();
 	const activeVariant = useMemo(
 		() =>
@@ -346,15 +384,23 @@ export default function LoraForm() {
 		setImportStartedAt(Date.now());
 		try {
 			const weight = Number(defaultWeight);
-			const lora = await create.mutateAsync({
-				name: name.trim() || undefined,
-				sourceUrl: trimmedSourceUrl,
-				sourceVersionId: selectedVersionId ?? undefined,
-				baseModel,
-				defaultWeight: Number.isFinite(weight) ? weight : 1,
-				description: description.trim() || undefined,
-			});
-			toast.success(`Added LoRA "${lora.name}"`);
+			const created = await create.mutateAsync(
+				buildCreateLoraFromUrlInput({
+					baseModel,
+					defaultWeight: weight,
+					description,
+					importAsPair,
+					name,
+					previewData,
+					selectedVersionId,
+					trimmedSourceUrl,
+				})
+			);
+			const message =
+				created.length > 1
+					? `Added pair "${created[0]?.name}" + "${created[1]?.name}"`
+					: `Added LoRA "${created[0]?.name}"`;
+			toast.success(message);
 			setName("");
 			setSourceUrl("");
 			setDescription("");
@@ -469,6 +515,33 @@ export default function LoraForm() {
 							preview={previewData}
 							selectedVersionId={selectedVersionId}
 						/>
+					) : null}
+					{previewData?.pairedFiles && previewData.pairedFiles.length === 2 ? (
+						<label className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/8 p-3 text-xs md:col-span-2 dark:border-emerald-400/30">
+							<input
+								checked={importAsPair}
+								className="mt-0.5"
+								onChange={(event) => setImportAsPair(event.target.checked)}
+								type="checkbox"
+							/>
+							<span className="grid gap-1">
+								<span className="font-medium text-emerald-800 dark:text-emerald-200">
+									Detected high+low pair — import both
+								</span>
+								<span className="text-emerald-700/80 dark:text-emerald-300/80">
+									{previewData.pairedFiles
+										.map(
+											(file) =>
+												`${file.variant.toUpperCase()}: ${file.fileName ?? file.sourceUrl}`
+										)
+										.join(" · ")}
+								</span>
+								<span className="text-muted-foreground">
+									Wan 2.2 A14B uses two transformers (high-noise + low-noise);
+									the pair is linked via shared <code>pairGroupId</code>.
+								</span>
+							</span>
+						</label>
 					) : null}
 					<div className="grid gap-1.5">
 						<Label htmlFor="lora-name">Name</Label>

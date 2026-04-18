@@ -27,12 +27,15 @@ import { formatBytes, formatDateTime } from "@generator/ui/lib/format";
 import {
 	Archive,
 	ExternalLink,
+	Link2,
 	Loader2,
 	RotateCcw,
 	Save,
 	Tags,
 	Trash2,
 } from "lucide-react";
+import type { Route } from "next";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -41,6 +44,16 @@ import {
 	useDeleteLora,
 	useUpdateLora,
 } from "@/hooks/use-admin-loras";
+
+function variantLabel(variant: LoraRegistryEntry["variant"]) {
+	if (variant === "high") {
+		return "high noise";
+	}
+	if (variant === "low") {
+		return "low noise";
+	}
+	return "both transformers";
+}
 
 const baseModelGroups = groupBaseModelsByFamily();
 
@@ -72,10 +85,108 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 	);
 }
 
+function LoraReadonlyMetadata({
+	lora,
+	paired,
+}: {
+	lora: LoraRegistryEntry;
+	paired: LoraRegistryEntry | null;
+}) {
+	return (
+		<section className="grid gap-3">
+			<SectionLabel>Metadata</SectionLabel>
+			<Field label="Slug" value={<code>{lora.slug}</code>} />
+			<Field
+				label="Stored base model"
+				value={
+					<span className="inline-flex items-center gap-1.5">
+						<code className="text-[11px]">{lora.baseModel}</code>
+						<span className="text-muted-foreground">
+							({getBaseModelLabel(lora.baseModel)})
+						</span>
+					</span>
+				}
+			/>
+			{lora.sourceProvider ? (
+				<Field label="Source provider" value={lora.sourceProvider} />
+			) : null}
+			{lora.variant ? (
+				<Field label="Variant" value={variantLabel(lora.variant)} />
+			) : null}
+			{lora.pairGroupId ? (
+				<Field
+					label="Pair"
+					value={
+						paired ? (
+							<Link
+								className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
+								href={`/loras?id=${paired.id}` as Route}
+							>
+								<Link2 className="size-3" />
+								<span className="break-all">{paired.name}</span>
+								{paired.variant && paired.variant !== "both" ? (
+									<span className="text-muted-foreground">
+										({variantLabel(paired.variant)})
+									</span>
+								) : null}
+							</Link>
+						) : (
+							<span className="inline-flex items-center gap-1 text-muted-foreground">
+								<Link2 className="size-3" />
+								<code className="text-[11px]">{lora.pairGroupId}</code>
+								<span>(paired entry not found)</span>
+							</span>
+						)
+					}
+				/>
+			) : null}
+			<Field label="Size" value={formatBytes(lora.sizeBytes)} />
+			<Field
+				label="S3 URL"
+				value={
+					<a
+						className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
+						href={lora.s3Url}
+						rel="noopener noreferrer"
+						target="_blank"
+					>
+						<span className="break-all">{lora.s3Url}</span>
+						<ExternalLink className="size-3" />
+					</a>
+				}
+			/>
+			<Field
+				label="S3 key"
+				value={<code className="text-[11px]">{lora.s3Key}</code>}
+			/>
+			{lora.sourceUrl ? (
+				<Field
+					label="Source"
+					value={
+						<a
+							className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
+							href={lora.sourceUrl}
+							rel="noopener noreferrer"
+							target="_blank"
+						>
+							<span className="break-all">{lora.sourceUrl}</span>
+							<ExternalLink className="size-3" />
+						</a>
+					}
+				/>
+			) : null}
+			<Field label="Created" value={formatDateTime(lora.createdAt)} />
+			<Field label="Updated" value={formatDateTime(lora.updatedAt)} />
+		</section>
+	);
+}
+
 export default function LoraDetail({
 	lora,
+	paired,
 }: {
 	lora: LoraRegistryEntry | null;
+	paired?: LoraRegistryEntry | null;
 }) {
 	if (!lora) {
 		return (
@@ -89,10 +200,16 @@ export default function LoraDetail({
 		);
 	}
 
-	return <LoraEditor key={lora.id} lora={lora} />;
+	return <LoraEditor key={lora.id} lora={lora} paired={paired ?? null} />;
 }
 
-function LoraEditor({ lora }: { lora: LoraRegistryEntry }) {
+function LoraEditor({
+	lora,
+	paired,
+}: {
+	lora: LoraRegistryEntry;
+	paired: LoraRegistryEntry | null;
+}) {
 	const update = useUpdateLora();
 	const archive = useArchiveLora();
 	const remove = useDeleteLora();
@@ -174,11 +291,20 @@ function LoraEditor({ lora }: { lora: LoraRegistryEntry }) {
 	return (
 		<div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto]">
 			<div className="border-foreground/6 border-b px-4 py-3 dark:border-foreground/10">
-				<div className="flex items-center justify-between gap-2">
+				<div className="flex flex-wrap items-center justify-between gap-2">
 					<SectionLabel>Inspector</SectionLabel>
-					<StatusBadge tone={lora.status === "active" ? "success" : "warning"}>
-						{lora.status}
-					</StatusBadge>
+					<div className="flex flex-wrap items-center gap-1.5">
+						{lora.variant && lora.variant !== "both" ? (
+							<StatusBadge tone={lora.variant === "high" ? "info" : "accent"}>
+								{variantLabel(lora.variant)}
+							</StatusBadge>
+						) : null}
+						<StatusBadge
+							tone={lora.status === "active" ? "success" : "warning"}
+						>
+							{lora.status}
+						</StatusBadge>
+					</div>
 				</div>
 			</div>
 
@@ -262,61 +388,7 @@ function LoraEditor({ lora }: { lora: LoraRegistryEntry }) {
 					</div>
 				</section>
 
-				<section className="grid gap-3">
-					<SectionLabel>Metadata</SectionLabel>
-					<Field label="Slug" value={<code>{lora.slug}</code>} />
-					<Field
-						label="Stored base model"
-						value={
-							<span className="inline-flex items-center gap-1.5">
-								<code className="text-[11px]">{lora.baseModel}</code>
-								<span className="text-muted-foreground">
-									({getBaseModelLabel(lora.baseModel)})
-								</span>
-							</span>
-						}
-					/>
-					{lora.sourceProvider ? (
-						<Field label="Source provider" value={lora.sourceProvider} />
-					) : null}
-					<Field label="Size" value={formatBytes(lora.sizeBytes)} />
-					<Field
-						label="S3 URL"
-						value={
-							<a
-								className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
-								href={lora.s3Url}
-								rel="noopener noreferrer"
-								target="_blank"
-							>
-								<span className="break-all">{lora.s3Url}</span>
-								<ExternalLink className="size-3" />
-							</a>
-						}
-					/>
-					<Field
-						label="S3 key"
-						value={<code className="text-[11px]">{lora.s3Key}</code>}
-					/>
-					{lora.sourceUrl ? (
-						<Field
-							label="Source"
-							value={
-								<a
-									className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
-									href={lora.sourceUrl}
-									rel="noopener noreferrer"
-									target="_blank"
-								>
-									<span className="break-all">{lora.sourceUrl}</span>
-									<ExternalLink className="size-3" />
-								</a>
-							}
-						/>
-					) : null}
-					<Field label="Created" value={formatDateTime(lora.createdAt)} />
-					<Field label="Updated" value={formatDateTime(lora.updatedAt)} />
-				</section>
+				<LoraReadonlyMetadata lora={lora} paired={paired} />
 			</div>
 
 			<div className="flex flex-wrap items-center justify-between gap-2 border-foreground/6 border-t bg-muted/20 px-4 py-3 dark:border-foreground/10">

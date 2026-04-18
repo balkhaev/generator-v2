@@ -119,7 +119,7 @@ export function createApp(options: AppOptions) {
 			"/*",
 			cors({
 				origin: options.corsOrigin,
-				allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+				allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 				allowHeaders: [
 					"Content-Type",
 					"Authorization",

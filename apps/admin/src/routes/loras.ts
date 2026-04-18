@@ -4,10 +4,11 @@ import type {
 	LoraBaseModel,
 	LoraSourceProvider,
 	LoraStatus,
+	LoraVariant,
 	PreviewLoraSourceInput,
 	UpdateLoraInput,
 } from "@generator/contracts/loras";
-import { LORA_BASE_MODELS } from "@generator/contracts/loras";
+import { LORA_BASE_MODELS, LORA_VARIANTS } from "@generator/contracts/loras";
 import { Hono } from "hono";
 
 import type { LoraRegistryService } from "@/domain/loras";
@@ -54,6 +55,46 @@ function parsePositiveNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isInteger(value) && value > 0
 		? value
 		: undefined;
+}
+
+function parseVariant(value: unknown): LoraVariant | undefined {
+	if (typeof value !== "string") {
+		return;
+	}
+	return LORA_VARIANTS.includes(value as LoraVariant)
+		? (value as LoraVariant)
+		: undefined;
+}
+
+function parsePair(value: unknown): CreateLoraFromUrlInput["pair"] | undefined {
+	if (!value || typeof value !== "object") {
+		return;
+	}
+	const payload = value as Record<string, unknown>;
+	const sourceUrl =
+		typeof payload.sourceUrl === "string" ? payload.sourceUrl : "";
+	const variant = parseVariant(payload.variant);
+	if (!(sourceUrl && (variant === "high" || variant === "low"))) {
+		throw new Error(
+			"pair.sourceUrl and pair.variant ('high' | 'low') are required"
+		);
+	}
+	return {
+		defaultWeight:
+			typeof payload.defaultWeight === "number"
+				? payload.defaultWeight
+				: undefined,
+		description:
+			typeof payload.description === "string" ? payload.description : undefined,
+		name: typeof payload.name === "string" ? payload.name : undefined,
+		sourceFilePath:
+			typeof payload.sourceFilePath === "string"
+				? payload.sourceFilePath
+				: undefined,
+		sourceUrl,
+		sourceVersionId: parsePositiveNumber(payload.sourceVersionId),
+		variant,
+	};
 }
 
 function resolveListQuery(c: {
@@ -103,6 +144,8 @@ function parseCreateBody(body: unknown): CreateLoraFromUrlInput {
 				? payload.sourceRevision
 				: undefined,
 		sourceVersionId: parsePositiveNumber(payload.sourceVersionId),
+		variant: parseVariant(payload.variant),
+		pair: parsePair(payload.pair),
 	};
 }
 
@@ -140,6 +183,18 @@ function parseUpdateBody(body: unknown): UpdateLoraInput {
 		throw new Error("Invalid request body");
 	}
 	const payload = body as Record<string, unknown>;
+	let variant: LoraVariant | null | undefined;
+	if (payload.variant === null) {
+		variant = null;
+	} else if (typeof payload.variant === "string") {
+		variant = parseVariant(payload.variant) ?? undefined;
+	}
+	let pairGroupId: string | null | undefined;
+	if (payload.pairGroupId === null) {
+		pairGroupId = null;
+	} else if (typeof payload.pairGroupId === "string") {
+		pairGroupId = payload.pairGroupId;
+	}
 	return {
 		name: typeof payload.name === "string" ? payload.name : undefined,
 		description:
@@ -154,6 +209,8 @@ function parseUpdateBody(body: unknown): UpdateLoraInput {
 		status: parseStatus(
 			typeof payload.status === "string" ? payload.status : undefined
 		),
+		variant,
+		pairGroupId,
 	};
 }
 
@@ -168,8 +225,11 @@ export function createAdminLoraRoutes(service: LoraRegistryService) {
 	app.post("/", async (c) => {
 		try {
 			const input = parseCreateBody(await c.req.json());
-			const entry = await service.createFromUrl(input);
-			return c.json({ lora: entry }, 201);
+			const result = await service.createFromUrl(input);
+			if (Array.isArray(result)) {
+				return c.json({ loras: result }, 201);
+			}
+			return c.json({ lora: result }, 201);
 		} catch (error) {
 			const response = toErrorResponse(error);
 			return c.json(response.body, response.status as 400);

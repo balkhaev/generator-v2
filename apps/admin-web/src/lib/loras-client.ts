@@ -33,16 +33,22 @@ export async function fetchAdminLoras(query: ListLorasQuery = {}) {
 }
 
 export async function createLoraFromUrl(input: CreateLoraFromUrlInput) {
-	const payload = await requestJson<{ lora: LoraRegistryEntry }>(
-		`${API_BASE_URL}/api/admin/loras`,
-		{
-			method: "POST",
-			credentials: "include",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(input),
-		}
-	);
-	return payload.lora;
+	const payload = await requestJson<{
+		lora?: LoraRegistryEntry;
+		loras?: LoraRegistryEntry[];
+	}>(`${API_BASE_URL}/api/admin/loras`, {
+		method: "POST",
+		credentials: "include",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(input),
+	});
+	if (payload.loras) {
+		return payload.loras;
+	}
+	if (payload.lora) {
+		return [payload.lora];
+	}
+	throw new Error("Server returned no LoRA records");
 }
 
 export async function previewLoraSource(input: PreviewLoraSourceInput) {

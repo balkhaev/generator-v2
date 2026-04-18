@@ -148,6 +148,11 @@ const falZimageTurboImageToImageParamsSchema =
 // `loras: []` when no URL is provided. The `/lora` endpoint is a strict
 // superset of the base endpoint, so this avoids maintaining two near-identical
 // workflows for "with LoRA" / "without LoRA".
+//
+// Wan 2.2 A14B is a dual-expert model (high-noise + low-noise transformer);
+// LoRAs are typically trained as a pair and we expose two slots — `loraUrlHigh`
+// and `loraUrlLow` — so each can be loaded into the matching transformer via
+// fal's `transformer: "high" | "low"` field on each LoRA entry.
 const falWan22TextToVideoParamsSchema = z.object({
 	negativePrompt: z.string().default(""),
 	numFrames: z.number().int().min(17).max(161).default(81),
@@ -168,8 +173,10 @@ const falWan22TextToVideoParamsSchema = z.object({
 	adjustFpsForInterpolation: z.boolean().default(true),
 	videoQuality: z.enum(["low", "medium", "high", "maximum"]).default("high"),
 	videoWriteMode: z.enum(["fast", "balanced", "small"]).default("balanced"),
-	loraUrl: optionalUrlParamSchema,
-	loraScale: z.number().min(0).max(2).default(1),
+	loraUrlHigh: optionalUrlParamSchema,
+	loraScaleHigh: z.number().min(0).max(2).default(1),
+	loraUrlLow: optionalUrlParamSchema,
+	loraScaleLow: z.number().min(0).max(2).default(1),
 });
 
 const falWan22ImageToVideoParamsSchema = falWan22TextToVideoParamsSchema.extend(
@@ -179,6 +186,67 @@ const falWan22ImageToVideoParamsSchema = falWan22TextToVideoParamsSchema.extend(
 		endImageUrl: optionalUrlParamSchema,
 	}
 );
+
+interface WanLoraEntry {
+	path: string;
+	scale: number;
+	transformer: "high" | "low";
+}
+
+function buildWanLoras(parsed: {
+	loraScaleHigh: number;
+	loraScaleLow: number;
+	loraUrlHigh?: string;
+	loraUrlLow?: string;
+}): WanLoraEntry[] {
+	const loras: WanLoraEntry[] = [];
+	if (parsed.loraUrlHigh) {
+		loras.push({
+			path: parsed.loraUrlHigh,
+			scale: parsed.loraScaleHigh,
+			transformer: "high",
+		});
+	}
+	if (parsed.loraUrlLow) {
+		loras.push({
+			path: parsed.loraUrlLow,
+			scale: parsed.loraScaleLow,
+			transformer: "low",
+		});
+	}
+	return loras;
+}
+
+const wanLoraParameterFields: readonly WorkflowField[] = [
+	{
+		description:
+			"Optional public URL pointing to the high-noise Wan 2.2 LoRA weights.",
+		key: "loraUrlHigh",
+		kind: "lora-url",
+		label: "LoRA High",
+		type: "text",
+	},
+	{
+		description: "Strength of the high-noise LoRA (ignored when no URL set).",
+		key: "loraScaleHigh",
+		label: "High scale",
+		type: "number",
+	},
+	{
+		description:
+			"Optional public URL pointing to the low-noise Wan 2.2 LoRA weights.",
+		key: "loraUrlLow",
+		kind: "lora-url",
+		label: "LoRA Low",
+		type: "text",
+	},
+	{
+		description: "Strength of the low-noise LoRA (ignored when no URL set).",
+		key: "loraScaleLow",
+		label: "Low scale",
+		type: "number",
+	},
+];
 
 // LTX-2.3 22B has dedicated `/lora` submodels for both text/image-to-video that
 // accept a required `loras: LoRAInput[]` array (path + scale). These submodels
@@ -721,7 +789,7 @@ export const workflowRegistry = {
 		key: "fal-wan-2-2-text-to-video",
 		name: "Wan 2.2 A14B",
 		description:
-			"High-quality text-to-video generation using Wan 2.2 A14B on fal.ai. Optionally accepts a LoRA URL.",
+			"High-quality text-to-video generation using Wan 2.2 A14B on fal.ai. Optionally accepts paired high/low LoRA URLs (one per transformer).",
 		requiresInputImage: false,
 		parameterSchema: falWan22TextToVideoParamsSchema,
 		parameterFields: [
@@ -775,20 +843,7 @@ export const workflowRegistry = {
 				label: "Shift",
 				type: "number",
 			},
-			{
-				description:
-					"Optional public URL pointing to trained Wan 2.2 LoRA weights.",
-				key: "loraUrl",
-				kind: "lora-url",
-				label: "LoRA URL",
-				type: "text",
-			},
-			{
-				description: "Strength of the LoRA effect (ignored when no LoRA set).",
-				key: "loraScale",
-				label: "LoRA scale",
-				type: "number",
-			},
+			...wanLoraParameterFields,
 			{
 				description: "Optional deterministic seed.",
 				key: "seed",
@@ -798,9 +853,6 @@ export const workflowRegistry = {
 		],
 		buildProviderInput: ({ params, prompt }) => {
 			const parsed = falWan22TextToVideoParamsSchema.parse(params);
-			const loras = parsed.loraUrl
-				? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
-				: [];
 			return {
 				__falModel: "fal-ai/wan/v2.2-a14b/text-to-video/lora",
 				prompt,
@@ -822,7 +874,7 @@ export const workflowRegistry = {
 				adjust_fps_for_interpolation: parsed.adjustFpsForInterpolation,
 				video_quality: parsed.videoQuality,
 				video_write_mode: parsed.videoWriteMode,
-				loras,
+				loras: buildWanLoras(parsed),
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},
@@ -833,7 +885,7 @@ export const workflowRegistry = {
 		key: "fal-wan-2-2-image-to-video",
 		name: "Wan 2.2 A14B I2V",
 		description:
-			"Image-to-video generation using Wan 2.2 A14B on fal.ai. Optionally accepts a LoRA URL.",
+			"Image-to-video generation using Wan 2.2 A14B on fal.ai. Optionally accepts paired high/low LoRA URLs (one per transformer).",
 		requiresInputImage: true,
 		parameterSchema: falWan22ImageToVideoParamsSchema,
 		parameterFields: [
@@ -896,20 +948,7 @@ export const workflowRegistry = {
 				label: "Shift",
 				type: "number",
 			},
-			{
-				description:
-					"Optional public URL pointing to trained Wan 2.2 LoRA weights.",
-				key: "loraUrl",
-				kind: "lora-url",
-				label: "LoRA URL",
-				type: "text",
-			},
-			{
-				description: "Strength of the LoRA effect (ignored when no LoRA set).",
-				key: "loraScale",
-				label: "LoRA scale",
-				type: "number",
-			},
+			...wanLoraParameterFields,
 			{
 				description: "Optional deterministic seed.",
 				key: "seed",
@@ -919,9 +958,6 @@ export const workflowRegistry = {
 		],
 		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
 			const parsed = falWan22ImageToVideoParamsSchema.parse(params);
-			const loras = parsed.loraUrl
-				? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
-				: [];
 			return {
 				__falModel: "fal-ai/wan/v2.2-a14b/image-to-video/lora",
 				image_url: inputImageUrl,
@@ -944,7 +980,7 @@ export const workflowRegistry = {
 				adjust_fps_for_interpolation: parsed.adjustFpsForInterpolation,
 				video_quality: parsed.videoQuality,
 				video_write_mode: parsed.videoWriteMode,
-				loras,
+				loras: buildWanLoras(parsed),
 				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
@@ -1221,17 +1257,22 @@ function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
 			return { ...field, min: 1, max: 4, step: 1 };
 		case "loraScale":
 		case "loraWeight":
+		case "loraScaleHigh":
+		case "loraScaleLow":
 			return { ...field, min: 0, max: 2, step: 0.05 };
 		case "extraLoraWeight":
 			return { ...field, min: 0, max: 2, step: 0.05, optional: true };
 		case "extraLoraUrl":
 			return { ...field, optional: true };
-		case "loraUrl": {
-			// Every workflow that exposes a `loraUrl` field now runs on the LoRA
+		case "loraUrl":
+		case "loraUrlHigh":
+		case "loraUrlLow": {
+			// Every workflow that exposes a `loraUrl*` field now runs on the LoRA
 			// variant of its provider endpoint, with an empty `loras` array sent
 			// when no URL is provided. We mark the field optional so the UI hides
 			// the required indicator and surfaces it as a "leave empty to skip"
-			// affordance.
+			// affordance. Wan 2.2 exposes paired high/low slots and follows the
+			// same convention.
 			return { ...field, optional: true };
 		}
 		case "endImageUrl":

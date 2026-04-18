@@ -106,7 +106,7 @@ export function createApp(options: AppOptions) {
 		"/api/*",
 		cors({
 			origin: options.corsOrigins,
-			allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+			allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 			allowHeaders: ["Content-Type", "Authorization", DEBUG_CORRELATION_HEADER],
 			credentials: true,
 		})

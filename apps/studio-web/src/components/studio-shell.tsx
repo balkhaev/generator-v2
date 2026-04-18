@@ -432,6 +432,7 @@ export default function StudioShell({
 			navigation={createWorkspaceNavigation("studio", {
 				admin: adminUrl,
 				persons: personsUrl,
+				shots: "/shots",
 				studio: "/",
 			})}
 			status={

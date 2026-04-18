@@ -87,6 +87,7 @@ const DEFAULT_ADMIN_URL = "http://localhost:3001";
 interface LightboxState {
 	images: string[];
 	index: number;
+	prompts?: string[];
 }
 
 function Lightbox({
@@ -94,11 +95,13 @@ function Lightbox({
 	index,
 	onClose,
 	onNavigate,
+	prompts,
 }: {
 	images: string[];
 	index: number;
 	onClose: () => void;
 	onNavigate: (index: number) => void;
+	prompts?: string[];
 }) {
 	const backdropRef = useRef<HTMLDivElement>(null);
 
@@ -143,6 +146,7 @@ function Lightbox({
 	}
 
 	const hasMultiple = images.length > 1;
+	const currentPrompt = prompts?.[index]?.trim();
 
 	return (
 		<div
@@ -203,9 +207,24 @@ function Lightbox({
 				/>
 			</div>
 
-			{hasMultiple ? (
+			{hasMultiple && !currentPrompt ? (
 				<div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-3 py-1.5 text-white/70 text-xs tabular-nums">
 					{index + 1} / {images.length}
+				</div>
+			) : null}
+			{currentPrompt ? (
+				<div className="pointer-events-auto absolute right-4 bottom-4 left-4 z-10 mx-auto grid max-w-3xl gap-2 rounded-lg bg-black/60 px-4 py-3 text-white shadow-lg backdrop-blur">
+					<div className="flex items-center justify-between gap-3 text-[11px] text-white/60">
+						<span className="font-medium">Prompt</span>
+						{hasMultiple ? (
+							<span className="shrink-0 tabular-nums">
+								{index + 1} / {images.length}
+							</span>
+						) : null}
+					</div>
+					<p className="max-h-28 overflow-y-auto text-sm text-white/85 leading-relaxed">
+						{currentPrompt}
+					</p>
 				</div>
 			) : null}
 		</div>
@@ -349,9 +368,11 @@ function GenerationPreview({
 					<div className="flex justify-center">
 						<Loader2 className="size-6 animate-spin text-muted-foreground/50" />
 					</div>
-					<div className="flex w-full items-center justify-between gap-3 text-muted-foreground/60 text-xs">
-						<span>Generating</span>
-						<span className="font-medium tabular-nums">{progressPct}%</span>
+					<div className="grid w-full grid-cols-[minmax(0,1fr)_4ch] items-center gap-3 text-muted-foreground/60 text-xs">
+						<span className="truncate">Generating</span>
+						<span className="text-right font-medium tabular-nums">
+							{progressPct}%
+						</span>
 					</div>
 					<div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/30 dark:bg-muted/15">
 						<div
@@ -1267,11 +1288,16 @@ function PersonDetailView({
 	const generationImageUrls = imageGenerations.map(
 		(g) => g.previewUrl ?? g.sourceUrl
 	);
+	const generationPrompts = imageGenerations.map((g) => g.prompt);
 
 	function openGenerationLightbox(generationId: string) {
 		const idx = imageGenerations.findIndex((g) => g.id === generationId);
 		if (idx >= 0) {
-			setLightbox({ images: generationImageUrls, index: idx });
+			setLightbox({
+				images: generationImageUrls,
+				index: idx,
+				prompts: generationPrompts,
+			});
 		}
 	}
 
@@ -1303,6 +1329,7 @@ function PersonDetailView({
 					onNavigate={(i) =>
 						setLightbox((prev) => (prev ? { ...prev, index: i } : null))
 					}
+					prompts={lightbox.prompts}
 				/>
 			) : null}
 

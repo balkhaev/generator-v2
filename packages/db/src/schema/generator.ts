@@ -1,5 +1,6 @@
 import {
 	index,
+	integer,
 	jsonb,
 	pgEnum,
 	pgTable,
@@ -36,6 +37,9 @@ export const generatorExecution = pgTable(
 			.$type<Array<{ url: string | null }>>()
 			.notNull()
 			.default([]),
+		progressPct: integer("progress_pct"),
+		queuePosition: integer("queue_position"),
+		lastLogLine: text("last_log_line"),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()

@@ -15,6 +15,85 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const TRAILING_SLASH = /\/$/;
 const CANONICAL_ENDPOINT_PATTERN = /\/requests\/[^/]+/;
 
+/**
+ * Reasonable patterns we see in fal.ai logs across diffusion-style workflows.
+ * Examples actually observed:
+ *   - "Sampling step 12/40"
+ *   - "step 8 / 50"
+ *   - "Progress: 25%"
+ *   - "12.5%"
+ *   - "[10/40]"
+ */
+const STEP_PATTERN_SLASH = /(?:^|\D)(\d{1,4})\s*\/\s*(\d{1,4})(?:\D|$)/;
+const PERCENT_PATTERN = /(\d{1,3}(?:\.\d{1,2})?)\s*%/;
+
+interface FalLogEntry {
+	level?: string;
+	message?: string;
+	timestamp?: string;
+}
+
+function parseProgressFromLogLine(line: string): number | null {
+	const stepMatch = line.match(STEP_PATTERN_SLASH);
+	if (stepMatch?.[1] && stepMatch[2]) {
+		const current = Number.parseInt(stepMatch[1], 10);
+		const total = Number.parseInt(stepMatch[2], 10);
+		if (total > 0 && current >= 0 && current <= total) {
+			return Math.round((current / total) * 100);
+		}
+	}
+
+	const percentMatch = line.match(PERCENT_PATTERN);
+	if (percentMatch?.[1]) {
+		const value = Number.parseFloat(percentMatch[1]);
+		if (Number.isFinite(value) && value >= 0 && value <= 100) {
+			return Math.round(value);
+		}
+	}
+
+	return null;
+}
+
+interface FalProgressSnapshot {
+	lastLogLine: string | null;
+	progressPct: number | null;
+}
+
+export function extractFalProgressSnapshot(
+	logs: FalLogEntry[] | undefined
+): FalProgressSnapshot {
+	if (!Array.isArray(logs) || logs.length === 0) {
+		return { lastLogLine: null, progressPct: null };
+	}
+
+	let lastLogLine: string | null = null;
+	let progressPct: number | null = null;
+
+	for (let i = logs.length - 1; i >= 0; i -= 1) {
+		const entry = logs[i];
+		const message =
+			typeof entry?.message === "string" ? entry.message.trim() : "";
+		if (message.length === 0) {
+			continue;
+		}
+		if (lastLogLine === null) {
+			lastLogLine =
+				message.length > 240 ? `${message.slice(0, 237)}…` : message;
+		}
+		if (progressPct === null) {
+			const parsed = parseProgressFromLogLine(message);
+			if (parsed !== null) {
+				progressPct = parsed;
+			}
+		}
+		if (lastLogLine !== null && progressPct !== null) {
+			break;
+		}
+	}
+
+	return { lastLogLine, progressPct };
+}
+
 type FalFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 export function normalizeFalStatus(status: string): InferenceStatus {
@@ -254,6 +333,8 @@ export function createFalClient(options: {
 			return {
 				endpointId: canonicalEndpoint,
 				jobId: body.request_id,
+				queuePosition:
+					typeof body.queue_position === "number" ? body.queue_position : null,
 				status: body.status ? normalizeFalStatus(body.status) : "queued",
 			};
 		},
@@ -263,11 +344,16 @@ export function createFalClient(options: {
 				throw new Error("fal.ai provider requires endpointId for status check");
 			}
 
+			// `?logs=1` заставляет fal вернуть массив `logs[]` со step-сообщениями
+			// и `queue_position` пока заявка ждёт слот. Без этого флага мы видим
+			// только дискретный статус — undestroyable mёртвый прогресс.
 			const statusBody = await request<{
 				status: string;
 				request_id: string;
 				error?: string;
-			}>(`${apiBaseUrl}/${endpointId}/requests/${jobId}/status`);
+				logs?: FalLogEntry[];
+				queue_position?: number;
+			}>(`${apiBaseUrl}/${endpointId}/requests/${jobId}/status?logs=1`);
 
 			const statusError =
 				typeof statusBody.error === "string" ? statusBody.error : null;
@@ -275,22 +361,32 @@ export function createFalClient(options: {
 			if (statusError) {
 				return {
 					endpointId,
-					jobId,
-					status: "failed",
-					output: null,
 					errorSummary: statusError,
+					jobId,
+					output: null,
+					status: "failed",
 				};
 			}
 
 			const status = normalizeFalStatus(statusBody.status);
+			const { lastLogLine, progressPct } = extractFalProgressSnapshot(
+				statusBody.logs
+			);
+			const queuePosition =
+				typeof statusBody.queue_position === "number"
+					? statusBody.queue_position
+					: null;
 
 			if (status !== "succeeded") {
 				return {
 					endpointId,
-					jobId,
-					status,
-					output: null,
 					errorSummary: null,
+					jobId,
+					lastLogLine,
+					output: null,
+					progressPct,
+					queuePosition,
+					status,
 				};
 			}
 
@@ -300,10 +396,13 @@ export function createFalClient(options: {
 
 			return {
 				endpointId,
-				jobId,
-				status: "succeeded",
-				output: resultBody,
 				errorSummary: null,
+				jobId,
+				lastLogLine,
+				output: resultBody,
+				progressPct: 100,
+				queuePosition: null,
+				status: "succeeded",
 			};
 		},
 

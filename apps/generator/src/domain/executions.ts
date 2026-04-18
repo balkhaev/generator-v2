@@ -1,14 +1,19 @@
 import type {
 	CreateGeneratorExecutionInput,
+	ExecutionPhase,
 	GeneratorExecutionRecord,
 	SyncGeneratorExecutionInput,
 } from "@generator/contracts/generator";
 import type { EventPublisher } from "@generator/events";
 import { GENERATOR_CALLBACK_TOKEN_HEADER } from "@generator/http/shared";
-import { getWorkflowDefinition, listWorkflows } from "@generator/workflows";
+import {
+	getWorkflowDefinition,
+	getWorkflowExpectedDurationMs,
+	listWorkflows,
+} from "@generator/workflows";
 import { z } from "zod";
 
-import type { InferenceClient } from "@/providers/inference";
+import type { InferenceClient, InferenceJob } from "@/providers/inference";
 import type { StorageAdapter } from "@/providers/storage";
 import type { GeneratorExecutionQueue } from "@/queue/executions";
 import { BadRequestError } from "@/routes/utils";
@@ -65,18 +70,126 @@ function getNextSyncDelay(
 	return DEFAULT_QUEUED_SYNC_DELAY_MS;
 }
 
-function getExecutionProgressPct(status: GeneratorExecutionRecord["status"]) {
-	switch (status) {
-		case "queued":
-			return 5;
-		case "running":
-			return 65;
-		case "succeeded":
-		case "failed":
-			return 100;
-		default:
-			return 0;
+const PROGRESS_CAP_PCT = 90;
+const PROGRESS_FLOOR_BY_STATUS: Record<
+	GeneratorExecutionRecord["status"],
+	number
+> = {
+	queued: 2,
+	running: 8,
+	succeeded: 100,
+	failed: 100,
+};
+
+interface DeriveProgressInput {
+	createdAt: Date;
+	jobSnapshot?: {
+		progressPct?: number | null;
+		queuePosition?: number | null;
+	} | null;
+	persistedProgressPct: number | null;
+	providerJobId: string | null;
+	status: GeneratorExecutionRecord["status"];
+	updatedAt: Date;
+	workflowKey: string;
+}
+
+interface DeriveProgressResult {
+	etaMs: number | null;
+	phase: ExecutionPhase;
+	progressPct: number;
+}
+
+/**
+ * Sole source of truth для (phase, progressPct, etaMs):
+ * - terminal статусы → 100% / done|failed.
+ * - реальный progress от провайдера задаёт нижнюю границу.
+ * - soft-progress по 1 - exp(-elapsed / expected) пока running.
+ * - монотонность через max(persisted, computed).
+ *
+ * `etaMs` выводится из expected duration минус elapsed (для running) или
+ * полная expected (для queued).
+ */
+export function derivePhaseAndProgress(
+	input: DeriveProgressInput
+): DeriveProgressResult {
+	if (input.status === "succeeded") {
+		return { etaMs: 0, phase: "done", progressPct: 100 };
 	}
+	if (input.status === "failed") {
+		return { etaMs: 0, phase: "failed", progressPct: 100 };
+	}
+
+	const expectedMs = getWorkflowExpectedDurationMs(input.workflowKey);
+	const elapsedMs = Date.now() - input.createdAt.getTime();
+
+	const phase = derivePhase(input);
+
+	const realProgress =
+		typeof input.jobSnapshot?.progressPct === "number"
+			? clampProgressPct(input.jobSnapshot.progressPct)
+			: null;
+
+	const softProgress =
+		expectedMs && input.status === "running"
+			? Math.round((1 - Math.exp(-elapsedMs / expectedMs)) * PROGRESS_CAP_PCT)
+			: null;
+
+	const floor = PROGRESS_FLOOR_BY_STATUS[input.status];
+	const persisted = input.persistedProgressPct ?? 0;
+
+	const computed = Math.max(
+		floor,
+		realProgress ?? 0,
+		softProgress ?? 0,
+		persisted
+	);
+	const progressPct = Math.min(PROGRESS_CAP_PCT, computed);
+
+	let etaMs: number | null = null;
+	if (expectedMs) {
+		if (input.status === "running") {
+			etaMs = Math.max(0, expectedMs - elapsedMs);
+		} else {
+			etaMs = expectedMs;
+		}
+	}
+
+	return { etaMs, phase, progressPct };
+}
+
+function clampProgressPct(value: number): number {
+	if (!Number.isFinite(value)) {
+		return 0;
+	}
+	if (value < 0) {
+		return 0;
+	}
+	if (value > 100) {
+		return 100;
+	}
+	return Math.round(value);
+}
+
+function derivePhase(input: {
+	jobSnapshot?: { queuePosition?: number | null } | null;
+	providerJobId: string | null;
+	status: GeneratorExecutionRecord["status"];
+}): ExecutionPhase {
+	if (input.status === "queued") {
+		if (!input.providerJobId) {
+			return "submitting";
+		}
+		const position = input.jobSnapshot?.queuePosition;
+		if (typeof position === "number" && position > 0) {
+			return "in_queue";
+		}
+		return "queued";
+	}
+	if (input.status === "running") {
+		return "running";
+	}
+	return "queued";
 }
 
 export interface ExecutionEntity {
@@ -90,10 +203,13 @@ export interface ExecutionEntity {
 	errorSummary: string | null;
 	id: string;
 	inputImageUrl: string | null;
+	lastLogLine: string | null;
 	params: Record<string, unknown>;
+	progressPct: number | null;
 	prompt: string;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
+	queuePosition: number | null;
 	status: GeneratorExecutionRecord["status"];
 	updatedAt: Date;
 	workflowKey: string;
@@ -111,18 +227,34 @@ export interface ExecutionRepository {
 }
 
 function toExecutionRecord(entity: ExecutionEntity): GeneratorExecutionRecord {
+	const derived = derivePhaseAndProgress({
+		createdAt: entity.createdAt,
+		jobSnapshot: {
+			progressPct: entity.progressPct,
+			queuePosition: entity.queuePosition,
+		},
+		persistedProgressPct: entity.progressPct,
+		providerJobId: entity.providerJobId,
+		status: entity.status,
+		updatedAt: entity.updatedAt,
+		workflowKey: entity.workflowKey,
+	});
 	return {
 		artifacts: entity.artifacts,
 		callback: entity.callback ?? null,
 		createdAt: entity.createdAt.toISOString(),
 		errorSummary: entity.errorSummary,
+		etaMs: derived.etaMs,
 		id: entity.id,
 		inputImageUrl: entity.inputImageUrl ?? "",
+		lastLogLine: entity.lastLogLine,
 		params: entity.params,
-		progressPct: getExecutionProgressPct(entity.status),
+		phase: derived.phase,
+		progressPct: derived.progressPct,
 		prompt: entity.prompt,
 		providerEndpointId: entity.providerEndpointId,
 		providerJobId: entity.providerJobId,
+		queuePosition: entity.queuePosition,
 		status: entity.status,
 		updatedAt: entity.updatedAt.toISOString(),
 		workflowKey: entity.workflowKey,
@@ -138,14 +270,26 @@ function normalizeDirectExecution(input: {
 	status: GeneratorExecutionRecord["status"];
 	workflowKey: string;
 }): GeneratorExecutionRecord {
+	const now = new Date();
+	const derived = derivePhaseAndProgress({
+		createdAt: now,
+		jobSnapshot: null,
+		persistedProgressPct: null,
+		providerJobId: input.providerJobId ?? null,
+		status: input.status,
+		updatedAt: now,
+		workflowKey: input.workflowKey,
+	});
 	return {
 		artifacts: (input.artifacts ?? []).map((url) => ({ url })),
 		errorSummary: input.errorSummary ?? null,
+		etaMs: derived.etaMs,
 		id: input.providerJobId ?? crypto.randomUUID(),
 		inputImageUrl: input.inputImageUrl ?? "",
+		phase: derived.phase,
 		providerEndpointId: input.providerEndpointId ?? null,
 		providerJobId: input.providerJobId ?? null,
-		progressPct: getExecutionProgressPct(input.status),
+		progressPct: derived.progressPct,
 		status: input.status,
 		workflowKey: input.workflowKey,
 	};
@@ -492,6 +636,10 @@ export class ExecutionService {
 			{
 				providerEndpointId: submission.endpointId,
 				providerJobId: submission.jobId,
+				queuePosition:
+					typeof submission.queuePosition === "number"
+						? submission.queuePosition
+						: null,
 				status: submission.status,
 			}
 		);
@@ -504,6 +652,57 @@ export class ExecutionService {
 			delayMs: getNextSyncDelay(submission.status, 0),
 			executionId: execution.id,
 		});
+	}
+
+	/**
+	 * Считает обновление progress-полей с учётом монотонности (прогресс не
+	 * откатывается). Возвращает только diff — `null`-ы означают «оставь как
+	 * было», поэтому undefined-полей в `set` не появится.
+	 */
+	private composeProgressUpdate(
+		execution: ExecutionEntity,
+		job: InferenceJob
+	): {
+		changed: boolean;
+		patch: {
+			lastLogLine?: string | null;
+			progressPct?: number | null;
+			queuePosition?: number | null;
+		};
+	} {
+		const patch: {
+			lastLogLine?: string | null;
+			progressPct?: number | null;
+			queuePosition?: number | null;
+		} = {};
+		let changed = false;
+
+		const incomingProgress =
+			typeof job.progressPct === "number"
+				? clampProgressPct(job.progressPct)
+				: null;
+		if (incomingProgress !== null) {
+			const next = Math.max(execution.progressPct ?? 0, incomingProgress);
+			if (next !== execution.progressPct) {
+				patch.progressPct = next;
+				changed = true;
+			}
+		}
+
+		const incomingQueue =
+			typeof job.queuePosition === "number" ? job.queuePosition : null;
+		if (incomingQueue !== execution.queuePosition) {
+			patch.queuePosition = incomingQueue;
+			changed = true;
+		}
+
+		const incomingLog = job.lastLogLine ?? null;
+		if (incomingLog && incomingLog !== execution.lastLogLine) {
+			patch.lastLogLine = incomingLog;
+			changed = true;
+		}
+
+		return { changed, patch };
 	}
 
 	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: sync worker state machine
@@ -552,12 +751,14 @@ export class ExecutionService {
 		const artifactsChanged =
 			execution.artifacts.length !== nextArtifacts.length ||
 			execution.artifacts.some((a, i) => a.url !== nextArtifacts[i]?.url);
+		const progressUpdate = this.composeProgressUpdate(execution, job);
 		const shouldDispatchCallback =
 			execution.status !== job.status ||
 			execution.providerJobId !== job.jobId ||
 			execution.providerEndpointId !== job.endpointId ||
 			execution.errorSummary !== job.errorSummary ||
-			artifactsChanged;
+			artifactsChanged ||
+			progressUpdate.changed;
 
 		if (
 			job.status === "queued" &&
@@ -612,6 +813,7 @@ export class ExecutionService {
 					providerEndpointId: job.endpointId,
 					providerJobId: job.jobId,
 					status: job.status,
+					...progressUpdate.patch,
 				})
 			: execution;
 		if (!updatedExecution) {

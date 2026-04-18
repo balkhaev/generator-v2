@@ -7,6 +7,7 @@ import type { ScenarioCardData } from "@/components/scenario-card-data";
 
 interface UseStudioSelectionInput {
 	currentSearch: string;
+	isPersonsLoaded: boolean;
 	navigate: (href: string) => void;
 	pathname: string;
 	requestedPersonId: string | null;
@@ -24,6 +25,7 @@ interface UseStudioSelectionInput {
 }
 
 export function useStudioSelection({
+	isPersonsLoaded,
 	navigate,
 	requestedPersonId,
 	requestedRunId,
@@ -56,6 +58,12 @@ export function useStudioSelection({
 			null);
 
 	useEffect(() => {
+		// Если в URL есть person, но список персон ещё не загружен — нельзя
+		// «корректировать» URL: selectedPersonId временно null, и эффект бы
+		// удалил параметр person, выкинув пользователя обратно на сценарий.
+		if (requestedPersonId && !isPersonsLoaded) {
+			return;
+		}
 		const personOk = requestedPersonId === selectedPersonId;
 		const scenarioOk = isPersonMode
 			? requestedScenarioId === null
@@ -73,6 +81,7 @@ export function useStudioSelection({
 		);
 	}, [
 		isPersonMode,
+		isPersonsLoaded,
 		navigate,
 		requestedPersonId,
 		requestedRunId,

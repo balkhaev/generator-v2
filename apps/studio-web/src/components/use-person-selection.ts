@@ -15,6 +15,12 @@ import { getPersonById, listPersons } from "@/lib/persons-api";
 export function usePersonSelection(requestedPersonId: string | null) {
 	const [persons, setPersons] = useState<PersonRecord[]>([]);
 	const [fetchedPerson, setFetchedPerson] = useState<PersonRecord | null>(null);
+	// Список персон грузится async после mount, а requested id может уже
+	// присутствовать в URL (прямой переход / reload). Без флага загрузки
+	// downstream хук useStudioSelection пытается «починить» URL ещё до того,
+	// как мы знаем, существует персона или нет — и сбрасывает выбор обратно
+	// на сценарий.
+	const [isPersonsLoaded, setIsPersonsLoaded] = useState(false);
 
 	const selectedPersonId =
 		(requestedPersonId &&
@@ -44,6 +50,9 @@ export function usePersonSelection(requestedPersonId: string | null) {
 			})
 			.catch(() => {
 				setPersons([]);
+			})
+			.finally(() => {
+				setIsPersonsLoaded(true);
 			});
 	}, []);
 
@@ -77,6 +86,7 @@ export function usePersonSelection(requestedPersonId: string | null) {
 
 	return {
 		handlePersonRefreshed,
+		isPersonsLoaded,
 		personDetail,
 		persons,
 		selectedPersonId,

@@ -436,8 +436,13 @@ export default function StudioShell({
 		[snapshot.runs, snapshot.scenarios]
 	);
 	const requestedPersonId = searchParams.get("person");
-	const { handlePersonRefreshed, personDetail, persons, selectedPersonId } =
-		usePersonSelection(requestedPersonId);
+	const {
+		handlePersonRefreshed,
+		isPersonsLoaded,
+		personDetail,
+		persons,
+		selectedPersonId,
+	} = usePersonSelection(requestedPersonId);
 	const requestedRunId = searchParams.get("run");
 	const requestedScenarioId = searchParams.get("scenario");
 	const requestedAssetId = searchParams.get("asset");
@@ -476,6 +481,7 @@ export default function StudioShell({
 		selectedScenarioId,
 	} = useStudioSelection({
 		currentSearch,
+		isPersonsLoaded,
 		navigate,
 		pathname,
 		requestedPersonId,

@@ -83,7 +83,20 @@ function ScenarioListItem({
 						: "hover:bg-muted/20 dark:hover:bg-muted/10"
 				)}
 				href={getScenarioHref(scenario.id)}
-				onClick={() => onPick(scenario.id)}
+				onClick={(event) => {
+					if (
+						event.defaultPrevented ||
+						event.metaKey ||
+						event.ctrlKey ||
+						event.shiftKey ||
+						event.altKey ||
+						event.button !== 0
+					) {
+						return;
+					}
+					event.preventDefault();
+					onPick(scenario.id);
+				}}
 			>
 				<span
 					aria-hidden="true"
@@ -199,7 +212,20 @@ function PersonListItem({
 						: "hover:bg-muted/20 dark:hover:bg-muted/10"
 				)}
 				href={getPersonHref(person.id)}
-				onClick={() => onPick(person.id)}
+				onClick={(event) => {
+					if (
+						event.defaultPrevented ||
+						event.metaKey ||
+						event.ctrlKey ||
+						event.shiftKey ||
+						event.altKey ||
+						event.button !== 0
+					) {
+						return;
+					}
+					event.preventDefault();
+					onPick(person.id);
+				}}
 			>
 				<span className="relative size-8 shrink-0 overflow-hidden rounded-md ring-1 ring-foreground/10">
 					{thumb ? (

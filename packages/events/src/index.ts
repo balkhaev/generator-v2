@@ -13,14 +13,28 @@ const generatorArtifactSchema = z.object({
 	url: z.string().nullable().optional(),
 });
 
+const executionPhaseSchema = z.enum([
+	"queued",
+	"submitting",
+	"in_queue",
+	"running",
+	"finalizing",
+	"done",
+	"failed",
+]);
+
 const generatorExecutionSchema = z.object({
 	artifacts: z.array(generatorArtifactSchema),
 	errorSummary: z.string().nullable(),
+	etaMs: z.number().nullable().optional(),
 	id: z.string().min(1),
 	inputImageUrl: z.string(),
+	lastLogLine: z.string().nullable().optional(),
+	phase: executionPhaseSchema.nullable().optional(),
 	progressPct: z.number().nullable().optional(),
 	providerEndpointId: z.string().nullable(),
 	providerJobId: z.string().nullable(),
+	queuePosition: z.number().nullable().optional(),
 	status: z.enum(["queued", "running", "succeeded", "failed"]),
 	workflowKey: z.string().min(1),
 });

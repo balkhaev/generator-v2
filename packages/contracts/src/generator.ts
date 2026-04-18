@@ -6,6 +6,20 @@ export type WorkflowBaseModel = BaseModelId;
 export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 export type ScenarioParamValue = string | number | boolean | null;
 
+/**
+ * Узкие фазы execution для UI/прогресса. Расширяют дискретные {@link RunStatus}
+ * до набора, по которому видно «где сейчас» — пока ждём слот у провайдера, уже
+ * генерим, или собираем артефакты.
+ */
+export type ExecutionPhase =
+	| "queued"
+	| "submitting"
+	| "in_queue"
+	| "running"
+	| "finalizing"
+	| "done"
+	| "failed";
+
 export interface WorkflowField {
 	description: string;
 	enumValues?: readonly string[];
@@ -101,13 +115,21 @@ export interface GeneratorExecutionRecord {
 	} | null;
 	createdAt?: string;
 	errorSummary: string | null;
+	/** Грубая оценка остатка генерации в миллисекундах. */
+	etaMs?: number | null;
 	id: string;
 	inputImageUrl: string;
+	/** Последняя строка из логов провайдера, если он их отдаёт. */
+	lastLogLine?: string | null;
 	params?: Record<string, unknown>;
+	/** Дискретная фаза исполнения для UI. */
+	phase?: ExecutionPhase | null;
 	progressPct?: number | null;
 	prompt?: string;
 	providerEndpointId: string | null;
 	providerJobId: string | null;
+	/** Позиция в очереди провайдера (только пока phase = in_queue). */
+	queuePosition?: number | null;
 	status: RunStatus;
 	updatedAt?: string;
 	workflowKey: string;

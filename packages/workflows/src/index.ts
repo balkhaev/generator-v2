@@ -325,12 +325,42 @@ export interface WorkflowDefinition<
 		params: z.infer<TParams>;
 	}) => Record<string, unknown>;
 	description: string;
+	/**
+	 * Грубая оценка типичной длительности успешного исполнения. Используется
+	 * для soft-progress (1 - exp(-elapsed/expected)) и ETA в UI, когда провайдер
+	 * не отдаёт реальный progress. Значения подобраны по реально наблюдаемым
+	 * runtime'ам (image: ~10–30s, video: ~3–10min); цифры нарочно консервативны
+	 * — soft-progress кепится 90%, так что недолёт лучше перелёта.
+	 */
+	expectedDurationMs?: number;
 	extractArtifactUrls: (output: unknown) => string[];
 	key: string;
 	name: string;
 	parameterFields: readonly WorkflowField[];
 	parameterSchema: TParams;
 	requiresInputImage: boolean;
+}
+
+const SECOND = 1000;
+const MINUTE = 60 * SECOND;
+
+const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
+	"fal-flux-schnell": 8 * SECOND,
+	"fal-flux-dev": 25 * SECOND,
+	"fal-flux2-turbo": 12 * SECOND,
+	"fal-flux2-dev-edit": 30 * SECOND,
+	"fal-zimage-turbo": 10 * SECOND,
+	"fal-zimage-turbo-image-to-image": 15 * SECOND,
+	"fal-wan-2-2-text-to-video": 4 * MINUTE,
+	"fal-wan-2-2-image-to-video": 4 * MINUTE,
+	"fal-ltx-2-3-text-to-video": 5 * MINUTE,
+	"fal-ltx-2-3-image-to-video": 5 * MINUTE,
+};
+
+export function getWorkflowExpectedDurationMs(
+	workflowKey: string
+): number | null {
+	return WORKFLOW_EXPECTED_DURATION_MS[workflowKey] ?? null;
 }
 
 function collectFalImageUrls(output: unknown): string[] {

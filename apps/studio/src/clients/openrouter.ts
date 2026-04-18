@@ -7,8 +7,7 @@ import {
 } from "@/clients/prompt-enhance-templates";
 import { tryInlineImageForVision } from "@/clients/vision-input-image";
 
-const XAI_BASE_URL = "https://api.x.ai/v1";
-const DEFAULT_MODEL = "grok-4-fast";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 interface ChatCompletionResponse {
 	choices?: Array<{
@@ -18,11 +17,13 @@ interface ChatCompletionResponse {
 	}>;
 }
 
-export type StudioGrokClient = PromptEnhanceClient;
-
-interface StudioGrokClientOptions {
+interface StudioOpenRouterClientOptions {
 	apiKey: string;
+	/** Shown as X-Title (optional). */
+	appName?: string | null;
 	fetchImpl?: typeof fetch;
+	/** e.g. https://your-app.example — optional OpenRouter header. */
+	httpReferer?: string | null;
 	model?: string;
 }
 
@@ -37,16 +38,18 @@ function cleanPromptOutput(value: string) {
 		.trim();
 }
 
-export function createStudioGrokClient(
-	options: StudioGrokClientOptions
-): StudioGrokClient {
+export function createStudioOpenRouterClient(
+	options: StudioOpenRouterClientOptions
+): PromptEnhanceClient {
 	const apiKey = options.apiKey.trim();
 	if (!apiKey) {
-		throw new Error("XAI_API_KEY is required to create studio Grok client");
+		throw new Error("OPENROUTER_API_KEY is required for OpenRouter client");
 	}
 
 	const fetchImpl = options.fetchImpl ?? fetch;
-	const model = options.model ?? DEFAULT_MODEL;
+	const model = options.model?.trim() || "openai/gpt-4o-mini";
+	const referer = options.httpReferer?.trim();
+	const appName = options.appName?.trim();
 
 	async function callChatCompletions(
 		messages: {
@@ -54,30 +57,41 @@ export function createStudioGrokClient(
 			role: "system" | "user";
 		}[]
 	): Promise<string> {
-		const response = await fetchImpl(`${XAI_BASE_URL}/chat/completions`, {
-			body: JSON.stringify({
-				messages,
-				model,
-				temperature: 0.85,
-			}),
-			headers: {
-				authorization: `Bearer ${apiKey}`,
-				"content-type": "application/json",
-			},
-			method: "POST",
-		});
+		const headers: Record<string, string> = {
+			authorization: `Bearer ${apiKey}`,
+			"content-type": "application/json",
+		};
+		if (referer) {
+			headers.Referer = referer;
+		}
+		if (appName) {
+			headers["X-Title"] = appName;
+		}
+
+		const response = await fetchImpl(
+			`${OPENROUTER_BASE_URL}/chat/completions`,
+			{
+				body: JSON.stringify({
+					messages,
+					model,
+					temperature: 0.85,
+				}),
+				headers,
+				method: "POST",
+			}
+		);
 
 		if (!response.ok) {
 			const detail = await response.text().catch(() => "");
 			throw new Error(
-				`Grok request failed: ${response.status} ${response.statusText}${detail ? ` — ${detail.slice(0, 200)}` : ""}`
+				`OpenRouter request failed: ${response.status} ${response.statusText}${detail ? ` — ${detail.slice(0, 200)}` : ""}`
 			);
 		}
 
 		const payload = (await response.json()) as ChatCompletionResponse;
 		const content = payload.choices?.[0]?.message?.content?.trim();
 		if (!content) {
-			throw new Error("Grok response did not contain any content");
+			throw new Error("OpenRouter response did not contain any content");
 		}
 		return cleanPromptOutput(content);
 	}

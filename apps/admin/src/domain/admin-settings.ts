@@ -15,6 +15,7 @@
 import type {
 	AdminSettingsSnapshot,
 	AdminWorkerHealthStatus,
+	PromptEnhanceSettingsSnapshot,
 	TrainingProviderAvailability,
 	TrainingProviderName,
 } from "@generator/contracts/admin";
@@ -53,6 +54,8 @@ export interface BuildAdminSettingsSnapshotInput {
 	availability: TrainingProviderAvailability[];
 	currentTrainingProvider: TrainingProviderName;
 	env: AdminSettingsEnvSnapshot;
+	/** Studio prompt enhance (Grok vs OpenRouter): провайдер из Redis, флаги из env гейтвея. */
+	promptEnhance?: PromptEnhanceSettingsSnapshot;
 	/** Optional snapshot from the worker; when fresh, takes precedence. */
 	workerSnapshot?: WorkerSettingsSnapshot | null;
 }
@@ -117,6 +120,13 @@ export function buildAdminSettingsSnapshot(
 		input.env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS ??
 		120 * 60 * 1000;
 
+	const promptEnhance: PromptEnhanceSettingsSnapshot = input.promptEnhance ?? {
+		grokConfigured: false,
+		openRouterConfigured: false,
+		openRouterModel: "openai/gpt-4o-mini",
+		provider: "grok",
+	};
+
 	return {
 		datasetBuilder: {
 			guidanceScale: IDENTITY_GUIDANCE_SCALE,
@@ -138,6 +148,7 @@ export function buildAdminSettingsSnapshot(
 			loraWorkflow:
 				input.env.PERSONS_DEFAULT_LORA_WORKFLOW ?? "fal-zimage-turbo",
 		},
+		promptEnhance,
 		runpodTraining: {
 			baseModel: runpodBaseModel,
 			bootstrapUrl:

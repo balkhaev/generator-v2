@@ -17,6 +17,7 @@ import { createApp } from "@/app";
 import { getAdminDashboardSnapshot } from "@/dashboard";
 import { LoraRegistryService } from "@/domain/loras";
 import { PersonLoraTrainingControlService } from "@/domain/person-lora-training-control";
+import { createRedisPromptEnhanceSettings } from "@/domain/prompt-enhance-settings";
 import { resolveTrainingProviderAvailability } from "@/domain/training-provider-availability";
 import { createRedisTrainingProviderSettings } from "@/domain/training-provider-settings";
 import { UsersService } from "@/domain/users";
@@ -38,6 +39,11 @@ const s3Config = tryResolveS3StorageConfig() ?? undefined;
 
 const trainingProviderSettings = createRedisTrainingProviderSettings({
 	defaultProvider: env.TRAINING_PROVIDER,
+	redisUrl,
+});
+
+const promptEnhanceSettings = createRedisPromptEnhanceSettings({
+	defaultProvider: env.PROMPT_ENHANCE_PROVIDER,
 	redisUrl,
 });
 
@@ -116,6 +122,12 @@ const app = createApp({
 			RUNPOD_TRAINING_MODE: env.RUNPOD_TRAINING_MODE,
 		}),
 	},
+	promptEnhanceEnv: {
+		grokConfigured: Boolean(env.XAI_API_KEY?.trim()),
+		openRouterConfigured: Boolean(env.OPENROUTER_API_KEY?.trim()),
+		openRouterModel: env.OPENROUTER_MODEL,
+	},
+	promptEnhanceSettings,
 	trainingProviderAvailability: {
 		resolve: () => resolveTrainingProviderAvailability(env),
 	},

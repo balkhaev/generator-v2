@@ -96,6 +96,10 @@ export interface ListAdminUsersQuery {
 	search?: string;
 }
 
+export const PROMPT_ENHANCE_PROVIDER_NAMES = ["grok", "openrouter"] as const;
+export type PromptEnhanceProviderName =
+	(typeof PROMPT_ENHANCE_PROVIDER_NAMES)[number];
+
 export type TrainingProviderName = "fal" | "runpod";
 
 export interface TrainingProviderAvailability {
@@ -157,10 +161,19 @@ export interface AdminWorkerHealthStatus {
 	source: "worker" | "gateway-fallback";
 }
 
+export interface PromptEnhanceSettingsSnapshot {
+	/** Ключи (XAI / OpenRouter) должны быть в env **studio-api**; здесь только выбор провайдера из Redis. */
+	grokConfigured: boolean;
+	openRouterConfigured: boolean;
+	openRouterModel: string;
+	provider: PromptEnhanceProviderName;
+}
+
 export interface AdminSettingsSnapshot {
 	datasetBuilder: DatasetBuilderSettings;
 	generatorRuntime: GeneratorRuntimeSettings;
 	personsDefaults: PersonsWorkflowDefaults;
+	promptEnhance: PromptEnhanceSettingsSnapshot;
 	runpodTraining: RunpodTrainingSettings;
 	trainingProvider: TrainingProviderSettingsSnapshot;
 	workerHealth: AdminWorkerHealthStatus;

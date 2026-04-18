@@ -82,6 +82,12 @@ export function normalizeServerRuntimeEnv(
 	if (xaiKey) {
 		out.XAI_API_KEY = xaiKey;
 	}
+
+	const openrouterKey =
+		out.OPENROUTER_API_KEY?.trim() || out.OPENROUTER_KEY?.trim();
+	if (openrouterKey) {
+		out.OPENROUTER_API_KEY = openrouterKey;
+	}
 	return out;
 }
 
@@ -166,6 +172,15 @@ const serverSchema = {
 	GROK_API_KEY: z.string().min(1).optional(),
 	XAI_KEY: z.string().min(1).optional(),
 	XAI_API_TOKEN: z.string().min(1).optional(),
+
+	/** Studio `/api/enhance-prompt`: Grok (xAI) или OpenRouter; переключатель в админке (Redis). */
+	PROMPT_ENHANCE_PROVIDER: z.enum(["grok", "openrouter"]).default("grok"),
+	OPENROUTER_API_KEY: z.string().min(1).optional(),
+	/** Alias merged into `OPENROUTER_API_KEY` by {@link normalizeServerRuntimeEnv}. */
+	OPENROUTER_KEY: z.string().min(1).optional(),
+	OPENROUTER_MODEL: z.string().min(1).default("openai/gpt-4o-mini"),
+	OPENROUTER_HTTP_REFERER: optionalUrlSchema,
+	OPENROUTER_APP_NAME: z.string().min(1).max(128).optional(),
 
 	// LoRA training provider selection.
 	// "fal" — текущий fal-ai/z-image-trainer пайплайн.

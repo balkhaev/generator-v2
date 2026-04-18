@@ -14,7 +14,6 @@ import {
 import { createGeneratorExecutionClient } from "@generator/generator-client-server";
 import { resolveS3StorageConfig } from "@generator/storage";
 import { createApp } from "@/app";
-import { createStudioGrokClient } from "@/clients/grok";
 import { createDrizzleStudioRepository } from "@/repositories/studio";
 
 const PORT = Number(process.env.PORT ?? 3006);
@@ -22,10 +21,6 @@ const PORT = Number(process.env.PORT ?? 3006);
 const generatorBaseUrl = getGeneratorApiUrl();
 const repository = createDrizzleStudioRepository();
 const loraReadRepository = createLoraReadRepository();
-
-const grokClient = env.XAI_API_KEY
-	? createStudioGrokClient({ apiKey: env.XAI_API_KEY })
-	: undefined;
 
 const app = createApp({
 	authHandler: handleAuthRequest,
@@ -38,7 +33,6 @@ const app = createApp({
 	}),
 	generatorBaseUrl,
 	getSession: getRequestSession,
-	grokClient,
 	loggerImpl: console,
 	loraReadRepository,
 	personsApiBaseUrl: env.PERSONS_API_URL,

@@ -969,7 +969,7 @@ function PromptOverrideEditor({
 							} else if (result.mode === "vision") {
 								toast.success("Prompt rewritten for this image");
 							} else {
-								toast.success("Prompt enhanced with Grok");
+								toast.success("Prompt enhanced");
 							}
 							return result.enhanced;
 						}}
@@ -979,8 +979,8 @@ function PromptOverrideEditor({
 						prompt={promptValue}
 						tooltip={
 							hasInputImage
-								? "Rewrite this prompt grounded in the input image (Grok vision)"
-								: "Rewrite this prompt with Grok"
+								? "Rewrite this prompt using the input image (vision)"
+								: "Rewrite this prompt with the configured AI provider"
 						}
 					/>
 				</div>

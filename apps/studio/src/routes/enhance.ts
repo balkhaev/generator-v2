@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 
-import type { StudioGrokClient } from "@/clients/grok";
+import type { PromptEnhanceClient } from "@/clients/prompt-enhance-client";
 
 const enhanceRequestSchema = z.object({
 	imageUrl: z.url("Image URL must be a valid URL").optional(),
@@ -25,7 +25,7 @@ function shouldFallbackVisionToText(error: unknown): boolean {
 }
 
 async function runEnhancement(
-	client: StudioGrokClient,
+	client: PromptEnhanceClient,
 	input: z.infer<typeof enhanceRequestSchema>
 ): Promise<{
 	enhanced: string;
@@ -51,15 +51,18 @@ async function runEnhancement(
 			enhanced,
 			mode: "text",
 			notice:
-				"Grok could not use the image (policy or provider limits). Prompt was enhanced without vision.",
+				"The model could not use the image (policy or provider limits). Prompt was enhanced without vision.",
 		};
 	}
 }
 
-export function createEnhanceRoutes(client: StudioGrokClient | undefined) {
+export function createEnhanceRoutes(deps: {
+	resolveClient: () => Promise<PromptEnhanceClient | undefined>;
+}) {
 	const app = new Hono();
 
 	app.post("/", async (c) => {
+		const client = await deps.resolveClient();
 		if (!client) {
 			return c.json(
 				{ error: "Prompt enhancement is not configured on this server." },

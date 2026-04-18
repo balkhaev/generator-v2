@@ -636,7 +636,7 @@ export default function ComposeForm({
 								}}
 								onEnhanced={(enhanced) => {
 									onFormChange({ ...form, prompt: enhanced });
-									toast.success("Prompt enhanced with Grok");
+									toast.success("Prompt enhanced");
 								}}
 								onError={(message) => toast.error(message)}
 								prompt={form.prompt}

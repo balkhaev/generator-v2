@@ -24,6 +24,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
+import type { PromptEnhanceSettings } from "@/domain/prompt-enhance-settings";
 import type { TrainingProviderSettings } from "@/domain/training-provider-settings";
 import type { UsersService } from "@/domain/users";
 import type { WorkerSettingsReader } from "@/domain/worker-settings-store";
@@ -33,6 +34,7 @@ import {
 } from "@/routes/admin-settings";
 import { createInternalRoutes } from "@/routes/internal";
 import { createAdminLoraRoutes } from "@/routes/loras";
+import { createPromptEnhanceProviderRoutes } from "@/routes/prompt-enhance-provider";
 import {
 	createTrainingProviderRoutes,
 	type TrainingProviderAvailabilityResolver,
@@ -58,6 +60,12 @@ interface AppOptions {
 	loadSetupStatus: () => Promise<AdminSetupStatus>;
 	loggerImpl?: Pick<Console, "info" | "error">;
 	loraRegistryService?: LoraRegistryService;
+	promptEnhanceEnv?: {
+		grokConfigured: boolean;
+		openRouterConfigured: boolean;
+		openRouterModel: string;
+	};
+	promptEnhanceSettings?: PromptEnhanceSettings;
 	s3Config?: S3StorageConfig;
 	studioBaseUrl: string;
 	trainingProviderAvailability?: TrainingProviderAvailabilityResolver;
@@ -216,12 +224,28 @@ export function createApp(options: AppOptions) {
 			})
 		);
 
+		if (options.promptEnhanceSettings && options.promptEnhanceEnv) {
+			app.route(
+				"/api/admin/prompt-enhance-provider",
+				createPromptEnhanceProviderRoutes({
+					promptEnhanceEnv: options.promptEnhanceEnv,
+					settings: options.promptEnhanceSettings,
+				})
+			);
+		}
+
 		if (options.adminSettingsEnvResolver) {
 			app.route(
 				"/api/admin/settings",
 				createAdminSettingsRoutes({
 					availability: options.trainingProviderAvailability,
 					envResolver: options.adminSettingsEnvResolver,
+					...(options.promptEnhanceSettings && options.promptEnhanceEnv
+						? {
+								promptEnhanceEnv: options.promptEnhanceEnv,
+								promptEnhanceSettings: options.promptEnhanceSettings,
+							}
+						: {}),
 					settings: options.trainingProviderSettings,
 					workerSettingsReader: options.workerSettingsReader,
 				})

@@ -19,9 +19,10 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
-import type { StudioGrokClient } from "@/clients/grok";
+import type { PromptEnhanceClient } from "@/clients/prompt-enhance-client";
 import type { StudioExecutionClient, StudioRepository } from "@/domain/studio";
 import { StudioService } from "@/domain/studio";
+import { resolveStudioPromptEnhanceClient } from "@/prompt-enhance-resolve";
 import { createEnhanceRoutes } from "@/routes/enhance";
 import { createInputAssetRoutes } from "@/routes/input-assets";
 import { createInternalRoutes } from "@/routes/internal";
@@ -50,12 +51,16 @@ interface AppOptions {
 	getSession: (
 		request: Request
 	) => Promise<{ session: unknown; user: unknown } | null>;
-	grokClient?: StudioGrokClient;
 	loggerImpl?: Pick<Console, "info" | "error" | "warn">;
 	loraReadRepository?: LoraReadRepository;
 	/** Base URL persons-api (same cookie domain) — для подстановки LoRA персоны в ран. */
 	personsApiBaseUrl?: string;
 	repository: StudioRepository;
+	/**
+	 * По умолчанию — Grok vs OpenRouter из Redis (`admin:prompt-enhance-provider`)
+	 * и env на studio-api. Переопределение для тестов.
+	 */
+	resolvePromptEnhanceClient?: () => Promise<PromptEnhanceClient | undefined>;
 	s3Client?: S3ClientLike;
 	s3Config: S3StorageConfig;
 }
@@ -329,7 +334,13 @@ export function createApp(options: AppOptions) {
 	app.route("/api/runs", createRunRoutes(service));
 	app.route("/api/scenario-shots", createShotRoutes(service));
 	app.route("/api/internal", createInternalRoutes(service));
-	app.route("/api/enhance-prompt", createEnhanceRoutes(options.grokClient));
+	app.route(
+		"/api/enhance-prompt",
+		createEnhanceRoutes({
+			resolveClient:
+				options.resolvePromptEnhanceClient ?? resolveStudioPromptEnhanceClient,
+		})
+	);
 	app.route(
 		"/api/loras",
 		createLoraRoutes(

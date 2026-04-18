@@ -660,7 +660,6 @@ function RunFilterPills({
 						type="button"
 					>
 						{option.label}
-						<span className="tabular-nums">{count}</span>
 					</button>
 				);
 			})}

@@ -57,16 +57,29 @@ async function fetchStudioLoras(baseModel?: string): Promise<{
 			credentials: "include",
 		});
 		// eslint-disable-next-line no-console
-		console.info("[compose] fetched loras", {
-			baseModel,
-			url,
-			payload,
-			count: Array.isArray(payload?.loras) ? payload.loras.length : null,
-		});
+		console.info(
+			"[compose] fetched loras " +
+				JSON.stringify({
+					baseModel,
+					url,
+					hasLoras: Array.isArray(payload?.loras),
+					count: Array.isArray(payload?.loras) ? payload.loras.length : null,
+					slugs: Array.isArray(payload?.loras)
+						? payload.loras.map((entry) => entry.slug)
+						: null,
+				})
+		);
 		return { error: null, loras: payload.loras ?? [] };
 	} catch (error) {
 		// eslint-disable-next-line no-console
-		console.error("[compose] failed to fetch loras", { baseModel, url, error });
+		console.error(
+			"[compose] failed to fetch loras " +
+				JSON.stringify({
+					baseModel,
+					url,
+					error: error instanceof Error ? error.message : String(error),
+				})
+		);
 		const message =
 			error instanceof Error ? error.message : "Failed to load LoRAs";
 		return { error: message, loras: [] };

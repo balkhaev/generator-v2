@@ -51,7 +51,7 @@ async function runEnhancement(
 			enhanced,
 			mode: "text",
 			notice:
-				"The model could not use the image (policy or provider limits). Prompt was enhanced without vision.",
+				"The provider declined to use the reference image. Prompt was enhanced without vision — the action may not be tied to the input frame.",
 		};
 	}
 }

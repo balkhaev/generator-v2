@@ -70,6 +70,77 @@ const promptStopWords = new Set([
 	"with",
 ]);
 
+// Reference image for prompt enhance: scenario-level workflows expose
+// `image-url` parameters (e.g. `endImageUrl`) that point to a frame the
+// generator will use as input. When the user clicks Enhance we want the
+// vision-capable model to see that frame so it can describe the action
+// from the correct starting state.
+function useReferenceImageUrl(
+	workflow: WorkflowDefinition | null,
+	form: ScenarioFormState
+): string | null {
+	return useMemo(() => {
+		if (!workflow) {
+			return null;
+		}
+		for (const parameter of workflow.parameters) {
+			if (parameter.kind !== "image-url") {
+				continue;
+			}
+			const raw = form.params[parameter.key];
+			if (typeof raw !== "string") {
+				continue;
+			}
+			const trimmed = raw.trim();
+			if (trimmed.length > 0) {
+				return trimmed;
+			}
+		}
+		return null;
+	}, [form.params, workflow]);
+}
+
+function ScenarioEnhancePromptButton({
+	onEnhanced,
+	prompt,
+	referenceImageUrl,
+}: {
+	onEnhanced: (enhanced: string) => void;
+	prompt: string;
+	referenceImageUrl: string | null;
+}) {
+	const hasImage = Boolean(referenceImageUrl);
+	return (
+		<EnhancePromptButton
+			enhance={async (value) => {
+				const result = await enhanceStudioPrompt(value, {
+					imageUrl: referenceImageUrl,
+				});
+				if (result.notice) {
+					toast.warning(result.notice);
+				}
+				return result.enhanced;
+			}}
+			label={hasImage ? "Enhance for image" : "Enhance"}
+			onEnhanced={(enhanced) => {
+				onEnhanced(enhanced);
+				toast.success(
+					hasImage
+						? "Prompt rewritten for the reference image"
+						: "Prompt enhanced"
+				);
+			}}
+			onError={(message) => toast.error(message)}
+			prompt={prompt}
+			tooltip={
+				hasImage
+					? "Rewrite this prompt as an action grounded in the reference image (vision)"
+					: "Rewrite this prompt with the configured AI provider"
+			}
+		/>
+	);
+}
+
 function suggestNameFromPrompt(prompt: string) {
 	const words = prompt
 		.replace(promptCleanupPattern, " ")
@@ -446,6 +517,8 @@ export default function ComposeForm({
 			selectedClassification.approach === "image"
 	);
 
+	const referenceImageUrl = useReferenceImageUrl(selectedWorkflow, form);
+
 	const partitioned = useMemo(() => {
 		if (!selectedWorkflow) {
 			return {
@@ -629,17 +702,12 @@ export default function ComposeForm({
 							Prompt
 						</Label>
 						<div className="flex items-center gap-2">
-							<EnhancePromptButton
-								enhance={async (value) => {
-									const result = await enhanceStudioPrompt(value);
-									return result.enhanced;
-								}}
-								onEnhanced={(enhanced) => {
-									onFormChange({ ...form, prompt: enhanced });
-									toast.success("Prompt enhanced");
-								}}
-								onError={(message) => toast.error(message)}
+							<ScenarioEnhancePromptButton
+								onEnhanced={(enhanced) =>
+									onFormChange({ ...form, prompt: enhanced })
+								}
 								prompt={form.prompt}
+								referenceImageUrl={referenceImageUrl}
 							/>
 							<span
 								className={cn(

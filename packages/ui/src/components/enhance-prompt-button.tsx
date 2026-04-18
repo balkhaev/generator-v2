@@ -29,7 +29,7 @@ export function EnhancePromptButton({
 	onEnhanced,
 	onError,
 	prompt,
-	tooltip = "Rewrite this prompt with Grok",
+	tooltip = "Rewrite this prompt with the configured AI provider",
 }: EnhancePromptButtonProps) {
 	const [isLoading, setIsLoading] = useState(false);
 	const trimmed = prompt.trim();

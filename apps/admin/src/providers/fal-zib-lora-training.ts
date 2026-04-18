@@ -13,9 +13,14 @@ import { z } from "zod";
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const REQUEST_TIMEOUT_MS = 120_000;
 /**
- * 1500 шагов на 20-кадровом датасете давало заметный оверфит на синтетику
- * (z-image-trainer запоминал артефакты flux-2/edit). 1200 даёт лучший баланс
- * между усвоением идентичности и сохранением гибкости при инференсе.
+ * Текущая композиция датасета — 25 кадров: 6 копий оригинала + 19 синтетических
+ * вариаций flux-2/edit. На 18-кадровой версии 1500 шагов давали оверфит на
+ * синтетику (z-image-trainer запоминал артефакты flux-2/edit), 1200 — баланс.
+ * На 25 кадрах каждый кадр видится трейнером ~25–30% реже за тот же бюджет
+ * шагов, поэтому 1200 остаётся осознанно консервативным выбором: лучше слегка
+ * недотренировать и сохранить гибкость, чем уйти в lock-in на flux-2/edit
+ * артефакты. Если на инференсе LoRA выглядит «слабой» по идентичности — можно
+ * аккуратно поднять до 1400; выше уже опасно.
  */
 const DEFAULT_TRAINING_STEPS = 1200;
 const DEFAULT_TRAINING_POLL_MS = 30_000;
@@ -170,6 +175,48 @@ const REFERENCE_DATASET_VARIANTS: readonly ReferenceVariant[] = [
 			"tight frontal headshot, off-white background, soft frontal beauty lighting, neutral relaxed expression, sharp focus on face",
 		prompt:
 			"tight frontal headshot of the face and shoulders, plain off-white seamless background, soft frontal beauty lighting, eye-level camera, neutral relaxed expression, both eyes clearly visible to camera, sharp focus on face",
+	},
+	{
+		caption:
+			"close-up headshot, soft pastel pink seamless backdrop, soft frontal softbox, plain cream silk top, neutral expression",
+		prompt:
+			"close-up beauty headshot, soft pastel pink seamless backdrop, soft frontal softbox lighting, plain cream silk shell top, eye-level camera, neutral relaxed expression, both eyes to camera",
+	},
+	{
+		caption:
+			"close-up headshot, cool blue-grey backdrop, soft north-window light, plain charcoal crewneck top, neutral expression",
+		prompt:
+			"close-up beauty headshot, cool blue-grey seamless backdrop, soft diffused north-window light, plain charcoal crewneck top, eye-level camera, neutral relaxed expression, both eyes to camera",
+	},
+	{
+		caption:
+			"half-body portrait, warm beige seamless backdrop, neutral softbox key plus fill, plain camel cashmere sweater, gentle closed-mouth smile",
+		prompt:
+			"half-body portrait, warm beige seamless backdrop, neutral softbox key plus soft fill, plain camel cashmere sweater, eye-level camera, gentle closed-mouth smile, eyes to camera",
+	},
+	{
+		caption:
+			"close-up portrait, soft sage green interior wall, soft diffused window light, plain olive linen blouse, neutral expression",
+		prompt:
+			"close-up portrait, softly blurred sage green interior wall, soft diffused window light, plain olive linen blouse, eye-level camera, neutral relaxed expression, eyes to camera",
+	},
+	{
+		caption:
+			"half-body outdoor portrait, neutral concrete wall, soft overcast daylight, plain navy crewneck top, neutral expression",
+		prompt:
+			"half-body outdoor portrait against a smoothly blurred neutral concrete wall, soft overcast daylight, plain navy crewneck top, eye-level camera, neutral relaxed expression, eyes to camera",
+	},
+	{
+		caption:
+			"close-up headshot, dusty rose backdrop, large frontal softbox, plain ivory cotton tee, soft closed-mouth smile",
+		prompt:
+			"close-up beauty headshot, dusty rose seamless backdrop, large frontal softbox lighting, plain ivory cotton tee, eye-level camera, soft closed-mouth smile, eyes to camera",
+	},
+	{
+		caption:
+			"shoulder-up frontal portrait, off-white seamless, soft daylight LED panel, plain heather grey tee, fresh neutral expression",
+		prompt:
+			"shoulder-up frontal portrait, plain off-white seamless backdrop, soft daylight-balanced LED panel from front, plain heather grey cotton tee, eye-level camera, fresh neutral expression, eyes to camera",
 	},
 ] as const;
 

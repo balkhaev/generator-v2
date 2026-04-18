@@ -22,7 +22,12 @@ import {
 	UsersRound,
 } from "lucide-react";
 import type { Route } from "next";
-import { useMemo, useState } from "react";
+import {
+	type ComponentPropsWithoutRef,
+	forwardRef,
+	useMemo,
+	useState,
+} from "react";
 
 import IconButton from "@/components/icon-button";
 import type { ScenarioCardData } from "@/components/scenario-card-data";
@@ -230,42 +235,94 @@ function PersonListItem({
 	);
 }
 
-function SwitcherTrigger({
-	open,
-	scenarioCount,
-	selectedPerson,
-	selectedScenario,
-}: {
+type SwitcherTriggerProps = {
 	open: boolean;
 	scenarioCount: number;
 	selectedPerson: PersonRecord | null;
 	selectedScenario: ScenarioCardData | null;
-}) {
-	if (selectedPerson) {
-		const thumb =
-			selectedPerson.photoUrl ?? selectedPerson.referencePhotoUrl ?? null;
+} & ComponentPropsWithoutRef<"button">;
+
+const SwitcherTrigger = forwardRef<HTMLButtonElement, SwitcherTriggerProps>(
+	function SwitcherTrigger(
+		{
+			className,
+			open,
+			scenarioCount,
+			selectedPerson,
+			selectedScenario,
+			...buttonProps
+		},
+		ref
+	) {
+		const triggerClass = cn(
+			"group flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-muted/15",
+			className
+		);
+
+		if (selectedPerson) {
+			const thumb =
+				selectedPerson.photoUrl ?? selectedPerson.referencePhotoUrl ?? null;
+			return (
+				<button
+					className={triggerClass}
+					ref={ref}
+					type="button"
+					{...buttonProps}
+				>
+					<span className="relative size-6 shrink-0 overflow-hidden rounded-md ring-1 ring-foreground/20">
+						{thumb ? (
+							<span
+								aria-hidden="true"
+								className="absolute inset-0 bg-center bg-cover"
+								style={{ backgroundImage: `url("${thumb}")` }}
+							/>
+						) : (
+							<UserRound className="absolute top-1/2 left-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 text-muted-foreground" />
+						)}
+					</span>
+					<div className="min-w-0 flex-1">
+						<p className="truncate font-medium text-xs leading-tight">
+							{selectedPerson.name}
+						</p>
+						<p className="truncate text-[10px] text-muted-foreground">
+							Person · LoRA generation
+						</p>
+					</div>
+					<ChevronDown
+						aria-hidden="true"
+						className={cn(
+							"size-3.5 shrink-0 text-muted-foreground transition-transform",
+							open && "rotate-180"
+						)}
+					/>
+				</button>
+			);
+		}
+
 		return (
-			<button
-				className="group flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-muted/15"
-				type="button"
-			>
-				<span className="relative size-6 shrink-0 overflow-hidden rounded-md ring-1 ring-foreground/20">
-					{thumb ? (
-						<span
-							aria-hidden="true"
-							className="absolute inset-0 bg-center bg-cover"
-							style={{ backgroundImage: `url("${thumb}")` }}
-						/>
-					) : (
-						<UserRound className="absolute top-1/2 left-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 text-muted-foreground" />
-					)}
-				</span>
+			<button className={triggerClass} ref={ref} type="button" {...buttonProps}>
+				{selectedScenario ? (
+					<span
+						aria-hidden="true"
+						className={cn(
+							"size-2 shrink-0 rounded-full",
+							scenarioStatusDot[selectedScenario.status]
+						)}
+					/>
+				) : (
+					<Layers
+						aria-hidden="true"
+						className="size-3.5 shrink-0 text-muted-foreground/60"
+					/>
+				)}
 				<div className="min-w-0 flex-1">
 					<p className="truncate font-medium text-xs leading-tight">
-						{selectedPerson.name}
+						{selectedScenario?.name ?? "Pick scenario or person"}
 					</p>
 					<p className="truncate text-[10px] text-muted-foreground">
-						Person · LoRA generation
+						{selectedScenario
+							? `${selectedScenario.workflowKey} · ${selectedScenario.duration} · ${selectedScenario.runCount} runs`
+							: `${scenarioCount} scenarios`}
 					</p>
 				</div>
 				<ChevronDown
@@ -278,46 +335,9 @@ function SwitcherTrigger({
 			</button>
 		);
 	}
+);
 
-	return (
-		<button
-			className="group flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-muted/15"
-			type="button"
-		>
-			{selectedScenario ? (
-				<span
-					aria-hidden="true"
-					className={cn(
-						"size-2 shrink-0 rounded-full",
-						scenarioStatusDot[selectedScenario.status]
-					)}
-				/>
-			) : (
-				<Layers
-					aria-hidden="true"
-					className="size-3.5 shrink-0 text-muted-foreground/60"
-				/>
-			)}
-			<div className="min-w-0 flex-1">
-				<p className="truncate font-medium text-xs leading-tight">
-					{selectedScenario?.name ?? "Pick scenario or person"}
-				</p>
-				<p className="truncate text-[10px] text-muted-foreground">
-					{selectedScenario
-						? `${selectedScenario.workflowKey} · ${selectedScenario.duration} · ${selectedScenario.runCount} runs`
-						: `${scenarioCount} scenarios`}
-				</p>
-			</div>
-			<ChevronDown
-				aria-hidden="true"
-				className={cn(
-					"size-3.5 shrink-0 text-muted-foreground transition-transform",
-					open && "rotate-180"
-				)}
-			/>
-		</button>
-	);
-}
+SwitcherTrigger.displayName = "SwitcherTrigger";
 
 export default function SubjectSwitcher({
 	getPersonHref,

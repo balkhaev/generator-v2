@@ -65,6 +65,10 @@ const PRESIGNED_URL_TTL_SECONDS = 6 * 60 * 60;
 const LORA_S3_PREFIX = "loras/runpod-pod";
 const LOG_S3_PREFIX = "loras/runpod-pod/logs";
 
+const POLL_PROGRESS_MIN = 80;
+const POLL_PROGRESS_MAX = 99;
+const TQDM_STEP_PATTERN = /(\d+)\s*\/\s*(\d+)\s*\[/g;
+
 const POD_TRAINING_PROVIDER = "runpod-pod" as const;
 const TRAINING_MODEL_LABEL = "ai-toolkit-pod";
 
@@ -362,6 +366,88 @@ export class RunpodPodLoraTrainingRunner {
 		} catch {
 			return { exists: false, size: null };
 		}
+	}
+
+	/**
+	 * Возвращает последние `tailBytes` живого pod-лога из S3 (его шипит
+	 * `pod-bootstrap.sh` каждые 15с в `LOG_UPLOAD_URL`). Используется для
+	 * парсинга tqdm-прогресса в `pollUntilExited` — без этого UI висит на
+	 * статичных 80% всё время тренировки. На любой ошибке возвращает null,
+	 * чтобы poll loop продолжал работать без логов.
+	 */
+	private async fetchPodLogTail(
+		s3Key: string,
+		tailBytes = 16 * 1024
+	): Promise<string | null> {
+		try {
+			const client = createS3Client(this.s3Config);
+			const file = client.file(s3Key);
+			const stat = await file.stat();
+			const size = stat.size ?? 0;
+			if (size === 0) {
+				return null;
+			}
+			const start = Math.max(0, size - tailBytes);
+			return await file.slice(start).text();
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * Достаёт последний `step/total` из tqdm-вывода ai-toolkit. Формат:
+	 *   "  96%|█████████▌| 1151/1200 [02:32<00:06,  7.45it/s]"
+	 * Берём последнее совпадение, т.к. tqdm перезаписывает строку через `\r`
+	 * и в S3-файле эти кадры лежат подряд.
+	 */
+	private parseTqdmProgress(
+		logTail: string
+	): { step: number; total: number } | null {
+		const matches = [...logTail.matchAll(TQDM_STEP_PATTERN)];
+		const last = matches.at(-1);
+		if (!last) {
+			return null;
+		}
+		const step = Number(last[1]);
+		const total = Number(last[2]);
+		if (
+			!(
+				Number.isFinite(step) &&
+				Number.isFinite(total) &&
+				total > 0 &&
+				step >= 0 &&
+				step <= total
+			)
+		) {
+			return null;
+		}
+		return { step, total };
+	}
+
+	/**
+	 * Возвращает progressPct в диапазоне [POLL_PROGRESS_MIN..POLL_PROGRESS_MAX]
+	 * на основе tqdm-прогресса из логов. Если лог недоступен/не содержит
+	 * валидный прогресс — отдаёт floor (80%), как и было до парсинга.
+	 */
+	private async resolvePollProgressPct(input: {
+		logS3Key: string;
+		trainingSteps: number;
+	}): Promise<{ pct: number; step: number | null; total: number | null }> {
+		const tail = await this.fetchPodLogTail(input.logS3Key);
+		if (!tail) {
+			return { pct: POLL_PROGRESS_MIN, step: null, total: null };
+		}
+		const progress = this.parseTqdmProgress(tail);
+		if (!progress) {
+			return { pct: POLL_PROGRESS_MIN, step: null, total: null };
+		}
+		const ratio = progress.step / progress.total;
+		const span = POLL_PROGRESS_MAX - POLL_PROGRESS_MIN;
+		const pct = Math.min(
+			POLL_PROGRESS_MAX,
+			Math.max(POLL_PROGRESS_MIN, POLL_PROGRESS_MIN + Math.round(span * ratio))
+		);
+		return { pct, step: progress.step, total: progress.total };
 	}
 
 	private async sendTrainingEvent(input: {
@@ -794,6 +880,7 @@ export class RunpodPodLoraTrainingRunner {
 			await this.pollUntilExited({
 				datasetUrl: datasetPrep.datasetUrl,
 				debugCorrelationId: parsed.debugCorrelationId,
+				logS3Key,
 				loraS3Key,
 				outputName,
 				personId: parsed.personId,
@@ -927,9 +1014,67 @@ export class RunpodPodLoraTrainingRunner {
 		});
 
 		try {
+			// Fast-path: если артефакт уже в S3 (типично для recovery после
+			// падения admin-worker'а), пропускаем polling и финализируем сразу.
+			// Это спасает от ложного timeout, когда pod давно отработал, а
+			// исходный trainingStartedAt уже за границей trainingTimeoutMs.
+			const preCheck = await this.checkLoraArtifactInS3(loraS3Key);
+			if (preCheck.exists) {
+				this.logger.info("runpod-pod.resume-fast-path", {
+					loraS3Key,
+					personId: parsed.personId,
+					podId: parsed.providerJobId,
+					sizeBytes: preCheck.size,
+				});
+				try {
+					await this.podClient.stopPod(parsed.providerJobId);
+				} catch (stopError) {
+					this.logger.error("runpod-pod.resume-stop-failed", {
+						message: stopError instanceof Error ? stopError.message : "unknown",
+						podId: parsed.providerJobId,
+					});
+				}
+				await this.sendTrainingEvent({
+					personId: parsed.personId,
+					event: {
+						completedAt: new Date().toISOString(),
+						debug: {
+							baseModel: this.baseModel,
+							loraS3Key,
+							podId: parsed.providerJobId,
+							recovered: true,
+							recoveredAt: new Date().toISOString(),
+							recoveryFastPath: true,
+						},
+						debugCorrelationId: parsed.debugCorrelationId,
+						lastEventAt: new Date().toISOString(),
+						loraUrl: loraPublicUrl,
+						phase: "ready",
+						progressPct: 100,
+						providerJobId: parsed.providerJobId,
+						providerRequestId: parsed.providerJobId,
+						providerStatus: "EXITED",
+						referenceImageCount: parsed.referenceImageCount,
+						referenceImageTargetCount: parsed.referenceImageTargetCount,
+						referenceImageUrls: parsed.referenceImageUrls,
+						status: "ready",
+						trainingElapsedMs: Date.now() - trainingStartedMs,
+						trainingRunId: parsed.trainingRunId,
+						trainingStartedAt: parsed.trainingStartedAt,
+						trainingSteps: parsed.trainingSteps,
+						triggerWord: parsed.triggerWord,
+						uploadMethod: "s3",
+					},
+				});
+				return;
+			}
+
+			const logS3Key = `${LOG_S3_PREFIX}/${sanitizeSegment(parsed.outputName)}-${parsed.trainingRunId.slice(0, 8)}.log`;
+
 			await this.pollUntilExited({
 				datasetUrl: "",
 				debugCorrelationId: parsed.debugCorrelationId,
+				logS3Key,
 				loraS3Key,
 				outputName: parsed.outputName,
 				personId: parsed.personId,
@@ -1026,9 +1171,116 @@ export class RunpodPodLoraTrainingRunner {
 		}
 	}
 
+	/**
+	 * Pod снесли извне (вручную / через MCP / quota). Прежде чем падать,
+	 * проверим S3 — pod_runner мог успеть долить .safetensors до того, как
+	 * его снесли. Тогда трактуем как ready.
+	 */
+	private async handleTerminatedPod(input: {
+		loraS3Key: string;
+		personId: string;
+		pod: RunpodPodSnapshot;
+		podId: string;
+	}): Promise<RunpodPodSnapshot> {
+		const artifactCheck = await this.checkLoraArtifactInS3(input.loraS3Key);
+		if (artifactCheck.exists) {
+			this.logger.info("runpod-pod.terminated-but-artifact-ready", {
+				loraS3Key: input.loraS3Key,
+				personId: input.personId,
+				podId: input.podId,
+				sizeBytes: artifactCheck.size,
+			});
+			return input.pod;
+		}
+		throw new Error(
+			"RunPod pod was terminated externally before training finished"
+		);
+	}
+
+	/**
+	 * Authoritative-источник готовности — наличие .safetensors в S3.
+	 * pod-bootstrap.sh после успешного pod_runner.py делает `exec sleep
+	 * infinity` (RunPod иначе перезапускает контейнер по бесконечному
+	 * кругу), поэтому desiredStatus останется RUNNING вечно. Стопаем
+	 * pod руками и выходим как успех.
+	 */
+	private async stopPodIfArtifactReady(input: {
+		loraS3Key: string;
+		personId: string;
+		pod: RunpodPodSnapshot;
+		podId: string;
+	}): Promise<RunpodPodSnapshot | null> {
+		const artifactCheck = await this.checkLoraArtifactInS3(input.loraS3Key);
+		if (!artifactCheck.exists) {
+			return null;
+		}
+		this.logger.info("runpod-pod.artifact-ready-stopping-pod", {
+			loraS3Key: input.loraS3Key,
+			personId: input.personId,
+			podId: input.podId,
+			sizeBytes: artifactCheck.size,
+		});
+		try {
+			await this.podClient.stopPod(input.podId);
+		} catch (stopError) {
+			this.logger.error("runpod-pod.stop-after-artifact-failed", {
+				message: stopError instanceof Error ? stopError.message : "unknown",
+				podId: input.podId,
+			});
+		}
+		return input.pod;
+	}
+
+	private async emitPollProgressEvent(input: {
+		debugCorrelationId?: string;
+		logS3Key: string;
+		personId: string;
+		podId: string;
+		providerStatus: RunpodPodStatus;
+		referenceImageCount: number;
+		referenceImageTargetCount: number;
+		trainingRunId: string;
+		trainingStartedAt: string;
+		trainingStartedMs: number;
+		trainingSteps: number;
+		triggerWord: string;
+	}): Promise<void> {
+		const progress = await this.resolvePollProgressPct({
+			logS3Key: input.logS3Key,
+			trainingSteps: input.trainingSteps,
+		});
+		const tqdmDebug =
+			progress.step !== null && progress.total !== null
+				? { tqdmStep: progress.step, tqdmTotal: progress.total }
+				: null;
+
+		await this.sendTrainingEvent({
+			personId: input.personId,
+			event: {
+				...(tqdmDebug ? { debug: tqdmDebug } : {}),
+				debugCorrelationId: input.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				phase: "polling-training",
+				progressPct: progress.pct,
+				providerJobId: input.podId,
+				providerRequestId: input.podId,
+				providerStatus: input.providerStatus,
+				referenceImageCount: input.referenceImageCount,
+				referenceImageTargetCount: input.referenceImageTargetCount,
+				status: "training",
+				trainingElapsedMs: Date.now() - input.trainingStartedMs,
+				trainingRunId: input.trainingRunId,
+				trainingStartedAt: input.trainingStartedAt,
+				trainingSteps: input.trainingSteps,
+				triggerWord: input.triggerWord,
+			},
+		});
+	}
+
 	private async pollUntilExited(input: {
 		datasetUrl: string;
 		debugCorrelationId?: string;
+		logS3Key: string;
 		loraS3Key: string;
 		outputName: string;
 		personId: string;
@@ -1052,44 +1304,37 @@ export class RunpodPodLoraTrainingRunner {
 				return pod;
 			}
 			if (status === "TERMINATED") {
-				// Pod снесли извне (вручную / через MCP / quota). Прежде чем падать,
-				// проверим S3 — pod_runner мог успеть долить .safetensors до того, как
-				// его снесли (типичный случай: pod успешно завершил тренировку, ушёл
-				// в idle перед exit, кто-то ткнул "delete"). Тогда трактуем как ready.
-				const artifactCheck = await this.checkLoraArtifactInS3(input.loraS3Key);
-				if (artifactCheck.exists) {
-					this.logger.info("runpod-pod.terminated-but-artifact-ready", {
-						loraS3Key: input.loraS3Key,
-						personId: input.personId,
-						podId: input.podId,
-						sizeBytes: artifactCheck.size,
-					});
-					return pod;
-				}
-				throw new Error(
-					"RunPod pod was terminated externally before training finished"
-				);
+				return await this.handleTerminatedPod({
+					loraS3Key: input.loraS3Key,
+					personId: input.personId,
+					pod,
+					podId: input.podId,
+				});
 			}
 
-			await this.sendTrainingEvent({
+			const stoppedFromArtifact = await this.stopPodIfArtifactReady({
+				loraS3Key: input.loraS3Key,
 				personId: input.personId,
-				event: {
-					debugCorrelationId: input.debugCorrelationId,
-					lastEventAt: new Date().toISOString(),
-					phase: "polling-training",
-					progressPct: 80,
-					providerJobId: input.podId,
-					providerRequestId: input.podId,
-					providerStatus: status,
-					referenceImageCount: input.referenceImageCount,
-					referenceImageTargetCount: input.referenceImageTargetCount,
-					status: "training",
-					trainingElapsedMs: Date.now() - input.trainingStartedMs,
-					trainingRunId: input.trainingRunId,
-					trainingStartedAt: input.trainingStartedAt,
-					trainingSteps: input.trainingSteps,
-					triggerWord: input.triggerWord,
-				},
+				pod,
+				podId: input.podId,
+			});
+			if (stoppedFromArtifact) {
+				return stoppedFromArtifact;
+			}
+
+			await this.emitPollProgressEvent({
+				debugCorrelationId: input.debugCorrelationId,
+				logS3Key: input.logS3Key,
+				personId: input.personId,
+				podId: input.podId,
+				providerStatus: status,
+				referenceImageCount: input.referenceImageCount,
+				referenceImageTargetCount: input.referenceImageTargetCount,
+				trainingRunId: input.trainingRunId,
+				trainingStartedAt: input.trainingStartedAt,
+				trainingStartedMs: input.trainingStartedMs,
+				trainingSteps: input.trainingSteps,
+				triggerWord: input.triggerWord,
 			});
 
 			await sleep(this.pollMs);

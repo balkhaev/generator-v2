@@ -24,8 +24,18 @@
 #     LORA_UPLOAD_URL, опционально HF_TOKEN, RESULT_CALLBACK_URL,
 #     RESULT_CALLBACK_TOKEN.
 #
-# Pod завершается с кодом pod_runner.py — admin-worker ловит это через
-# RunPod REST API (desiredStatus → EXITED) и забирает .safetensors из S3.
+# RunPod рестартует контейнер при любом exit (нет одноразового pod-режима),
+# поэтому мы:
+#   1. Кладём sentinel-файл `<workspace>/.pod-runner-done` после успешного
+#      pod_runner.py и при следующем boot сразу уходим в `exec sleep infinity`,
+#      чтобы вторая (и третья, и седьмая) тренировка не запустилась.
+#   2. После успешного завершения тоже делаем `exec sleep infinity` —
+#      контейнер не "падает", desiredStatus у RunPod остаётся RUNNING.
+#   3. admin-worker через `pollUntilExited` параллельно опрашивает S3 на
+#      наличие `.safetensors` и стопает pod через REST API сам, как только
+#      артефакт появился. См. apps/admin/src/providers/runpod-pod-lora-training.ts.
+# При ошибке pod_runner.py наоборот — даём контейнеру упасть, чтобы admin
+# увидел ненулевой exit/EXITED и пометил тренировку как failed.
 
 set -euo pipefail
 set -o errtrace
@@ -41,12 +51,22 @@ trap 'fail "bootstrap aborted on line $LINENO"' ERR
 # именно этот путь по умолчанию. На custom-образах можно переопределить.
 export AI_TOOLKIT_PATH="${AI_TOOLKIT_PATH:-/app/ai-toolkit}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
+POD_RUNNER_DONE_SENTINEL="${WORKSPACE_DIR}/.pod-runner-done"
 
 mkdir -p "$WORKSPACE_DIR"
 cd "$WORKSPACE_DIR"
 
 BOOTSTRAP_LOG="${WORKSPACE_DIR}/pod-bootstrap.log"
 exec > >(tee -a "$BOOTSTRAP_LOG") 2>&1
+
+# Sentinel-короткое замыкание: если предыдущая инкарнация контейнера уже
+# успешно дотренировала и залила .safetensors, не запускаем тренировку
+# заново. Просто держим контейнер живым, пока admin-worker не стопнет pod
+# через REST API.
+if [ -f "$POD_RUNNER_DONE_SENTINEL" ]; then
+  log "found sentinel $POD_RUNNER_DONE_SENTINEL — pod_runner.py already succeeded; sleeping until admin stops the pod"
+  exec sleep infinity
+fi
 
 log "ostris/aitoolkit slim bootstrap; AI_TOOLKIT_PATH=$AI_TOOLKIT_PATH"
 
@@ -115,4 +135,16 @@ if [ -n "${LOG_UPLOAD_URL:-}" ] && [ -s "$BOOTSTRAP_LOG" ]; then
     "$LOG_UPLOAD_URL" >/dev/null 2>&1 || true
 fi
 
+if [ "$RUNNER_EXIT" -eq 0 ]; then
+  # Успех: ставим sentinel и держим контейнер живым. Admin-worker сам
+  # стопнет pod через REST API после того, как увидит .safetensors в S3.
+  # Без этого RunPod рестартанёт контейнер и pod_runner.py начнёт тренировку
+  # с нуля по кругу (наблюдалось x7 за 2 часа на одном pod).
+  date -u +'%Y-%m-%dT%H:%M:%SZ' > "$POD_RUNNER_DONE_SENTINEL"
+  log "pod_runner.py succeeded; wrote sentinel and sleeping forever (admin-worker will stop the pod)"
+  exec sleep infinity
+fi
+
+# При ошибке наоборот — даём контейнеру упасть, чтобы admin увидел EXITED
+# с ненулевым кодом и пометил тренировку failed.
 exit "$RUNNER_EXIT"

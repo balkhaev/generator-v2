@@ -387,6 +387,26 @@ const toolDefinitions = [
 		},
 		name: "kafka_topic_sample",
 	},
+	{
+		description:
+			"Force-mark a studio run as 'failed' with an explanatory error summary. Used to clear orphan runs that got stuck in 'queued' (e.g. studio-api crashed between createRun and createExecution).",
+		inputSchema: {
+			properties: {
+				errorSummary: {
+					description:
+						"Human-readable reason shown in studio UI. Defaults to 'Marked failed via internal MCP tool'.",
+					type: "string",
+				},
+				runId: {
+					description: "Studio run id (uuid).",
+					type: "string",
+				},
+			},
+			required: ["runId"],
+			type: "object",
+		},
+		name: "studio_run_mark_failed",
+	},
 ] as const;
 
 function createToolResult(payload: unknown, isError = false) {
@@ -1048,6 +1068,41 @@ async function handleGeneratorExecutionToolCall(
 	);
 }
 
+async function handleStudioRunMarkFailedToolCall(
+	_name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const runId = parseOptionalString(argumentsPayload.runId);
+	if (!runId) {
+		return createErrorResponse(id, "runId is required");
+	}
+	const errorSummary = parseOptionalString(argumentsPayload.errorSummary);
+	const callbackToken =
+		process.env.GENERATOR_CALLBACK_TOKEN ?? "local-generator-callback-token";
+	const body: Record<string, unknown> = {};
+	if (errorSummary) {
+		body.errorSummary = errorSummary;
+	}
+	return createOkResponse(
+		id,
+		createToolResult(
+			await fetchServiceSnapshot(
+				"studio",
+				`/api/internal/runs/${encodeURIComponent(runId)}/mark-failed`,
+				{
+					body: JSON.stringify(body),
+					headers: {
+						"content-type": "application/json",
+						"x-generator-callback-token": callbackToken,
+					},
+					method: "POST",
+				}
+			)
+		)
+	);
+}
+
 type ToolHandler = (
 	name: string,
 	argumentsPayload: Record<string, unknown>,
@@ -1060,6 +1115,7 @@ const toolHandlers: Record<string, ToolHandler> = {
 	generator_execution_sync: handleGeneratorExecutionToolCall,
 	lora_get: handleLoraToolCall,
 	lora_list: handleLoraToolCall,
+	studio_run_mark_failed: handleStudioRunMarkFailedToolCall,
 	test_user_get: handleTestUserToolCall,
 	test_user_upsert: handleTestUserToolCall,
 	training_provider_get: handleTrainingProviderToolCall,

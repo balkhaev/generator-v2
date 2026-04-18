@@ -509,28 +509,59 @@ export class StudioService {
 			workflowKey: scenario.workflowKey,
 		});
 
-		const execution = await this.executionClient.createExecution(
-			{
-				callback: this.callbackConfig
-					? {
-							context: {
-								runId: createdRun.id,
-							},
-							token: this.callbackConfig.token,
-							...(this.callbackConfig.url
-								? { url: this.callbackConfig.url }
-								: {}),
-						}
-					: undefined,
-				...(parsed.inputImageUrl
-					? { inputImageUrl: parsed.inputImageUrl }
-					: {}),
-				params: mergedExecutionParams,
-				prompt: scenario.prompt,
-				workflowKey: scenario.workflowKey,
-			},
-			{ debugCorrelationId: options?.debugCorrelationId }
-		);
+		let execution: GeneratorExecutionRecord;
+		try {
+			execution = await this.executionClient.createExecution(
+				{
+					callback: this.callbackConfig
+						? {
+								context: {
+									runId: createdRun.id,
+								},
+								token: this.callbackConfig.token,
+								...(this.callbackConfig.url
+									? { url: this.callbackConfig.url }
+									: {}),
+							}
+						: undefined,
+					...(parsed.inputImageUrl
+						? { inputImageUrl: parsed.inputImageUrl }
+						: {}),
+					params: mergedExecutionParams,
+					prompt: scenario.prompt,
+					workflowKey: scenario.workflowKey,
+				},
+				{ debugCorrelationId: options?.debugCorrelationId }
+			);
+		} catch (error) {
+			// Не оставляем «зомби»-row в queued при провале старта в generator-api:
+			// иначе фронт будет бесконечно дёргать /sync и получать 500 (нет
+			// generatorRunId). Помечаем сразу как failed, чтобы UI показал ошибку.
+			const errorSummary =
+				error instanceof Error
+					? error.message
+					: "Failed to launch generator execution";
+			await this.repository
+				.updateRun(createdRun.id, {
+					completedAt: new Date(),
+					errorSummary,
+					status: "failed",
+				})
+				.catch((markError) => {
+					this.logger.error("studio.execution.create.mark-failed-failed", {
+						markError:
+							markError instanceof Error ? markError.message : "unknown",
+						runId: createdRun.id,
+					});
+				});
+			this.logger.error("studio.execution.create.failed", {
+				debugCorrelationId: options?.debugCorrelationId ?? null,
+				errorSummary,
+				runId: createdRun.id,
+				scenarioId: scenario.id,
+			});
+			throw error;
+		}
 
 		this.logger.info("studio.execution.create", {
 			debugCorrelationId: options?.debugCorrelationId ?? null,
@@ -608,6 +639,30 @@ export class StudioService {
 		});
 
 		return updatedRun ? toStudioRunRecord(updatedRun) : null;
+	}
+
+	/**
+	 * Точечно перевести run в `failed` со связанным `errorSummary`.
+	 * Нужен для ручной зачистки orphan-ров (например, через MCP-tool
+	 * `studio_run_mark_failed`), когда `launchRun` не успел сам пометить запись
+	 * — например, после рестарта studio-api между попытками.
+	 */
+	async markRunFailed(runId: string, errorSummary: string) {
+		const currentRun = await this.repository.getRunById(runId);
+		if (!currentRun) {
+			return null;
+		}
+		const updated = await this.repository.updateRun(runId, {
+			completedAt: new Date(),
+			errorSummary,
+			status: "failed",
+		});
+		this.logger.info("studio.run.mark-failed", {
+			errorSummary,
+			previousStatus: currentRun.status,
+			runId,
+		});
+		return updated ? toStudioRunRecord(updated) : null;
 	}
 
 	async applyExecutionCallback(input: {

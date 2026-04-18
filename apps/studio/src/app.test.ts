@@ -563,4 +563,131 @@ describe("studio backend", () => {
 			true
 		);
 	});
+
+	it("marks an orphan run failed when generator launch throws", async () => {
+		const repository = createMemoryRepository();
+		await repository.createScenario({
+			generatorScenarioId: null,
+			id: "scenario-orphan",
+			name: "Orphan scenario",
+			params: {},
+			prompt: "p",
+			workflowKey: "fal-zimage-turbo",
+		});
+
+		const app = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub({
+				createExecution() {
+					return Promise.reject(new Error("401 Unauthorized"));
+				},
+			}),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			repository,
+			s3Config: fakeS3Config,
+		});
+
+		const runResponse = await app.request("http://localhost/api/runs", {
+			body: JSON.stringify({ scenarioId: "scenario-orphan" }),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		expect(runResponse.status).toBe(500);
+
+		const runs = await repository.listRuns();
+		expect(runs).toHaveLength(1);
+		expect(runs[0]?.status).toBe("failed");
+		expect(runs[0]?.errorSummary).toBe("401 Unauthorized");
+		expect(runs[0]?.completedAt).toBeInstanceOf(Date);
+	});
+
+	it("marks a run failed via internal endpoint", async () => {
+		const repository = createMemoryRepository();
+		await repository.createScenario({
+			generatorScenarioId: null,
+			id: "scenario-mark",
+			name: "Mark scenario",
+			params: {},
+			prompt: "p",
+			workflowKey: "fal-zimage-turbo",
+		});
+		await repository.createRun({
+			errorSummary: null,
+			generatorRunId: null,
+			id: "run-stuck",
+			inputImageUrl: "",
+			inputPersonGenerationId: null,
+			inputPersonId: null,
+			loraPersonId: null,
+			providerEndpointId: null,
+			providerJobId: null,
+			scenarioId: "scenario-mark",
+			status: "queued",
+			workflowKey: "fal-zimage-turbo",
+		});
+
+		const app = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub(),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve(null);
+			},
+			repository,
+			s3Config: fakeS3Config,
+		});
+
+		const unauthorized = await app.request(
+			"http://localhost/api/internal/runs/run-stuck/mark-failed",
+			{
+				body: JSON.stringify({ errorSummary: "manual cleanup" }),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+		expect(unauthorized.status).toBe(401);
+
+		const ok = await app.request(
+			"http://localhost/api/internal/runs/run-stuck/mark-failed",
+			{
+				body: JSON.stringify({ errorSummary: "manual cleanup" }),
+				headers: {
+					"content-type": "application/json",
+					"x-generator-callback-token": "local-generator-callback-token",
+				},
+				method: "POST",
+			}
+		);
+		expect(ok.status).toBe(200);
+		const payload = (await ok.json()) as {
+			run: { errorSummary: string; status: string };
+		};
+		expect(payload.run.status).toBe("failed");
+		expect(payload.run.errorSummary).toBe("manual cleanup");
+
+		const notFound = await app.request(
+			"http://localhost/api/internal/runs/missing/mark-failed",
+			{
+				body: JSON.stringify({}),
+				headers: {
+					"content-type": "application/json",
+					"x-generator-callback-token": "local-generator-callback-token",
+				},
+				method: "POST",
+			}
+		);
+		expect(notFound.status).toBe(404);
+	});
 });

@@ -19,6 +19,10 @@ const callbackPayloadSchema = z.object({
 	}),
 });
 
+const markFailedPayloadSchema = z.object({
+	errorSummary: z.string().trim().min(1).max(500).optional(),
+});
+
 export function createInternalRoutes(service: StudioService) {
 	const app = new Hono();
 
@@ -38,6 +42,34 @@ export function createInternalRoutes(service: StudioService) {
 		}
 
 		const run = await service.applyExecutionCallback(result.data);
+		return c.json({ run });
+	});
+
+	// Точечная зачистка orphan-ров (MCP-tool studio_run_mark_failed).
+	// Авторизация — тем же callback-токеном, что и /generator-executions:
+	// доверенный канал между внутренними сервисами (mcp / debug-tools).
+	app.post("/runs/:runId/mark-failed", async (c) => {
+		const token = c.req.header(GENERATOR_CALLBACK_TOKEN_HEADER);
+		if (token !== getGeneratorCallbackToken()) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+
+		const body = await c.req.json().catch(() => ({}) as unknown);
+		const result = markFailedPayloadSchema.safeParse(body);
+		if (!result.success) {
+			return c.json(
+				{ error: "Invalid payload", issues: result.error.issues },
+				400
+			);
+		}
+
+		const run = await service.markRunFailed(
+			c.req.param("runId"),
+			result.data.errorSummary ?? "Marked failed via internal MCP tool"
+		);
+		if (!run) {
+			return c.json({ error: "Run not found" }, 404);
+		}
 		return c.json({ run });
 	});
 

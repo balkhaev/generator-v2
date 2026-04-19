@@ -863,8 +863,6 @@ describe("studio backend", () => {
 	it("streams initial snapshot via /api/runs/stream", async () => {
 		const repository = createMemoryRepository();
 		await repository.createScenario({
-			createdByUserId: "user-1",
-			durationLabel: null,
 			generatorScenarioId: null,
 			id: "scenario-stream",
 			name: "Stream scenario",

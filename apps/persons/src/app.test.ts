@@ -261,6 +261,15 @@ function createMemoryLoraReadRepository(
 		getById(id) {
 			return Promise.resolve(entries.find((entry) => entry.id === id) ?? null);
 		},
+		getByPairGroupId(pairGroupId) {
+			return Promise.resolve(
+				entries.filter((entry) => entry.pairGroupId === pairGroupId)
+			);
+		},
+		getByS3Urls(urls) {
+			const set = new Set(urls);
+			return Promise.resolve(entries.filter((entry) => set.has(entry.s3Url)));
+		},
 		getBySlug(slug) {
 			return Promise.resolve(
 				entries.find((entry) => entry.slug === slug) ?? null
@@ -298,6 +307,9 @@ function createRegistryEntry(
 		sizeBytes: 1024,
 		defaultWeight: 1,
 		status: "active",
+		pairGroupId: null,
+		triggerWords: [],
+		variant: null,
 		createdAt: now,
 		updatedAt: now,
 		...overrides,
@@ -622,7 +634,7 @@ describe("persons api", () => {
 		});
 	});
 
-	it("generates with lora through reference-conditioned zimage i2i", async () => {
+	it("generates with lora through the default zimage workflow", async () => {
 		const capturedExecutionInputs: Parameters<
 			OperatorServerClient["createExecution"]
 		>[0][] = [];
@@ -690,16 +702,19 @@ describe("persons api", () => {
 			workflowKey: string;
 		};
 		expect(executionInput).toMatchObject({
-			inputImageUrl: "https://assets.example.com/reference.png",
-			workflowKey: "fal-zimage-turbo-image-to-image",
+			workflowKey: "fal-zimage-turbo",
 			params: {
+				enableSafetyChecker: false,
 				imageSize: "portrait_4_3",
 				loraUrl: "https://assets.example.com/person.safetensors",
 				loraWeight: 1,
-				numInferenceSteps: 8,
-				strength: 0.95,
+				numImages: 1,
+				numInferenceSteps: 12,
+				outputFormat: "png",
 			},
 		});
+		expect(executionInput.inputImageUrl).toBeUndefined();
+		expect(executionInput.params).not.toHaveProperty("strength");
 		expect(executionInput.prompt).toContain(
 			"a photo of ohwx_generated_subject"
 		);

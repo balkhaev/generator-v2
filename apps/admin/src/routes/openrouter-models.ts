@@ -1,3 +1,4 @@
+import type { FetchLike } from "@generator/http/proxy";
 import { Hono } from "hono";
 
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
@@ -7,7 +8,7 @@ interface OpenRouterModelsPayload {
 }
 
 export function createOpenRouterModelsRoutes(deps: {
-	fetchImpl?: typeof fetch;
+	fetchImpl?: FetchLike;
 	openRouterApiKey?: string | null;
 }) {
 	const app = new Hono();

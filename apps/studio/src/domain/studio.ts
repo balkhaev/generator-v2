@@ -387,7 +387,7 @@ function collectLoraUrls(
 	}
 	const urls: string[] = [];
 	for (const field of definition.parameterFields) {
-		if (field.kind !== "lora-url") {
+		if (!("kind" in field) || field.kind !== "lora-url") {
 			continue;
 		}
 		const raw = params[field.key];

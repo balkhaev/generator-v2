@@ -1,0 +1,1 @@
+ALTER TABLE "lora" ADD COLUMN "trigger_words" text[] DEFAULT ARRAY[]::text[] NOT NULL;

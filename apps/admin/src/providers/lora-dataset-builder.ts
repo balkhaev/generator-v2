@@ -7,7 +7,11 @@
  */
 
 import { setTimeout as sleep } from "node:timers/promises";
-import { downloadImageAsset } from "@generator/storage";
+import {
+	downloadImageAsset,
+	type S3StorageConfig,
+	uploadObjectToS3,
+} from "@generator/storage";
 import {
 	DEFAULT_DATASET_EDITOR_MODEL_ID,
 	getDatasetEditorModelAdapter,
@@ -517,6 +521,337 @@ export async function buildReferenceDataset(
 	return {
 		defaultCaption,
 		generatedReferences,
+		zipFiles,
+	};
+}
+
+/**
+ * `variant-NN` → synthetic flux-2/edit variation, NN is the index inside
+ * `REFERENCE_DATASET_VARIANTS`. `original-NN` → captioned duplicate of the
+ * source reference photo, NN indexes `ORIGINAL_PHOTO_SLOTS`. The format is
+ * intentionally stable: persons-service stores it on every dataset
+ * `PersonGenerationRecord` and uses it as the upsert key when admin worker
+ * (re)publishes a slot.
+ */
+export const ORIGINAL_VARIANT_ID_PREFIX = "original-";
+export const SYNTHETIC_VARIANT_ID_PREFIX = "variant-";
+
+function buildOriginalVariantId(index: number): string {
+	return `${ORIGINAL_VARIANT_ID_PREFIX}${String(index).padStart(2, "0")}`;
+}
+
+function buildSyntheticVariantId(index: number): string {
+	return `${SYNTHETIC_VARIANT_ID_PREFIX}${String(index).padStart(2, "0")}`;
+}
+
+function parseVariantIndex(variantId: string, prefix: string): number | null {
+	if (!variantId.startsWith(prefix)) {
+		return null;
+	}
+	const raw = variantId.slice(prefix.length);
+	const index = Number.parseInt(raw, 10);
+	return Number.isFinite(index) ? index : null;
+}
+
+/**
+ * One ready-to-zip dataset photo. Emitted incrementally by the approval-flow
+ * dataset prep pipeline so persons-service can upsert the corresponding
+ * `PersonGenerationRecord` slot the moment the photo lands in S3 (instead of
+ * waiting for the whole batch).
+ *
+ *   - `url` is the public S3 URL the operator sees in persons-web
+ *   - `s3Key` is the same object expressed as a key (used for cleanup
+ *     after the LoRA is published or the slot is rejected)
+ *   - `variantId` is the stable slot identifier (see above)
+ *   - `caption` is the per-photo caption baked into the zip alongside it
+ */
+export interface PreparedDatasetPhoto {
+	caption: string;
+	s3Key: string | null;
+	url: string;
+	variantId: string;
+}
+
+const leadingDotPattern = /^\./u;
+
+/**
+ * Best-effort mime guess from filename extension. We only ever see the half a
+ * dozen image types fal returns, so a tiny lookup beats pulling in a full
+ * mime DB for one upload call.
+ */
+function guessImageContentType(extension: string): string {
+	const normalized = extension.toLowerCase().replace(leadingDotPattern, "");
+	if (normalized === "png") {
+		return "image/png";
+	}
+	if (normalized === "webp") {
+		return "image/webp";
+	}
+	if (normalized === "gif") {
+		return "image/gif";
+	}
+	return "image/jpeg";
+}
+
+interface DatasetPhotoUploadInput {
+	bytes: Uint8Array;
+	extension: string;
+	fallbackUrl: string;
+	personId: string;
+	s3Config?: S3StorageConfig;
+	trainingRunId: string;
+	variantId: string;
+}
+
+/**
+ * Uploads one dataset photo to S3 under a deterministic key derived from
+ * (personId, trainingRunId, variantId). When `s3Config` is missing we
+ * gracefully fall through and return the original ephemeral URL — that path
+ * exists for tests and dry-runs where S3 isn't wired up.
+ */
+async function uploadDatasetPhoto(
+	input: DatasetPhotoUploadInput
+): Promise<{ s3Key: string | null; url: string }> {
+	if (!input.s3Config) {
+		return { s3Key: null, url: input.fallbackUrl };
+	}
+	const safeVariant = sanitizeSegment(input.variantId) || input.variantId;
+	const safeExtension = input.extension.startsWith(".")
+		? input.extension
+		: `.${input.extension}`;
+	const key = `persons/${sanitizeSegment(input.personId)}/datasets/${sanitizeSegment(input.trainingRunId)}/${safeVariant}${safeExtension}`;
+	const uploaded = await uploadObjectToS3(
+		{
+			contentType: guessImageContentType(safeExtension),
+			data: input.bytes,
+			key,
+			tmpPrefix: "dataset-photo",
+		},
+		input.s3Config
+	);
+	return { s3Key: uploaded.key, url: uploaded.url };
+}
+
+interface GenerateSingleVariantInput {
+	apiKey: string;
+	editorModelId?: string;
+	genderHint: string | null;
+	personId: string;
+	referencePhotoUrl: string;
+	referencePrompt?: string | null;
+	s3Config?: S3StorageConfig;
+	trainingRunId: string;
+	triggerWord: string;
+	variantId: string;
+}
+
+/**
+ * Generates (or, for `original-*` slots, copies) a single dataset photo and
+ * uploads it to S3. The result is the canonical descriptor the rest of the
+ * pipeline (admin worker → persons-service → persons-web) keys off of.
+ *
+ * For synthetic slots this calls the configured fal.ai editor model with the
+ * variant's preset prompt. For original slots it just re-uploads the source
+ * reference photo with the slot-specific caption — that's how we anchor the
+ * trainer on the real face without paying for another generation.
+ */
+export async function generateSingleVariant(
+	input: GenerateSingleVariantInput
+): Promise<PreparedDatasetPhoto> {
+	const editorModelId = input.editorModelId ?? DEFAULT_DATASET_EDITOR_MODEL_ID;
+
+	const originalIndex = parseVariantIndex(
+		input.variantId,
+		ORIGINAL_VARIANT_ID_PREFIX
+	);
+	if (originalIndex !== null) {
+		const slot = ORIGINAL_PHOTO_SLOTS[originalIndex];
+		if (!slot) {
+			throw new Error(
+				`Unknown original dataset slot for variantId=${input.variantId}`
+			);
+		}
+		const refPhoto = await downloadImageAsset(input.referencePhotoUrl);
+		const uploaded = await uploadDatasetPhoto({
+			bytes: refPhoto.data,
+			extension: refPhoto.extension,
+			fallbackUrl: input.referencePhotoUrl,
+			personId: input.personId,
+			s3Config: input.s3Config,
+			trainingRunId: input.trainingRunId,
+			variantId: input.variantId,
+		});
+		return {
+			caption: buildOriginalPhotoCaption({
+				genderHint: input.genderHint,
+				slot,
+				triggerWord: input.triggerWord,
+			}),
+			s3Key: uploaded.s3Key,
+			url: uploaded.url,
+			variantId: input.variantId,
+		};
+	}
+
+	const variantIndex = parseVariantIndex(
+		input.variantId,
+		SYNTHETIC_VARIANT_ID_PREFIX
+	);
+	if (variantIndex === null) {
+		throw new Error(`Unknown variantId=${input.variantId}`);
+	}
+	const variant = REFERENCE_DATASET_VARIANTS[variantIndex];
+	if (!variant) {
+		throw new Error(
+			`Unknown synthetic dataset variant for variantId=${input.variantId}`
+		);
+	}
+
+	const prompt = buildVariantPrompt({
+		referencePrompt: input.referencePrompt,
+		variant,
+	});
+	const ephemeralUrl = await generateReferenceImage(
+		input.apiKey,
+		input.referencePhotoUrl,
+		prompt,
+		editorModelId
+	);
+	const generated = await downloadImageAsset(ephemeralUrl);
+	const uploaded = await uploadDatasetPhoto({
+		bytes: generated.data,
+		extension: generated.extension,
+		fallbackUrl: ephemeralUrl,
+		personId: input.personId,
+		s3Config: input.s3Config,
+		trainingRunId: input.trainingRunId,
+		variantId: input.variantId,
+	});
+	return {
+		caption: buildVariantCaption({
+			genderHint: input.genderHint,
+			triggerWord: input.triggerWord,
+			variant,
+		}),
+		s3Key: uploaded.s3Key,
+		url: uploaded.url,
+		variantId: input.variantId,
+	};
+}
+
+interface PrepareDatasetPhotosInput {
+	apiKey: string;
+	editorModelId?: string;
+	genderHint: string | null;
+	onPhotoReady: (photo: PreparedDatasetPhoto) => Promise<void>;
+	personId: string;
+	referencePhotoUrl: string;
+	referencePrompt?: string | null;
+	s3Config?: S3StorageConfig;
+	trainingRunId: string;
+	triggerWord: string;
+}
+
+/**
+ * Generates the entire dataset photo set (originals first, then synthetic
+ * variants) and streams each finished photo through `onPhotoReady` so admin
+ * worker can publish a per-slot training event the moment a photo lands in
+ * S3. Originals come first because they're cheap and let the operator start
+ * reviewing the baseline immediately while flux-2/edit chews through the
+ * synthetics.
+ */
+export async function prepareDatasetPhotos(
+	input: PrepareDatasetPhotosInput
+): Promise<PreparedDatasetPhoto[]> {
+	const photos: PreparedDatasetPhoto[] = [];
+	for (let i = 0; i < ORIGINAL_PHOTO_DUPLICATES; i += 1) {
+		const photo = await generateSingleVariant({
+			apiKey: input.apiKey,
+			editorModelId: input.editorModelId,
+			genderHint: input.genderHint,
+			personId: input.personId,
+			referencePhotoUrl: input.referencePhotoUrl,
+			referencePrompt: input.referencePrompt,
+			s3Config: input.s3Config,
+			trainingRunId: input.trainingRunId,
+			triggerWord: input.triggerWord,
+			variantId: buildOriginalVariantId(i),
+		});
+		photos.push(photo);
+		await input.onPhotoReady(photo);
+	}
+	for (let i = 0; i < REFERENCE_VARIANT_COUNT; i += 1) {
+		const photo = await generateSingleVariant({
+			apiKey: input.apiKey,
+			editorModelId: input.editorModelId,
+			genderHint: input.genderHint,
+			personId: input.personId,
+			referencePhotoUrl: input.referencePhotoUrl,
+			referencePrompt: input.referencePrompt,
+			s3Config: input.s3Config,
+			trainingRunId: input.trainingRunId,
+			triggerWord: input.triggerWord,
+			variantId: buildSyntheticVariantId(i),
+		});
+		photos.push(photo);
+		await input.onPhotoReady(photo);
+	}
+	return photos;
+}
+
+export interface ApprovedDatasetItemDescriptor {
+	caption: string;
+	url: string;
+	variantId: string;
+}
+
+export interface AssembledDatasetResult {
+	defaultCaption: string;
+	referenceImageUrls: string[];
+	zipFiles: ZipFileEntry[];
+}
+
+interface AssembleDatasetZipFromItemsInput {
+	defaultCaption: string;
+	items: readonly ApprovedDatasetItemDescriptor[];
+}
+
+/**
+ * Packs the operator-approved dataset (already uploaded to S3 by the prep
+ * stage) into a flat zip layout the trainer expects: one image + one .txt
+ * caption per slot. Filenames are derived from the slot's position in the
+ * approved list so the trainer sees a stable ordering, but originals are
+ * intentionally placed first to mirror the legacy zip layout produced by
+ * `buildReferenceDataset`.
+ */
+export async function assembleDatasetZipFromItems(
+	input: AssembleDatasetZipFromItemsInput
+): Promise<AssembledDatasetResult> {
+	const ordered = [...input.items].sort((a, b) => {
+		const aIsOriginal = a.variantId.startsWith(ORIGINAL_VARIANT_ID_PREFIX);
+		const bIsOriginal = b.variantId.startsWith(ORIGINAL_VARIANT_ID_PREFIX);
+		if (aIsOriginal !== bIsOriginal) {
+			return aIsOriginal ? -1 : 1;
+		}
+		return a.variantId.localeCompare(b.variantId);
+	});
+
+	const zipFiles: ZipFileEntry[] = [];
+	const referenceImageUrls: string[] = [];
+	for (const [index, item] of ordered.entries()) {
+		const image = await downloadImageAsset(item.url);
+		const baseName = String(index).padStart(3, "0");
+		zipFiles.push({ data: image.data, name: `${baseName}${image.extension}` });
+		zipFiles.push({
+			data: new TextEncoder().encode(item.caption),
+			name: `${baseName}.txt`,
+		});
+		referenceImageUrls.push(item.url);
+	}
+
+	return {
+		defaultCaption: input.defaultCaption,
+		referenceImageUrls,
 		zipFiles,
 	};
 }

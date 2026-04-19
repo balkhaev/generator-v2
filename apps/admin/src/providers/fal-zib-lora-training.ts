@@ -597,6 +597,17 @@ export class FalZibLoraTrainingRunner {
 		});
 	}
 
+	/**
+	 * ⚠️ APPROVAL FLOW NOT SUPPORTED.
+	 *
+	 * This runner still does the legacy "prep + zip + train" pipeline in one
+	 * shot. It does NOT honour `mode === "prep-only"` and never publishes the
+	 * `awaiting-approval` event, so persons-service will land directly in
+	 * `training` after dataset prep — operator-side reject/refill won't work
+	 * until the same refactor that landed in `RunpodPodLoraTrainingRunner`
+	 * is applied here. Use the runpod-pod runner if the approval flow is
+	 * required.
+	 */
 	async run(input: StartInput) {
 		const parsed = startFalZibLoraTrainingSchema.parse(input);
 		const triggerWord =

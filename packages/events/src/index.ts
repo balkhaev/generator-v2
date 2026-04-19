@@ -307,6 +307,7 @@ export interface KafkaEventBusConfig {
 export interface EventLogger {
 	error(message: string, metadata?: Record<string, unknown>): void;
 	info?(message: string, metadata?: Record<string, unknown>): void;
+	warn?(message: string, metadata?: Record<string, unknown>): void;
 }
 
 export function parseKafkaBrokers(raw: string | undefined): string[] {
@@ -616,6 +617,43 @@ function parseEnvelopeOrLog(
 	}
 }
 
+/**
+ * Ensure the given topics exist on the broker. KafkaJS's `consumer.subscribe`
+ * issues a `Metadata` RPC for the topic and surfaces `UNKNOWN_TOPIC_OR_PARTITION`
+ * as an unhandled rejection if the topic has never been produced to before —
+ * which on Bun crashes the worker process and traps it in a restart loop. By
+ * calling `admin.createTopics({ waitForLeaders: true })` first, we make boot
+ * idempotent: if the topic already exists kafkajs returns `false` without
+ * throwing, and otherwise it is created with the broker's default partition /
+ * replication settings.
+ */
+async function ensureTopicsExist(
+	kafka: Kafka,
+	topics: readonly string[],
+	logger: EventLogger | undefined
+): Promise<void> {
+	if (topics.length === 0) {
+		return;
+	}
+	const admin = kafka.admin();
+	try {
+		await admin.connect();
+		await admin.createTopics({
+			topics: topics.map((topic) => ({ topic })),
+			waitForLeaders: true,
+		});
+	} catch (error) {
+		logger?.warn?.("events.kafka.ensure-topics-failed", {
+			error: error instanceof Error ? error.message : "unknown error",
+			topics: [...topics],
+		});
+	} finally {
+		await admin.disconnect().catch(() => {
+			// ignore disconnect errors
+		});
+	}
+}
+
 export async function createKafkaEventConsumer(options: {
 	config: KafkaEventBusConfig;
 	groupId: string;
@@ -630,6 +668,7 @@ export async function createKafkaEventConsumer(options: {
 	topics: string[];
 }): Promise<EventConsumerRuntime> {
 	const kafka = createKafka(options.config);
+	await ensureTopicsExist(kafka, options.topics, options.logger);
 	const consumer = kafka.consumer({ groupId: options.groupId });
 
 	await consumer.connect();

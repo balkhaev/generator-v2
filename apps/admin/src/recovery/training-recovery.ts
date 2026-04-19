@@ -29,7 +29,7 @@ export interface TrainingRecoveryDeps {
 	runner: Pick<FalZibLoraTrainingRunner, "resumeFromProviderJob">;
 	runpodPodRunner?: Pick<
 		RunpodPodLoraTrainingRunner,
-		"resumeFromProviderJob"
+		"prepareDataset" | "resumeFromProviderJob"
 	> | null;
 	stalenessThresholdMs?: number;
 }
@@ -61,6 +61,26 @@ interface RecoveryCandidate {
 	trainingStartedAt: string;
 	trainingSteps: number;
 	triggerWord: string;
+}
+
+/**
+ * Recovery candidate for the dataset-prep stage (status `generating` /
+ * `awaiting-approval`, phase `generating-references`). Distinct from
+ * `RecoveryCandidate` because at this point there's no providerJobId yet —
+ * we just need to re-invoke `prepareDataset` so the runner finishes
+ * generating the remaining variants up to `referenceImageTargetCount`.
+ */
+interface PrepRecoveryCandidate {
+	debugCorrelationId?: string;
+	description: string;
+	lastEventAt: string;
+	outputName: string | null;
+	personId: string;
+	personName: string;
+	personSlug: string;
+	referencePhotoUrl: string;
+	trainingRunId: string;
+	triggerWord: string | null;
 }
 
 function readDebugString(
@@ -160,6 +180,62 @@ function isStaleEnough(
 	return nowMs - lastEventMs >= stalenessMs;
 }
 
+/**
+ * Detect a stalled dataset-prep run on the runpod-pod runner. We only resume
+ * the main `generating-references` phase here; mid-flight refills
+ * (`refilling-references`) are intentionally skipped because we'd lose the
+ * original `requestNonce`/variantId context and might double-publish a
+ * regenerated photo. The operator can re-trigger a refill from the UI by
+ * deleting the offending photo again.
+ */
+function pickPrepRecoveryCandidate(
+	person: PersonRecord,
+	training: PersonLoraTrainingMeta,
+	nowMs: number,
+	stalenessMs: number
+): PrepRecoveryCandidate | null {
+	if (training.provider !== "runpod-pod") {
+		return null;
+	}
+	if (training.status !== "generating") {
+		return null;
+	}
+	if (training.phase !== "generating-references") {
+		return null;
+	}
+	if (training.cancelledAt) {
+		return null;
+	}
+	const trainingRunId = training.trainingRunId ?? null;
+	if (!trainingRunId) {
+		return null;
+	}
+	const referencePhotoUrl = person.referencePhotoUrl;
+	if (!referencePhotoUrl) {
+		return null;
+	}
+	const lastEventAt = training.lastEventAt ?? training.requestedAt ?? null;
+	if (!(lastEventAt && isStaleEnough(lastEventAt, nowMs, stalenessMs))) {
+		return null;
+	}
+
+	return {
+		debugCorrelationId:
+			typeof training.debugCorrelationId === "string"
+				? training.debugCorrelationId
+				: undefined,
+		description: person.description,
+		lastEventAt,
+		outputName: training.outputName ?? null,
+		personId: person.id,
+		personName: person.name,
+		personSlug: person.slug,
+		referencePhotoUrl,
+		trainingRunId,
+		triggerWord: training.triggerWord ?? null,
+	};
+}
+
 function pickRecoveryCandidate(
 	person: PersonRecord,
 	training: PersonLoraTrainingMeta,
@@ -214,6 +290,74 @@ function pickRecoveryCandidate(
 	};
 }
 
+async function tryResumePrep(
+	candidate: PrepRecoveryCandidate,
+	deps: TrainingRecoveryDeps,
+	summary: TrainingRecoverySummary,
+	logger: NonNullable<TrainingRecoveryDeps["logger"]>
+): Promise<void> {
+	const runner = deps.runpodPodRunner;
+	if (!runner) {
+		summary.skipped += 1;
+		logger.warn("admin.recovery.prep-skipped", {
+			personId: candidate.personId,
+			reason: "runpod-pod runner not configured",
+			trainingRunId: candidate.trainingRunId,
+		});
+		return;
+	}
+
+	summary.attempted += 1;
+	try {
+		const outcome = await withIdempotency(
+			deps.recoveryLock,
+			`prep:${candidate.trainingRunId}`,
+			async () => {
+				logger.info("admin.recovery.prep-resume-start", {
+					lastEventAt: candidate.lastEventAt,
+					personId: candidate.personId,
+					personSlug: candidate.personSlug,
+					trainingRunId: candidate.trainingRunId,
+				});
+				await runner.prepareDataset({
+					debugCorrelationId: candidate.debugCorrelationId,
+					description: candidate.description,
+					mode: "prep-only",
+					outputName: candidate.outputName ?? undefined,
+					personId: candidate.personId,
+					personName: candidate.personName,
+					personSlug: candidate.personSlug,
+					referencePhotoUrl: candidate.referencePhotoUrl,
+					trainingRunId: candidate.trainingRunId,
+					triggerWord: candidate.triggerWord ?? undefined,
+				});
+			}
+		);
+
+		if (outcome.acquired) {
+			summary.recovered += 1;
+			logger.info("admin.recovery.prep-resume-completed", {
+				personId: candidate.personId,
+				trainingRunId: candidate.trainingRunId,
+			});
+		} else {
+			summary.skipped += 1;
+			logger.info("admin.recovery.prep-resume-skipped", {
+				personId: candidate.personId,
+				reason: "another worker holds recovery lock",
+				trainingRunId: candidate.trainingRunId,
+			});
+		}
+	} catch (error) {
+		summary.failed += 1;
+		logger.error("admin.recovery.prep-resume-failed", {
+			message: error instanceof Error ? error.message : "unknown",
+			personId: candidate.personId,
+			trainingRunId: candidate.trainingRunId,
+		});
+	}
+}
+
 /**
  * Scan all persons via persons-api and resume any fal training that has been
  * silent for longer than `stalenessThresholdMs`. Designed to run at admin
@@ -257,6 +401,18 @@ export async function recoverInterruptedTrainings(
 		if (!training) {
 			continue;
 		}
+
+		const prepCandidate = pickPrepRecoveryCandidate(
+			person,
+			training,
+			nowMs,
+			stalenessMs
+		);
+		if (prepCandidate) {
+			await tryResumePrep(prepCandidate, deps, summary, logger);
+			continue;
+		}
+
 		const candidate = pickRecoveryCandidate(
 			person,
 			training,
@@ -266,60 +422,53 @@ export async function recoverInterruptedTrainings(
 		if (!candidate) {
 			continue;
 		}
+		await tryResumeProviderJob(candidate, deps, summary, logger);
+	}
 
-		if (candidate.provider === "runpod-pod" && !deps.runpodPodRunner) {
-			summary.skipped += 1;
-			logger.warn("admin.recovery.resume-skipped", {
-				personId: candidate.personId,
-				reason: "runpod-pod runner not configured",
-				trainingRunId: candidate.trainingRunId,
-			});
-			continue;
-		}
+	logger.info("admin.recovery.summary", summary);
+	return summary;
+}
 
-		summary.attempted += 1;
+async function tryResumeProviderJob(
+	candidate: RecoveryCandidate,
+	deps: TrainingRecoveryDeps,
+	summary: TrainingRecoverySummary,
+	logger: NonNullable<TrainingRecoveryDeps["logger"]>
+): Promise<void> {
+	if (candidate.provider === "runpod-pod" && !deps.runpodPodRunner) {
+		summary.skipped += 1;
+		logger.warn("admin.recovery.resume-skipped", {
+			personId: candidate.personId,
+			reason: "runpod-pod runner not configured",
+			trainingRunId: candidate.trainingRunId,
+		});
+		return;
+	}
 
-		try {
-			const outcome = await withIdempotency(
-				deps.recoveryLock,
-				candidate.trainingRunId,
-				async () => {
-					logger.info("admin.recovery.resume-start", {
-						lastEventAt: candidate.lastEventAt,
-						personId: candidate.personId,
-						personSlug: candidate.personSlug,
-						provider: candidate.provider,
-						providerJobId: candidate.providerJobId,
-						trainingRunId: candidate.trainingRunId,
-					});
-					if (candidate.provider === "runpod-pod") {
-						const runner = deps.runpodPodRunner;
-						if (!runner) {
-							throw new Error(
-								"runpod-pod runner is not configured; recovery cannot proceed"
-							);
-						}
-						await runner.resumeFromProviderJob({
-							debugCorrelationId: candidate.debugCorrelationId,
-							loraS3Key: candidate.loraS3Key ?? undefined,
-							outputName: candidate.outputName,
-							personId: candidate.personId,
-							personSlug: candidate.personSlug,
-							providerJobId: candidate.providerJobId,
-							referenceImageCount: candidate.referenceImageCount,
-							referenceImageTargetCount: candidate.referenceImageTargetCount,
-							referenceImageUrls: candidate.referenceImageUrls,
-							trainingRunId: candidate.trainingRunId,
-							trainingStartedAt: candidate.trainingStartedAt,
-							trainingSteps: candidate.trainingSteps,
-							triggerWord: candidate.triggerWord,
-						});
-						return;
+	summary.attempted += 1;
+	try {
+		const outcome = await withIdempotency(
+			deps.recoveryLock,
+			candidate.trainingRunId,
+			async () => {
+				logger.info("admin.recovery.resume-start", {
+					lastEventAt: candidate.lastEventAt,
+					personId: candidate.personId,
+					personSlug: candidate.personSlug,
+					provider: candidate.provider,
+					providerJobId: candidate.providerJobId,
+					trainingRunId: candidate.trainingRunId,
+				});
+				if (candidate.provider === "runpod-pod") {
+					const runner = deps.runpodPodRunner;
+					if (!runner) {
+						throw new Error(
+							"runpod-pod runner is not configured; recovery cannot proceed"
+						);
 					}
-					await deps.runner.resumeFromProviderJob({
-						datasetUrl: candidate.datasetUrl,
+					await runner.resumeFromProviderJob({
 						debugCorrelationId: candidate.debugCorrelationId,
-						genderHint: candidate.genderHint,
+						loraS3Key: candidate.loraS3Key ?? undefined,
 						outputName: candidate.outputName,
 						personId: candidate.personId,
 						personSlug: candidate.personSlug,
@@ -332,33 +481,47 @@ export async function recoverInterruptedTrainings(
 						trainingSteps: candidate.trainingSteps,
 						triggerWord: candidate.triggerWord,
 					});
+					return;
 				}
-			);
-
-			if (outcome.acquired) {
-				summary.recovered += 1;
-				logger.info("admin.recovery.resume-completed", {
+				await deps.runner.resumeFromProviderJob({
+					datasetUrl: candidate.datasetUrl,
+					debugCorrelationId: candidate.debugCorrelationId,
+					genderHint: candidate.genderHint,
+					outputName: candidate.outputName,
 					personId: candidate.personId,
+					personSlug: candidate.personSlug,
+					providerJobId: candidate.providerJobId,
+					referenceImageCount: candidate.referenceImageCount,
+					referenceImageTargetCount: candidate.referenceImageTargetCount,
+					referenceImageUrls: candidate.referenceImageUrls,
 					trainingRunId: candidate.trainingRunId,
-				});
-			} else {
-				summary.skipped += 1;
-				logger.info("admin.recovery.resume-skipped", {
-					personId: candidate.personId,
-					reason: "another worker holds recovery lock",
-					trainingRunId: candidate.trainingRunId,
+					trainingStartedAt: candidate.trainingStartedAt,
+					trainingSteps: candidate.trainingSteps,
+					triggerWord: candidate.triggerWord,
 				});
 			}
-		} catch (error) {
-			summary.failed += 1;
-			logger.error("admin.recovery.resume-failed", {
-				message: error instanceof Error ? error.message : "unknown",
+		);
+
+		if (outcome.acquired) {
+			summary.recovered += 1;
+			logger.info("admin.recovery.resume-completed", {
 				personId: candidate.personId,
 				trainingRunId: candidate.trainingRunId,
 			});
+		} else {
+			summary.skipped += 1;
+			logger.info("admin.recovery.resume-skipped", {
+				personId: candidate.personId,
+				reason: "another worker holds recovery lock",
+				trainingRunId: candidate.trainingRunId,
+			});
 		}
+	} catch (error) {
+		summary.failed += 1;
+		logger.error("admin.recovery.resume-failed", {
+			message: error instanceof Error ? error.message : "unknown",
+			personId: candidate.personId,
+			trainingRunId: candidate.trainingRunId,
+		});
 	}
-
-	logger.info("admin.recovery.summary", summary);
-	return summary;
 }

@@ -274,6 +274,10 @@ describe("recoverInterruptedTrainings", () => {
 					),
 			},
 			runpodPodRunner: {
+				prepareDataset: () =>
+					Promise.reject(
+						new Error("prepareDataset must not be called for resumable runs")
+					),
 				resumeFromProviderJob: (input) => {
 					calls.push({
 						outputName: input.outputName,

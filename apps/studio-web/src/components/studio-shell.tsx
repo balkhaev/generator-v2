@@ -203,6 +203,7 @@ function StudioStatusBar({
 								etaMs={headlineLiveRun.etaMs}
 								expectedDurationMs={headlineLiveRun.expectedDurationMs}
 								phase={headlineLiveRun.phase}
+								progressMonotonicKey={headlineLiveRun.id}
 								progressPct={headlineLiveRun.progressPct}
 								queuePosition={headlineLiveRun.queuePosition}
 								runStartedAt={headlineLiveRun.createdAt}
@@ -574,7 +575,19 @@ export default function StudioShell({
 			setSnapshot((current) => {
 				const byId = new Map(current.runs.map((run) => [run.id, run]));
 				for (const run of streamRuns) {
-					byId.set(run.id, run);
+					const prev = byId.get(run.id);
+					byId.set(
+						run.id,
+						prev
+							? {
+									...prev,
+									...run,
+									expectedDurationMs:
+										run.expectedDurationMs ?? prev.expectedDurationMs ?? null,
+									scenarioName: run.scenarioName || prev.scenarioName,
+								}
+							: run
+					);
 				}
 				return { ...current, runs: Array.from(byId.values()) };
 			});
@@ -588,8 +601,16 @@ export default function StudioShell({
 			if (index === -1) {
 				return { ...current, runs: [streamRun, ...current.runs] };
 			}
+			const prev = current.runs[index];
+			const merged: ScenarioRunRecord = {
+				...prev,
+				...streamRun,
+				expectedDurationMs:
+					streamRun.expectedDurationMs ?? prev.expectedDurationMs ?? null,
+				scenarioName: streamRun.scenarioName || prev.scenarioName,
+			};
 			const nextRuns = current.runs.slice();
-			nextRuns[index] = streamRun;
+			nextRuns[index] = merged;
 			return { ...current, runs: nextRuns };
 		});
 	}, []);
@@ -602,6 +623,25 @@ export default function StudioShell({
 			// silent: best-effort recovery, will retry next tick
 		}
 	}, []);
+
+	const hasActiveStudioRuns = useMemo(
+		() =>
+			snapshot.runs.some(
+				(run) => run.status === "queued" || run.status === "running"
+			),
+		[snapshot.runs]
+	);
+
+	/** Пока есть активный run — периодически подтягиваем снапшот из БД (защита от залипания при потере SSE/Kafka). */
+	useEffect(() => {
+		if (isPersonMode || !hasActiveStudioRuns) {
+			return;
+		}
+		const timer = setInterval(() => {
+			handleFallbackPoll().catch(() => undefined);
+		}, 15_000);
+		return () => clearInterval(timer);
+	}, [handleFallbackPoll, hasActiveStudioRuns, isPersonMode]);
 
 	useStudioRunStream({
 		enabled: !isPersonMode,

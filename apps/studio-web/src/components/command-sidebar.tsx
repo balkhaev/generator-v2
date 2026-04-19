@@ -285,6 +285,7 @@ function RunLiveProgress({ run }: { run: ScenarioRunRecord }) {
 			expectedDurationMs={run.expectedDurationMs}
 			lastLogLine={run.lastLogLine}
 			phase={run.phase}
+			progressMonotonicKey={run.id}
 			progressPct={run.progressPct}
 			queuePosition={run.queuePosition}
 			runStartedAt={run.createdAt}

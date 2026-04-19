@@ -143,6 +143,7 @@ function PreviewBadges({ asset }: { asset: StudioMediaAsset }) {
 						etaMs={asset.etaMs}
 						expectedDurationMs={asset.expectedDurationMs}
 						phase={asset.phase}
+						progressMonotonicKey={asset.runId}
 						progressPct={asset.progressPct}
 						queuePosition={asset.queuePosition}
 						runStartedAt={asset.createdAt}
@@ -178,6 +179,7 @@ function PreviewProgressOverlay({ asset }: { asset: StudioMediaAsset }) {
 				expectedDurationMs={asset.expectedDurationMs}
 				lastLogLine={asset.lastLogLine}
 				phase={asset.phase}
+				progressMonotonicKey={asset.runId}
 				progressPct={asset.progressPct}
 				queuePosition={asset.queuePosition}
 				runStartedAt={asset.createdAt}

@@ -55,10 +55,10 @@ const STUCK_QUEUE_FAIL_AFTER_MS = 15 * 60_000;
 // растянуты: для running ждём 30с, для queued — 20-60с в зависимости от
 // возраста. Реальный финальный update обычно прилетает раньше — через
 // `terminal` event стрима, который сам триггерит sync с delayMs:0.
-const DEFAULT_RUNNING_SYNC_DELAY_MS = 30_000;
-const DEFAULT_QUEUED_SYNC_DELAY_MS = 20_000;
-const MEDIUM_QUEUED_SYNC_DELAY_MS = 30_000;
-const LONG_QUEUED_SYNC_DELAY_MS = 60_000;
+const DEFAULT_RUNNING_SYNC_DELAY_MS = 12_000;
+const DEFAULT_QUEUED_SYNC_DELAY_MS = 12_000;
+const MEDIUM_QUEUED_SYNC_DELAY_MS = 24_000;
+const LONG_QUEUED_SYNC_DELAY_MS = 45_000;
 
 function getNextSyncDelay(
 	status: GeneratorExecutionRecord["status"],

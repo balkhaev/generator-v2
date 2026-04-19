@@ -354,6 +354,19 @@ describe("fal workflow registry", () => {
 		});
 	});
 
+	it("resolves fal-nano-banana-edit from shared image-edit registry", () => {
+		const workflow = getWorkflowDefinition("fal-nano-banana-edit");
+		expect(workflow).toBeDefined();
+		expect(workflow?.requiresInputImage).toBe(true);
+		const built = workflow?.buildProviderInput({
+			params: {},
+			prompt: "test",
+			inputImageUrl: "https://example.com/in.png",
+		}) as Record<string, unknown>;
+		expect(built?.__falModel).toBe("fal-ai/nano-banana/edit");
+		expect(built?.aspect_ratio).toBe("3:4");
+	});
+
 	it("defaults fal-zimage-turbo-image-to-image imageSize to auto", () => {
 		const workflow = getWorkflowDefinition("fal-zimage-turbo-image-to-image");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({

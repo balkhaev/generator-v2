@@ -1,9 +1,14 @@
 import type {
-	WorkflowBaseModel,
 	WorkflowField,
 	WorkflowSummary,
 } from "@generator/contracts/generator";
 import { z } from "zod";
+
+import { falImageEditWorkflowRegistry } from "./fal-image-edit-models";
+import { collectArtifactUrls, collectFalImageUrls } from "./fal-output";
+import type * as WorkflowTypes from "./workflow-types";
+
+export type { WorkflowDefinition } from "./workflow-types";
 
 const falFlux2TurboParamsSchema = z.object({
 	guidanceScale: z.number().min(1).max(20).default(2.5),
@@ -27,31 +32,6 @@ const falFlux2TurboParamsSchema = z.object({
 	enableSafetyChecker: z.boolean().default(false),
 	enablePromptExpansion: z.boolean().default(false),
 	outputFormat: z.enum(["png", "jpeg", "webp"]).default("png"),
-	seed: z.number().int().nonnegative().optional(),
-});
-
-const falFlux2DevEditParamsSchema = z.object({
-	guidanceScale: z.number().min(1).max(20).default(2.5),
-	numInferenceSteps: z.number().int().min(1).max(50).default(28),
-	imageSize: z
-		.union([
-			z.enum([
-				"auto",
-				"square_hd",
-				"square",
-				"portrait_4_3",
-				"portrait_16_9",
-				"landscape_4_3",
-				"landscape_16_9",
-			]),
-			z.object({
-				width: z.number().int().min(512).max(2048),
-				height: z.number().int().min(512).max(2048),
-			}),
-		])
-		.default("auto"),
-	numImages: z.number().int().min(1).max(4).default(1),
-	enableSafetyChecker: z.boolean().default(false),
 	seed: z.number().int().nonnegative().optional(),
 });
 
@@ -340,34 +320,6 @@ const falLtx23ImageToVideoParamsSchema = falLtx23TextToVideoParamsSchema.extend(
 	}
 );
 
-const artifactDataUrlPattern = /^data:(image|video)\/[a-z0-9.+-]+;base64,/i;
-
-export interface WorkflowDefinition<
-	TParams extends z.ZodTypeAny = z.ZodTypeAny,
-> {
-	baseModel?: WorkflowBaseModel;
-	buildProviderInput: (args: {
-		inputImageUrl?: string;
-		prompt: string;
-		params: z.infer<TParams>;
-	}) => Record<string, unknown>;
-	description: string;
-	/**
-	 * Грубая оценка типичной длительности успешного исполнения. Используется
-	 * для soft-progress (1 - exp(-elapsed/expected)) и ETA в UI, когда провайдер
-	 * не отдаёт реальный progress. Значения подобраны по реально наблюдаемым
-	 * runtime'ам (image: ~10–30s, video: ~3–10min); цифры нарочно консервативны
-	 * — soft-progress кепится 90%, так что недолёт лучше перелёта.
-	 */
-	expectedDurationMs?: number;
-	extractArtifactUrls: (output: unknown) => string[];
-	key: string;
-	name: string;
-	parameterFields: readonly WorkflowField[];
-	parameterSchema: TParams;
-	requiresInputImage: boolean;
-}
-
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 
@@ -386,7 +338,6 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-flux-schnell": 8 * SECOND,
 	"fal-flux-dev": 25 * SECOND,
 	"fal-flux2-turbo": 12 * SECOND,
-	"fal-flux2-dev-edit": 30 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
 	// queue ~10s + inference ~75-90s (5s 720p video)
@@ -398,64 +349,6 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-ltx-2-3-text-to-video": 2 * MINUTE,
 	"fal-ltx-2-3-image-to-video": 2 * MINUTE,
 };
-
-export function getWorkflowExpectedDurationMs(
-	workflowKey: string
-): number | null {
-	return WORKFLOW_EXPECTED_DURATION_MS[workflowKey] ?? null;
-}
-
-function collectFalImageUrls(output: unknown): string[] {
-	if (!output || typeof output !== "object") {
-		return [];
-	}
-	const record = output as Record<string, unknown>;
-	const images = record.images;
-	if (!Array.isArray(images)) {
-		return collectArtifactUrls(output);
-	}
-	const urls: string[] = [];
-	for (const image of images) {
-		if (image && typeof image === "object" && "url" in image) {
-			const url = (image as Record<string, unknown>).url;
-			if (typeof url === "string" && url.length > 0) {
-				urls.push(url);
-			}
-		}
-	}
-	return urls.length > 0 ? urls : collectArtifactUrls(output);
-}
-
-function collectArtifactUrls(output: unknown): string[] {
-	const looksLikeArtifactUrl = (value: string) => {
-		return (
-			artifactDataUrlPattern.test(value) ||
-			value.startsWith("http://") ||
-			value.startsWith("https://")
-		);
-	};
-
-	const collect = (value: unknown): string[] => {
-		if (!value) {
-			return [];
-		}
-		if (typeof value === "string") {
-			return looksLikeArtifactUrl(value) ? [value] : [];
-		}
-		if (Array.isArray(value)) {
-			return value.flatMap(collect);
-		}
-		if (typeof value === "object") {
-			const record = value as Record<string, unknown>;
-			const directKeys = ["video", "videoUrl", "image", "imageUrl", "url"];
-			const urls = directKeys.flatMap((key) => collect(record[key]));
-			return urls.length > 0 ? urls : Object.values(record).flatMap(collect);
-		}
-		return [];
-	};
-
-	return [...new Set(collect(output))];
-}
 
 export const workflowRegistry = {
 	"fal-flux-schnell": {
@@ -807,64 +700,7 @@ export const workflowRegistry = {
 		},
 		extractArtifactUrls: collectFalImageUrls,
 	},
-	"fal-flux2-dev-edit": {
-		baseModel: "flux",
-		key: "fal-flux2-dev-edit",
-		name: "Flux 2 Dev Edit",
-		description:
-			"Reference-guided image editing with FLUX.2 [dev]. Generates variations preserving subject identity.",
-		requiresInputImage: true,
-		parameterSchema: falFlux2DevEditParamsSchema,
-		parameterFields: [
-			{
-				description: "Guidance scale for prompt adherence.",
-				key: "guidanceScale",
-				label: "Guidance Scale",
-				type: "number",
-			},
-			{
-				description: "Number of inference steps.",
-				key: "numInferenceSteps",
-				label: "Steps",
-				type: "number",
-			},
-			{
-				description: "Output image size preset or custom dimensions.",
-				key: "imageSize",
-				label: "Image Size",
-				type: "text",
-			},
-			{
-				description: "Number of images to generate per request.",
-				key: "numImages",
-				label: "Num Images",
-				type: "number",
-			},
-			{
-				description: "Optional deterministic seed.",
-				key: "seed",
-				label: "Seed",
-				type: "number",
-			},
-		],
-		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
-			const parsed = falFlux2DevEditParamsSchema.parse(params);
-			const inheritsSourceSize = parsed.imageSize === "auto";
-			return {
-				__falModel: "fal-ai/flux-2/edit",
-				prompt,
-				image_urls: inputImageUrl ? [inputImageUrl] : [],
-				guidance_scale: parsed.guidanceScale,
-				num_inference_steps: parsed.numInferenceSteps,
-				...(inheritsSourceSize ? {} : { image_size: parsed.imageSize }),
-				num_images: parsed.numImages,
-				enable_safety_checker: parsed.enableSafetyChecker,
-				output_format: "webp",
-				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
-			};
-		},
-		extractArtifactUrls: collectFalImageUrls,
-	},
+	...falImageEditWorkflowRegistry,
 	"fal-wan-2-2-text-to-video": {
 		baseModel: "wan-2-2",
 		key: "fal-wan-2-2-text-to-video",
@@ -1415,9 +1251,23 @@ export const workflowRegistry = {
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},
-} satisfies Record<string, WorkflowDefinition>;
+} satisfies Record<string, WorkflowTypes.WorkflowDefinition>;
 
 export type WorkflowKey = keyof typeof workflowRegistry;
+
+export function getWorkflowExpectedDurationMs(
+	workflowKey: string
+): number | null {
+	const fromMap = WORKFLOW_EXPECTED_DURATION_MS[workflowKey];
+	if (fromMap !== undefined) {
+		return fromMap;
+	}
+	const fromRegistry = workflowRegistry[workflowKey as WorkflowKey];
+	const fromDefinition = (
+		fromRegistry as { expectedDurationMs?: number } | undefined
+	)?.expectedDurationMs;
+	return fromDefinition ?? null;
+}
 
 const SUPPORTED_IMAGE_SIZES = [
 	"square_hd",

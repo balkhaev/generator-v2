@@ -18,6 +18,12 @@ interface ServerWireRun {
 	createdAt?: string | null;
 	errorSummary?: string | null;
 	etaMs?: number | null;
+	/**
+	 * Иначе при каждом SSE `run` теряется soft-progress: клиент затирает run и
+	 * `expectedDurationMs` становится undefined → индикатор откатывается к
+	 * серверному floor (8%).
+	 */
+	expectedDurationMs?: number | null;
 	generatorRunId?: string | null;
 	id: string;
 	inputImageUrl?: string | null;
@@ -37,15 +43,19 @@ interface ServerWireRun {
 	workflowKey?: string | null;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: плоский маппинг wire → DTO
 function toScenarioRunRecord(
 	payload: ServerWireRun,
 	knownScenarioName: string | undefined
 ): ScenarioRunRecord {
+	const scenarioName =
+		knownScenarioName ?? payload.scenarioName ?? "Unknown scenario";
 	return {
 		artifactUrls: payload.artifactUrls ?? [],
 		createdAt: payload.createdAt ?? new Date().toISOString(),
 		errorSummary: payload.errorSummary ?? null,
 		etaMs: payload.etaMs ?? null,
+		expectedDurationMs: payload.expectedDurationMs ?? null,
 		generatorRunId: payload.generatorRunId ?? null,
 		id: payload.id,
 		inputImageUrl: payload.inputImageUrl ?? "",
@@ -60,8 +70,7 @@ function toScenarioRunRecord(
 		providerJobId: payload.providerJobId ?? null,
 		queuePosition: payload.queuePosition ?? null,
 		scenarioId: payload.scenarioId ?? "",
-		scenarioName:
-			knownScenarioName ?? payload.scenarioName ?? "Unknown scenario",
+		scenarioName,
 		status: payload.status ?? "queued",
 		workflowKey: payload.workflowKey ?? "",
 	};

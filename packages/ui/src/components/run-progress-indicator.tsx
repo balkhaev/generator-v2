@@ -31,6 +31,11 @@ export interface RunProgressIndicatorProps {
 	lastLogLine?: string | null;
 	/** Дискретная фаза для подписи. */
 	phase?: ExecutionPhase | null;
+	/**
+	 * Стабильный id ран'а (обычно `run.id`). Сбрасывает локальный «пик»
+	 * прогресса при смене генерации — иначе новый run наследует старый max.
+	 */
+	progressMonotonicKey?: string | null;
 	/** 0–100. Если undefined/null — рендерится shimmer-fallback. */
 	progressPct?: number | null;
 	/** Позиция в очереди провайдера (только если phase = in_queue). */
@@ -452,6 +457,7 @@ export function RunProgressIndicator({
 	lastLogLine,
 	phase,
 	progressPct,
+	progressMonotonicKey,
 	queuePosition,
 	runStartedAt,
 	size = 40,
@@ -469,10 +475,39 @@ export function RunProgressIndicator({
 	// Серверное значение задаёт нижнюю границу (включая floor 8% / 2%), soft —
 	// плавную интерполяцию между апдейтами. Берём max, чтобы прогресс никогда
 	// не двигался назад. Для terminal-статусов soft игнорируем (хук вернёт null).
-	const effectiveProgressPct =
-		serverProgressPct === null && softProgressPct === null
-			? null
-			: Math.max(serverProgressPct ?? 0, softProgressPct ?? 0);
+	let combinedRaw: number | null = null;
+	if (status === "succeeded") {
+		combinedRaw = 100;
+	} else if (serverProgressPct !== null || softProgressPct !== null) {
+		combinedRaw = Math.max(serverProgressPct ?? 0, softProgressPct ?? 0);
+	}
+
+	const [peakProgressPct, setPeakProgressPct] = useState(0);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional — сброс пика при смене run id (линтер считает dep лишней)
+	useEffect(() => {
+		setPeakProgressPct(0);
+	}, [progressMonotonicKey]);
+
+	useEffect(() => {
+		if (status === "succeeded") {
+			setPeakProgressPct(100);
+			return;
+		}
+		if (status === "failed") {
+			return;
+		}
+		if (typeof combinedRaw === "number") {
+			setPeakProgressPct((previous) => Math.max(previous, combinedRaw));
+		}
+	}, [combinedRaw, status]);
+
+	let effectiveProgressPct: number | null = null;
+	if (status === "succeeded") {
+		effectiveProgressPct = 100;
+	} else if (typeof combinedRaw === "number") {
+		effectiveProgressPct = Math.max(combinedRaw, peakProgressPct);
+	}
 	const phaseLabel = buildPhaseLabel(phase, queuePosition, etaMs, status);
 	const hasProgress = typeof effectiveProgressPct === "number";
 	const clamped = hasProgress

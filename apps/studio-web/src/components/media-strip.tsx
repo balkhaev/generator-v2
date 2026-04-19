@@ -115,6 +115,7 @@ export default function MediaStrip({
 											etaMs={asset.etaMs}
 											expectedDurationMs={asset.expectedDurationMs}
 											phase={asset.phase}
+											progressMonotonicKey={asset.runId}
 											progressPct={asset.progressPct}
 											queuePosition={asset.queuePosition}
 											runStartedAt={asset.createdAt}

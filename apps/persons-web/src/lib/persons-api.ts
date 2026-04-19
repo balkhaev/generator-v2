@@ -221,6 +221,16 @@ export async function trainPersonLora(personId: string) {
 	return payload.person;
 }
 
+export async function confirmPersonLoraTraining(personId: string) {
+	const payload = await requestJson<{ person: PersonRecord }>(
+		`${API_BASE_URL}/api/persons/${personId}/train-lora/confirm`,
+		{
+			method: "POST",
+		}
+	);
+	return payload.person;
+}
+
 export async function cancelPersonLoraTraining(personId: string) {
 	const payload = await requestJson<{ person: PersonRecord }>(
 		`${API_BASE_URL}/api/persons/${personId}/train-lora/cancel`,

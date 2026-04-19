@@ -3,6 +3,7 @@ export type PersonGenerationStatus = "ready" | "queued" | "failed";
 export type PersonLoraTrainingStatus =
 	| "queued"
 	| "generating"
+	| "awaiting-approval"
 	| "training"
 	| "publishing"
 	| "ready"
@@ -11,6 +12,7 @@ export type PersonLoraTrainingStatus =
 export const PERSON_LORA_ACTIVE_TRAINING_STATUSES = [
 	"queued",
 	"generating",
+	"awaiting-approval",
 	"training",
 	"publishing",
 ] as const satisfies readonly PersonLoraTrainingStatus[];
@@ -36,6 +38,7 @@ const PERSON_LORA_ACTIVE_TRAINING_STATUS_SET = new Set<string>(
 
 const PERSON_LORA_FALLBACK_PROGRESS: Record<PersonLoraTrainingStatus, number> =
 	{
+		"awaiting-approval": 60,
 		failed: 100,
 		generating: 32,
 		publishing: 92,
@@ -43,6 +46,12 @@ const PERSON_LORA_FALLBACK_PROGRESS: Record<PersonLoraTrainingStatus, number> =
 		ready: 100,
 		training: 76,
 	};
+
+export function isApprovablePersonLoraTrainingStatus(
+	status: string | null | undefined
+): boolean {
+	return status === "awaiting-approval";
+}
 
 const PROVIDER_TRAINING_BASE_PROGRESS = 76;
 const PROVIDER_TRAINING_MAX_DISPLAY_PROGRESS = 89;
@@ -222,6 +231,10 @@ export function getPersonLoraTrainingPhaseLabel(
 	switch (training?.phase) {
 		case "generating-references":
 			return "Generating reference set";
+		case "refilling-references":
+			return "Regenerating rejected photos";
+		case "awaiting-approval":
+			return "Review dataset before training";
 		case "uploading-dataset":
 			return "Packing and uploading dataset";
 		case "starting-training":
@@ -242,6 +255,8 @@ export function getPersonLoraTrainingPhaseLabel(
 					return "Waiting for worker";
 				case "generating":
 					return "Preparing dataset";
+				case "awaiting-approval":
+					return "Review dataset before training";
 				case "training":
 					return "Training LoRA weights";
 				case "publishing":
@@ -274,7 +289,12 @@ export function getPersonLoraReferenceImageTarget(
 	return DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT;
 }
 
-export type PersonLoraStageId = "queued" | "dataset" | "training" | "ready";
+export type PersonLoraStageId =
+	| "queued"
+	| "dataset"
+	| "review"
+	| "training"
+	| "ready";
 export type PersonLoraStageState = "pending" | "active" | "done" | "failed";
 
 export interface PersonLoraStageItem {
@@ -288,6 +308,7 @@ export interface PersonLoraStageItem {
 const PERSON_LORA_STAGE_ORDER: readonly PersonLoraStageId[] = [
 	"queued",
 	"dataset",
+	"review",
 	"training",
 	"ready",
 ];
@@ -296,20 +317,23 @@ const PERSON_LORA_STATUS_TO_STAGE_INDEX: Record<
 	PersonLoraTrainingStatus | "ready",
 	number
 > = {
-	failed: 3,
+	"awaiting-approval": 2,
+	failed: 4,
 	generating: 1,
-	publishing: 2,
+	publishing: 3,
 	queued: 0,
-	ready: 3,
-	training: 2,
+	ready: 4,
+	training: 3,
 };
 
 const PERSON_LORA_FAILED_STAGE_FROM_PHASE: Record<string, PersonLoraStageId> = {
+	"awaiting-approval": "review",
 	"generating-references": "dataset",
 	"publishing-lora": "ready",
 	"polling-training": "training",
+	"refilling-references": "dataset",
 	"starting-training": "training",
-	"uploading-dataset": "dataset",
+	"uploading-dataset": "review",
 };
 
 function buildStageState(input: {
@@ -472,6 +496,13 @@ export function getPersonLoraTrainingStages(input: {
 		isReady,
 		stageId: "dataset",
 	});
+	const reviewState = buildStageState({
+		currentIdx,
+		failedStageId,
+		isFailed,
+		isReady,
+		stageId: "review",
+	});
 	const trainingState = buildStageState({
 		currentIdx,
 		failedStageId,
@@ -496,6 +527,12 @@ export function getPersonLoraTrainingStages(input: {
 		datasetState === "active" ||
 		datasetState === "done" ||
 		datasetState === "failed";
+	let reviewDetail: string | null = null;
+	if (reviewState === "active") {
+		reviewDetail = "waiting for approval";
+	} else if (reviewState === "done") {
+		reviewDetail = "approved";
+	}
 
 	return [
 		{
@@ -511,6 +548,13 @@ export function getPersonLoraTrainingStages(input: {
 			label: "Dataset",
 			progressPct: progressForStageState(datasetState, datasetActiveProgress),
 			state: datasetState,
+		},
+		{
+			detail: reviewDetail,
+			id: "review",
+			label: "Review",
+			progressPct: progressForStageState(reviewState, 50),
+			state: reviewState,
 		},
 		{
 			detail: getTrainingStageDetail({

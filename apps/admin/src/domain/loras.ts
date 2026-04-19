@@ -40,6 +40,35 @@ export function slugify(value: string): string {
 		.replace(slugEdgeDashesPattern, "");
 }
 
+/**
+ * Trim, drop empties and de-duplicate (case-insensitive) trigger words while
+ * preserving the order in which they were declared. Civitai often returns
+ * `trainedWords` with stray whitespace or duplicate casing variants — keeping
+ * them clean avoids polluting the prompt at run time.
+ */
+export function normalizeTriggerWords(
+	value: readonly string[] | undefined
+): string[] {
+	if (!value) {
+		return [];
+	}
+	const seen = new Set<string>();
+	const result: string[] = [];
+	for (const raw of value) {
+		const trimmed = typeof raw === "string" ? raw.trim() : "";
+		if (!trimmed) {
+			continue;
+		}
+		const key = trimmed.toLowerCase();
+		if (seen.has(key)) {
+			continue;
+		}
+		seen.add(key);
+		result.push(trimmed);
+	}
+	return result;
+}
+
 interface LoraServiceDeps {
 	cacheLora?: (
 		sourceUrl: string,
@@ -133,6 +162,9 @@ export class LoraRegistryService {
 			s3Url: cached.url,
 			sizeBytes: cached.sizeBytes,
 			defaultWeight: input.defaultWeight ?? 1,
+			triggerWords: normalizeTriggerWords(
+				input.triggerWords ?? source.trainedWords
+			),
 			variant,
 			pairGroupId: null,
 		});
@@ -196,6 +228,7 @@ export class LoraRegistryService {
 			),
 			pairGroupId,
 			source: primarySource,
+			triggerWordsOverride: input.triggerWords,
 			variant: primaryVariant,
 		});
 		const secondaryEntry = await this.persistPairEntry({
@@ -208,6 +241,7 @@ export class LoraRegistryService {
 			),
 			pairGroupId,
 			source: secondarySource,
+			triggerWordsOverride: input.pair.triggerWords ?? input.triggerWords,
 			variant: secondaryVariant,
 		});
 
@@ -223,6 +257,7 @@ export class LoraRegistryService {
 		name: string;
 		pairGroupId: string;
 		source: ResolvedLoraSource;
+		triggerWordsOverride: string[] | undefined;
 		variant: Exclude<LoraVariant, "both">;
 	}): Promise<LoraRegistryEntry> {
 		const s3Config = this.s3Config;
@@ -251,6 +286,9 @@ export class LoraRegistryService {
 			s3Url: cached.url,
 			sizeBytes: cached.sizeBytes,
 			defaultWeight: input.defaultWeight ?? 1,
+			triggerWords: normalizeTriggerWords(
+				input.triggerWordsOverride ?? input.source.trainedWords
+			),
 			variant: input.variant,
 			pairGroupId: input.pairGroupId,
 		});
@@ -346,7 +384,13 @@ export class LoraRegistryService {
 		id: string,
 		patch: UpdateLoraInput
 	): Promise<LoraRegistryEntry | null> {
-		const updated = await this.repository.update(id, patch);
+		const normalizedPatch: UpdateLoraInput = {
+			...patch,
+			...(patch.triggerWords === undefined
+				? {}
+				: { triggerWords: normalizeTriggerWords(patch.triggerWords) }),
+		};
+		const updated = await this.repository.update(id, normalizedPatch);
 		await this.emitChange("updated", updated);
 		return updated;
 	}

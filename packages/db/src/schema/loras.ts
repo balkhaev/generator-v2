@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
 	bigint,
 	doublePrecision,
@@ -31,6 +32,13 @@ export const lora = pgTable(
 		s3Url: text("s3_url").notNull(),
 		sizeBytes: bigint("size_bytes", { mode: "number" }).notNull().default(0),
 		defaultWeight: doublePrecision("default_weight").notNull().default(1),
+		// Trigger words (a.k.a. trainedWords on Civitai) that activate the LoRA
+		// in a prompt. Stored as a structured list so studio/persons can prepend
+		// them to user prompts automatically when the LoRA is selected.
+		triggerWords: text("trigger_words")
+			.array()
+			.notNull()
+			.default(sql`ARRAY[]::text[]`),
 		variant: loraVariantEnum("variant"),
 		pairGroupId: text("pair_group_id"),
 		status: loraStatusEnum("status").notNull().default("active"),

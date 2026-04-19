@@ -56,19 +56,23 @@ function buildS3ObjectUrl(config: S3StorageConfig, key: string): URL {
 async function buildS3Authorization(input: {
 	accessKeyId: string;
 	contentSha256: string;
-	contentType: string;
+	contentType?: string;
 	date: Date;
 	host: string;
-	method: "PUT";
+	method: "PUT" | "DELETE";
 	pathname: string;
 	region: string;
 	secretAccessKey: string;
 }) {
 	const { dateStamp, timestamp } = formatAmzDate(input.date);
 	const credentialScope = `${dateStamp}/${input.region}/s3/aws4_request`;
-	const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
+	const includeContentType =
+		input.method === "PUT" && typeof input.contentType === "string";
+	const signedHeaders = includeContentType
+		? "content-type;host;x-amz-content-sha256;x-amz-date"
+		: "host;x-amz-content-sha256;x-amz-date";
 	const canonicalHeaders = [
-		`content-type:${input.contentType}`,
+		...(includeContentType ? [`content-type:${input.contentType}`] : []),
 		`host:${input.host}`,
 		`x-amz-content-sha256:${input.contentSha256}`,
 		`x-amz-date:${timestamp}`,
@@ -154,6 +158,85 @@ export async function uploadObjectToS3(
 		sizeBytes: input.data.length,
 		url: `${config.publicBaseUrl.replace(trailingSlashesPattern, "")}/${input.key}`,
 	};
+}
+
+/**
+ * Removes an object from S3 using SigV4. Used by persons-service to clean up
+ * dataset photos when an operator rejects a generated reference variant or
+ * when a successful LoRA training releases the per-photo dataset (the final
+ * dataset zip is preserved on `person.datasetUrl` for retrains).
+ */
+export async function deleteObjectFromS3(
+	key: string,
+	config: S3StorageConfig
+): Promise<{ deleted: boolean; key: string }> {
+	const deleteUrl = buildS3ObjectUrl(config, key);
+	// SigV4 requires the SHA-256 of the (empty) request body even for DELETE.
+	const emptyBodySha256 = await sha256Hex(new Uint8Array(0));
+	const signed = await buildS3Authorization({
+		accessKeyId: config.accessKeyId,
+		contentSha256: emptyBodySha256,
+		date: new Date(),
+		host: deleteUrl.host,
+		method: "DELETE",
+		pathname: deleteUrl.pathname,
+		region: config.region,
+		secretAccessKey: config.secretAccessKey,
+	});
+	const response = await fetch(deleteUrl, {
+		headers: {
+			authorization: signed.authorization,
+			"x-amz-content-sha256": emptyBodySha256,
+			"x-amz-date": signed.timestamp,
+		},
+		method: "DELETE",
+	});
+
+	// S3 returns 204 No Content when the object is removed and 404 when it
+	// never existed. Treat 404 as success because the desired end-state — the
+	// object is not in the bucket — is already true.
+	if (response.status === 404) {
+		return { deleted: false, key };
+	}
+	if (!response.ok) {
+		const responseBody = await response.text().catch(() => "");
+		const detail = responseBody ? `: ${responseBody.slice(0, 500)}` : "";
+		throw new Error(
+			`S3 delete failed (${response.status} ${response.statusText}) for ${key}${detail}`
+		);
+	}
+
+	return { deleted: true, key };
+}
+
+/**
+ * Recovers the canonical S3 object key from a public URL produced by
+ * {@link uploadObjectToS3}. Returns `null` when the URL doesn't belong to the
+ * configured bucket so callers can short-circuit and skip the DELETE call
+ * (and thus avoid leaking errors when working with externally-hosted assets
+ * we never owned in the first place).
+ */
+export function extractS3KeyFromPublicUrl(
+	publicUrl: string,
+	config: S3StorageConfig
+): string | null {
+	const baseUrl = config.publicBaseUrl.replace(trailingSlashesPattern, "");
+	if (!publicUrl.startsWith(`${baseUrl}/`)) {
+		return null;
+	}
+	const rawKey = publicUrl.slice(baseUrl.length + 1);
+	if (!rawKey) {
+		return null;
+	}
+
+	try {
+		return rawKey
+			.split("/")
+			.map((segment) => decodeURIComponent(segment))
+			.join("/");
+	} catch {
+		return null;
+	}
 }
 
 export async function uploadZipToS3(

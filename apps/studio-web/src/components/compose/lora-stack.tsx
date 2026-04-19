@@ -257,7 +257,6 @@ interface PickerPopoverProps {
 	excludedUrls: Set<string>;
 	onClose: () => void;
 	onPickEntry: (entry: LoraRegistryEntry) => void;
-	onPickUrl: (url: string) => void;
 	/**
 	 * Restricts the picker to entries matching this variant. Used for wan 2.2
 	 * workflows where each slot targets a specific transformer (high/low) and
@@ -272,12 +271,10 @@ function PickerPopover({
 	excludedUrls,
 	onClose,
 	onPickEntry,
-	onPickUrl,
 	restrictVariant,
 }: PickerPopoverProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [query, setQuery] = useState("");
-	const [customUrl, setCustomUrl] = useState("");
 
 	useEffect(() => {
 		function handleClick(event: MouseEvent) {
@@ -329,19 +326,6 @@ function PickerPopover({
 				entry.description.toLowerCase().includes(normalized)
 		);
 	}, [availableLoras, excludedUrls, query, restrictVariant]);
-
-	function handleAddCustom() {
-		const trimmed = customUrl.trim();
-		if (!trimmed) {
-			return;
-		}
-		try {
-			new URL(trimmed);
-		} catch {
-			return;
-		}
-		onPickUrl(trimmed);
-	}
 
 	return (
 		<div
@@ -413,31 +397,16 @@ function PickerPopover({
 			)}
 
 			<div className="border-foreground/8 border-t pt-2">
-				<p className="mb-1 text-[10px] text-muted-foreground">
-					Or paste a public URL:
-				</p>
-				<div className="flex gap-1.5">
-					<Input
-						className="h-7 flex-1 text-[11px]"
-						onChange={(event) => setCustomUrl(event.target.value)}
-						onKeyDown={(event) => {
-							if (event.key === "Enter") {
-								event.preventDefault();
-								handleAddCustom();
-							}
-						}}
-						placeholder="https://…/lora.safetensors"
-						value={customUrl}
-					/>
-					<Button
-						disabled={!customUrl.trim()}
-						onClick={handleAddCustom}
-						size="xs"
-						type="button"
-					>
-						Add
-					</Button>
-				</div>
+				<a
+					className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground underline transition hover:text-foreground"
+					href={adminHref}
+					rel="noreferrer noopener"
+					target="_blank"
+				>
+					<Plus className="size-3" />
+					Add new LoRA in admin
+					<ExternalLink className="size-2.5" />
+				</a>
 			</div>
 		</div>
 	);
@@ -537,7 +506,6 @@ function LoraEmptySlotPickerRow({
 	excludedUrls,
 	isMultiSlot,
 	onPickEntry,
-	onPickUrl,
 	openSlotKey,
 	restrictVariant,
 	setOpenSlotKey,
@@ -549,7 +517,6 @@ function LoraEmptySlotPickerRow({
 	excludedUrls: Set<string>;
 	isMultiSlot: boolean;
 	onPickEntry: (entry: LoraRegistryEntry, slotIndex: number) => void;
-	onPickUrl: (url: string, slotIndex: number) => void;
 	openSlotKey: string | null;
 	restrictVariant?: LoraVariant;
 	setOpenSlotKey: (key: string | null) => void;
@@ -576,7 +543,6 @@ function LoraEmptySlotPickerRow({
 					excludedUrls={excludedUrls}
 					onClose={() => setOpenSlotKey(null)}
 					onPickEntry={(entry) => onPickEntry(entry, slotIndex)}
-					onPickUrl={(url) => onPickUrl(url, slotIndex)}
 					restrictVariant={restrictVariant}
 				/>
 			) : null}
@@ -654,11 +620,6 @@ export default function LoraStack({
 		setOpenSlotKey(null);
 	}
 
-	function handlePickUrlForSlot(url: string, slotIndex: number) {
-		fillSlot(slotIndex, url);
-		setOpenSlotKey(null);
-	}
-
 	function handleClearSlot(urlKey: string) {
 		onParamChange(urlKey, "");
 	}
@@ -698,7 +659,6 @@ export default function LoraStack({
 				excludedUrls={excludedUrls}
 				isMultiSlot={isMultiSlot}
 				onPickEntry={handlePickEntryForSlot}
-				onPickUrl={handlePickUrlForSlot}
 				openSlotKey={openSlotKey}
 				restrictVariant={getSlotVariant(slot)}
 				setOpenSlotKey={setOpenSlotKey}

@@ -1,4 +1,8 @@
-import type { EventPublisher } from "@generator/events";
+import type {
+	ApprovedDatasetItem,
+	EventPublisher,
+	PersonDatasetVariantRefillRequest,
+} from "@generator/events";
 import {
 	DEBUG_CORRELATION_HEADER,
 	normalizeBaseUrl,
@@ -8,6 +12,16 @@ import {
 export interface StartPersonLoraTrainingInput {
 	debugCorrelationId?: string;
 	description?: string;
+	/**
+	 * Pipeline mode for the admin runner:
+	 *   - `"prep-only"` (default): generate dataset photos, upload each to
+	 *     S3, then publish `awaiting-approval`. Operator must call
+	 *     {@link AdminTrainingClient.confirmPersonLoraTraining} to start the
+	 *     actual training.
+	 *   - `"auto-train"`: legacy single-shot behaviour (datasetPrep + zip +
+	 *     train). Used for retrains via `reuseDatasetUrl` or in tests.
+	 */
+	mode?: "prep-only" | "auto-train";
 	outputName?: string;
 	personId: string;
 	personName: string;
@@ -24,8 +38,17 @@ export interface StartPersonLoraTrainingInput {
 	triggerWord?: string;
 }
 
+export interface ConfirmPersonLoraTrainingInput
+	extends StartPersonLoraTrainingInput {
+	approvedItems: ApprovedDatasetItem[];
+}
+
 export interface AdminTrainingClient {
 	cacheExternalLora(sourceUrl: string): Promise<string>;
+	confirmPersonLoraTraining(
+		input: ConfirmPersonLoraTrainingInput
+	): Promise<{ accepted: true; jobId: string }>;
+	requestVariantRefill(input: PersonDatasetVariantRefillRequest): Promise<void>;
 	startPersonLoraTraining(
 		input: StartPersonLoraTrainingInput,
 		options?: {
@@ -99,6 +122,25 @@ export function createAdminTrainingClient(
 			);
 			return result.url;
 		},
+
+		confirmPersonLoraTraining(input: ConfirmPersonLoraTrainingInput) {
+			return request<{ accepted: true; jobId: string }>(
+				"/api/internal/person-lora-trainings/confirm",
+				{
+					body: JSON.stringify(input),
+					headers: { "content-type": "application/json" },
+					method: "POST",
+				}
+			);
+		},
+
+		async requestVariantRefill(input: PersonDatasetVariantRefillRequest) {
+			await request("/api/internal/person-lora-trainings/refill-variant", {
+				body: JSON.stringify(input),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			});
+		},
 	};
 }
 
@@ -112,6 +154,16 @@ export function createKafkaAdminTrainingClient(
 				throw new Error("Admin LoRA cache integration is not configured");
 			}
 			return fallbackClient.cacheExternalLora(sourceUrl);
+		},
+		async confirmPersonLoraTraining(input) {
+			await eventPublisher.publishPersonLoraTrainingConfirmed(input);
+			return {
+				accepted: true,
+				jobId: `person-lora-training-confirm-${input.personId}-${input.trainingRunId}`,
+			};
+		},
+		async requestVariantRefill(input) {
+			await eventPublisher.publishPersonDatasetVariantRefillRequested(input);
 		},
 		async startPersonLoraTraining(input, options) {
 			const debugCorrelationId =

@@ -13,6 +13,7 @@ import type {
 	StudioShotArtifactKind,
 	StudioShotRecord,
 } from "@generator/contracts/studio";
+import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import { normalizeBaseUrl } from "@generator/http/shared";
 import { getWorkflowDefinition } from "@generator/workflows";
 import { z } from "zod";
@@ -216,7 +217,7 @@ export interface StudioExecutionClient {
 	): Promise<GeneratorExecutionRecord>;
 }
 
-type StudioLogger = Pick<Console, "info" | "error">;
+type StudioLogger = Pick<Console, "info" | "error" | "warn">;
 
 type HttpFetch = (
 	input: string | URL | Request,
@@ -371,6 +372,70 @@ function workflowAcceptsOptionalLora(workflowKey: string) {
 	);
 }
 
+/**
+ * Collect URL strings sitting in workflow params under any field marked as a
+ * LoRA URL (`kind: "lora-url"`). Used at run-launch time so we can map the
+ * URLs back to registry entries and prepend their trigger words to the prompt.
+ */
+function collectLoraUrls(
+	workflowKey: string,
+	params: Record<string, unknown>
+): string[] {
+	const definition = getWorkflowDefinition(workflowKey);
+	if (!definition) {
+		return [];
+	}
+	const urls: string[] = [];
+	for (const field of definition.parameterFields) {
+		if (field.kind !== "lora-url") {
+			continue;
+		}
+		const raw = params[field.key];
+		if (typeof raw !== "string") {
+			continue;
+		}
+		const trimmed = raw.trim();
+		if (trimmed.length > 0) {
+			urls.push(trimmed);
+		}
+	}
+	return urls;
+}
+
+/**
+ * Build the final prompt for the generator: the user prompt prefixed with any
+ * trigger words from the LoRAs the user picked. Trigger words already present
+ * in the prompt (case-insensitive substring match) are skipped to avoid
+ * duplication when users paste them in by hand.
+ */
+export function buildPromptWithTriggerWords(input: {
+	prompt: string;
+	triggerWords: readonly string[];
+}): string {
+	const promptLower = input.prompt.toLowerCase();
+	const seen = new Set<string>();
+	const additions: string[] = [];
+	for (const raw of input.triggerWords) {
+		const word = raw.trim();
+		if (!word) {
+			continue;
+		}
+		const key = word.toLowerCase();
+		if (seen.has(key)) {
+			continue;
+		}
+		seen.add(key);
+		if (promptLower.includes(key)) {
+			continue;
+		}
+		additions.push(word);
+	}
+	if (additions.length === 0) {
+		return input.prompt;
+	}
+	return `${additions.join(", ")}, ${input.prompt}`;
+}
+
 async function resolvePersonLoraUrl(params: {
 	cookieHeader: string;
 	fetchImpl: HttpFetch;
@@ -402,6 +467,7 @@ export class StudioService {
 	private readonly callbackConfig?: { token: string; url?: string };
 	private readonly executionClient: StudioExecutionClient;
 	private readonly logger: StudioLogger;
+	private readonly loraReadRepository?: LoraReadRepository;
 	private readonly outboundFetch: HttpFetch;
 	private readonly personsApiBaseUrl?: string;
 	private readonly repository: StudioRepository;
@@ -414,6 +480,7 @@ export class StudioService {
 		callbackConfig?: { token: string; url?: string },
 		resolver?: {
 			fetchImpl?: HttpFetch;
+			loraReadRepository?: LoraReadRepository;
 			personsApiBaseUrl?: string;
 		}
 	) {
@@ -423,6 +490,65 @@ export class StudioService {
 		this.callbackConfig = callbackConfig;
 		this.personsApiBaseUrl = resolver?.personsApiBaseUrl?.trim();
 		this.outboundFetch = resolver?.fetchImpl ?? fetch;
+		this.loraReadRepository = resolver?.loraReadRepository;
+	}
+
+	/**
+	 * Look up the registry entries for the LoRA URLs picked in this run and
+	 * prepend their trigger words to the prompt. Civitai LoRAs only activate
+	 * when their `trainedWords` show up in the prompt; previously studio sent
+	 * the bare user prompt and the LoRA had no effect. Falls back to the
+	 * original prompt when no registry repo is configured (used by tests) or
+	 * none of the URLs match a registry entry (e.g. ad-hoc URL the user pasted
+	 * directly).
+	 */
+	private async injectLoraTriggerWords(input: {
+		params: Record<string, unknown>;
+		prompt: string;
+		runId: string;
+		workflowKey: string;
+	}): Promise<string> {
+		if (!this.loraReadRepository) {
+			return input.prompt;
+		}
+		const urls = collectLoraUrls(input.workflowKey, input.params);
+		if (urls.length === 0) {
+			return input.prompt;
+		}
+		let entries: Awaited<ReturnType<LoraReadRepository["getByS3Urls"]>>;
+		try {
+			entries = await this.loraReadRepository.getByS3Urls(urls);
+		} catch (error) {
+			// Триггер-слова — это обогащение, а не критический шаг. Если запрос в БД
+			// упал (схема не накатилась, потерян коннект и т.п.) — лучше отправить
+			// исходный промпт, чем валить весь launchRun.
+			this.logger.warn?.("studio.lora.trigger-lookup.failed", {
+				error: error instanceof Error ? error.message : "unknown",
+				runId: input.runId,
+			});
+			return input.prompt;
+		}
+		const triggerWords: string[] = [];
+		for (const entry of entries) {
+			for (const word of entry.triggerWords) {
+				triggerWords.push(word);
+			}
+		}
+		if (triggerWords.length === 0) {
+			return input.prompt;
+		}
+		const augmented = buildPromptWithTriggerWords({
+			prompt: input.prompt,
+			triggerWords,
+		});
+		if (augmented !== input.prompt) {
+			this.logger.info("studio.lora.trigger-words.applied", {
+				added: augmented.length - input.prompt.length,
+				loraIds: entries.map((entry) => entry.id),
+				runId: input.runId,
+			});
+		}
+		return augmented;
 	}
 
 	/**
@@ -693,6 +819,14 @@ export class StudioService {
 			workflowKey: scenario.workflowKey,
 		});
 
+		const basePrompt = parsed.promptOverride ?? scenario.prompt;
+		const finalPrompt = await this.injectLoraTriggerWords({
+			params: mergedExecutionParams,
+			prompt: basePrompt,
+			runId: createdRun.id,
+			workflowKey: scenario.workflowKey,
+		});
+
 		let execution: GeneratorExecutionRecord;
 		try {
 			execution = await this.executionClient.createExecution(
@@ -712,7 +846,7 @@ export class StudioService {
 						? { inputImageUrl: parsed.inputImageUrl }
 						: {}),
 					params: mergedExecutionParams,
-					prompt: parsed.promptOverride ?? scenario.prompt,
+					prompt: finalPrompt,
 					workflowKey: scenario.workflowKey,
 				},
 				{ debugCorrelationId: options?.debugCorrelationId }

@@ -30,7 +30,12 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 import { env } from "@generator/env/server";
-import type { EventPublisher } from "@generator/events";
+import type {
+	ApprovedDatasetItem,
+	EventPublisher,
+	PersonDatasetVariantRefillRequest,
+	PersonLoraTrainingConfirmation,
+} from "@generator/events";
 import {
 	buildPublicAssetUrl,
 	buildZipFromBuffers,
@@ -42,10 +47,14 @@ import {
 import { z } from "zod";
 
 import {
+	assembleDatasetZipFromItems,
 	buildDefaultTriggerWord,
 	buildReferenceDataset,
+	generateSingleVariant,
 	inferGenderHint,
 	ORIGINAL_PHOTO_DUPLICATES,
+	type PreparedDatasetPhoto,
+	prepareDatasetPhotos,
 	REFERENCE_VARIANT_COUNT,
 	sanitizeSegment,
 	TOTAL_DATASET_COUNT,
@@ -83,6 +92,15 @@ export type RunpodAiToolkitBaseModel =
 export const startRunpodPodTrainingSchema = z.object({
 	debugCorrelationId: z.string().trim().min(1).optional(),
 	description: z.string().trim().optional(),
+	/**
+	 * Pipeline mode set by persons-service:
+	 *   - `"prep-only"` (default for first-time trainings) — generate the
+	 *     dataset photos individually + emit `awaiting-approval`. The
+	 *     operator must call `confirmAndTrain` afterwards.
+	 *   - `"auto-train"` — legacy single-shot path (datasetPrep + zip +
+	 *     train). Used for retrains via `reuseDatasetUrl` and for tests.
+	 */
+	mode: z.enum(["prep-only", "auto-train"]).optional(),
 	outputName: z.string().trim().min(1).optional(),
 	personId: z.string().trim().min(1),
 	personName: z.string().trim().min(1),
@@ -126,7 +144,15 @@ type TrainingEventStatus =
 	| "training"
 	| "publishing"
 	| "ready"
-	| "failed";
+	| "failed"
+	| "awaiting-approval";
+
+interface ReferenceImageItemEvent {
+	caption: string;
+	s3Key: string | null;
+	url: string;
+	variantId: string;
+}
 
 interface TrainingEventPayload {
 	completedAt?: string | null;
@@ -145,6 +171,12 @@ interface TrainingEventPayload {
 	providerRequestId?: string | null;
 	providerStatus?: string | null;
 	referenceImageCount?: number | null;
+	/**
+	 * Per-photo dataset descriptors. Persons-service upserts these by
+	 * `variantId`, so the same array element may be re-emitted (with a new url
+	 * + s3Key) after a refill without creating duplicate generation rows.
+	 */
+	referenceImageItems?: ReferenceImageItemEvent[];
 	referenceImageTargetCount?: number | null;
 	referenceImageUrls?: string[];
 	status: TrainingEventStatus;
@@ -703,6 +735,608 @@ export class RunpodPodLoraTrainingRunner {
 		};
 	}
 
+	/**
+	 * Builds canonical S3 keys + public URLs for the trainer artifacts.
+	 * Centralised so prep, confirm, recovery and resume all derive identical
+	 * paths from `(personSlug, outputName, trainingRunId)`.
+	 */
+	private buildArtifactKeys(input: {
+		outputName: string;
+		trainingRunId: string;
+	}): {
+		logPublicUrl: string;
+		logS3Key: string;
+		loraPublicUrl: string;
+		loraS3Key: string;
+	} {
+		const safeOutput = sanitizeSegment(input.outputName);
+		const runSuffix = input.trainingRunId.slice(0, 8);
+		const loraS3Key = `${LORA_S3_PREFIX}/${safeOutput}-${runSuffix}.safetensors`;
+		const logS3Key = `${LOG_S3_PREFIX}/${safeOutput}-${runSuffix}.log`;
+		return {
+			logPublicUrl: buildPublicAssetUrl(this.s3Config, logS3Key),
+			logS3Key,
+			loraPublicUrl: buildPublicAssetUrl(this.s3Config, loraS3Key),
+			loraS3Key,
+		};
+	}
+
+	private resolveOutputName(parsed: {
+		outputName?: string;
+		personSlug: string;
+	}): string {
+		return (
+			parsed.outputName ??
+			`${sanitizeSegment(parsed.personSlug)}-runpod-pod-lora-${Date.now()}`
+		);
+	}
+
+	/**
+	 * Generates dataset photos one-by-one (uploading each to S3) and emits a
+	 * per-photo training event with `referenceImageItems` so persons-service
+	 * can incrementally surface the gallery. Finishes by emitting an
+	 * `awaiting-approval` event — the runner does NOT touch RunPod here. The
+	 * actual training is triggered later via {@link confirmAndTrain} once the
+	 * operator clicks "Train LoRA".
+	 */
+	private async executeDatasetPrep(parsed: StartInput): Promise<void> {
+		const triggerWord =
+			parsed.triggerWord ?? buildDefaultTriggerWord(parsed.personSlug);
+		const genderHint = inferGenderHint(parsed.description);
+		const outputName = this.resolveOutputName(parsed);
+		const startedAt = new Date().toISOString();
+
+		try {
+			this.logger.info("runpod-pod.prep.starting", {
+				outputName,
+				personId: parsed.personId,
+				trainingRunId: parsed.trainingRunId,
+			});
+
+			const accumulated: PreparedDatasetPhoto[] = [];
+			const editorModelId = await this.getDatasetEditorModelId();
+
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debug: {
+						baseModel: this.baseModel,
+						originalPhotoDuplicates: ORIGINAL_PHOTO_DUPLICATES,
+						outputName,
+						referenceVariantCount: REFERENCE_VARIANT_COUNT,
+						sourceReferencePhotoUrl: parsed.referencePhotoUrl,
+						trainingModel: TRAINING_MODEL_LABEL,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: startedAt,
+					phase: "generating-references",
+					progressPct: buildGeneratingProgress(0),
+					referenceImageCount: 0,
+					referenceImageTargetCount: TOTAL_DATASET_COUNT,
+					status: "generating",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+				},
+			});
+
+			await prepareDatasetPhotos({
+				apiKey: this.falApiKeyForDataset,
+				editorModelId,
+				genderHint,
+				onPhotoReady: async (photo) => {
+					accumulated.push(photo);
+					await this.sendTrainingEvent({
+						personId: parsed.personId,
+						event: {
+							debugCorrelationId: parsed.debugCorrelationId,
+							lastEventAt: new Date().toISOString(),
+							phase: "generating-references",
+							progressPct: buildGeneratingProgress(accumulated.length),
+							referenceImageCount: accumulated.length,
+							referenceImageItems: [photo],
+							referenceImageTargetCount: TOTAL_DATASET_COUNT,
+							referenceImageUrls: accumulated.map((entry) => entry.url),
+							status: "generating",
+							trainingRunId: parsed.trainingRunId,
+							triggerWord,
+						},
+					});
+				},
+				personId: parsed.personId,
+				referencePhotoUrl: parsed.referencePhotoUrl,
+				referencePrompt: parsed.referencePrompt,
+				s3Config: this.s3Config,
+				trainingRunId: parsed.trainingRunId,
+				triggerWord,
+			});
+
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debug: {
+						baseModel: this.baseModel,
+						outputName,
+						readyForApproval: true,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					phase: "awaiting-approval",
+					progressPct: 60,
+					referenceImageCount: accumulated.length,
+					referenceImageItems: accumulated,
+					referenceImageTargetCount: TOTAL_DATASET_COUNT,
+					referenceImageUrls: accumulated.map((entry) => entry.url),
+					status: "awaiting-approval",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+				},
+			});
+
+			this.logger.info("runpod-pod.prep.awaiting-approval", {
+				outputName,
+				personId: parsed.personId,
+				photoCount: accumulated.length,
+				trainingRunId: parsed.trainingRunId,
+			});
+		} catch (error) {
+			const errorSummary =
+				error instanceof Error
+					? error.message
+					: "RunPod pod-mode dataset prep failed";
+			this.logger.error("runpod-pod.prep.failed", {
+				error: errorSummary,
+				personId: parsed.personId,
+			});
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debugCorrelationId: parsed.debugCorrelationId,
+					errorSummary,
+					failedAt: new Date().toISOString(),
+					lastEventAt: new Date().toISOString(),
+					phase: "failed",
+					status: "failed",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+				},
+			});
+			throw error;
+		}
+	}
+
+	/**
+	 * Generates a single replacement variant for a rejected dataset slot,
+	 * uploads it to S3 and emits a training event with one
+	 * `referenceImageItems[]` entry. Persons-service upserts that slot in the
+	 * gallery and clears the per-variant "regenerating" indicator.
+	 *
+	 * Note: refilling an `original-NN` slot is a no-op because originals are
+	 * just captioned copies of the reference photo and therefore not deletable
+	 * in the UI in the first place.
+	 */
+	private async executeRefillVariant(
+		input: PersonDatasetVariantRefillRequest
+	): Promise<void> {
+		try {
+			const editorModelId = await this.getDatasetEditorModelId();
+			const photo = await generateSingleVariant({
+				apiKey: this.falApiKeyForDataset,
+				editorModelId,
+				genderHint: inferGenderHint(input.description),
+				personId: input.personId,
+				referencePhotoUrl: input.referencePhotoUrl,
+				referencePrompt: input.referencePrompt,
+				s3Config: this.s3Config,
+				trainingRunId: input.trainingRunId,
+				triggerWord: input.triggerWord,
+				variantId: input.variantId,
+			});
+			await this.sendTrainingEvent({
+				personId: input.personId,
+				event: {
+					debug: {
+						refillRequestNonce: input.requestNonce,
+						refillVariantId: input.variantId,
+					},
+					debugCorrelationId: input.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					phase: "refilling-references",
+					referenceImageItems: [photo],
+					referenceImageTargetCount: TOTAL_DATASET_COUNT,
+					status: "awaiting-approval",
+					trainingRunId: input.trainingRunId,
+					triggerWord: input.triggerWord,
+				},
+			});
+			this.logger.info("runpod-pod.refill.completed", {
+				personId: input.personId,
+				trainingRunId: input.trainingRunId,
+				variantId: input.variantId,
+			});
+		} catch (error) {
+			const errorSummary =
+				error instanceof Error ? error.message : "Variant refill failed";
+			this.logger.error("runpod-pod.refill.failed", {
+				error: errorSummary,
+				personId: input.personId,
+				trainingRunId: input.trainingRunId,
+				variantId: input.variantId,
+			});
+			await this.sendTrainingEvent({
+				personId: input.personId,
+				event: {
+					debug: {
+						refillRequestNonce: input.requestNonce,
+						refillVariantId: input.variantId,
+					},
+					debugCorrelationId: input.debugCorrelationId,
+					errorSummary,
+					lastEventAt: new Date().toISOString(),
+					phase: "refilling-references",
+					status: "awaiting-approval",
+					trainingRunId: input.trainingRunId,
+					triggerWord: input.triggerWord,
+				},
+			});
+			throw error;
+		}
+	}
+
+	/**
+	 * Consumes the operator-approved dataset list, packs it into a zip, uploads
+	 * it to S3 and runs the same RunPod pipeline as the legacy `run()` path
+	 * (presigned URLs + pod create + poll until EXITED + verify artifact).
+	 */
+	private async executeConfirmAndTrain(
+		parsed: StartInput,
+		approvedItems: readonly ApprovedDatasetItem[]
+	): Promise<void> {
+		const triggerWord =
+			parsed.triggerWord ?? buildDefaultTriggerWord(parsed.personSlug);
+		const trainingSteps =
+			env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS;
+		const outputName = this.resolveOutputName(parsed);
+		const { loraS3Key, loraPublicUrl, logS3Key, logPublicUrl } =
+			this.buildArtifactKeys({
+				outputName,
+				trainingRunId: parsed.trainingRunId,
+			});
+
+		let podId: string | null = null;
+		try {
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debug: {
+						approvedItemCount: approvedItems.length,
+						baseModel: this.baseModel,
+						outputName,
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					lastEventAt: new Date().toISOString(),
+					phase: "uploading-dataset",
+					progressPct: 62,
+					referenceImageCount: approvedItems.length,
+					referenceImageTargetCount: TOTAL_DATASET_COUNT,
+					status: "training",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+					uploadMethod: "s3",
+				},
+			});
+
+			const dataset = await assembleDatasetZipFromItems({
+				defaultCaption: triggerWord,
+				items: approvedItems.map((item) => ({
+					caption: item.caption,
+					url: item.url,
+					variantId: item.variantId,
+				})),
+			});
+			const zipData = buildZipFromBuffers(dataset.zipFiles);
+			const datasetUrl = await uploadZipToS3(
+				zipData,
+				`${outputName}-dataset.zip`,
+				this.s3Config
+			);
+
+			await this.runRunpodPodTrainingPipeline({
+				datasetUrl,
+				datasetZipSizeBytes: zipData.length,
+				defaultCaption: dataset.defaultCaption,
+				logPublicUrl,
+				logS3Key,
+				loraPublicUrl,
+				loraS3Key,
+				outputName,
+				parsed,
+				podIdRef: (id) => {
+					podId = id;
+				},
+				referenceImageCount: approvedItems.length,
+				referenceImageUrls: dataset.referenceImageUrls,
+				trainingSteps,
+				triggerWord,
+			});
+		} catch (error) {
+			const errorSummary =
+				error instanceof Error
+					? error.message
+					: "RunPod pod-mode LoRA training failed";
+			this.logger.error("runpod-pod.failed", {
+				error: errorSummary,
+				personId: parsed.personId,
+				podId,
+			});
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debugCorrelationId: parsed.debugCorrelationId,
+					errorSummary,
+					failedAt: new Date().toISOString(),
+					lastEventAt: new Date().toISOString(),
+					phase: "failed",
+					providerJobId: podId,
+					status: "failed",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+				},
+			});
+			throw error;
+		} finally {
+			if (podId) {
+				await this.podClient.deletePod(podId);
+			}
+		}
+	}
+
+	/**
+	 * Shared trainer-submission pipeline used by both the legacy `auto-train`
+	 * path (datasetPrep + train inline) and the new `confirmAndTrain` path
+	 * (zip already assembled from operator-approved photos):
+	 *   1. Mint presigned PUT URLs for the LoRA artifact and live log.
+	 *   2. Emit `starting-training` event.
+	 *   3. Create RunPod pod via REST API and emit `polling-training`.
+	 *   4. Poll pod until EXITED (or until the artifact lands).
+	 *   5. Verify `.safetensors` is in S3 — pods sometimes EXIT before
+	 *      flushing the artifact (OOM/torch crash) and we'd otherwise mark
+	 *      the run `ready` with a 404 loraUrl.
+	 *   6. Emit `ready` event.
+	 *
+	 * The pipeline does NOT delete the pod on failure — that's the caller's
+	 * responsibility (via `podIdRef` + finally block) so failures and the
+	 * happy-path share one cleanup site.
+	 */
+	private async runRunpodPodTrainingPipeline(input: {
+		datasetUrl: string;
+		datasetZipSizeBytes: number | null;
+		defaultCaption: string;
+		logPublicUrl: string;
+		logS3Key: string;
+		loraPublicUrl: string;
+		loraS3Key: string;
+		outputName: string;
+		parsed: Pick<
+			StartInput,
+			| "debugCorrelationId"
+			| "personId"
+			| "personSlug"
+			| "referencePhotoUrl"
+			| "trainingRunId"
+		>;
+		podIdRef: (id: string) => void;
+		referenceImageCount: number;
+		referenceImageUrls: string[];
+		reused?: boolean;
+		trainingSteps: number;
+		triggerWord: string;
+	}): Promise<void> {
+		const {
+			datasetUrl,
+			datasetZipSizeBytes,
+			defaultCaption,
+			logPublicUrl,
+			logS3Key,
+			loraPublicUrl,
+			loraS3Key,
+			outputName,
+			parsed,
+			podIdRef,
+			referenceImageCount,
+			referenceImageUrls,
+			reused = false,
+			trainingSteps,
+			triggerWord,
+		} = input;
+
+		const loraUploadUrl = await createPresignedPutUrl(
+			{
+				contentType: "application/octet-stream",
+				expiresInSeconds: PRESIGNED_URL_TTL_SECONDS,
+				key: loraS3Key,
+			},
+			this.s3Config
+		);
+		const logUploadUrl = await createPresignedPutUrl(
+			{
+				contentType: "text/plain; charset=utf-8",
+				expiresInSeconds: PRESIGNED_URL_TTL_SECONDS,
+				key: logS3Key,
+			},
+			this.s3Config
+		);
+
+		await this.sendTrainingEvent({
+			personId: parsed.personId,
+			event: {
+				datasetUrl,
+				datasetZipSizeBytes,
+				debug: {
+					baseModel: this.baseModel,
+					datasetReused: reused,
+					defaultCaption,
+					loraS3Key,
+					originalPhotoDuplicates: ORIGINAL_PHOTO_DUPLICATES,
+					outputName,
+				},
+				debugCorrelationId: parsed.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				phase: "starting-training",
+				progressPct: 70,
+				referenceImageCount,
+				referenceImageTargetCount: TOTAL_DATASET_COUNT,
+				referenceImageUrls,
+				status: "training",
+				trainingRunId: parsed.trainingRunId,
+				trainingStartedAt: new Date().toISOString(),
+				trainingSteps,
+				triggerWord,
+				uploadMethod: reused ? "reused" : "s3",
+			},
+		});
+
+		const trainingStartedAt = new Date().toISOString();
+		const trainingStartedMs = Date.now();
+
+		const podEnv: Record<string, string> = {
+			BASE_MODEL: this.baseModel,
+			DATASET_URL: datasetUrl,
+			DEFAULT_CAPTION: defaultCaption,
+			LEARNING_RATE: String(DEFAULT_LEARNING_RATE),
+			LOG_UPLOAD_URL: logUploadUrl,
+			LORA_RANK: String(DEFAULT_LORA_RANK),
+			LORA_UPLOAD_CONTENT_TYPE: "application/octet-stream",
+			LORA_UPLOAD_URL: loraUploadUrl,
+			OUTPUT_NAME: outputName,
+			POD_RUNNER_URL: this.podRunnerUrl,
+			TRAINING_STEPS: String(trainingSteps),
+			TRIGGER_WORD: triggerWord,
+		};
+		if (this.hfToken) {
+			podEnv.HF_TOKEN = this.hfToken;
+		}
+		if (this.resultCallbackUrl) {
+			podEnv.RESULT_CALLBACK_URL = this.resultCallbackUrl;
+			podEnv.RESULT_CALLBACK_TOKEN = this.trainingControlToken;
+		}
+
+		const pod = await this.podClient.createPod({
+			cloudType: this.cloudType,
+			containerDiskInGb: this.containerDiskInGb,
+			dockerStartCmd: [
+				"bash",
+				"-lc",
+				`curl -sSfL "${this.bootstrapUrl}" | bash`,
+			],
+			env: podEnv,
+			gpuCount: 1,
+			gpuTypeIds: this.gpuTypeIds,
+			imageName: this.imageName,
+			name: `ai-toolkit-${sanitizeSegment(parsed.personSlug).slice(0, 32)}-${parsed.trainingRunId.slice(0, 6)}`,
+			networkVolumeId: this.networkVolumeId,
+			ports: ["22/tcp"],
+			supportPublicIp: false,
+			templateId: this.templateId,
+			volumeInGb: this.volumeInGb,
+			volumeMountPath: "/workspace",
+		});
+
+		const podId = pod.id;
+		podIdRef(podId);
+		this.logger.info("runpod-pod.started", {
+			gpuTypeIds: this.gpuTypeIds,
+			personId: parsed.personId,
+			podId,
+		});
+
+		await this.sendTrainingEvent({
+			personId: parsed.personId,
+			event: {
+				debug: {
+					podId,
+					podLogUrl: logPublicUrl,
+					runpodPodConsoleUrl: `https://runpod.io/console/pods/${podId}`,
+				},
+				debugCorrelationId: parsed.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				phase: "polling-training",
+				progressPct: 76,
+				providerJobId: podId,
+				providerRequestId: podId,
+				providerStatus: pod.desiredStatus ?? "RUNNING",
+				status: "training",
+				trainingElapsedMs: 0,
+				trainingRunId: parsed.trainingRunId,
+				trainingStartedAt,
+				trainingSteps,
+				triggerWord,
+			},
+		});
+
+		await this.pollUntilExited({
+			datasetUrl,
+			debugCorrelationId: parsed.debugCorrelationId,
+			logS3Key,
+			loraS3Key,
+			outputName,
+			personId: parsed.personId,
+			podId,
+			referenceImageCount,
+			referenceImageTargetCount: TOTAL_DATASET_COUNT,
+			referenceImageUrls,
+			trainingRunId: parsed.trainingRunId,
+			trainingStartedAt,
+			trainingStartedMs,
+			trainingSteps,
+			triggerWord,
+		});
+
+		const artifactCheck = await this.checkLoraArtifactInS3(loraS3Key);
+		if (!artifactCheck.exists) {
+			throw new Error(
+				`RunPod pod ${podId} exited but lora artifact missing in S3 (${loraS3Key}). Check pod logs.`
+			);
+		}
+		this.logger.info("runpod-pod.artifact-verified", {
+			loraS3Key,
+			personId: parsed.personId,
+			podId,
+			sizeBytes: artifactCheck.size,
+		});
+
+		await this.sendTrainingEvent({
+			personId: parsed.personId,
+			event: {
+				completedAt: new Date().toISOString(),
+				datasetUrl,
+				debug: {
+					baseModel: this.baseModel,
+					datasetReused: reused,
+					loraS3Key,
+					podId,
+				},
+				debugCorrelationId: parsed.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				loraUrl: loraPublicUrl,
+				phase: "ready",
+				progressPct: 100,
+				providerJobId: podId,
+				providerRequestId: podId,
+				providerStatus: "EXITED",
+				referenceImageCount,
+				referenceImageTargetCount: TOTAL_DATASET_COUNT,
+				referenceImageUrls,
+				status: "ready",
+				trainingElapsedMs: Date.now() - trainingStartedMs,
+				trainingRunId: parsed.trainingRunId,
+				trainingStartedAt,
+				trainingSteps,
+				triggerWord,
+				uploadMethod: reused ? "reused" : "s3",
+			},
+		});
+	}
+
 	private async executeRunpodPodTraining(parsed: StartInput): Promise<void> {
 		const triggerWord =
 			parsed.triggerWord ?? buildDefaultTriggerWord(parsed.personSlug);
@@ -710,13 +1344,12 @@ export class RunpodPodLoraTrainingRunner {
 		const startedAt = new Date().toISOString();
 		const trainingSteps =
 			env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS;
-		const outputName =
-			parsed.outputName ??
-			`${sanitizeSegment(parsed.personSlug)}-runpod-pod-lora-${Date.now()}`;
-		const loraS3Key = `${LORA_S3_PREFIX}/${sanitizeSegment(outputName)}-${parsed.trainingRunId.slice(0, 8)}.safetensors`;
-		const loraPublicUrl = buildPublicAssetUrl(this.s3Config, loraS3Key);
-		const logS3Key = `${LOG_S3_PREFIX}/${sanitizeSegment(outputName)}-${parsed.trainingRunId.slice(0, 8)}.log`;
-		const logPublicUrl = buildPublicAssetUrl(this.s3Config, logS3Key);
+		const outputName = this.resolveOutputName(parsed);
+		const { loraS3Key, loraPublicUrl, logS3Key, logPublicUrl } =
+			this.buildArtifactKeys({
+				outputName,
+				trainingRunId: parsed.trainingRunId,
+			});
 
 		let podId: string | null = null;
 
@@ -765,195 +1398,24 @@ export class RunpodPodLoraTrainingRunner {
 				triggerWord,
 			});
 
-			const loraUploadUrl = await createPresignedPutUrl(
-				{
-					contentType: "application/octet-stream",
-					expiresInSeconds: PRESIGNED_URL_TTL_SECONDS,
-					key: loraS3Key,
-				},
-				this.s3Config
-			);
-
-			const logUploadUrl = await createPresignedPutUrl(
-				{
-					contentType: "text/plain; charset=utf-8",
-					expiresInSeconds: PRESIGNED_URL_TTL_SECONDS,
-					key: logS3Key,
-				},
-				this.s3Config
-			);
-
-			await this.sendTrainingEvent({
-				personId: parsed.personId,
-				event: {
-					datasetUrl: datasetPrep.datasetUrl,
-					datasetZipSizeBytes: datasetPrep.datasetZipSizeBytes,
-					debug: {
-						baseModel: this.baseModel,
-						datasetReused: datasetPrep.reused,
-						defaultCaption: datasetPrep.defaultCaption,
-						loraS3Key,
-						originalPhotoDuplicates: ORIGINAL_PHOTO_DUPLICATES,
-						outputName,
-					},
-					debugCorrelationId: parsed.debugCorrelationId,
-					lastEventAt: new Date().toISOString(),
-					phase: "starting-training",
-					progressPct: 70,
-					referenceImageCount: datasetPrep.referenceImageCount,
-					referenceImageTargetCount: TOTAL_DATASET_COUNT,
-					referenceImageUrls: datasetPrep.referenceImageUrls,
-					status: "training",
-					trainingRunId: parsed.trainingRunId,
-					trainingStartedAt: new Date().toISOString(),
-					trainingSteps,
-					triggerWord,
-					uploadMethod: datasetPrep.reused ? "reused" : "s3",
-				},
-			});
-
-			const trainingStartedAt = new Date().toISOString();
-			const trainingStartedMs = Date.now();
-
-			const podEnv: Record<string, string> = {
-				BASE_MODEL: this.baseModel,
-				DATASET_URL: datasetPrep.datasetUrl,
-				DEFAULT_CAPTION: datasetPrep.defaultCaption,
-				LEARNING_RATE: String(DEFAULT_LEARNING_RATE),
-				LOG_UPLOAD_URL: logUploadUrl,
-				LORA_RANK: String(DEFAULT_LORA_RANK),
-				LORA_UPLOAD_CONTENT_TYPE: "application/octet-stream",
-				LORA_UPLOAD_URL: loraUploadUrl,
-				OUTPUT_NAME: outputName,
-				POD_RUNNER_URL: this.podRunnerUrl,
-				TRAINING_STEPS: String(trainingSteps),
-				TRIGGER_WORD: triggerWord,
-			};
-			if (this.hfToken) {
-				podEnv.HF_TOKEN = this.hfToken;
-			}
-			if (this.resultCallbackUrl) {
-				podEnv.RESULT_CALLBACK_URL = this.resultCallbackUrl;
-				podEnv.RESULT_CALLBACK_TOKEN = this.trainingControlToken;
-			}
-
-			const pod = await this.podClient.createPod({
-				cloudType: this.cloudType,
-				containerDiskInGb: this.containerDiskInGb,
-				dockerStartCmd: [
-					"bash",
-					"-lc",
-					`curl -sSfL "${this.bootstrapUrl}" | bash`,
-				],
-				env: podEnv,
-				gpuCount: 1,
-				gpuTypeIds: this.gpuTypeIds,
-				imageName: this.imageName,
-				name: `ai-toolkit-${sanitizeSegment(parsed.personSlug).slice(0, 32)}-${parsed.trainingRunId.slice(0, 6)}`,
-				networkVolumeId: this.networkVolumeId,
-				ports: ["22/tcp"],
-				supportPublicIp: false,
-				templateId: this.templateId,
-				volumeInGb: this.volumeInGb,
-				volumeMountPath: "/workspace",
-			});
-
-			podId = pod.id;
-			this.logger.info("runpod-pod.started", {
-				gpuTypeIds: this.gpuTypeIds,
-				personId: parsed.personId,
-				podId,
-			});
-
-			await this.sendTrainingEvent({
-				personId: parsed.personId,
-				event: {
-					debug: {
-						podId,
-						podLogUrl: logPublicUrl,
-						runpodPodConsoleUrl: `https://runpod.io/console/pods/${podId}`,
-					},
-					debugCorrelationId: parsed.debugCorrelationId,
-					lastEventAt: new Date().toISOString(),
-					phase: "polling-training",
-					progressPct: 76,
-					providerJobId: podId,
-					providerRequestId: podId,
-					providerStatus: pod.desiredStatus ?? "RUNNING",
-					status: "training",
-					trainingElapsedMs: 0,
-					trainingRunId: parsed.trainingRunId,
-					trainingStartedAt,
-					trainingSteps,
-					triggerWord,
-				},
-			});
-
-			await this.pollUntilExited({
+			await this.runRunpodPodTrainingPipeline({
 				datasetUrl: datasetPrep.datasetUrl,
-				debugCorrelationId: parsed.debugCorrelationId,
+				datasetZipSizeBytes: datasetPrep.datasetZipSizeBytes,
+				defaultCaption: datasetPrep.defaultCaption,
+				logPublicUrl,
 				logS3Key,
+				loraPublicUrl,
 				loraS3Key,
 				outputName,
-				personId: parsed.personId,
-				podId,
+				parsed,
+				podIdRef: (id) => {
+					podId = id;
+				},
 				referenceImageCount: datasetPrep.referenceImageCount,
-				referenceImageTargetCount: TOTAL_DATASET_COUNT,
 				referenceImageUrls: datasetPrep.referenceImageUrls,
-				trainingRunId: parsed.trainingRunId,
-				trainingStartedAt,
-				trainingStartedMs,
+				reused: datasetPrep.reused,
 				trainingSteps,
 				triggerWord,
-			});
-
-			// Verify .safetensors actually landed in S3 — pod иногда уходит в EXITED
-			// раньше, чем долил артефакт (OOM, торч-краш и т.п.). Без этой проверки
-			// мы маркировали бы тренировку как `ready` с loraUrl, по которому
-			// файла нет.
-			const artifactCheck = await this.checkLoraArtifactInS3(loraS3Key);
-			if (!artifactCheck.exists) {
-				throw new Error(
-					`RunPod pod ${podId} exited but lora artifact missing in S3 (${loraS3Key}). Check pod logs.`
-				);
-			}
-			this.logger.info("runpod-pod.artifact-verified", {
-				loraS3Key,
-				personId: parsed.personId,
-				podId,
-				sizeBytes: artifactCheck.size,
-			});
-
-			await this.sendTrainingEvent({
-				personId: parsed.personId,
-				event: {
-					completedAt: new Date().toISOString(),
-					datasetUrl: datasetPrep.datasetUrl,
-					debug: {
-						baseModel: this.baseModel,
-						datasetReused: datasetPrep.reused,
-						loraS3Key,
-						podId,
-					},
-					debugCorrelationId: parsed.debugCorrelationId,
-					lastEventAt: new Date().toISOString(),
-					loraUrl: loraPublicUrl,
-					phase: "ready",
-					progressPct: 100,
-					providerJobId: podId,
-					providerRequestId: podId,
-					providerStatus: "EXITED",
-					referenceImageCount: datasetPrep.referenceImageCount,
-					referenceImageTargetCount: TOTAL_DATASET_COUNT,
-					referenceImageUrls: datasetPrep.referenceImageUrls,
-					status: "ready",
-					trainingElapsedMs: Date.now() - trainingStartedMs,
-					trainingRunId: parsed.trainingRunId,
-					trainingStartedAt,
-					trainingSteps,
-					triggerWord,
-					uploadMethod: datasetPrep.reused ? "reused" : "s3",
-				},
 			});
 		} catch (error) {
 			const errorSummary =
@@ -987,12 +1449,66 @@ export class RunpodPodLoraTrainingRunner {
 		}
 	}
 
+	/**
+	 * Top-level entry from worker.ts. Routing matrix:
+	 *   - `mode === "auto-train"` OR `reuseDatasetUrl` set → legacy single-shot
+	 *     path (datasetPrep + zip + train), no awaiting-approval gate. Used
+	 *     for retrains and tests.
+	 *   - default (`mode === "prep-only"` or undefined) → only generate dataset
+	 *     photos and emit `awaiting-approval`. Operator must explicitly call
+	 *     {@link confirmAndTrain} to start the actual LoRA training.
+	 */
 	async run(input: StartInput): Promise<void> {
 		const parsed = startRunpodPodTrainingSchema.parse(input);
 		if (await this.shouldIgnoreDuplicateKafkaStart(parsed)) {
 			return;
 		}
-		await this.executeRunpodPodTraining(parsed);
+		const autoTrain =
+			parsed.mode === "auto-train" || Boolean(parsed.reuseDatasetUrl);
+		if (autoTrain) {
+			await this.executeRunpodPodTraining(parsed);
+			return;
+		}
+		await this.executeDatasetPrep(parsed);
+	}
+
+	/**
+	 * Public entry for the operator-driven approval flow. Generates the full
+	 * 25-photo dataset, uploads each photo to S3 individually, and finishes by
+	 * publishing an `awaiting-approval` event so the persons UI can render the
+	 * gallery + a "Train LoRA" CTA.
+	 */
+	async prepareDataset(input: StartInput): Promise<void> {
+		const parsed = startRunpodPodTrainingSchema.parse(input);
+		if (await this.shouldIgnoreDuplicateKafkaStart(parsed)) {
+			return;
+		}
+		await this.executeDatasetPrep(parsed);
+	}
+
+	/**
+	 * Generates one replacement variant for a rejected dataset slot. Called by
+	 * the worker in response to a `personDatasetVariantRefillRequested` event
+	 * after the operator deletes a photo in the UI.
+	 */
+	async refillVariant(input: PersonDatasetVariantRefillRequest): Promise<void> {
+		await this.executeRefillVariant(input);
+	}
+
+	/**
+	 * Public entry for `personLoraTrainingConfirmed`. Takes the operator's
+	 * approved dataset list, packs it into a zip, uploads it, and submits to
+	 * RunPod. Idempotency-safe: if a previous confirm is already running for
+	 * the same `(personId, trainingRunId)` we skip via the same guard as
+	 * `run()`.
+	 */
+	async confirmAndTrain(input: PersonLoraTrainingConfirmation): Promise<void> {
+		const { approvedItems, ...request } = input;
+		const parsed = startRunpodPodTrainingSchema.parse(request);
+		if (await this.shouldIgnoreDuplicateKafkaStart(parsed)) {
+			return;
+		}
+		await this.executeConfirmAndTrain(parsed, approvedItems);
 	}
 
 	/**

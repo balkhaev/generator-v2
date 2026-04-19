@@ -26,6 +26,8 @@ export {
 } from "./download";
 export {
 	cacheExternalLoraToS3,
+	deleteObjectFromS3,
+	extractS3KeyFromPublicUrl,
 	persistLoraWeightsToS3,
 	uploadObjectToS3,
 	uploadZipToS3,

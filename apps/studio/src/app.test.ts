@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import type { StudioRunDebugBundle } from "@generator/contracts/studio";
+import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import type { S3StorageConfig } from "@generator/storage";
 
 import { createApp } from "@/app";
@@ -506,6 +508,90 @@ describe("studio backend", () => {
 		expect(upload.url).toContain("studio-inputs/");
 		expect(writes).toHaveLength(1);
 		expect(writes[0]?.key.startsWith("studio-inputs/")).toBe(true);
+	});
+
+	it("prepends LoRA trigger words to the prompt sent to the generator", async () => {
+		const repository = createMemoryRepository();
+		await repository.createScenario({
+			generatorScenarioId: null,
+			id: "scenario-trigger",
+			name: "Trigger scenario",
+			params: {
+				loraUrl: "https://cdn.example.com/loras/mystic.safetensors",
+				loraWeight: 1,
+			},
+			prompt: "a quiet street at night",
+			workflowKey: "fal-flux-dev",
+		});
+
+		const loraEntry: LoraRegistryEntry = {
+			baseModel: "flux",
+			createdAt: new Date().toISOString(),
+			defaultWeight: 1,
+			description: "",
+			id: "lora-mystic",
+			name: "Mystic",
+			pairGroupId: null,
+			s3Key: "loras/mystic.safetensors",
+			s3Url: "https://cdn.example.com/loras/mystic.safetensors",
+			sizeBytes: 1024,
+			slug: "mystic",
+			sourceUrl: null,
+			status: "active",
+			triggerWords: ["mystic", "neon city"],
+			updatedAt: new Date().toISOString(),
+			variant: null,
+		};
+		const loraReadRepository: LoraReadRepository = {
+			getById: () => Promise.resolve(null),
+			getByPairGroupId: () => Promise.resolve([]),
+			getByS3Urls: (urls) =>
+				Promise.resolve(urls.includes(loraEntry.s3Url) ? [loraEntry] : []),
+			getBySlug: () => Promise.resolve(null),
+			list: () => Promise.resolve([loraEntry]),
+		};
+
+		const promptsSeen: string[] = [];
+		const { app } = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub({
+				createExecution(input) {
+					promptsSeen.push(input.prompt ?? "");
+					return Promise.resolve({
+						artifacts: [],
+						errorSummary: null,
+						id: "execution-trigger",
+						inputImageUrl: input.inputImageUrl ?? "",
+						providerEndpointId: null,
+						providerJobId: null,
+						status: "queued",
+						workflowKey: input.workflowKey,
+					});
+				},
+			}),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			loraReadRepository,
+			repository,
+			s3Config: fakeS3Config,
+		});
+
+		const runResponse = await app.request("http://localhost/api/runs", {
+			body: JSON.stringify({ scenarioId: "scenario-trigger" }),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		expect(runResponse.status).toBe(201);
+		expect(promptsSeen).toHaveLength(1);
+		expect(promptsSeen[0]).toBe("mystic, neon city, a quiet street at night");
 	});
 
 	it("returns a studio-native aggregate snapshot", async () => {

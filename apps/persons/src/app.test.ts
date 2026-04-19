@@ -233,14 +233,23 @@ function createOperatorClient(): OperatorServerClient {
 
 function createAdminTrainingClient(): AdminTrainingClient {
 	return {
+		cacheExternalLora(sourceUrl: string) {
+			return Promise.resolve(sourceUrl);
+		},
+		confirmPersonLoraTraining() {
+			return Promise.resolve({
+				accepted: true,
+				jobId: "training-job-confirm-1",
+			});
+		},
+		requestVariantRefill() {
+			return Promise.resolve();
+		},
 		startPersonLoraTraining() {
 			return Promise.resolve({
 				accepted: true,
 				jobId: "training-job-1",
 			});
-		},
-		cacheExternalLora(sourceUrl: string) {
-			return Promise.resolve(sourceUrl);
 		},
 	};
 }
@@ -1079,6 +1088,12 @@ describe("persons api", () => {
 			loraReadRepository: {
 				getById() {
 					return Promise.resolve(null);
+				},
+				getByPairGroupId() {
+					return Promise.resolve([]);
+				},
+				getByS3Urls() {
+					return Promise.resolve([]);
 				},
 				getBySlug() {
 					return Promise.resolve(null);

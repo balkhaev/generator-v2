@@ -66,6 +66,17 @@ function parseVariant(value: unknown): LoraVariant | undefined {
 		: undefined;
 }
 
+function parseTriggerWords(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) {
+		return;
+	}
+	const words = value
+		.filter((item): item is string => typeof item === "string")
+		.map((item) => item.trim())
+		.filter((item) => item.length > 0);
+	return words;
+}
+
 function parsePair(value: unknown): CreateLoraFromUrlInput["pair"] | undefined {
 	if (!value || typeof value !== "object") {
 		return;
@@ -93,6 +104,7 @@ function parsePair(value: unknown): CreateLoraFromUrlInput["pair"] | undefined {
 				: undefined,
 		sourceUrl,
 		sourceVersionId: parsePositiveNumber(payload.sourceVersionId),
+		triggerWords: parseTriggerWords(payload.triggerWords),
 		variant,
 	};
 }
@@ -144,6 +156,7 @@ function parseCreateBody(body: unknown): CreateLoraFromUrlInput {
 				? payload.sourceRevision
 				: undefined,
 		sourceVersionId: parsePositiveNumber(payload.sourceVersionId),
+		triggerWords: parseTriggerWords(payload.triggerWords),
 		variant: parseVariant(payload.variant),
 		pair: parsePair(payload.pair),
 	};
@@ -209,6 +222,7 @@ function parseUpdateBody(body: unknown): UpdateLoraInput {
 		status: parseStatus(
 			typeof payload.status === "string" ? payload.status : undefined
 		),
+		triggerWords: parseTriggerWords(payload.triggerWords),
 		variant,
 		pairGroupId,
 	};

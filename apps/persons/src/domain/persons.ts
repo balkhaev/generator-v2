@@ -5,6 +5,11 @@ import {
 } from "@generator/contracts/persons";
 import { env } from "@generator/env/server";
 import type { GeneratorExecutionClient } from "@generator/generator-client-server";
+import {
+	deleteObjectFromS3,
+	extractS3KeyFromPublicUrl,
+	type S3StorageConfig,
+} from "@generator/storage";
 import { z } from "zod";
 import type { AdminTrainingClient } from "@/clients/admin-training";
 import type { GrokClient } from "@/clients/grok";
@@ -244,7 +249,21 @@ const personLoraTrainingStatusSchema = z.enum([
 	"publishing",
 	"ready",
 	"failed",
+	"awaiting-approval",
 ]);
+
+/**
+ * Per-photo dataset descriptor emitted by the admin runner. Persons-service
+ * upserts dataset generations by `variantId` (NOT by `sourceUrl`) so a refill
+ * for the same slot replaces the previous row instead of creating a duplicate
+ * and leaks no orphan S3 objects.
+ */
+const referenceImageItemSchema = z.object({
+	caption: z.string(),
+	s3Key: z.string().nullable(),
+	url: z.url(),
+	variantId: z.string().min(1),
+});
 
 const personLoraTrainingEventSchema = z.object({
 	assetReleaseId: optionalStringSchema,
@@ -264,6 +283,7 @@ const personLoraTrainingEventSchema = z.object({
 	providerRequestId: optionalStringSchema,
 	providerStatus: optionalStringSchema,
 	referenceImageCount: optionalNumberSchema,
+	referenceImageItems: z.array(referenceImageItemSchema).optional(),
 	referenceImageTargetCount: optionalNumberSchema,
 	referenceImageUrls: z.array(z.url()).optional(),
 	status: personLoraTrainingStatusSchema,
@@ -515,6 +535,7 @@ export interface PersonsServiceDependencies {
 	grokClient?: GrokClient;
 	operatorServerClient?: OperatorServerClient;
 	repository: PersonsRepository;
+	s3Storage?: S3StorageConfig;
 }
 
 export class PersonsService {
@@ -523,6 +544,7 @@ export class PersonsService {
 	private readonly callbackConfig?: { token: string; url?: string };
 	private readonly adminTrainingClient?: AdminTrainingClient;
 	private readonly grokClient?: GrokClient;
+	private readonly s3Storage?: S3StorageConfig;
 
 	constructor(deps: PersonsServiceDependencies);
 	constructor(
@@ -554,6 +576,34 @@ export class PersonsService {
 		this.callbackConfig = deps.callbackConfig;
 		this.adminTrainingClient = deps.adminTrainingClient;
 		this.grokClient = deps.grokClient;
+		this.s3Storage = deps.s3Storage;
+	}
+
+	private async deleteS3ObjectQuietly(s3Key: string | null) {
+		if (!(s3Key && this.s3Storage)) {
+			return;
+		}
+		try {
+			await deleteObjectFromS3(s3Key, this.s3Storage);
+		} catch (error) {
+			console.error("persons.s3.delete.error", {
+				key: s3Key,
+				message: error instanceof Error ? error.message : "unknown",
+			});
+		}
+	}
+
+	private resolveS3KeyForGeneration(
+		generation: PersonGenerationRecord
+	): string | null {
+		const stored = readMetadataString(generation.metadata, "datasetS3Key");
+		if (stored) {
+			return stored;
+		}
+		if (!this.s3Storage) {
+			return null;
+		}
+		return extractS3KeyFromPublicUrl(generation.sourceUrl, this.s3Storage);
 	}
 
 	private createExecutionCallback(context: Record<string, unknown>) {
@@ -1001,6 +1051,23 @@ export class PersonsService {
 			return this.repository.getPersonById(personId);
 		}
 
+		const variantId = readMetadataString(
+			deletedGeneration.metadata,
+			"datasetVariantId"
+		);
+		// Original reference photo duplicates are essential for training and
+		// must never be removed individually — the UI hides the Delete button
+		// for them. This server-side guard exists so a stray DELETE request
+		// (e.g. via API client or replayed event) cannot leave the dataset
+		// short an "anchor" copy of the canonical reference photo.
+		if (variantId?.startsWith("original-")) {
+			return this.repository.getPersonById(personId);
+		}
+
+		await this.deleteS3ObjectQuietly(
+			this.resolveS3KeyForGeneration(deletedGeneration)
+		);
+
 		const training =
 			person.metadata.training &&
 			typeof person.metadata.training === "object" &&
@@ -1029,7 +1096,84 @@ export class PersonsService {
 			},
 		});
 
+		await this.maybePublishVariantRefill({
+			deletedGeneration,
+			person,
+			training,
+			variantId,
+		});
+
 		return this.repository.getPersonById(personId);
+	}
+
+	/**
+	 * Auto-refills a single dataset variant slot whenever the operator removes
+	 * a synthetic reference photo while the LoRA pipeline is awaiting approval
+	 * (or the underlying admin runner is still mid dataset prep). The intent
+	 * is "every reject triggers exactly one regeneration for that slot" so the
+	 * dataset converges back to its target size without operator action.
+	 *
+	 * The refill is a best-effort fire-and-forget because:
+	 *   - the rejected row has already been deleted from the DB,
+	 *   - the corresponding S3 object has already been deleted, and
+	 *   - admin worker carries its own idempotency guard for the same
+	 *     `(personId, trainingRunId, variantId)` triple.
+	 * If the publish fails, the operator can manually click "Regenerate" from
+	 * the persons-web UI without leaving the dataset in an inconsistent state.
+	 */
+	private async maybePublishVariantRefill(input: {
+		deletedGeneration: PersonGenerationRecord;
+		person: PersonRecord;
+		training: Record<string, unknown>;
+		variantId: string | null;
+	}) {
+		if (!(input.variantId && this.adminTrainingClient?.requestVariantRefill)) {
+			return;
+		}
+		const trainingStatus = readMetadataString(input.training, "status");
+		// Only auto-refill while the dataset is still in scope: prep, awaiting
+		// approval, or queued. After the operator hits Train (status moves to
+		// `training`/`publishing`/`ready`) the dataset is frozen.
+		const isDatasetMutable =
+			trainingStatus === "queued" ||
+			trainingStatus === "generating" ||
+			trainingStatus === "awaiting-approval";
+		if (!isDatasetMutable) {
+			return;
+		}
+		const trainingRunId = readMetadataString(input.training, "trainingRunId");
+		if (!trainingRunId) {
+			return;
+		}
+		const triggerWord = readMetadataString(input.training, "triggerWord");
+
+		try {
+			await this.adminTrainingClient.requestVariantRefill({
+				debugCorrelationId:
+					readMetadataString(input.training, "debugCorrelationId") ?? undefined,
+				description: input.person.description,
+				personId: input.person.id,
+				personSlug: input.person.slug,
+				referencePhotoUrl: input.person.referencePhotoUrl,
+				// `requestNonce` lets the admin worker dedupe replays of the
+				// same rejection without re-running fal.ai. We bind it to the
+				// (trainingRunId, variantId) pair plus a fresh UUID so distinct
+				// rejections of the same slot (operator rejects, worker
+				// regenerates, operator rejects again) each get their own key.
+				requestNonce: `${trainingRunId}:${input.variantId}:${crypto.randomUUID()}`,
+				trainingRunId,
+				triggerWord:
+					triggerWord ??
+					buildDefaultPersonTriggerWord(input.person.slug || input.person.id),
+				variantId: input.variantId,
+			});
+		} catch (error) {
+			console.error("persons.refill.publish.error", {
+				message: error instanceof Error ? error.message : "unknown",
+				personId: input.person.id,
+				variantId: input.variantId,
+			});
+		}
 	}
 
 	async cancelGeneration(personId: string, generationId: string) {
@@ -1280,10 +1424,21 @@ export class PersonsService {
 				? person.datasetUrl
 				: undefined;
 
+		// Approval flow: when no reusable dataset is available we ask the
+		// runner to stop after dataset prep and emit `awaiting-approval`. The
+		// operator then reviews the per-photo dataset in persons-web and
+		// either rejects individual photos (auto-refilled via
+		// `requestVariantRefill`) or hits "Train" which routes through
+		// `confirmDatasetAndStartTraining` below. Retrains that reuse an
+		// existing dataset zip skip the approval step because there's nothing
+		// new to review.
+		const trainingMode = reuseDatasetUrl ? "auto-train" : "prep-only";
+
 		await this.adminTrainingClient.startPersonLoraTraining(
 			{
 				debugCorrelationId: options?.debugCorrelationId,
 				description: person.description,
+				mode: trainingMode,
 				outputName,
 				personId: person.id,
 				personName: person.name,
@@ -1300,6 +1455,103 @@ export class PersonsService {
 		);
 
 		return updatedPerson ?? person;
+	}
+
+	/**
+	 * Confirms the awaiting-approval dataset and asks the admin runner to
+	 * assemble the zip + start the actual LoRA training. The list of approved
+	 * dataset items is reconstructed from the current `PersonGenerationRecord`
+	 * rows tagged with `isDatasetPhoto: true` — so any photos the operator
+	 * deleted (or that arrived via a refill) are automatically excluded /
+	 * included without an extra payload from the UI.
+	 */
+	async confirmDatasetAndStartTraining(
+		personId: string,
+		options?: { debugCorrelationId?: string }
+	) {
+		const person = await this.repository.getPersonById(personId);
+		if (!person) {
+			return null;
+		}
+		if (!this.adminTrainingClient?.confirmPersonLoraTraining) {
+			throw new Error("Admin training integration is not configured");
+		}
+
+		const training =
+			person.metadata.training &&
+			typeof person.metadata.training === "object" &&
+			!Array.isArray(person.metadata.training)
+				? (person.metadata.training as Record<string, unknown>)
+				: null;
+		if (!training) {
+			throw new Error("Person does not have an active training run");
+		}
+		if (training.status !== "awaiting-approval") {
+			// Nothing to do — caller is replaying a stale Confirm or the
+			// pipeline has moved past the approval gate.
+			return person;
+		}
+
+		const trainingRunId = readMetadataString(training, "trainingRunId");
+		const outputName = readMetadataString(training, "outputName");
+		const triggerWord = readMetadataString(training, "triggerWord");
+		if (!(trainingRunId && outputName && triggerWord)) {
+			throw new Error("Training metadata is incomplete");
+		}
+
+		const approvedItems = person.generations
+			.filter(
+				(generation) =>
+					generation.metadata.isDatasetPhoto === true &&
+					generation.status === "ready"
+			)
+			.map((generation) => ({
+				caption:
+					readMetadataString(generation.metadata, "datasetCaption") ?? "",
+				s3Key: readMetadataString(generation.metadata, "datasetS3Key"),
+				url: generation.sourceUrl,
+				variantId:
+					readMetadataString(generation.metadata, "datasetVariantId") ??
+					generation.id,
+			}));
+
+		if (approvedItems.length === 0) {
+			throw new Error("No approved dataset items to train on");
+		}
+
+		const requestedAt = new Date().toISOString();
+		await this.repository.updatePerson(personId, {
+			metadata: {
+				...person.metadata,
+				training: {
+					...training,
+					lastEventAt: requestedAt,
+					phase: "uploading-dataset",
+					status: "training",
+					updatedAt: requestedAt,
+				},
+			},
+		});
+
+		await this.adminTrainingClient.confirmPersonLoraTraining({
+			approvedItems,
+			debugCorrelationId:
+				options?.debugCorrelationId ??
+				readMetadataString(training, "debugCorrelationId") ??
+				undefined,
+			description: person.description,
+			outputName,
+			personId: person.id,
+			personName: person.name,
+			personSlug: person.slug,
+			referencePhotoUrl: person.referencePhotoUrl,
+			referencePrompt:
+				readMetadataString(training, "referencePrompt") ?? undefined,
+			trainingRunId,
+			triggerWord,
+		});
+
+		return this.repository.getPersonById(personId);
 	}
 
 	async generateWithLora(
@@ -1688,7 +1940,12 @@ export class PersonsService {
 			uploadMethod: parsedEvent.uploadMethod ?? currentUploadMethod,
 		};
 
-		if (parsedEvent.referenceImageUrls?.length) {
+		if (parsedEvent.referenceImageItems?.length) {
+			await this.upsertDatasetGenerationsByVariantId(
+				personId,
+				parsedEvent.referenceImageItems
+			);
+		} else if (parsedEvent.referenceImageUrls?.length) {
 			const nextDatasetUrls = [...new Set(nextReferenceImageUrls)];
 			await this.repository.deleteDatasetGenerations(personId, nextDatasetUrls);
 			const existingDatasetUrls = new Set(
@@ -1717,7 +1974,7 @@ export class PersonsService {
 			}
 		}
 
-		return this.repository.updatePerson(personId, {
+		const updatedPerson = await this.repository.updatePerson(personId, {
 			datasetUrl: parsedEvent.datasetUrl ?? person.datasetUrl,
 			loraUrl: parsedEvent.loraUrl ?? person.loraUrl,
 			metadata: {
@@ -1725,6 +1982,138 @@ export class PersonsService {
 				training: nextTrainingMetadata,
 			},
 		});
+
+		// LoRA is published — the per-photo dataset is no longer needed
+		// (`person.datasetUrl` retains the assembled training zip for retrains).
+		// Clean up both the DB rows and the underlying S3 objects so storage
+		// costs stop accruing for completed persons.
+		if (parsedEvent.status === "ready" && parsedEvent.loraUrl) {
+			await this.cleanupDatasetAfterTraining(personId);
+		}
+
+		return updatedPerson;
+	}
+
+	private datasetPhotoItemUpToDate(
+		existing: PersonGenerationRecord,
+		item: {
+			caption: string;
+			s3Key: string | null;
+			url: string;
+			variantId: string;
+		}
+	): boolean {
+		return (
+			existing.sourceUrl === item.url &&
+			existing.previewUrl === item.url &&
+			readMetadataString(existing.metadata, "datasetCaption") ===
+				item.caption &&
+			readMetadataString(existing.metadata, "datasetS3Key") ===
+				(item.s3Key ?? null)
+		);
+	}
+
+	private async upsertDatasetGenerationsByVariantId(
+		personId: string,
+		items: {
+			caption: string;
+			s3Key: string | null;
+			url: string;
+			variantId: string;
+		}[]
+	) {
+		const personSnapshot = await this.repository.getPersonById(personId);
+		if (!personSnapshot) {
+			return;
+		}
+
+		const existingByVariantId = new Map<string, PersonGenerationRecord>();
+		const existingDatasetWithoutVariant: PersonGenerationRecord[] = [];
+		for (const generation of personSnapshot.generations) {
+			if (generation.metadata.isDatasetPhoto !== true) {
+				continue;
+			}
+			const existingVariantId = readMetadataString(
+				generation.metadata,
+				"datasetVariantId"
+			);
+			if (existingVariantId) {
+				existingByVariantId.set(existingVariantId, generation);
+			} else {
+				existingDatasetWithoutVariant.push(generation);
+			}
+		}
+
+		const incomingVariantIds = new Set(items.map((item) => item.variantId));
+
+		// Drop legacy dataset rows that don't belong to the new variantId set
+		// — those came from the old "URL-only" event path or were rejected
+		// during the current run. Their S3 objects were cleaned up either by
+		// the operator's reject (which goes through `deleteGeneration`) or by
+		// the previous training run's cleanup, so we only need to drop the
+		// stale DB rows here.
+		for (const [variantId, generation] of existingByVariantId.entries()) {
+			if (!incomingVariantIds.has(variantId)) {
+				await this.repository.deleteGeneration(personId, generation.id);
+			}
+		}
+		for (const generation of existingDatasetWithoutVariant) {
+			await this.repository.deleteGeneration(personId, generation.id);
+		}
+
+		for (const [index, item] of items.entries()) {
+			const existing = existingByVariantId.get(item.variantId);
+			const metadata: Record<string, unknown> = {
+				datasetCaption: item.caption,
+				datasetVariantId: item.variantId,
+				isDatasetPhoto: true,
+				...(item.s3Key ? { datasetS3Key: item.s3Key } : {}),
+			};
+
+			if (existing) {
+				if (!this.datasetPhotoItemUpToDate(existing, item)) {
+					await this.repository.updateGeneration(existing.id, {
+						metadata: { ...existing.metadata, ...metadata },
+						previewUrl: item.url,
+						sourceUrl: item.url,
+					});
+				}
+				continue;
+			}
+
+			await this.repository.createGeneration({
+				errorSummary: null,
+				id: crypto.randomUUID(),
+				mediaType: "image",
+				metadata,
+				operatorRunId: null,
+				operatorScenarioId: null,
+				personId,
+				previewUrl: item.url,
+				prompt: "",
+				sourceUrl: item.url,
+				status: "ready",
+				title: `Dataset photo ${index + 1}`,
+			});
+		}
+	}
+
+	private async cleanupDatasetAfterTraining(personId: string) {
+		const person = await this.repository.getPersonById(personId);
+		if (!person) {
+			return;
+		}
+
+		const datasetGenerations = person.generations.filter(
+			(generation) => generation.metadata.isDatasetPhoto === true
+		);
+
+		for (const generation of datasetGenerations) {
+			await this.deleteS3ObjectQuietly(
+				this.resolveS3KeyForGeneration(generation)
+			);
+			await this.repository.deleteGeneration(personId, generation.id);
+		}
 	}
 
 	async importGenerationFromServer(

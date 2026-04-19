@@ -34,6 +34,12 @@ export interface LoraRegistryEntry {
 	sourceProvider?: Exclude<LoraSourceProvider, "auto">;
 	sourceUrl: string | null;
 	status: LoraStatus;
+	/**
+	 * Trigger words (a.k.a. trainedWords on Civitai) that activate the LoRA.
+	 * Studio/persons prepend these to the user prompt at run time so the model
+	 * actually engages the LoRA's learned subject/style.
+	 */
+	triggerWords: string[];
 	updatedAt: string;
 	variant: LoraVariant | null;
 }
@@ -55,6 +61,7 @@ export interface CreateLoraFromUrlInput {
 		sourceFilePath?: string;
 		sourceUrl: string;
 		sourceVersionId?: number;
+		triggerWords?: string[];
 		variant: Exclude<LoraVariant, "both">;
 	};
 	sourceFilePath?: string;
@@ -62,6 +69,11 @@ export interface CreateLoraFromUrlInput {
 	sourceRevision?: string;
 	sourceUrl: string;
 	sourceVersionId?: number;
+	/**
+	 * Override the trigger words detected from the source. When omitted, the
+	 * Civitai resolver's `trainedWords` are persisted automatically.
+	 */
+	triggerWords?: string[];
 	variant?: LoraVariant;
 }
 
@@ -131,6 +143,7 @@ export interface UpdateLoraInput {
 	name?: string;
 	pairGroupId?: string | null;
 	status?: LoraStatus;
+	triggerWords?: string[];
 	variant?: LoraVariant | null;
 }
 

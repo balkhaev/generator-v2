@@ -65,6 +65,7 @@ interface FormState {
 	defaultWeight: string;
 	description: string;
 	name: string;
+	triggerWords: string;
 }
 
 function toFormState(entry: LoraRegistryEntry): FormState {
@@ -73,7 +74,38 @@ function toFormState(entry: LoraRegistryEntry): FormState {
 		defaultWeight: String(entry.defaultWeight),
 		description: entry.description,
 		name: entry.name,
+		triggerWords: entry.triggerWords.join(", "),
 	};
+}
+
+function parseTriggerWordsInput(value: string): string[] {
+	const seen = new Set<string>();
+	const result: string[] = [];
+	for (const raw of value.split(",")) {
+		const trimmed = raw.trim();
+		if (!trimmed) {
+			continue;
+		}
+		const key = trimmed.toLowerCase();
+		if (seen.has(key)) {
+			continue;
+		}
+		seen.add(key);
+		result.push(trimmed);
+	}
+	return result;
+}
+
+function arrayEquals(a: readonly string[], b: readonly string[]): boolean {
+	if (a.length !== b.length) {
+		return false;
+	}
+	for (let i = 0; i < a.length; i += 1) {
+		if (a[i] !== b[i]) {
+			return false;
+		}
+	}
+	return true;
 }
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -220,11 +252,13 @@ function LoraEditor({
 		setForm(toFormState(lora));
 	}, [lora]);
 
+	const parsedTriggerWords = parseTriggerWordsInput(form.triggerWords);
 	const isDirty =
 		form.name.trim() !== lora.name ||
 		form.description.trim() !== lora.description ||
 		form.baseModel !== lora.baseModel ||
-		Number(form.defaultWeight) !== lora.defaultWeight;
+		Number(form.defaultWeight) !== lora.defaultWeight ||
+		!arrayEquals(parsedTriggerWords, lora.triggerWords);
 
 	async function handleSave() {
 		const trimmedName = form.name.trim();
@@ -245,6 +279,7 @@ function LoraEditor({
 					description: form.description.trim(),
 					baseModel: form.baseModel,
 					defaultWeight: weight,
+					triggerWords: parsedTriggerWords,
 				},
 			});
 			toast.success("LoRA updated");
@@ -385,6 +420,38 @@ function LoraEditor({
 							type="number"
 							value={form.defaultWeight}
 						/>
+					</div>
+					<div className="grid gap-1.5">
+						<Label className="text-xs" htmlFor="lora-edit-trigger-words">
+							Trigger words
+						</Label>
+						<Input
+							id="lora-edit-trigger-words"
+							onChange={(event) =>
+								setForm((prev) => ({
+									...prev,
+									triggerWords: event.target.value,
+								}))
+							}
+							placeholder="e.g. mystic, neon city"
+							value={form.triggerWords}
+						/>
+						<p className="text-[11px] text-muted-foreground">
+							Comma-separated. Studio will prepend these to the user prompt
+							whenever this LoRA is selected so the model actually triggers it.
+						</p>
+						{parsedTriggerWords.length > 0 ? (
+							<div className="flex flex-wrap gap-1">
+								{parsedTriggerWords.map((word) => (
+									<span
+										className="rounded border border-foreground/10 px-1.5 py-0.5 text-[11px]"
+										key={word}
+									>
+										{word}
+									</span>
+								))}
+							</div>
+						) : null}
 					</div>
 				</section>
 

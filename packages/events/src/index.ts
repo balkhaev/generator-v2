@@ -44,6 +44,9 @@ const contextSchema = z.record(z.string(), z.unknown());
 export const eventTopics = {
 	generatorExecutionUpdates: "generator.execution.updates.v1",
 	loraRegistryChanges: "loras.registry.changes.v1",
+	personDatasetVariantRefillRequests:
+		"persons.dataset.variant-refill-requests.v1",
+	personLoraTrainingConfirmations: "persons.lora-training.confirmations.v1",
 	personLoraTrainingRequests: "persons.lora-training.requests.v1",
 	personLoraTrainingUpdates: "persons.lora-training.updates.v1",
 } as const;
@@ -51,6 +54,9 @@ export const eventTopics = {
 export const eventNames = {
 	generatorExecutionUpdated: "generator.execution.updated",
 	loraRegistryChanged: "loras.registry.changed",
+	personDatasetVariantRefillRequested:
+		"persons.dataset.variant-refill-requested",
+	personLoraTrainingConfirmed: "persons.lora-training.confirmed",
 	personLoraTrainingRequested: "persons.lora-training.requested",
 	personLoraTrainingUpdated: "persons.lora-training.updated",
 } as const;
@@ -70,6 +76,7 @@ const loraRegistryEntrySchema = z.object({
 	sourceProvider: z.enum(["civitai", "huggingface", "direct"]).optional(),
 	sourceUrl: z.string().nullable(),
 	status: z.enum(["active", "archived"]),
+	triggerWords: z.array(z.string()),
 	updatedAt: z.string(),
 	variant: z.enum(["high", "low", "both"]).nullable(),
 }) satisfies z.ZodType<LoraRegistryEntry>;
@@ -87,6 +94,16 @@ export type LoraRegistryChangeKind = (typeof loraRegistryChangeKinds)[number];
 const personLoraTrainingRequestSchema = z.object({
 	debugCorrelationId: z.string().optional(),
 	description: z.string().optional(),
+	/**
+	 * Operating mode for the runner:
+	 *   - "prep-only" — generate the dataset photos individually and stop
+	 *     at status `awaiting-approval`, waiting for the operator to confirm
+	 *     in the persons UI before submitting to the trainer.
+	 *   - "auto-train" — legacy behaviour: prep + zip + submit + poll in one
+	 *     run() call. Used for retrains with `reuseDatasetUrl`, where there
+	 *     is nothing to review.
+	 */
+	mode: z.enum(["prep-only", "auto-train"]).optional(),
 	outputName: z.string().optional(),
 	personId: z.string().min(1),
 	personName: z.string().min(1),
@@ -104,11 +121,53 @@ const personLoraTrainingRequestSchema = z.object({
 	triggerWord: z.string().optional(),
 });
 
+const approvedDatasetItemSchema = z.object({
+	caption: z.string().min(1),
+	s3Key: z.string().min(1).nullable(),
+	url: z.string().min(1),
+	variantId: z.string().min(1),
+});
+
+export type ApprovedDatasetItem = z.infer<typeof approvedDatasetItemSchema>;
+
+/**
+ * Published by persons-service when the operator clicks "Train LoRA" on a
+ * person whose dataset has been generated and reviewed. Carries the same
+ * envelope as the original training request plus the explicit list of
+ * approved photos so the admin runner can rebuild the zip without going
+ * through persons-api.
+ */
+const personLoraTrainingConfirmationSchema =
+	personLoraTrainingRequestSchema.extend({
+		approvedItems: z.array(approvedDatasetItemSchema).min(1),
+	});
+
+/**
+ * Published by persons-service for a single rejected dataset photo. Admin
+ * worker generates exactly one new variant via fal.ai/flux-2/edit, uploads
+ * it to S3 and emits a `lora-training.updated` event with one
+ * `referenceImageItems[]` entry so persons can upsert the slot.
+ */
+const personDatasetVariantRefillRequestSchema = z.object({
+	debugCorrelationId: z.string().optional(),
+	description: z.string().optional(),
+	personId: z.string().min(1),
+	personSlug: z.string().min(1),
+	referencePhotoUrl: z.string().min(1),
+	referencePrompt: z.string().optional(),
+	requestNonce: z.string().min(1),
+	trainingRunId: z.string().min(1),
+	triggerWord: z.string().min(1),
+	variantId: z.string().min(1),
+});
+
 const eventEnvelopeBaseSchema = z.object({
 	id: z.string().min(1),
 	name: z.enum([
 		eventNames.generatorExecutionUpdated,
 		eventNames.loraRegistryChanged,
+		eventNames.personDatasetVariantRefillRequested,
+		eventNames.personLoraTrainingConfirmed,
 		eventNames.personLoraTrainingRequested,
 		eventNames.personLoraTrainingUpdated,
 	]),
@@ -150,9 +209,23 @@ export const personLoraTrainingRequestedEventSchema =
 		name: z.literal(eventNames.personLoraTrainingRequested),
 	});
 
+export const personLoraTrainingConfirmedEventSchema =
+	eventEnvelopeBaseSchema.extend({
+		data: personLoraTrainingConfirmationSchema,
+		name: z.literal(eventNames.personLoraTrainingConfirmed),
+	});
+
+export const personDatasetVariantRefillRequestedEventSchema =
+	eventEnvelopeBaseSchema.extend({
+		data: personDatasetVariantRefillRequestSchema,
+		name: z.literal(eventNames.personDatasetVariantRefillRequested),
+	});
+
 export const eventEnvelopeSchema = z.discriminatedUnion("name", [
 	generatorExecutionUpdatedEventSchema,
 	loraRegistryChangedEventSchema,
+	personDatasetVariantRefillRequestedEventSchema,
+	personLoraTrainingConfirmedEventSchema,
 	personLoraTrainingRequestedEventSchema,
 	personLoraTrainingUpdatedEventSchema,
 ]);
@@ -173,6 +246,18 @@ export type PersonLoraTrainingRequestedEvent = z.infer<
 export type PersonLoraTrainingRequest = z.infer<
 	typeof personLoraTrainingRequestSchema
 >;
+export type PersonLoraTrainingConfirmedEvent = z.infer<
+	typeof personLoraTrainingConfirmedEventSchema
+>;
+export type PersonLoraTrainingConfirmation = z.infer<
+	typeof personLoraTrainingConfirmationSchema
+>;
+export type PersonDatasetVariantRefillRequestedEvent = z.infer<
+	typeof personDatasetVariantRefillRequestedEventSchema
+>;
+export type PersonDatasetVariantRefillRequest = z.infer<
+	typeof personDatasetVariantRefillRequestSchema
+>;
 
 export interface EventPublisher {
 	close(): Promise<void>;
@@ -185,6 +270,12 @@ export interface EventPublisher {
 		context?: Record<string, unknown>;
 		lora: LoraRegistryEntry;
 	}): Promise<void>;
+	publishPersonDatasetVariantRefillRequested(
+		input: PersonDatasetVariantRefillRequest
+	): Promise<void>;
+	publishPersonLoraTrainingConfirmed(
+		input: PersonLoraTrainingConfirmation
+	): Promise<void>;
 	publishPersonLoraTrainingRequested(
 		input: PersonLoraTrainingRequest
 	): Promise<void>;
@@ -275,6 +366,12 @@ export function createNoopEventPublisher(): EventPublisher {
 			await Promise.resolve();
 		},
 		async publishLoraRegistryChanged() {
+			await Promise.resolve();
+		},
+		async publishPersonDatasetVariantRefillRequested() {
+			await Promise.resolve();
+		},
+		async publishPersonLoraTrainingConfirmed() {
 			await Promise.resolve();
 		},
 		async publishPersonLoraTrainingRequested() {
@@ -394,6 +491,33 @@ export function createKafkaEventPublisher(
 				event
 			);
 		},
+		async publishPersonLoraTrainingConfirmed(input) {
+			const event = createEnvelope(
+				eventNames.personLoraTrainingConfirmed,
+				options.source,
+				input
+			);
+			await publish(
+				eventTopics.personLoraTrainingConfirmations,
+				input.trainingRunId,
+				event
+			);
+		},
+		async publishPersonDatasetVariantRefillRequested(input) {
+			const event = createEnvelope(
+				eventNames.personDatasetVariantRefillRequested,
+				options.source,
+				input
+			);
+			// Partition by `${trainingRunId}:${variantId}` so refills for the same
+			// slot land on the same partition and are processed in order, while
+			// refills for different slots can run concurrently across partitions.
+			await publish(
+				eventTopics.personDatasetVariantRefillRequests,
+				`${input.trainingRunId}:${input.variantId}`,
+				event
+			);
+		},
 	};
 }
 
@@ -402,6 +526,12 @@ export interface EventConsumerHandlers {
 		event: GeneratorExecutionUpdatedEvent
 	) => Promise<void>;
 	onLoraRegistryChanged?: (event: LoraRegistryChangedEvent) => Promise<void>;
+	onPersonDatasetVariantRefillRequested?: (
+		event: PersonDatasetVariantRefillRequestedEvent
+	) => Promise<void>;
+	onPersonLoraTrainingConfirmed?: (
+		event: PersonLoraTrainingConfirmedEvent
+	) => Promise<void>;
 	onPersonLoraTrainingRequested?: (
 		event: PersonLoraTrainingRequestedEvent
 	) => Promise<void>;
@@ -437,6 +567,22 @@ async function dispatchParsedEvent(
 		handlers.onPersonLoraTrainingRequested
 	) {
 		await handlers.onPersonLoraTrainingRequested(parsed);
+		return;
+	}
+
+	if (
+		parsed.name === eventNames.personLoraTrainingConfirmed &&
+		handlers.onPersonLoraTrainingConfirmed
+	) {
+		await handlers.onPersonLoraTrainingConfirmed(parsed);
+		return;
+	}
+
+	if (
+		parsed.name === eventNames.personDatasetVariantRefillRequested &&
+		handlers.onPersonDatasetVariantRefillRequested
+	) {
+		await handlers.onPersonDatasetVariantRefillRequested(parsed);
 		return;
 	}
 

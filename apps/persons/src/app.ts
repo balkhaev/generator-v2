@@ -10,6 +10,7 @@ import {
 	DEBUG_CORRELATION_HEADER,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
+import type { S3StorageConfig } from "@generator/storage";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -40,6 +41,7 @@ interface AppOptions {
 	loraReadRepository?: LoraReadRepository;
 	operatorServerClient?: OperatorServerClient;
 	repository: PersonsRepository;
+	s3Storage?: S3StorageConfig;
 }
 
 const isPublicApiPath = createPublicPathMatcher({
@@ -54,6 +56,7 @@ export function createApp(options: AppOptions) {
 		grokClient: options.grokClient,
 		operatorServerClient: options.operatorServerClient,
 		repository: options.repository,
+		s3Storage: options.s3Storage,
 	});
 	const app = new Hono<{
 		Variables: AuthVariables & {

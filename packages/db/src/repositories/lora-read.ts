@@ -7,7 +7,7 @@ import type {
 } from "@generator/contracts/loras";
 
 import { db as defaultDb } from "../index";
-import { and, desc, eq } from "../operators";
+import { and, desc, eq, inArray } from "../operators";
 import { lora } from "../schema/loras";
 
 type Db = typeof defaultDb;
@@ -52,6 +52,7 @@ export function mapLoraRow(row: LoraRow): LoraRegistryEntry {
 		pairGroupId: row.pairGroupId ?? null,
 		sourceProvider: deriveSourceProvider(row.sourceUrl),
 		status: row.status as LoraStatus,
+		triggerWords: row.triggerWords ?? [],
 		createdAt: row.createdAt.toISOString(),
 		updatedAt: row.updatedAt.toISOString(),
 	};
@@ -65,6 +66,7 @@ export interface ListLorasFilter {
 export interface LoraReadRepository {
 	getById(id: string): Promise<LoraRegistryEntry | null>;
 	getByPairGroupId(pairGroupId: string): Promise<LoraRegistryEntry[]>;
+	getByS3Urls(urls: string[]): Promise<LoraRegistryEntry[]>;
 	getBySlug(slug: string): Promise<LoraRegistryEntry | null>;
 	list(filter?: ListLorasFilter): Promise<LoraRegistryEntry[]>;
 }
@@ -82,6 +84,17 @@ export function createLoraReadRepository(
 				.select()
 				.from(lora)
 				.where(eq(lora.pairGroupId, pairGroupId));
+			return rows.map(mapLoraRow);
+		},
+		async getByS3Urls(urls) {
+			const unique = Array.from(new Set(urls.filter((url) => url.length > 0)));
+			if (unique.length === 0) {
+				return [];
+			}
+			const rows = await database
+				.select()
+				.from(lora)
+				.where(inArray(lora.s3Url, unique));
 			return rows.map(mapLoraRow);
 		},
 		async getBySlug(slug) {

@@ -29,6 +29,7 @@ export interface CreateLoraRecordInput {
 	sizeBytes: number;
 	slug: string;
 	sourceUrl: string | null;
+	triggerWords?: string[];
 	variant?: LoraVariant | null;
 }
 
@@ -39,6 +40,7 @@ export interface UpdateLoraRecordInput {
 	name?: string;
 	pairGroupId?: string | null;
 	status?: LoraStatus;
+	triggerWords?: string[];
 	variant?: LoraVariant | null;
 }
 
@@ -70,6 +72,7 @@ export function createDrizzleLoraRepository(database: Db = db): LoraRepository {
 					s3Url: input.s3Url,
 					sizeBytes: input.sizeBytes,
 					defaultWeight: input.defaultWeight,
+					triggerWords: input.triggerWords ?? [],
 					variant: input.variant ?? null,
 					pairGroupId: input.pairGroupId ?? null,
 				})
@@ -97,6 +100,7 @@ export function createDrizzleLoraRepository(database: Db = db): LoraRepository {
 						s3Url: input.s3Url,
 						sizeBytes: input.sizeBytes,
 						defaultWeight: input.defaultWeight,
+						triggerWords: input.triggerWords ?? [],
 						variant: input.variant ?? null,
 						pairGroupId: input.pairGroupId ?? null,
 					}))
@@ -129,6 +133,9 @@ export function createDrizzleLoraRepository(database: Db = db): LoraRepository {
 						? {}
 						: { defaultWeight: patch.defaultWeight }),
 					...(patch.status === undefined ? {} : { status: patch.status }),
+					...(patch.triggerWords === undefined
+						? {}
+						: { triggerWords: patch.triggerWords }),
 					...(patch.variant === undefined ? {} : { variant: patch.variant }),
 					...(patch.pairGroupId === undefined
 						? {}

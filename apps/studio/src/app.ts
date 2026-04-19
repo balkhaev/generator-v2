@@ -111,6 +111,12 @@ function createNoopLoraReadRepository(): LoraReadRepository {
 		getById() {
 			return Promise.resolve(null);
 		},
+		getByPairGroupId() {
+			return Promise.resolve([]);
+		},
+		getByS3Urls() {
+			return Promise.resolve([]);
+		},
 		getBySlug() {
 			return Promise.resolve(null);
 		},
@@ -186,6 +192,8 @@ export function createApp(options: AppOptions): {
 	service: StudioService;
 } {
 	const app = new Hono<{ Variables: AppVariables }>();
+	const loraReadRepository =
+		options.loraReadRepository ?? createNoopLoraReadRepository();
 	const service = new StudioService(
 		options.repository,
 		options.executionClient,
@@ -193,6 +201,7 @@ export function createApp(options: AppOptions): {
 		options.callbackConfig,
 		{
 			fetchImpl: options.fetchImpl,
+			loraReadRepository,
 			personsApiBaseUrl: options.personsApiBaseUrl,
 		}
 	);
@@ -290,12 +299,7 @@ export function createApp(options: AppOptions): {
 				options.resolvePromptEnhanceClient ?? resolveStudioPromptEnhanceClient,
 		})
 	);
-	app.route(
-		"/api/loras",
-		createLoraRoutes(
-			options.loraReadRepository ?? createNoopLoraReadRepository()
-		)
-	);
+	app.route("/api/loras", createLoraRoutes(loraReadRepository));
 	app.route(
 		"/api/input-assets",
 		createInputAssetRoutes({

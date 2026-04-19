@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import type { S3StorageConfig } from "@generator/storage";
-import { LoraRegistryService, slugify } from "@/domain/loras";
+import {
+	LoraRegistryService,
+	normalizeTriggerWords,
+	slugify,
+} from "@/domain/loras";
 import type {
 	CreateLoraRecordInput,
 	ListLorasFilter,
@@ -36,6 +40,7 @@ function createInMemoryRepo(): LoraRepository & {
 			s3Url: input.s3Url,
 			sizeBytes: input.sizeBytes,
 			defaultWeight: input.defaultWeight,
+			triggerWords: input.triggerWords ?? [],
 			variant: input.variant ?? null,
 			pairGroupId: input.pairGroupId ?? null,
 			status: "active",
@@ -72,6 +77,13 @@ function createInMemoryRepo(): LoraRepository & {
 		getByPairGroupId(pairGroupId) {
 			const result = Array.from(rows.values()).filter(
 				(entry) => entry.pairGroupId === pairGroupId
+			);
+			return Promise.resolve(result);
+		},
+		getByS3Urls(urls) {
+			const set = new Set(urls);
+			const result = Array.from(rows.values()).filter((entry) =>
+				set.has(entry.s3Url)
 			);
 			return Promise.resolve(result);
 		},
@@ -113,6 +125,9 @@ function createInMemoryRepo(): LoraRepository & {
 					? {}
 					: { defaultWeight: patch.defaultWeight }),
 				...(patch.status === undefined ? {} : { status: patch.status }),
+				...(patch.triggerWords === undefined
+					? {}
+					: { triggerWords: patch.triggerWords }),
 				...(patch.variant === undefined ? {} : { variant: patch.variant }),
 				...(patch.pairGroupId === undefined
 					? {}
@@ -148,6 +163,25 @@ describe("slugify", () => {
 		expect(slugify("Hello World")).toBe("hello-world");
 		expect(slugify("  ZIT / Mystic (xxx) ")).toBe("zit-mystic-xxx");
 		expect(slugify("---foo---")).toBe("foo");
+	});
+});
+
+describe("normalizeTriggerWords", () => {
+	it("trims, drops empties and de-duplicates case-insensitively", () => {
+		expect(
+			normalizeTriggerWords([
+				"  mystic ",
+				"Mystic",
+				"",
+				"   ",
+				"neon city",
+				"NEON CITY",
+			])
+		).toEqual(["mystic", "neon city"]);
+	});
+
+	it("returns empty array on undefined input", () => {
+		expect(normalizeTriggerWords(undefined)).toEqual([]);
 	});
 });
 
@@ -437,6 +471,64 @@ describe("LoraRegistryService", () => {
 				},
 			})
 		).rejects.toThrow("different variants");
+	});
+
+	it("persists trainedWords from the resolved source as triggerWords", async () => {
+		service = new LoraRegistryService({
+			repository: repo,
+			s3Config: fakeS3Config,
+			cacheLora: () =>
+				Promise.resolve({
+					key: "loras/civitai-mystic.safetensors",
+					sizeBytes: 12_345,
+					url: "https://cdn.test/loras/civitai-mystic.safetensors",
+				}),
+			generateId: () => "lora-civitai",
+			resolveSource: () =>
+				Promise.resolve({
+					description: "Provider notes",
+					downloadUrl: "https://civitai.com/api/download/123",
+					name: "Mystic",
+					provider: "civitai",
+					sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+					trainedWords: ["mystic", "Mystic", " neon "],
+				}),
+		});
+
+		const entry = expectSingle(
+			await service.createFromUrl({
+				sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+				baseModel: "flux",
+			})
+		);
+
+		expect(entry.triggerWords).toEqual(["mystic", "neon"]);
+	});
+
+	it("respects an explicit triggerWords override on createFromUrl", async () => {
+		const entry = expectSingle(
+			await service.createFromUrl({
+				name: "Override",
+				sourceUrl: "https://example.com/override.safetensors",
+				baseModel: "flux",
+				triggerWords: ["alpha", "alpha", "  beta "],
+			})
+		);
+		expect(entry.triggerWords).toEqual(["alpha", "beta"]);
+	});
+
+	it("normalizes triggerWords on update", async () => {
+		const entry = expectSingle(
+			await service.createFromUrl({
+				name: "Editable",
+				sourceUrl: "https://example.com/editable.safetensors",
+				baseModel: "flux",
+			})
+		);
+		const updated = await service.update(entry.id, {
+			triggerWords: ["foo", "Foo", "  bar  ", ""],
+		});
+		expect(updated?.triggerWords).toEqual(["foo", "bar"]);
 	});
 
 	it("returns null from getPairedLora when entry is not part of a pair", async () => {

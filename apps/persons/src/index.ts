@@ -11,6 +11,7 @@ import {
 } from "@generator/env/server";
 import { createKafkaEventPublisher } from "@generator/events";
 import { createGeneratorExecutionClient } from "@generator/generator-client-server";
+import { tryResolveS3StorageConfig } from "@generator/storage";
 import { createApp } from "@/app";
 import {
 	createAdminTrainingClient,
@@ -39,6 +40,7 @@ const operatorServerClient = env.PERSONS_OPERATOR_URL
 		})
 	: undefined;
 const grokClient = createPersonsPromptEnhanceProxy();
+const s3Storage = tryResolveS3StorageConfig() ?? undefined;
 
 const corsOriginsFromEnv = getCorsOrigins();
 const fallbackCorsOrigins = env.CORS_ORIGIN ? [env.CORS_ORIGIN] : [];
@@ -57,6 +59,7 @@ const app = createApp({
 	loraReadRepository,
 	operatorServerClient,
 	repository,
+	s3Storage,
 });
 
 ensureDevUser();

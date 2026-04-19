@@ -217,6 +217,25 @@ export function createPersonRoutes(service: PersonsService) {
 		}
 	});
 
+	app.post("/:personId/train-lora/confirm", async (c) => {
+		try {
+			const person = await service.confirmDatasetAndStartTraining(
+				c.req.param("personId"),
+				{
+					debugCorrelationId: c.get("debugCorrelationId"),
+				}
+			);
+			if (!person) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+
+			return c.json({ person }, 202);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
 	app.post("/:personId/train-lora/cancel", async (c) => {
 		try {
 			const person = await service.cancelLoraTraining(c.req.param("personId"));

@@ -62,12 +62,12 @@ if (!(personsApiUrl || eventPublisher)) {
 
 const defaultTrainingProvider = env.TRAINING_PROVIDER;
 
-const datasetBuilderSettings = createRedisDatasetBuilderSettings({ redisUrl });
 /**
- * Резолвер выбранной editor-модели для генерации синтетических вариаций
- * датасета. Передаём как функцию, чтобы значение читалось перед каждым job-ом
- * и переключение в админке применялось без рестарта воркера.
+ * Активная dataset-editor-модель читается перед каждым job-ом, поэтому смена
+ * модели в админке применяется к новым тренировкам без рестарта воркера.
+ * Уже выполняющиеся job-ы дорабатываются на старой модели.
  */
+const datasetBuilderSettings = createRedisDatasetBuilderSettings({ redisUrl });
 const getDatasetEditorModelId = () => datasetBuilderSettings.getEditorModelId();
 
 const falRunner = new FalZibLoraTrainingRunner({
@@ -281,17 +281,90 @@ const queueWorker = createPersonLoraTrainingWorker({
 	redisUrl,
 });
 
+/**
+ * Idempotency lock prefix for refill jobs. Each refill request carries a
+ * unique `requestNonce` (from persons-service) so duplicate Kafka deliveries
+ * for the same rejected slot don't double-spend fal.ai credits.
+ */
+const REFILL_LOCK_PREFIX = "admin:person-dataset-refill";
+const REFILL_LOCK_TTL_SECONDS = 30 * 60;
+const refillLock = createRedisIdempotencyLock({
+	keyPrefix: REFILL_LOCK_PREFIX,
+	redisUrl,
+	ttlSeconds: REFILL_LOCK_TTL_SECONDS,
+});
+
 const eventConsumer = kafkaConfig
 	? await createKafkaEventConsumer({
 			config: kafkaConfig,
 			groupId: "admin-worker",
 			handlers: {
+				onPersonDatasetVariantRefillRequested: async (event) => {
+					if (!runpodPodRunner) {
+						console.warn(
+							"admin.worker: refill request ignored, runpod-pod runner is not configured",
+							{
+								personId: event.data.personId,
+								variantId: event.data.variantId,
+							}
+						);
+						return;
+					}
+					const lockKey = `${event.data.trainingRunId}:${event.data.requestNonce}`;
+					const outcome = await withIdempotency(refillLock, lockKey, () =>
+						runpodPodRunner.refillVariant(event.data)
+					);
+					if (!outcome.acquired) {
+						console.info("admin.worker: skipped duplicate refill request", {
+							personId: event.data.personId,
+							trainingRunId: event.data.trainingRunId,
+							variantId: event.data.variantId,
+						});
+					}
+				},
+				onPersonLoraTrainingConfirmed: async (event) => {
+					if (!runpodPodRunner) {
+						console.warn(
+							"admin.worker: training confirmation ignored, runpod-pod runner is not configured",
+							{
+								personId: event.data.personId,
+								trainingRunId: event.data.trainingRunId,
+							}
+						);
+						return;
+					}
+					const outcome = await withIdempotency(
+						trainingLock,
+						event.data.trainingRunId,
+						async () => {
+							activeTrainingRunIds.add(event.data.trainingRunId);
+							try {
+								await runpodPodRunner.confirmAndTrain(event.data);
+							} finally {
+								activeTrainingRunIds.delete(event.data.trainingRunId);
+							}
+						}
+					);
+					if (!outcome.acquired) {
+						console.info(
+							"admin.worker: skipped duplicate training confirmation",
+							{
+								personId: event.data.personId,
+								trainingRunId: event.data.trainingRunId,
+							}
+						);
+					}
+				},
 				onPersonLoraTrainingRequested: async (event) => {
 					await runTrainingOnce("kafka", event.data);
 				},
 			},
 			logger: console,
-			topics: [eventTopics.personLoraTrainingRequests],
+			topics: [
+				eventTopics.personLoraTrainingRequests,
+				eventTopics.personLoraTrainingConfirmations,
+				eventTopics.personDatasetVariantRefillRequests,
+			],
 		})
 	: null;
 
@@ -340,6 +413,7 @@ await new Promise<void>((resolve) => {
 			)
 		);
 		await trainingLock.close();
+		await refillLock.close();
 		await recoveryLock.close();
 		await trainingProviderSettings.close();
 		await datasetBuilderSettings.close();

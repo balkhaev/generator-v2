@@ -9,6 +9,7 @@ import {
 	getPersonLoraTrainingProgressPct,
 	getPersonLoraTrainingStages,
 	isActivePersonLoraTrainingStatus,
+	isApprovablePersonLoraTrainingStatus,
 	type PersonLoraTrainingMeta,
 	type PersonLoraTrainingStatus,
 	readPersonLoraTrainingMeta,
@@ -66,6 +67,7 @@ import {
 	type CreatePersonInput,
 	cancelGeneration,
 	cancelPersonLoraTraining,
+	confirmPersonLoraTraining,
 	createPerson,
 	deleteGeneration,
 	deletePerson,
@@ -715,6 +717,7 @@ function GenerationCard({
 }
 
 const trainingStatusTone: Record<PersonLoraTrainingStatus | "ready", string> = {
+	"awaiting-approval": "bg-amber-500/15 text-amber-700 dark:text-amber-300",
 	queued: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
 	generating: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
 	training: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
@@ -838,34 +841,47 @@ function LoraTrainingStatusPanel({
 
 function LoraTrainingActions({
 	hasLora,
+	isAwaitingApproval,
 	isCancellingTraining,
 	isTraining,
 	onCancelTraining,
 	onTrainLora,
 }: {
 	hasLora: boolean;
+	isAwaitingApproval: boolean;
 	isCancellingTraining: boolean;
 	isTraining: boolean;
 	onCancelTraining: () => void;
 	onTrainLora: () => void;
 }) {
-	const actionLabel = hasLora ? "Retrain LoRA" : "Train LoRA";
+	let actionLabel = "Train LoRA";
+	if (isAwaitingApproval) {
+		actionLabel = "Train LoRA on this dataset";
+	} else if (hasLora) {
+		actionLabel = "Retrain LoRA";
+	}
 	const pendingLabel = hasLora ? "Retraining..." : "Training...";
+	// While the dataset is awaiting approval the operator MUST be able to
+	// click Train — that's the entire point of the gate. For every other
+	// active phase (queued / generating / training / publishing) the CTA is
+	// disabled to avoid duplicate submissions.
+	const ctaDisabled =
+		isCancellingTraining || (isTraining && !isAwaitingApproval);
 
 	return (
 		<>
 			<Button
-				disabled={isTraining || isCancellingTraining}
+				disabled={ctaDisabled}
 				onClick={onTrainLora}
 				size="sm"
-				variant="outline"
+				variant={isAwaitingApproval ? "default" : "outline"}
 			>
-				{isTraining ? (
+				{isTraining && !isAwaitingApproval ? (
 					<Loader2 className="size-3.5 animate-spin" />
 				) : (
 					<Sparkles className="size-3.5" />
 				)}
-				{isTraining ? pendingLabel : actionLabel}
+				{isTraining && !isAwaitingApproval ? pendingLabel : actionLabel}
 			</Button>
 			{isTraining ? (
 				<Button
@@ -969,6 +985,8 @@ function LoraActions({
 	const referenceImageCount = getPersonLoraReferenceImageCount(training);
 	const referenceImageTarget = getPersonLoraReferenceImageTarget(training);
 	const isTraining = isActivePersonLoraTrainingStatus(effectiveStatus);
+	const isAwaitingApproval =
+		isApprovablePersonLoraTrainingStatus(effectiveStatus);
 	const hasTrainingError = Boolean(training?.errorSummary);
 	const showTrainingSection = !hasLora || isTraining || hasTrainingError;
 
@@ -996,8 +1014,19 @@ function LoraActions({
 						</p>
 					) : null}
 
+					{isAwaitingApproval ? (
+						<p className="rounded-lg bg-amber-500/10 px-3 py-2 text-amber-700 text-xs leading-relaxed dark:text-amber-300">
+							Review the dataset photos in the gallery and remove any that don't
+							match the person. Rejected slots are regenerated automatically.
+							Click{" "}
+							<span className="font-semibold">Train LoRA on this dataset</span>{" "}
+							when you're happy with the lineup.
+						</p>
+					) : null}
+
 					<LoraTrainingActions
 						hasLora={hasLora}
+						isAwaitingApproval={isAwaitingApproval}
 						isCancellingTraining={isCancellingTraining}
 						isTraining={isTraining}
 						onCancelTraining={onCancelTraining}
@@ -1065,8 +1094,17 @@ function LoraActions({
 }
 
 interface DatasetImageItem {
+	/**
+	 * Dataset photos derived from the original reference photo (variantId
+	 * starts with `original-`) are essential anchors for the LoRA: removing
+	 * one would leave the trainer without an authoritative copy of the
+	 * subject's face. Hide the delete button for these so the operator can
+	 * only reject synthetic flux-2/edit variations.
+	 */
+	canDelete: boolean;
 	generationId: string | null;
 	url: string;
+	variantId: string | null;
 }
 
 function DatasetGallery({
@@ -1119,7 +1157,7 @@ function DatasetGallery({
 									src={item.url}
 								/>
 							</button>
-							{item.generationId ? (
+							{item.generationId && item.canDelete ? (
 								<button
 									aria-label={`Delete reference ${i + 1}`}
 									className="absolute top-1.5 right-1.5 inline-flex size-7 items-center justify-center rounded-full bg-background/85 text-muted-foreground shadow-sm ring-1 ring-border/50 transition hover:bg-rose-500/10 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-70 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 dark:hover:text-rose-400"
@@ -1138,6 +1176,14 @@ function DatasetGallery({
 									)}
 								</button>
 							) : null}
+							{item.canDelete ? null : (
+								<span
+									className="pointer-events-none absolute top-1.5 right-1.5 inline-flex items-center gap-1 rounded-full bg-background/85 px-1.5 py-0.5 text-[10px] text-muted-foreground shadow-sm ring-1 ring-border/50"
+									title="Original reference photo — required for training"
+								>
+									Original
+								</span>
+							)}
 						</div>
 					))}
 				</div>
@@ -1203,19 +1249,34 @@ function PersonDetailView({
 	const datasetPhotos = person.generations.filter(
 		(g) => g.metadata.isDatasetPhoto === true
 	);
-	const datasetPhotoItems = datasetPhotos.map((g) => ({
-		generationId: g.id,
-		url: g.sourceUrl,
-	}));
+	const buildDatasetItem = (
+		generation: PersonGenerationRecord | undefined,
+		fallbackUrl: string
+	): DatasetImageItem => {
+		const variantId =
+			typeof generation?.metadata.datasetVariantId === "string"
+				? generation.metadata.datasetVariantId
+				: null;
+		const isOriginal = variantId?.startsWith("original-") ?? false;
+		return {
+			canDelete: !isOriginal,
+			generationId: generation?.id ?? null,
+			url: generation?.sourceUrl ?? fallbackUrl,
+			variantId,
+		};
+	};
+	const datasetPhotoItems = datasetPhotos.map((g) =>
+		buildDatasetItem(g, g.sourceUrl)
+	);
 	const datasetItems: DatasetImageItem[] =
 		trainingMeta?.referenceImageUrls &&
 		trainingMeta.referenceImageUrls.length > 0
-			? trainingMeta.referenceImageUrls.map((url) => ({
-					generationId:
-						datasetPhotos.find((generation) => generation.sourceUrl === url)
-							?.id ?? null,
-					url,
-				}))
+			? trainingMeta.referenceImageUrls.map((url) =>
+					buildDatasetItem(
+						datasetPhotos.find((generation) => generation.sourceUrl === url),
+						url
+					)
+				)
 			: datasetPhotoItems;
 	const datasetUrls = datasetItems.map((item) => item.url);
 
@@ -2135,12 +2196,24 @@ export default function PersonsWorkspace({
 		if (!selectedPerson) {
 			return;
 		}
+		// When the dataset is awaiting operator approval the API is split:
+		// `train-lora` re-queues a fresh dataset prep, while `train-lora/confirm`
+		// promotes the already-reviewed dataset into actual training. Routing
+		// here keeps a single CTA in the UI but maps to the right backend
+		// endpoint so an accidental "Train" click on awaiting-approval never
+		// throws away the photos the operator just reviewed.
+		const trainingStatus = readPersonLoraTrainingMeta(selectedPerson)?.status;
+		const shouldConfirm = isApprovablePersonLoraTrainingStatus(trainingStatus);
 		try {
-			const updated = await trainPersonLora(selectedPerson.id);
+			const updated = shouldConfirm
+				? await confirmPersonLoraTraining(selectedPerson.id)
+				: await trainPersonLora(selectedPerson.id);
 			setPersons((current) =>
 				current.map((p) => (p.id === updated.id ? updated : p))
 			);
-			toast.success("LoRA training started");
+			toast.success(
+				shouldConfirm ? "LoRA training started" : "LoRA dataset prep queued"
+			);
 		} catch (error) {
 			toast.error(
 				error instanceof Error ? error.message : "Failed to start training"

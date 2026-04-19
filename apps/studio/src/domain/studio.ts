@@ -624,6 +624,55 @@ export class StudioService {
 		};
 	}
 
+	/**
+	 * Накладывает данные из свежего execution-payload поверх БД-снапшота run'а
+	 * БЕЗ записи в БД. Используется для SSE-эмита из web-инстанса, который
+	 * слушает Kafka, но не персистит (этим занимается studio-worker).
+	 *
+	 * Без этого overlay'я `processStreamEvent` отдавал бы клиентам status и
+	 * artifacts из БД, которые ещё не успел проапдейтить worker — и на UI run
+	 * оставался в "Generating", пока не сделают F5. См. комментарий к
+	 * `processStreamEvent`.
+	 */
+	private overlayExecutionOnEntity(
+		entity: StudioRunEntity,
+		execution: GeneratorExecutionRecord
+	): StudioRunEntity {
+		const executionStatus = execution.status as StudioRunStatus;
+		const nextStatus = isStatusProgression(entity.status, executionStatus)
+			? executionStatus
+			: entity.status;
+		const executionArtifacts = mapExecutionToArtifacts(
+			entity.id,
+			execution
+		).map((artifact) => ({
+			createdAt: new Date(),
+			id: artifact.id,
+			kind: artifact.kind,
+			metadata: artifact.metadata,
+			runId: artifact.runId,
+			url: artifact.url,
+		}));
+		const nextArtifacts =
+			executionArtifacts.length > 0 ? executionArtifacts : entity.artifacts;
+		const nextCompletedAt =
+			nextStatus === "succeeded" || nextStatus === "failed"
+				? (entity.completedAt ?? new Date())
+				: entity.completedAt;
+		return {
+			...entity,
+			artifacts: nextArtifacts,
+			completedAt: nextCompletedAt,
+			errorSummary: execution.errorSummary ?? entity.errorSummary,
+			generatorRunId: execution.id ?? entity.generatorRunId,
+			progressPct: executionProgressPct(execution) ?? entity.progressPct,
+			providerEndpointId:
+				execution.providerEndpointId ?? entity.providerEndpointId,
+			providerJobId: execution.providerJobId ?? entity.providerJobId,
+			status: nextStatus,
+		};
+	}
+
 	private resolveLatestExecution(
 		run: Pick<
 			StudioRunEntity,
@@ -1129,6 +1178,17 @@ export class StudioService {
 		return { updatedCount };
 	}
 
+	/**
+	 * Эмитит SSE-обновление run'а на основании свежего execution-payload из
+	 * Kafka. Запускается на web-инстансах (group-id `studio-web-stream-…`),
+	 * чтобы push'ить состояние клиентам без ожидания, пока studio-worker
+	 * (отдельный процесс) персистит апдейт в БД.
+	 *
+	 * ВАЖНО: статус/прогресс/артефакты берутся из execution, а не из БД,
+	 * иначе SSE-сообщение придёт со stale-полями (run остаётся в
+	 * "Generating", пока пользователь не сделает F5 — тогда snapshot из БД,
+	 * уже обновлённой воркером, исправит UI).
+	 */
 	async processStreamEvent(input: {
 		context: Record<string, unknown>;
 		execution: GeneratorExecutionRecord;
@@ -1142,7 +1202,8 @@ export class StudioService {
 		if (!run) {
 			return;
 		}
-		const enriched = this.withExecutionLiveFields(run, input.execution);
+		const overlaid = this.overlayExecutionOnEntity(run, input.execution);
+		const enriched = this.withExecutionLiveFields(overlaid, input.execution);
 		await this.emitRunUpdate(enriched);
 	}
 }

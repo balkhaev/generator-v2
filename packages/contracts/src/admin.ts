@@ -113,8 +113,15 @@ export interface TrainingProviderSettingsSnapshot {
 	provider: TrainingProviderName;
 }
 
+export interface DatasetEditorModelOption {
+	description: string;
+	id: string;
+	label: string;
+	supportsNegativePrompt: boolean;
+}
+
 export interface DatasetBuilderSettings {
-	guidanceScale: number;
+	availableModels: DatasetEditorModelOption[];
 	model: string;
 	negativePromptPreview: string;
 	note: string;
@@ -161,25 +168,39 @@ export interface AdminWorkerHealthStatus {
 	source: "worker" | "gateway-fallback";
 }
 
+/**
+ * Discriminator for which surface a prompt-enhance setting belongs to. Each
+ * surface owns an independent runtime-config domain so studio and persons
+ * can run on different LLMs (e.g. studio on Qwen, persons on Grok).
+ */
+export const PROMPT_ENHANCE_TARGETS = ["studio", "persons"] as const;
+export type PromptEnhanceTarget = (typeof PROMPT_ENHANCE_TARGETS)[number];
+
 export interface PromptEnhanceSettingsSnapshot {
-	/** Ключи (XAI / OpenRouter) должны быть в env **studio-api**; провайдер и модель OpenRouter — в Redis. */
+	/** Ключи (XAI / OpenRouter) должны быть в env consumer-сервиса (studio-api / persons-api); провайдер и модель OpenRouter — в runtime-config (Postgres + Redis pub/sub). */
 	grokConfigured: boolean;
 	openRouterConfigured: boolean;
 	/**
-	 * Фактический slug модели для enhance (Redis `admin:prompt-enhance-openrouter-model`,
+	 * Фактический slug модели для enhance (runtime-config setting,
 	 * иначе совпадает с `openRouterModelEnvDefault`).
 	 */
 	openRouterModel: string;
-	/** Значение OPENROUTER_MODEL в env (fallback при пустом Redis). */
+	/** Значение OPENROUTER_MODEL в env consumer-сервиса (fallback при пустом runtime-config). */
 	openRouterModelEnvDefault: string;
 	provider: PromptEnhanceProviderName;
+	target: PromptEnhanceTarget;
+}
+
+export interface PromptEnhanceSettingsBundle {
+	persons: PromptEnhanceSettingsSnapshot;
+	studio: PromptEnhanceSettingsSnapshot;
 }
 
 export interface AdminSettingsSnapshot {
 	datasetBuilder: DatasetBuilderSettings;
 	generatorRuntime: GeneratorRuntimeSettings;
 	personsDefaults: PersonsWorkflowDefaults;
-	promptEnhance: PromptEnhanceSettingsSnapshot;
+	promptEnhance: PromptEnhanceSettingsBundle;
 	runpodTraining: RunpodTrainingSettings;
 	trainingProvider: TrainingProviderSettingsSnapshot;
 	workerHealth: AdminWorkerHealthStatus;

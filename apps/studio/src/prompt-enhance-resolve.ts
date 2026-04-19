@@ -42,7 +42,7 @@ export async function resolveStudioPromptEnhanceClient(): Promise<
 	}
 	let snapshot: Awaited<ReturnType<RuntimeConfigClient["get"]>>;
 	try {
-		snapshot = await client.get("prompt-enhance");
+		snapshot = await client.get("prompt-enhance-studio");
 	} catch (error) {
 		console.warn("studio.prompt-enhance.runtime-config_fetch_failed", {
 			message: error instanceof Error ? error.message : String(error),

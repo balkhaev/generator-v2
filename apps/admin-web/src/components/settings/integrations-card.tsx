@@ -47,7 +47,6 @@ export function IntegrationsCard() {
 					</div>
 				) : null
 			}
-			className="lg:col-span-2"
 			description="Encrypted credentials stored in admin Postgres. Updates propagate to consumer services within ~10s (Redis pub/sub invalidation; otherwise on next 60s cache refresh)."
 			title="Integrations & API keys"
 		>

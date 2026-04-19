@@ -1,6 +1,4 @@
-import WorkspaceShell, {
-	WorkspacePane,
-} from "@generator/ui/components/workspace-shell";
+import WorkspaceShell from "@generator/ui/components/workspace-shell";
 import { createWorkspaceNavigation } from "@generator/ui/lib/workspace-nav";
 import type { ReactNode } from "react";
 
@@ -8,6 +6,12 @@ import AdminSideNav from "@/components/admin-side-nav";
 import WorkspaceActions from "@/components/workspace-actions";
 import { getModuleUrls } from "@/lib/session";
 
+/**
+ * Admin shell. The right-hand inspector pane is OPT-IN — pages that don't
+ * need it omit `inspector` and the layout collapses to a two-column
+ * (rail + main) grid. Previously we always rendered an empty `WorkspacePane`
+ * placeholder, which wasted ~20rem of horizontal real estate on every page.
+ */
 export default function AdminShell({
 	actions,
 	children,
@@ -35,9 +39,7 @@ export default function AdminShell({
 		<WorkspaceShell
 			actions={actions ?? <WorkspaceActions />}
 			context={<AdminSideNav />}
-			inspector={
-				inspector ?? <WorkspacePane className="h-full">&nbsp;</WorkspacePane>
-			}
+			{...(inspector ? { inspector } : {})}
 			navigation={navigation}
 			status={status}
 			subtitle={subtitle}

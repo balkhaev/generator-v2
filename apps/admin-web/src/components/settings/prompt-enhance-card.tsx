@@ -3,6 +3,7 @@
 import type {
 	PromptEnhanceProviderName,
 	PromptEnhanceSettingsSnapshot,
+	PromptEnhanceTarget,
 } from "@generator/contracts/admin";
 import { Button } from "@generator/ui/components/button";
 import { Input } from "@generator/ui/components/input";
@@ -20,18 +21,34 @@ const PROVIDER_LABELS: Record<PromptEnhanceProviderName, string> = {
 };
 
 const PROVIDER_DESCRIPTIONS: Record<PromptEnhanceProviderName, string> = {
-	grok: "Uses XAI_API_KEY on studio-api (grok-4-fast).",
+	grok: "Uses XAI_API_KEY (grok-4-fast) on the consumer service.",
 	openrouter:
-		"Uses OPENROUTER_API_KEY on studio-api. Pick any model slug below (stored in Redis).",
+		"Uses OPENROUTER_API_KEY on the consumer service. Pick any model slug below.",
+};
+
+const TARGET_TITLES: Record<PromptEnhanceTarget, string> = {
+	persons: "Persons prompt enhancement",
+	studio: "Studio prompt enhancement",
+};
+
+const TARGET_SUBTITLES: Record<PromptEnhanceTarget, string> = {
+	persons:
+		"Used by the persons service when expanding a brief into 4 persona variants and during refine. Independent from studio so each surface can pick its own LLM.",
+	studio:
+		"Used by /enhance-prompt in studio. Independent from persons so each surface can pick its own LLM.",
 };
 
 const PROVIDERS: PromptEnhanceProviderName[] = ["grok", "openrouter"];
 
 interface PromptEnhanceCardProps {
 	settings: PromptEnhanceSettingsSnapshot;
+	target: PromptEnhanceTarget;
 }
 
-export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
+export function PromptEnhanceCard({
+	settings,
+	target,
+}: PromptEnhanceCardProps) {
 	const mutation = useUpdatePromptEnhanceProvider();
 	const [catalogRequested, setCatalogRequested] = useState(false);
 	const [modelDraft, setModelDraft] = useState(settings.openRouterModel);
@@ -57,26 +74,32 @@ export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
 			.slice(0, 200);
 	}, [modelsQuery.data, modelFilter]);
 
+	// Pending state must be scoped to THIS target — both PromptEnhanceCard
+	// instances share one mutation hook, so we filter on `variables.target`.
+	const isPendingForTarget =
+		mutation.isPending && mutation.variables?.target === target;
 	const errorText =
-		mutation.error instanceof Error ? mutation.error.message : null;
+		mutation.error instanceof Error && mutation.variables?.target === target
+			? mutation.error.message
+			: null;
 
 	return (
 		<SettingsCard
 			action={
-				mutation.isPending ? (
+				isPendingForTarget ? (
 					<div className="inline-flex items-center gap-1 text-muted-foreground text-xs">
 						<Loader2 className="size-3 animate-spin" />
 						Saving…
 					</div>
 				) : null
 			}
-			description="Provider and OpenRouter model slug are stored in Redis. studio-api must have the matching API keys."
-			title="Studio prompt enhancement"
+			description={TARGET_SUBTITLES[target]}
+			title={TARGET_TITLES[target]}
 		>
 			<div className="grid gap-2">
 				{PROVIDERS.map((name) => {
 					const isActive = settings.provider === name;
-					const disabled = mutation.isPending || isActive;
+					const disabled = isPendingForTarget || isActive;
 					const configured =
 						name === "grok"
 							? settings.grokConfigured
@@ -93,7 +116,7 @@ export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
 							)}
 							disabled={disabled}
 							key={name}
-							onClick={() => mutation.mutate({ provider: name })}
+							onClick={() => mutation.mutate({ provider: name, target })}
 							type="button"
 						>
 							<div className="mt-0.5">
@@ -127,12 +150,6 @@ export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
 								<div className="text-muted-foreground text-xs">
 									{PROVIDER_DESCRIPTIONS[name]}
 								</div>
-								{configured ? null : (
-									<p className="text-[10px] text-amber-700 dark:text-amber-400">
-										Gateway env may be empty while studio-api still has the key
-										— try enhance in Studio to verify.
-									</p>
-								)}
 							</div>
 						</button>
 					);
@@ -150,14 +167,14 @@ export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
 					OpenRouter model
 				</div>
 				<SettingsRow
-					hint="Fallback when Redis has no model (OPENROUTER_MODEL on studio-api)"
-					label="Env default (studio)"
+					hint="Fallback when runtime-config has no value (OPENROUTER_MODEL on the consumer service)"
+					label="Env default"
 					value={settings.openRouterModelEnvDefault}
 				/>
 				<div className="flex flex-wrap items-end gap-2">
 					<div className="grid min-w-0 flex-1 gap-1">
 						<span className="text-[10px] text-muted-foreground">
-							Active slug (Redis)
+							Active slug
 						</span>
 						<Input
 							className="h-8 font-mono text-xs"
@@ -169,12 +186,15 @@ export function PromptEnhanceCard({ settings }: PromptEnhanceCardProps) {
 					<Button
 						className="h-8 shrink-0"
 						disabled={
-							mutation.isPending ||
+							isPendingForTarget ||
 							modelDraft.trim() === "" ||
 							modelDraft.trim() === settings.openRouterModel
 						}
 						onClick={() =>
-							mutation.mutate({ openRouterModel: modelDraft.trim() })
+							mutation.mutate({
+								openRouterModel: modelDraft.trim(),
+								target,
+							})
 						}
 						size="sm"
 						type="button"

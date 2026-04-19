@@ -15,6 +15,7 @@ import { createKafkaEventPublisher } from "@generator/events";
 import { tryResolveS3StorageConfig } from "@generator/storage";
 import { createApp } from "@/app";
 import { getAdminDashboardSnapshot } from "@/dashboard";
+import { createRedisDatasetBuilderSettings } from "@/domain/dataset-builder-settings";
 import { LoraRegistryService } from "@/domain/loras";
 import { PersonLoraTrainingControlService } from "@/domain/person-lora-training-control";
 import { createRedisPromptEnhanceSettings } from "@/domain/prompt-enhance-settings";
@@ -53,6 +54,8 @@ const basePromptEnhanceSettings = createRedisPromptEnhanceSettings({
 	defaultProvider: env.PROMPT_ENHANCE_PROVIDER,
 	redisUrl,
 });
+
+const datasetBuilderSettings = createRedisDatasetBuilderSettings({ redisUrl });
 
 /**
  * Reader for the worker's settings heartbeat (see worker-settings-store.ts).
@@ -98,6 +101,10 @@ const usersService = new UsersService({
  * into the runtime-config store (the new source of truth) and consumer caches
  * are invalidated via Redis pub/sub. Reads still go through Redis to keep the
  * existing admin UI snapshot path unchanged.
+ *
+ * Two domains: `prompt-enhance-studio` and `prompt-enhance-persons`. The
+ * target is selected by the admin UI per-write so each surface can run on
+ * a different LLM.
  */
 function mirrorPromptEnhanceSettings(
 	base: ReturnType<typeof createRedisPromptEnhanceSettings>,
@@ -106,35 +113,39 @@ function mirrorPromptEnhanceSettings(
 	if (!setup) {
 		return base;
 	}
+	const domainFor = (target: "studio" | "persons") =>
+		target === "studio"
+			? ("prompt-enhance-studio" as const)
+			: ("prompt-enhance-persons" as const);
 	return {
 		close: () => base.close(),
-		getOpenRouterModel: () => base.getOpenRouterModel(),
-		getProvider: () => base.getProvider(),
-		async setOpenRouterModel(model) {
-			await base.setOpenRouterModel(model);
+		getOpenRouterModel: (target) => base.getOpenRouterModel(target),
+		getProvider: (target) => base.getProvider(target),
+		async setOpenRouterModel(target, model) {
+			await base.setOpenRouterModel(target, model);
 			try {
-				await setup.store.setSetting(
-					"prompt-enhance",
-					"openrouterModel",
-					model
-				);
-				await setup.publishInvalidation("prompt-enhance");
+				const domain = domainFor(target);
+				await setup.store.setSetting(domain, "openrouterModel", model);
+				await setup.publishInvalidation(domain);
 			} catch (error) {
 				console.warn("admin.runtime-config.mirror_setOpenRouterModel_failed", {
 					message: error instanceof Error ? error.message : String(error),
+					target,
 				});
 			}
 		},
-		async setProvider(provider) {
-			await base.setProvider(provider);
+		async setProvider(target, provider) {
+			await base.setProvider(target, provider);
 			try {
-				await setup.store.setSetting("prompt-enhance", "provider", provider);
-				await setup.publishInvalidation("prompt-enhance");
+				const domain = domainFor(target);
+				await setup.store.setSetting(domain, "provider", provider);
+				await setup.publishInvalidation(domain);
 			} catch (error) {
 				console.warn(
 					"admin.runtime-config.mirror_setPromptEnhanceProvider_failed",
 					{
 						message: error instanceof Error ? error.message : String(error),
+						target,
 					}
 				);
 			}
@@ -191,12 +202,18 @@ if (runtimeConfigSetup) {
 	});
 
 	// Migrate legacy Redis-backed admin settings first; the env seed below only
-	// runs for keys that are still missing afterwards.
+	// runs for keys that are still missing afterwards. The legacy
+	// `prompt-enhance` rows seed BOTH new domains so the historical setting
+	// becomes the studio + persons starting point on first boot.
 	seedSettingsFromLegacyRedis(runtimeConfigSetup.store, { redisUrl })
 		.then(() =>
 			seedSettingsFromEnv(runtimeConfigSetup.store, {
 				settings: {
-					"prompt-enhance": {
+					"prompt-enhance-persons": {
+						openrouterModel: env.OPENROUTER_MODEL,
+						provider: env.PROMPT_ENHANCE_PROVIDER,
+					},
+					"prompt-enhance-studio": {
 						openrouterModel: env.OPENROUTER_MODEL,
 						provider: env.PROMPT_ENHANCE_PROVIDER,
 					},
@@ -254,15 +271,28 @@ const app = createApp({
 			RUNPOD_TRAINING_MODE: env.RUNPOD_TRAINING_MODE,
 		}),
 	},
-	promptEnhanceEnv: {
-		grokConfigured: Boolean(env.XAI_API_KEY?.trim()),
-		openRouterConfigured: Boolean(env.OPENROUTER_API_KEY?.trim()),
-		openRouterModelEnvDefault: env.OPENROUTER_MODEL,
+	// Same env summary for both targets — the gateway's env tells the UI what
+	// the consumer service likely has access to. studio-api / persons-api can
+	// have independent envs in production but typically share the same secrets
+	// pool, and runtime-config invalidation handles the actual provider
+	// switch per surface.
+	promptEnhanceEnvByTarget: {
+		persons: {
+			grokConfigured: Boolean(env.XAI_API_KEY?.trim()),
+			openRouterConfigured: Boolean(env.OPENROUTER_API_KEY?.trim()),
+			openRouterModelEnvDefault: env.OPENROUTER_MODEL,
+		},
+		studio: {
+			grokConfigured: Boolean(env.XAI_API_KEY?.trim()),
+			openRouterConfigured: Boolean(env.OPENROUTER_API_KEY?.trim()),
+			openRouterModelEnvDefault: env.OPENROUTER_MODEL,
+		},
 	},
 	promptEnhanceSettings: mirrorPromptEnhanceSettings(
 		basePromptEnhanceSettings,
 		runtimeConfigSetup
 	),
+	datasetBuilderSettings,
 	trainingProviderAvailability: {
 		resolve: () => resolveTrainingProviderAvailability(env),
 	},

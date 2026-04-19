@@ -19,11 +19,16 @@ describe("buildAdminSettingsSnapshot", () => {
 		});
 
 		expect(snapshot.trainingProvider.provider).toBe("fal");
-		expect(snapshot.promptEnhance.provider).toBe("grok");
-		expect(snapshot.promptEnhance.openRouterModel).toBe("openai/gpt-4o-mini");
-		expect(snapshot.promptEnhance.openRouterModelEnvDefault).toBe(
+		expect(snapshot.promptEnhance.studio.provider).toBe("grok");
+		expect(snapshot.promptEnhance.studio.openRouterModel).toBe(
 			"openai/gpt-4o-mini"
 		);
+		expect(snapshot.promptEnhance.studio.openRouterModelEnvDefault).toBe(
+			"openai/gpt-4o-mini"
+		);
+		expect(snapshot.promptEnhance.persons.provider).toBe("grok");
+		expect(snapshot.promptEnhance.persons.target).toBe("persons");
+		expect(snapshot.promptEnhance.studio.target).toBe("studio");
 		expect(snapshot.trainingProvider.availability).toHaveLength(2);
 		expect(snapshot.runpodTraining.endpointConfigured).toBe(false);
 		expect(snapshot.runpodTraining.baseModel).toBe("z-image");

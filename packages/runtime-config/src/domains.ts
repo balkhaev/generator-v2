@@ -46,8 +46,29 @@ export interface CredentialRef {
 	provider: string;
 }
 
-export const promptEnhanceDomain: DomainSpec<PromptEnhanceSettings> = {
-	name: "prompt-enhance",
+/**
+ * Studio-side prompt enhancement (used by `/api/enhance-prompt` in studio-api).
+ * Independent from the persons domain so each surface can pick its own
+ * provider — e.g. studio on Qwen 3.5 for fast rewrites, persons on Grok for
+ * stricter policy adherence on persona prompts.
+ */
+export const promptEnhanceStudioDomain: DomainSpec<PromptEnhanceSettings> = {
+	name: "prompt-enhance-studio",
+	schema: promptEnhanceSettingsSchema,
+	providerCredentials: {
+		grok: [{ provider: "xai", keyName: "apiKey" }],
+		openrouter: [{ provider: "openrouter", keyName: "apiKey" }],
+	},
+};
+
+/**
+ * Persons-side prompt enhancement (used by `/api/enhance-prompt` and the
+ * variant/refine flows in persons-api). Separate from the studio domain so
+ * persona prompts can stay on a different model — they have a stricter
+ * i2i-source contract that benefits from being tuned independently.
+ */
+export const promptEnhancePersonsDomain: DomainSpec<PromptEnhanceSettings> = {
+	name: "prompt-enhance-persons",
 	schema: promptEnhanceSettingsSchema,
 	providerCredentials: {
 		grok: [{ provider: "xai", keyName: "apiKey" }],
@@ -65,7 +86,8 @@ export const trainingDomain: DomainSpec<TrainingSettings> = {
 };
 
 export const domains = {
-	"prompt-enhance": promptEnhanceDomain,
+	"prompt-enhance-studio": promptEnhanceStudioDomain,
+	"prompt-enhance-persons": promptEnhancePersonsDomain,
 	training: trainingDomain,
 } as const;
 

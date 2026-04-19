@@ -61,7 +61,6 @@ export default async function Home() {
 		return (
 			<WorkspaceShell
 				actions={<WorkspaceActions />}
-				inspector={<WorkspacePane className="h-full">&nbsp;</WorkspacePane>}
 				navigation={navigation}
 				status={
 					<WorkspaceStatus tone="warning">backend unavailable</WorkspaceStatus>

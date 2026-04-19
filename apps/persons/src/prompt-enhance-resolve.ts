@@ -73,7 +73,7 @@ async function resolvePersonsPromptEnhanceClient(): Promise<
 
 	let snapshot: Awaited<ReturnType<RuntimeConfigClient["get"]>>;
 	try {
-		snapshot = await client.get("prompt-enhance");
+		snapshot = await client.get("prompt-enhance-persons");
 	} catch (error) {
 		console.warn("persons.prompt-enhance.runtime-config_fetch_failed", {
 			message: error instanceof Error ? error.message : String(error),

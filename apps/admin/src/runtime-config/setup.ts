@@ -215,14 +215,28 @@ export async function seedSettingsFromLegacyRedis(
 		// listener so a transient Redis hiccup doesn't crash boot.
 	});
 
+	// The historical `admin:prompt-enhance-*` keys predate the studio/persons
+	// split. We seed BOTH new domains from them so the prior selection
+	// becomes the starting point for both surfaces; subsequent admin UI
+	// writes target each surface independently.
 	const migrations: LegacyRedisMigration[] = [
 		{
-			domain: "prompt-enhance",
+			domain: "prompt-enhance-studio",
 			key: "provider",
 			redisKey: "admin:prompt-enhance-provider",
 		},
 		{
-			domain: "prompt-enhance",
+			domain: "prompt-enhance-studio",
+			key: "openrouterModel",
+			redisKey: "admin:prompt-enhance-openrouter-model",
+		},
+		{
+			domain: "prompt-enhance-persons",
+			key: "provider",
+			redisKey: "admin:prompt-enhance-provider",
+		},
+		{
+			domain: "prompt-enhance-persons",
 			key: "openrouterModel",
 			redisKey: "admin:prompt-enhance-openrouter-model",
 		},

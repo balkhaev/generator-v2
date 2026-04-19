@@ -5,7 +5,7 @@ import type { RuntimeConfigSnapshot } from "./domains";
 
 const SNAPSHOT: RuntimeConfigSnapshot = {
 	credentials: { openrouter: { apiKey: "sk-or-test" } },
-	domain: "prompt-enhance",
+	domain: "prompt-enhance-studio",
 	settings: { openrouterModel: "qwen/qwen3", provider: "openrouter" },
 };
 
@@ -43,7 +43,7 @@ describe("createRuntimeConfigClient", () => {
 			internalToken: "tok",
 			logger: SILENT_LOGGER,
 		});
-		const out = await client.get("prompt-enhance");
+		const out = await client.get("prompt-enhance-studio");
 		expect(out).toEqual(SNAPSHOT);
 		expect(calls).toBe(1);
 	});
@@ -59,9 +59,9 @@ describe("createRuntimeConfigClient", () => {
 			internalToken: "tok",
 			logger: SILENT_LOGGER,
 		});
-		await client.get("prompt-enhance");
-		await client.get("prompt-enhance");
-		await client.get("prompt-enhance");
+		await client.get("prompt-enhance-studio");
+		await client.get("prompt-enhance-studio");
+		await client.get("prompt-enhance-studio");
 		expect(calls).toBe(1);
 	});
 
@@ -76,9 +76,9 @@ describe("createRuntimeConfigClient", () => {
 			internalToken: "tok",
 			logger: SILENT_LOGGER,
 		});
-		await client.get("prompt-enhance");
-		client.invalidate("prompt-enhance");
-		await client.get("prompt-enhance");
+		await client.get("prompt-enhance-studio");
+		client.invalidate("prompt-enhance-studio");
+		await client.get("prompt-enhance-studio");
 		expect(calls).toBe(2);
 	});
 
@@ -97,9 +97,9 @@ describe("createRuntimeConfigClient", () => {
 			internalToken: "tok",
 			logger: SILENT_LOGGER,
 		});
-		const first = await client.get("prompt-enhance");
+		const first = await client.get("prompt-enhance-studio");
 		expect(first).toEqual(SNAPSHOT);
-		const second = await client.get("prompt-enhance");
+		const second = await client.get("prompt-enhance-studio");
 		expect(second).toEqual(SNAPSHOT);
 		expect(calls).toBe(2);
 	});
@@ -111,7 +111,9 @@ describe("createRuntimeConfigClient", () => {
 			internalToken: "tok",
 			logger: SILENT_LOGGER,
 		});
-		await expect(client.get("prompt-enhance")).rejects.toThrow("network down");
+		await expect(client.get("prompt-enhance-studio")).rejects.toThrow(
+			"network down"
+		);
 	});
 
 	it("rejects with descriptive message on non-2xx", async () => {
@@ -127,7 +129,7 @@ describe("createRuntimeConfigClient", () => {
 			internalToken: "tok",
 			logger: SILENT_LOGGER,
 		});
-		await expect(client.get("prompt-enhance")).rejects.toThrow("403");
+		await expect(client.get("prompt-enhance-studio")).rejects.toThrow("403");
 	});
 
 	it("coalesces concurrent requests for the same domain", async () => {
@@ -144,9 +146,9 @@ describe("createRuntimeConfigClient", () => {
 			internalToken: "tok",
 			logger: SILENT_LOGGER,
 		});
-		const a = client.get("prompt-enhance");
-		const b = client.get("prompt-enhance");
-		const c = client.get("prompt-enhance");
+		const a = client.get("prompt-enhance-studio");
+		const b = client.get("prompt-enhance-studio");
+		const c = client.get("prompt-enhance-studio");
 		resolveFetch?.(jsonResponse(SNAPSHOT));
 		await Promise.all([a, b, c]);
 		expect(calls).toBe(1);

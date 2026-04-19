@@ -1,11 +1,16 @@
 import {
 	PROMPT_ENHANCE_PROVIDER_NAMES,
+	PROMPT_ENHANCE_TARGETS,
+	type PromptEnhanceSettingsBundle,
 	type PromptEnhanceSettingsSnapshot,
+	type PromptEnhanceTarget,
 } from "@generator/contracts/admin";
 import { Hono } from "hono";
 import { z } from "zod";
 
 import type { PromptEnhanceSettings } from "@/domain/prompt-enhance-settings";
+
+const targetParamSchema = z.enum(PROMPT_ENHANCE_TARGETS);
 
 const putBodySchema = z
 	.object({
@@ -22,38 +27,73 @@ const putBodySchema = z
 		message: "Provide provider and/or openRouterModel",
 	});
 
-async function buildSnapshot(deps: {
-	promptEnhanceEnv: Omit<
-		PromptEnhanceSettingsSnapshot,
-		"provider" | "openRouterModel"
-	>;
+interface PerTargetEnv {
+	grokConfigured: boolean;
+	openRouterConfigured: boolean;
+	openRouterModelEnvDefault: string;
+}
+
+export interface PromptEnhanceProviderRoutesDeps {
+	envByTarget: Record<PromptEnhanceTarget, PerTargetEnv>;
 	settings: PromptEnhanceSettings;
-}): Promise<PromptEnhanceSettingsSnapshot> {
+}
+
+async function buildSnapshot(
+	deps: PromptEnhanceProviderRoutesDeps,
+	target: PromptEnhanceTarget
+): Promise<PromptEnhanceSettingsSnapshot> {
 	const [provider, openRouterModel] = await Promise.all([
-		deps.settings.getProvider(),
-		deps.settings.getOpenRouterModel(),
+		deps.settings.getProvider(target),
+		deps.settings.getOpenRouterModel(target),
 	]);
 	return {
-		...deps.promptEnhanceEnv,
+		...deps.envByTarget[target],
 		openRouterModel,
 		provider,
+		target,
 	};
 }
 
-export function createPromptEnhanceProviderRoutes(deps: {
-	promptEnhanceEnv: Omit<
-		PromptEnhanceSettingsSnapshot,
-		"provider" | "openRouterModel"
-	>;
-	settings: PromptEnhanceSettings;
-}) {
+async function buildBundle(
+	deps: PromptEnhanceProviderRoutesDeps
+): Promise<PromptEnhanceSettingsBundle> {
+	const [studio, persons] = await Promise.all([
+		buildSnapshot(deps, "studio"),
+		buildSnapshot(deps, "persons"),
+	]);
+	return { persons, studio };
+}
+
+export function buildPromptEnhanceBundle(
+	deps: PromptEnhanceProviderRoutesDeps
+): Promise<PromptEnhanceSettingsBundle> {
+	return buildBundle(deps);
+}
+
+export function createPromptEnhanceProviderRoutes(
+	deps: PromptEnhanceProviderRoutesDeps
+) {
 	const app = new Hono();
 
 	app.get("/", async (c) => {
-		return c.json(await buildSnapshot(deps));
+		return c.json(await buildBundle(deps));
 	});
 
-	app.put("/", async (c) => {
+	app.get("/:target", async (c) => {
+		const parsedTarget = targetParamSchema.safeParse(c.req.param("target"));
+		if (!parsedTarget.success) {
+			return c.json({ error: "Unknown target" }, 400);
+		}
+		return c.json(await buildSnapshot(deps, parsedTarget.data));
+	});
+
+	app.put("/:target", async (c) => {
+		const parsedTarget = targetParamSchema.safeParse(c.req.param("target"));
+		if (!parsedTarget.success) {
+			return c.json({ error: "Unknown target" }, 400);
+		}
+		const target = parsedTarget.data;
+
 		let body: unknown;
 		try {
 			body = await c.req.json();
@@ -70,13 +110,16 @@ export function createPromptEnhanceProviderRoutes(deps: {
 		}
 
 		if (parsed.data.provider !== undefined) {
-			await deps.settings.setProvider(parsed.data.provider);
+			await deps.settings.setProvider(target, parsed.data.provider);
 		}
 		if (parsed.data.openRouterModel !== undefined) {
-			await deps.settings.setOpenRouterModel(parsed.data.openRouterModel);
+			await deps.settings.setOpenRouterModel(
+				target,
+				parsed.data.openRouterModel
+			);
 		}
 
-		return c.json(await buildSnapshot(deps));
+		return c.json(await buildSnapshot(deps, target));
 	});
 
 	return app;

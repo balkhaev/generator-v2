@@ -15,7 +15,7 @@
 import type {
 	AdminSettingsSnapshot,
 	AdminWorkerHealthStatus,
-	PromptEnhanceSettingsSnapshot,
+	PromptEnhanceSettingsBundle,
 	TrainingProviderAvailability,
 	TrainingProviderName,
 } from "@generator/contracts/admin";
@@ -26,10 +26,12 @@ import {
 	type WorkerSettingsSnapshot,
 } from "@/domain/worker-settings-store";
 import {
+	DATASET_EDITOR_MODEL_DESCRIPTORS,
+	DEFAULT_DATASET_EDITOR_MODEL_ID,
+} from "@/providers/dataset-editor-models";
+import {
 	DEFAULT_DATASET_POLL_MS,
 	DEFAULT_DATASET_TIMEOUT_MS,
-	FLUX_REFERENCE_EDIT_MODEL,
-	IDENTITY_GUIDANCE_SCALE,
 	IDENTITY_NEGATIVE_PROMPT,
 } from "@/providers/lora-dataset-builder";
 
@@ -53,9 +55,19 @@ export interface BuildAdminSettingsSnapshotInput {
 	/** Resolved availability based on gateway-local env (used as fallback). */
 	availability: TrainingProviderAvailability[];
 	currentTrainingProvider: TrainingProviderName;
+	/**
+	 * Активный editor model id из dataset-builder-settings (Redis). Если не
+	 * передан — используется дефолт. Передаётся отдельным аргументом, а не
+	 * читается здесь, чтобы builder остался чистой функцией без сайд-эффектов.
+	 */
+	datasetEditorModelId?: string;
 	env: AdminSettingsEnvSnapshot;
-	/** Studio prompt enhance (Grok vs OpenRouter): провайдер из Redis, флаги из env гейтвея. */
-	promptEnhance?: PromptEnhanceSettingsSnapshot;
+	/**
+	 * Per-target prompt-enhance settings. Studio and persons own independent
+	 * provider/model selections so they can run on different LLMs without the
+	 * admin UI being forced into a single global toggle.
+	 */
+	promptEnhance?: PromptEnhanceSettingsBundle;
 	/** Optional snapshot from the worker; when fresh, takes precedence. */
 	workerSnapshot?: WorkerSettingsSnapshot | null;
 }
@@ -90,6 +102,25 @@ function buildWorkerHealth(
 	};
 }
 
+function resolvePromptEnhanceBundle(
+	provided: PromptEnhanceSettingsBundle | undefined
+): PromptEnhanceSettingsBundle {
+	if (provided) {
+		return provided;
+	}
+	const fallbackEntry = {
+		grokConfigured: false,
+		openRouterConfigured: false,
+		openRouterModel: "openai/gpt-4o-mini",
+		openRouterModelEnvDefault: "openai/gpt-4o-mini",
+		provider: "grok" as const,
+	};
+	return {
+		persons: { ...fallbackEntry, target: "persons" },
+		studio: { ...fallbackEntry, target: "studio" },
+	};
+}
+
 export function buildAdminSettingsSnapshot(
 	input: BuildAdminSettingsSnapshotInput
 ): AdminSettingsSnapshot {
@@ -120,20 +151,19 @@ export function buildAdminSettingsSnapshot(
 		input.env.RUNPOD_AI_TOOLKIT_TIMEOUT_MS ??
 		120 * 60 * 1000;
 
-	const promptEnhance: PromptEnhanceSettingsSnapshot = input.promptEnhance ?? {
-		grokConfigured: false,
-		openRouterConfigured: false,
-		openRouterModel: "openai/gpt-4o-mini",
-		openRouterModelEnvDefault: "openai/gpt-4o-mini",
-		provider: "grok",
-	};
+	const promptEnhance = resolvePromptEnhanceBundle(input.promptEnhance);
 
 	return {
 		datasetBuilder: {
-			guidanceScale: IDENTITY_GUIDANCE_SCALE,
-			model: FLUX_REFERENCE_EDIT_MODEL,
+			availableModels: DATASET_EDITOR_MODEL_DESCRIPTORS.map((d) => ({
+				description: d.description,
+				id: d.id,
+				label: d.label,
+				supportsNegativePrompt: d.supportsNegativePrompt,
+			})),
+			model: input.datasetEditorModelId ?? DEFAULT_DATASET_EDITOR_MODEL_ID,
 			negativePromptPreview: IDENTITY_NEGATIVE_PROMPT,
-			note: "Configured in apps/admin/src/providers/lora-dataset-builder.ts. Edit code to change.",
+			note: "Editor model для генерации синтетических вариаций референса. Меняется без рестарта воркера — применится к следующему job-у.",
 			pollMs: DEFAULT_DATASET_POLL_MS,
 			timeoutMs: DEFAULT_DATASET_TIMEOUT_MS,
 		},

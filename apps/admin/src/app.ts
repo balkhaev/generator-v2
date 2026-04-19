@@ -7,6 +7,7 @@ import { createPublicPathMatcher } from "@generator/auth/public-paths";
 import type {
 	AdminDashboardSnapshot,
 	AdminSetupStatus,
+	PromptEnhanceTarget,
 } from "@generator/contracts/admin";
 import type { StudioRunDebugBundle } from "@generator/contracts/studio";
 import { pingDatabase } from "@generator/db/health";
@@ -22,6 +23,7 @@ import type { S3StorageConfig } from "@generator/storage";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import type { DatasetBuilderSettings } from "@/domain/dataset-builder-settings";
 import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
 import type { PromptEnhanceSettings } from "@/domain/prompt-enhance-settings";
@@ -32,6 +34,7 @@ import {
 	type AdminSettingsEnvResolver,
 	createAdminSettingsRoutes,
 } from "@/routes/admin-settings";
+import { createDatasetBuilderRoutes } from "@/routes/dataset-builder";
 import { createInternalRoutes } from "@/routes/internal";
 import { createAdminLoraRoutes } from "@/routes/loras";
 import { createOpenRouterModelsRoutes } from "@/routes/openrouter-models";
@@ -55,6 +58,7 @@ interface AppOptions {
 	adminSettingsEnvResolver?: AdminSettingsEnvResolver;
 	authHandler: (request: Request) => Response | Promise<Response>;
 	corsOrigins: string[];
+	datasetBuilderSettings?: DatasetBuilderSettings;
 	fetchImpl?: FetchLike;
 	generatorBaseUrl: string;
 	getSession: (
@@ -68,11 +72,14 @@ interface AppOptions {
 	loraRegistryService?: LoraRegistryService;
 	/** Опционально — для заголовка Authorization при запросе каталога моделей OpenRouter. */
 	openRouterModelsApiKey?: string | null;
-	promptEnhanceEnv?: {
-		grokConfigured: boolean;
-		openRouterConfigured: boolean;
-		openRouterModelEnvDefault: string;
-	};
+	promptEnhanceEnvByTarget?: Record<
+		PromptEnhanceTarget,
+		{
+			grokConfigured: boolean;
+			openRouterConfigured: boolean;
+			openRouterModelEnvDefault: string;
+		}
+	>;
 	promptEnhanceSettings?: PromptEnhanceSettings;
 	runtimeConfig?: {
 		deps: RuntimeConfigRoutesDeps;
@@ -93,6 +100,65 @@ const isPublicApiPath = createPublicPathMatcher({
 });
 
 const BEARER_PREFIX_PATTERN = /^Bearer\s+/iu;
+
+/**
+ * Mounts the cluster of routes that all hang off `trainingProviderSettings`:
+ * the provider-toggle endpoints, the prompt-enhance per-target endpoints,
+ * and the read-only admin settings snapshot used by the UI. Pulled out of
+ * `createApp` to keep its cognitive complexity under the lint budget — the
+ * dependencies between these routes (snapshot needs both training and
+ * prompt-enhance) make a flat conditional cascade hard to read.
+ */
+function registerTrainingAndSettingsRoutes(
+	app: Hono<{ Variables: AppVariables }>,
+	options: AppOptions
+) {
+	if (
+		!(options.trainingProviderSettings && options.trainingProviderAvailability)
+	) {
+		return;
+	}
+
+	app.route(
+		"/api/admin/training-provider",
+		createTrainingProviderRoutes({
+			availability: options.trainingProviderAvailability,
+			settings: options.trainingProviderSettings,
+			workerSettingsReader: options.workerSettingsReader,
+		})
+	);
+
+	if (options.promptEnhanceSettings && options.promptEnhanceEnvByTarget) {
+		app.route(
+			"/api/admin/prompt-enhance-provider",
+			createPromptEnhanceProviderRoutes({
+				envByTarget: options.promptEnhanceEnvByTarget,
+				settings: options.promptEnhanceSettings,
+			})
+		);
+	}
+
+	if (options.adminSettingsEnvResolver) {
+		app.route(
+			"/api/admin/settings",
+			createAdminSettingsRoutes({
+				availability: options.trainingProviderAvailability,
+				...(options.datasetBuilderSettings
+					? { datasetBuilderSettings: options.datasetBuilderSettings }
+					: {}),
+				envResolver: options.adminSettingsEnvResolver,
+				...(options.promptEnhanceSettings && options.promptEnhanceEnvByTarget
+					? {
+							promptEnhanceEnvByTarget: options.promptEnhanceEnvByTarget,
+							promptEnhanceSettings: options.promptEnhanceSettings,
+						}
+					: {}),
+				settings: options.trainingProviderSettings,
+				workerSettingsReader: options.workerSettingsReader,
+			})
+		);
+	}
+}
 
 function createBearerTokenAuthorizer(token: string | undefined) {
 	if (!token) {
@@ -248,46 +314,15 @@ export function createApp(options: AppOptions) {
 		app.route("/api/admin/users", createAdminUserRoutes(options.usersService));
 	}
 
-	if (
-		options.trainingProviderSettings &&
-		options.trainingProviderAvailability
-	) {
+	registerTrainingAndSettingsRoutes(app, options);
+
+	if (options.datasetBuilderSettings) {
 		app.route(
-			"/api/admin/training-provider",
-			createTrainingProviderRoutes({
-				availability: options.trainingProviderAvailability,
-				settings: options.trainingProviderSettings,
-				workerSettingsReader: options.workerSettingsReader,
+			"/api/admin/dataset-builder",
+			createDatasetBuilderRoutes({
+				settings: options.datasetBuilderSettings,
 			})
 		);
-
-		if (options.promptEnhanceSettings && options.promptEnhanceEnv) {
-			app.route(
-				"/api/admin/prompt-enhance-provider",
-				createPromptEnhanceProviderRoutes({
-					promptEnhanceEnv: options.promptEnhanceEnv,
-					settings: options.promptEnhanceSettings,
-				})
-			);
-		}
-
-		if (options.adminSettingsEnvResolver) {
-			app.route(
-				"/api/admin/settings",
-				createAdminSettingsRoutes({
-					availability: options.trainingProviderAvailability,
-					envResolver: options.adminSettingsEnvResolver,
-					...(options.promptEnhanceSettings && options.promptEnhanceEnv
-						? {
-								promptEnhanceEnv: options.promptEnhanceEnv,
-								promptEnhanceSettings: options.promptEnhanceSettings,
-							}
-						: {}),
-					settings: options.trainingProviderSettings,
-					workerSettingsReader: options.workerSettingsReader,
-				})
-			);
-		}
 	}
 
 	const studioProxyRoutes = [

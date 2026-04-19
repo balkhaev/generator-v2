@@ -58,9 +58,10 @@ export const integrationCredential = pgTable(
 
 /**
  * One row per (domain, key) tuple. Examples:
- *   domain="prompt-enhance", key="provider",        value="openrouter"
- *   domain="prompt-enhance", key="openrouterModel", value="qwen/qwen-3.5-235b"
- *   domain="training",       key="provider",        value="fal"
+ *   domain="prompt-enhance-studio",  key="provider",        value="openrouter"
+ *   domain="prompt-enhance-studio",  key="openrouterModel", value="qwen/qwen-3.5-235b"
+ *   domain="prompt-enhance-persons", key="provider",        value="grok"
+ *   domain="training",               key="provider",        value="fal"
  *
  * Values are JSON to support both scalars and small structured payloads
  * without forcing a schema migration for every new setting.

@@ -1,6 +1,9 @@
 "use client";
 
-import type { PromptEnhanceProviderName } from "@generator/contracts/admin";
+import type {
+	PromptEnhanceProviderName,
+	PromptEnhanceTarget,
+} from "@generator/contracts/admin";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { adminSettingsQueryKey } from "@/hooks/use-admin-settings";
@@ -12,6 +15,7 @@ export function useUpdatePromptEnhanceProvider() {
 		mutationFn: (input: {
 			openRouterModel?: string;
 			provider?: PromptEnhanceProviderName;
+			target: PromptEnhanceTarget;
 		}) => updatePromptEnhanceProvider(input),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: adminSettingsQueryKey });

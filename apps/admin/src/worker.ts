@@ -236,13 +236,33 @@ const recoveryLock = createRedisIdempotencyLock({
  */
 const activeTrainingRunIds = new Set<string>();
 
+/**
+ * The runpod-pod approval flow splits a single LoRA run into two distinct
+ * worker handlers — `personLoraTrainingRequested` (does dataset prep, then
+ * stops at `awaiting-approval`) and `personLoraTrainingConfirmed` (uploads
+ * the dataset zip and submits the actual training job). Both handlers are
+ * wrapped in `withIdempotency` against `trainingLock`, so they MUST use
+ * non-overlapping keys: otherwise the prep handler keeps the lock for the
+ * full 24h TTL after a successful prep, and every later confirm event for
+ * the same `trainingRunId` is silently dropped as a "duplicate" — which is
+ * exactly the bug that left `kisunya` stuck at "Training 5%" with no
+ * runpod job ever submitted.
+ */
+function buildRequestLockKey(trainingRunId: string): string {
+	return `request:${trainingRunId}`;
+}
+
+function buildConfirmLockKey(trainingRunId: string): string {
+	return `confirm:${trainingRunId}`;
+}
+
 const runTrainingOnce = async (
 	source: "bullmq" | "kafka",
 	data: PersonLoraTrainingJobData
 ) => {
 	const outcome = await withIdempotency(
 		trainingLock,
-		data.trainingRunId,
+		buildRequestLockKey(data.trainingRunId),
 		async () => {
 			activeTrainingRunIds.add(data.trainingRunId);
 			const selected = await selectActiveRunner();
@@ -335,7 +355,7 @@ const eventConsumer = kafkaConfig
 					}
 					const outcome = await withIdempotency(
 						trainingLock,
-						event.data.trainingRunId,
+						buildConfirmLockKey(event.data.trainingRunId),
 						async () => {
 							activeTrainingRunIds.add(event.data.trainingRunId);
 							try {
@@ -403,14 +423,19 @@ await new Promise<void>((resolve) => {
 		await eventPublisher?.close();
 		const releaseSnapshot = Array.from(activeTrainingRunIds);
 		await Promise.all(
-			releaseSnapshot.map((trainingRunId) =>
-				trainingLock.release(trainingRunId).catch((error: unknown) => {
-					console.warn("admin.worker.shutdown.release-failed", {
-						message: error instanceof Error ? error.message : "unknown",
-						trainingRunId,
-					});
-				})
-			)
+			releaseSnapshot
+				.flatMap((trainingRunId) => [
+					buildRequestLockKey(trainingRunId),
+					buildConfirmLockKey(trainingRunId),
+				])
+				.map((lockKey) =>
+					trainingLock.release(lockKey).catch((error: unknown) => {
+						console.warn("admin.worker.shutdown.release-failed", {
+							lockKey,
+							message: error instanceof Error ? error.message : "unknown",
+						});
+					})
+				)
 		);
 		await trainingLock.close();
 		await refillLock.close();

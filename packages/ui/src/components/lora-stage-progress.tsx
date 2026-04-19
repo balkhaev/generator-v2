@@ -85,10 +85,13 @@ function LoraStageBlock({ stage }: { stage: PersonLoraStageItem }) {
 }
 
 /**
- * Renders the four LoRA training stages (Queued → Dataset → Training → Ready)
+ * Renders the LoRA training pipeline (Queued → Dataset → Review → Training)
  * as horizontal blocks. Each block is its own progress bar that fills from the
  * left as the stage advances; in the "Training" block the detail line shows
- * the estimated `~X/Y steps` derived in `getPersonLoraTrainingStages`.
+ * the estimated `~X/Y steps`, elapsed time, provider status, and provider
+ * name derived in `getPersonLoraTrainingStages`. The pipeline ends on
+ * "Training" — the published-and-ready state is rendered as a fully-filled
+ * Training block (state=done, "X steps · Mm · weights ready").
  */
 export function LoraStageProgress({
 	className,

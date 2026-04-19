@@ -289,12 +289,7 @@ export function getPersonLoraReferenceImageTarget(
 	return DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT;
 }
 
-export type PersonLoraStageId =
-	| "queued"
-	| "dataset"
-	| "review"
-	| "training"
-	| "ready";
+export type PersonLoraStageId = "queued" | "dataset" | "review" | "training";
 export type PersonLoraStageState = "pending" | "active" | "done" | "failed";
 
 export interface PersonLoraStageItem {
@@ -310,26 +305,28 @@ const PERSON_LORA_STAGE_ORDER: readonly PersonLoraStageId[] = [
 	"dataset",
 	"review",
 	"training",
-	"ready",
 ];
 
+// `publishing` and `ready` both collapse onto the Training stage: publishing
+// keeps it active (with a "publishing weights" detail), and ready marks the
+// whole pipeline as `done` via the `isReady` shortcut in `buildStageState`.
 const PERSON_LORA_STATUS_TO_STAGE_INDEX: Record<
 	PersonLoraTrainingStatus | "ready",
 	number
 > = {
 	"awaiting-approval": 2,
-	failed: 4,
+	failed: 3,
 	generating: 1,
 	publishing: 3,
 	queued: 0,
-	ready: 4,
+	ready: 3,
 	training: 3,
 };
 
 const PERSON_LORA_FAILED_STAGE_FROM_PHASE: Record<string, PersonLoraStageId> = {
 	"awaiting-approval": "review",
 	"generating-references": "dataset",
-	"publishing-lora": "ready",
+	"publishing-lora": "training",
 	"polling-training": "training",
 	"refilling-references": "dataset",
 	"starting-training": "training",
@@ -382,59 +379,137 @@ function progressForStageState(
 	return 0;
 }
 
-function getTrainingStageDetail(input: {
+function formatElapsedDuration(elapsedMs: number): string | null {
+	if (!(Number.isFinite(elapsedMs) && elapsedMs > 0)) {
+		return null;
+	}
+	const totalSeconds = Math.floor(elapsedMs / 1000);
+	if (totalSeconds < 60) {
+		return `${totalSeconds}s`;
+	}
+	const minutes = Math.floor(totalSeconds / 60);
+	if (minutes < 60) {
+		const seconds = totalSeconds % 60;
+		return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+	}
+	const hours = Math.floor(minutes / 60);
+	const remMinutes = minutes % 60;
+	return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+}
+
+function joinDetailParts(parts: ReadonlyArray<string | null>): string | null {
+	const filtered = parts.filter(
+		(part): part is string => typeof part === "string" && part.length > 0
+	);
+	return filtered.length > 0 ? filtered.join(" · ") : null;
+}
+
+function getTrainingActiveDetail(input: {
+	effectiveStatus: PersonLoraTrainingStatus | "ready";
+	elapsedLabel: string | null;
 	progressPct: number;
+	provider: string | null;
+	providerStatus: string | null | undefined;
+	trainingSteps: number | null;
+}): string {
+	const {
+		effectiveStatus,
+		elapsedLabel,
+		progressPct,
+		provider,
+		providerStatus,
+		trainingSteps,
+	} = input;
+
+	if (effectiveStatus === "publishing") {
+		return (
+			joinDetailParts(["publishing weights", elapsedLabel, provider]) ??
+			"publishing weights"
+		);
+	}
+
+	const stepsLabel = (() => {
+		if (!trainingSteps) {
+			return null;
+		}
+		const estimatedSteps = Math.min(
+			trainingSteps,
+			Math.max(0, Math.round((progressPct / 100) * trainingSteps))
+		);
+		return `~${estimatedSteps}/${trainingSteps} steps`;
+	})();
+
+	const statusLabel = providerStatus ? providerStatus.toLowerCase() : null;
+
+	return (
+		joinDetailParts([stepsLabel, elapsedLabel, statusLabel, provider]) ??
+		"training in progress"
+	);
+}
+
+function getTrainingStageDetail(input: {
+	effectiveStatus: PersonLoraTrainingStatus | "ready";
+	elapsedMs: number;
+	progressPct: number;
+	provider: string | null;
 	providerStatus: string | null | undefined;
 	state: PersonLoraStageState;
 	trainingSteps: number | null;
 }): string | null {
-	const { progressPct, providerStatus, state, trainingSteps } = input;
-	if (state === "done" && trainingSteps) {
-		return `${trainingSteps}/${trainingSteps} steps`;
+	const {
+		effectiveStatus,
+		elapsedMs,
+		progressPct,
+		provider,
+		providerStatus,
+		state,
+		trainingSteps,
+	} = input;
+
+	const elapsedLabel = formatElapsedDuration(elapsedMs);
+
+	if (state === "done") {
+		const stepsLabel = trainingSteps
+			? `${trainingSteps}/${trainingSteps} steps`
+			: null;
+		return (
+			joinDetailParts([stepsLabel, elapsedLabel, "weights ready"]) ??
+			"weights ready"
+		);
 	}
-	if (state === "failed" && trainingSteps) {
-		return `target ${trainingSteps} steps`;
+	if (state === "failed") {
+		const stepsLabel = trainingSteps ? `target ${trainingSteps} steps` : null;
+		return joinDetailParts([
+			stepsLabel,
+			elapsedLabel ? `after ${elapsedLabel}` : null,
+		]);
 	}
 	if (state !== "active") {
 		return null;
 	}
-	if (trainingSteps) {
-		const estimatedSteps = Math.min(
-			trainingSteps,
-			Math.round((progressPct / 100) * trainingSteps)
-		);
-		return `~${estimatedSteps}/${trainingSteps} steps`;
-	}
-	if (providerStatus) {
-		return providerStatus.toLowerCase();
-	}
-	return null;
-}
-
-function getReadyStageDetail(input: {
-	effectiveStatus: PersonLoraTrainingStatus | "ready";
-	state: PersonLoraStageState;
-}): string | null {
-	if (input.state === "done") {
-		return "weights ready";
-	}
-	if (input.state === "active") {
-		return input.effectiveStatus === "publishing"
-			? "publishing weights"
-			: "finalizing";
-	}
-	return null;
+	return getTrainingActiveDetail({
+		effectiveStatus,
+		elapsedLabel,
+		progressPct,
+		provider,
+		providerStatus,
+		trainingSteps,
+	});
 }
 
 /**
  * Compute per-stage progress for the LoRA training pipeline.
  *
- * The pipeline is rendered as four sequential blocks (Queued → Dataset →
- * Training → Ready), each acting as its own progress bar. fal/z-image-trainer
- * does not expose a current-step counter via the queue status endpoint, so the
- * "Training" block estimates step progress from elapsed time relative to a
- * 45-minute soft window — same heuristic used by `getPersonLoraTrainingProgressPct`,
- * but normalized into the local [0, 100] range of the block.
+ * The pipeline is rendered as four sequential blocks
+ * (Queued → Dataset → Review → Training), each acting as its own progress
+ * bar. fal/z-image-trainer does not expose a current-step counter via the
+ * queue status endpoint, so the "Training" block estimates step progress
+ * from elapsed time relative to a 45-minute soft window — same heuristic
+ * used by `getPersonLoraTrainingProgressPct`, but normalized into the
+ * local [0, 100] range of the block. The terminal `publishing` and `ready`
+ * statuses both fold onto the Training block (active@95% with
+ * "publishing weights" detail, then `done` with the steps/elapsed summary
+ * once weights are published).
  */
 export function getPersonLoraTrainingStages(input: {
 	hasLora: boolean;
@@ -462,12 +537,21 @@ export function getPersonLoraTrainingStages(input: {
 		Number.isFinite(training.trainingElapsedMs)
 			? Math.max(0, training.trainingElapsedMs)
 			: 0;
-	const trainingActiveProgress = clampProgressPct(
+	// Provider doesn't expose a step counter via queue status, so we estimate
+	// progress from elapsed time relative to a 45-minute soft window (same
+	// heuristic as `getPersonLoraTrainingProgressPct`). When the run flips to
+	// `publishing` we bump the bar to 95% so the operator gets visual confirmation
+	// the trainer finished and the upload is in flight.
+	const trainingTimeProgress = clampProgressPct(
 		Math.max(
 			5,
 			Math.min(1, elapsedMs / PROVIDER_TRAINING_SOFT_PROGRESS_WINDOW_MS) * 100
 		)
 	);
+	const trainingActiveProgress =
+		effectiveStatus === "publishing"
+			? Math.max(95, trainingTimeProgress)
+			: trainingTimeProgress;
 
 	const datasetRefsLabel =
 		referenceImageTarget > 0
@@ -510,19 +594,11 @@ export function getPersonLoraTrainingStages(input: {
 		isReady,
 		stageId: "training",
 	});
-	const readyState = buildStageState({
-		currentIdx,
-		failedStageId,
-		isFailed,
-		isReady,
-		stageId: "ready",
-	});
 
 	const trainingProgressPct = progressForStageState(
 		trainingState,
 		trainingActiveProgress
 	);
-	const readyActiveProgress = effectiveStatus === "publishing" ? 60 : 30;
 	const datasetShowDetail =
 		datasetState === "active" ||
 		datasetState === "done" ||
@@ -533,6 +609,10 @@ export function getPersonLoraTrainingStages(input: {
 	} else if (reviewState === "done") {
 		reviewDetail = "approved";
 	}
+	const provider =
+		typeof training?.provider === "string" && training.provider.length > 0
+			? training.provider
+			: null;
 
 	return [
 		{
@@ -558,7 +638,10 @@ export function getPersonLoraTrainingStages(input: {
 		},
 		{
 			detail: getTrainingStageDetail({
+				effectiveStatus,
+				elapsedMs,
 				progressPct: trainingProgressPct,
+				provider,
 				providerStatus: training?.providerStatus,
 				state: trainingState,
 				trainingSteps,
@@ -567,16 +650,6 @@ export function getPersonLoraTrainingStages(input: {
 			label: "Training",
 			progressPct: trainingProgressPct,
 			state: trainingState,
-		},
-		{
-			detail: getReadyStageDetail({
-				effectiveStatus,
-				state: readyState,
-			}),
-			id: "ready",
-			label: "Ready",
-			progressPct: progressForStageState(readyState, readyActiveProgress),
-			state: readyState,
 		},
 	];
 }

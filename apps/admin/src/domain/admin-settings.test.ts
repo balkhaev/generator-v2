@@ -156,7 +156,7 @@ describe("buildAdminSettingsSnapshot", () => {
 		expect(snapshot.generatorRuntime.reconcileWatch).toBe(false);
 	});
 
-	test("dataset builder section reports the canonical model", () => {
+	test("dataset builder section defaults to flux-2/edit and lists alternatives", () => {
 		const snapshot = buildAdminSettingsSnapshot({
 			availability: [],
 			currentTrainingProvider: "fal",
@@ -164,7 +164,22 @@ describe("buildAdminSettingsSnapshot", () => {
 		});
 
 		expect(snapshot.datasetBuilder.model).toBe("fal-ai/flux-2/edit");
-		expect(snapshot.datasetBuilder.guidanceScale).toBeGreaterThan(0);
-		expect(snapshot.datasetBuilder.note).toContain("lora-dataset-builder.ts");
+		expect(snapshot.datasetBuilder.availableModels.map((m) => m.id)).toContain(
+			"fal-ai/nano-banana/edit"
+		);
+		expect(
+			snapshot.datasetBuilder.availableModels.length
+		).toBeGreaterThanOrEqual(2);
+	});
+
+	test("dataset builder honors the configured editor model id", () => {
+		const snapshot = buildAdminSettingsSnapshot({
+			availability: [],
+			currentTrainingProvider: "fal",
+			datasetEditorModelId: "fal-ai/nano-banana/edit",
+			env: {},
+		});
+
+		expect(snapshot.datasetBuilder.model).toBe("fal-ai/nano-banana/edit");
 	});
 });

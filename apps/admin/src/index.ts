@@ -55,14 +55,14 @@ const basePromptEnhanceSettings = createRedisPromptEnhanceSettings({
 	redisUrl,
 });
 
-const datasetBuilderSettings = createRedisDatasetBuilderSettings({ redisUrl });
-
 /**
  * Reader for the worker's settings heartbeat (see worker-settings-store.ts).
  * Used by `/api/admin/settings` so the UI surfaces the worker's view of
  * provider availability instead of the gateway's empty env.
  */
 const workerSettingsReader = createRedisWorkerSettingsReader({ redisUrl });
+
+const datasetBuilderSettings = createRedisDatasetBuilderSettings({ redisUrl });
 
 const kafkaConfig = getKafkaEventBusConfig("admin-api");
 const eventPublisher = kafkaConfig
@@ -238,6 +238,7 @@ if (runtimeConfigSetup) {
 const app = createApp({
 	authHandler: handleAuthRequest,
 	corsOrigins: getRequiredCorsOrigins(),
+	datasetBuilderSettings,
 	generatorBaseUrl,
 	internalControlToken: env.TRAINING_CONTROL_TOKEN,
 	internalTrainingControlService,
@@ -292,7 +293,6 @@ const app = createApp({
 		basePromptEnhanceSettings,
 		runtimeConfigSetup
 	),
-	datasetBuilderSettings,
 	trainingProviderAvailability: {
 		resolve: () => resolveTrainingProviderAvailability(env),
 	},

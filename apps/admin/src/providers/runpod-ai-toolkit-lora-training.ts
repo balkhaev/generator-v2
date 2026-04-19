@@ -259,6 +259,12 @@ export class RunpodAiToolkitLoraTrainingRunner {
 	private readonly trainingControlToken: string;
 	private readonly trainingTimeoutMs: number;
 	private readonly falApiKeyForDataset: string;
+	/**
+	 * Резолвер активной dataset-editor-модели (см. dataset-builder-settings).
+	 * Вызывается перед каждым job-ом, чтобы смена модели в админке
+	 * применялась к новым тренировкам без рестарта worker-а.
+	 */
+	private readonly getDatasetEditorModelId: () => Promise<string>;
 
 	constructor(options: {
 		apiBaseUrl?: string;
@@ -268,6 +274,7 @@ export class RunpodAiToolkitLoraTrainingRunner {
 		eventPublisher?: EventPublisher | null;
 		falApiKeyForDataset: string;
 		fetchImpl?: typeof fetch;
+		getDatasetEditorModelId?: () => Promise<string>;
 		logger?: Pick<Console, "info" | "error">;
 		personsApiBaseUrl?: string;
 		pollMs?: number;
@@ -284,6 +291,9 @@ export class RunpodAiToolkitLoraTrainingRunner {
 		this.eventPublisher = options.eventPublisher ?? null;
 		this.falApiKeyForDataset = options.falApiKeyForDataset;
 		this.fetchImpl = options.fetchImpl ?? fetch;
+		this.getDatasetEditorModelId =
+			options.getDatasetEditorModelId ??
+			(() => Promise.resolve("fal-ai/flux-2/edit"));
 		this.logger = options.logger ?? console;
 		this.personsApiBaseUrl = options.personsApiBaseUrl;
 		this.pollMs = options.pollMs ?? 30_000;
@@ -436,8 +446,10 @@ export class RunpodAiToolkitLoraTrainingRunner {
 				},
 			});
 
+			const editorModelId = await this.getDatasetEditorModelId();
 			const dataset = await buildReferenceDataset({
 				apiKey: this.falApiKeyForDataset,
+				editorModelId,
 				genderHint,
 				onVariantGenerated: async ({ generated }) => {
 					await this.sendTrainingEvent({

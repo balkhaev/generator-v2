@@ -9,7 +9,9 @@
  *     fallback на локальный env гейтвея + предупреждение через `workerHealth`.
  *   - Persons defaults и generator runtime читаются из env гейтвея (там они
  *     обычно прокинуты для сетевого доступа).
- *   - Dataset builder зашит в коде (общая хардкод-конфигурация для пайплайна).
+ *   - Dataset builder: `availableModels` собирается из реестра адаптеров,
+ *     активный `model` — из dataset-builder-settings (Redis), резолвится
+ *     роутом и приходит как `datasetEditorModelId`.
  */
 
 import type {
@@ -89,6 +91,24 @@ function normalizeEndpointId(value: string | null | undefined): string | null {
 	return trimmed;
 }
 
+function buildDatasetBuilderSection(
+	editorModelId: string | undefined
+): AdminSettingsSnapshot["datasetBuilder"] {
+	return {
+		availableModels: DATASET_EDITOR_MODEL_DESCRIPTORS.map((d) => ({
+			description: d.description,
+			id: d.id,
+			label: d.label,
+			supportsNegativePrompt: d.supportsNegativePrompt,
+		})),
+		model: editorModelId ?? DEFAULT_DATASET_EDITOR_MODEL_ID,
+		negativePromptPreview: IDENTITY_NEGATIVE_PROMPT,
+		note: "Editor model для генерации синтетических вариаций референса. Меняется без рестарта воркера — применится к следующему job-у.",
+		pollMs: DEFAULT_DATASET_POLL_MS,
+		timeoutMs: DEFAULT_DATASET_TIMEOUT_MS,
+	};
+}
+
 function buildWorkerHealth(
 	workerSnapshot: WorkerSettingsSnapshot | null | undefined,
 	now: () => number = Date.now
@@ -154,19 +174,7 @@ export function buildAdminSettingsSnapshot(
 	const promptEnhance = resolvePromptEnhanceBundle(input.promptEnhance);
 
 	return {
-		datasetBuilder: {
-			availableModels: DATASET_EDITOR_MODEL_DESCRIPTORS.map((d) => ({
-				description: d.description,
-				id: d.id,
-				label: d.label,
-				supportsNegativePrompt: d.supportsNegativePrompt,
-			})),
-			model: input.datasetEditorModelId ?? DEFAULT_DATASET_EDITOR_MODEL_ID,
-			negativePromptPreview: IDENTITY_NEGATIVE_PROMPT,
-			note: "Editor model для генерации синтетических вариаций референса. Меняется без рестарта воркера — применится к следующему job-у.",
-			pollMs: DEFAULT_DATASET_POLL_MS,
-			timeoutMs: DEFAULT_DATASET_TIMEOUT_MS,
-		},
+		datasetBuilder: buildDatasetBuilderSection(input.datasetEditorModelId),
 		generatorRuntime: {
 			reconcileIntervalMs: input.env.RECONCILE_INTERVAL_MS ?? 5000,
 			reconcileWatch: input.env.RECONCILE_WATCH ?? true,

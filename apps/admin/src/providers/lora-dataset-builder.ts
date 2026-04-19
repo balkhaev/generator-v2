@@ -1,16 +1,25 @@
 /**
  * Общий dataset-builder для LoRA-тренировок: генерирует синтетические вариации
- * через fal-ai/flux-2/edit, миксует с дубликатами оригинального референса и
- * пакует в zip с captions. Используется и в fal-, и в runpod-runner-ах,
- * чтобы провайдер тренировки можно было менять, не перетряхивая dataset prep.
+ * через выбранную fal.ai edit-модель (см. dataset-editor-models.ts), миксует
+ * с дубликатами оригинального референса и пакует в zip с captions.
+ * Используется и в fal-, и в runpod-runner-ах, чтобы провайдер тренировки
+ * можно было менять, не перетряхивая dataset prep.
  */
 
 import { setTimeout as sleep } from "node:timers/promises";
 import { downloadImageAsset } from "@generator/storage";
+import {
+	DEFAULT_DATASET_EDITOR_MODEL_ID,
+	getDatasetEditorModelAdapter,
+} from "@/providers/dataset-editor-models";
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const REQUEST_TIMEOUT_MS = 120_000;
-export const FLUX_REFERENCE_EDIT_MODEL = "fal-ai/flux-2/edit";
+/**
+ * @deprecated используйте `DEFAULT_DATASET_EDITOR_MODEL_ID` из
+ * `dataset-editor-models.ts`. Оставлено как алиас для обратной совместимости.
+ */
+export const FLUX_REFERENCE_EDIT_MODEL = DEFAULT_DATASET_EDITOR_MODEL_ID;
 export const DEFAULT_DATASET_POLL_MS = 5000;
 export const DEFAULT_DATASET_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_RETRY_ATTEMPTS = 3;
@@ -19,12 +28,10 @@ const DEFAULT_RETRY_DELAY_MS = 2000;
 const fileExtensionPattern = /\.[^.]+$/u;
 
 /**
- * Параметры flux-2/edit, подобранные под максимальное сохранение идентичности.
- * Подробное обоснование см. в fal-zib-lora-training.ts (история выбора).
+ * Анти-дрейф для лица. Передаётся в адаптеры моделей; те, что не поддерживают
+ * `negative_prompt` (nano-banana, seedream, flux-pro/kontext), обычно
+ * подмешивают мягкий хинт в конец основного промпта или игнорируют значение.
  */
-export const IDENTITY_GUIDANCE_SCALE = 1.8;
-const IDENTITY_INFERENCE_STEPS = 36;
-
 export const IDENTITY_NEGATIVE_PROMPT =
 	"different person, different face, altered identity, swapped face, plastic surgery look, doll face, cartoon, anime, distorted face, asymmetric face, melted features, blurry face, deformed eyes, extra fingers";
 
@@ -323,57 +330,68 @@ async function falPollUntilDone(
 	throw new Error(`fal job timed out after ${timeoutMs}ms`);
 }
 
-async function generateReferenceImageFalOnce(
+async function generateReferenceImageOnce(
 	apiKey: string,
 	imageUrl: string,
-	prompt: string
+	prompt: string,
+	editorModelId: string
 ): Promise<string | null> {
-	const submit = await falSubmit(apiKey, FLUX_REFERENCE_EDIT_MODEL, {
-		enable_prompt_expansion: false,
-		guidance_scale: IDENTITY_GUIDANCE_SCALE,
-		image_size: "portrait_4_3",
-		image_urls: [imageUrl],
-		negative_prompt: IDENTITY_NEGATIVE_PROMPT,
-		num_images: 1,
-		num_inference_steps: IDENTITY_INFERENCE_STEPS,
-		output_format: "jpeg",
-		prompt,
-	});
+	const adapter = getDatasetEditorModelAdapter(editorModelId);
+	const modelId = adapter.descriptor.id;
+	const submit = await falSubmit(
+		apiKey,
+		modelId,
+		adapter.buildRequestBody({
+			imageUrl,
+			negativePrompt: IDENTITY_NEGATIVE_PROMPT,
+			prompt,
+		})
+	);
 	const result = await falPollUntilDone(
 		apiKey,
 		submit,
-		FLUX_REFERENCE_EDIT_MODEL,
+		modelId,
 		DEFAULT_DATASET_TIMEOUT_MS,
 		DEFAULT_DATASET_POLL_MS
 	);
-	const images = result.images as Array<{ url?: string }> | undefined;
-	return images?.[0]?.url ?? null;
+	return adapter.extractImageUrl(result);
 }
 
-async function generateReferenceImageFal(
+/**
+ * Generate a single reference variation through the configured fal.ai editor
+ * model with N retries. The exact request shape per model lives in
+ * dataset-editor-models.ts; here we just glue retries + polling.
+ */
+export async function generateReferenceImage(
 	apiKey: string,
 	imageUrl: string,
-	prompt: string
+	prompt: string,
+	editorModelId: string = DEFAULT_DATASET_EDITOR_MODEL_ID
 ): Promise<string> {
 	let lastError: Error | null = null;
 	for (let attempt = 1; attempt <= DEFAULT_RETRY_ATTEMPTS; attempt += 1) {
 		try {
-			const url = await generateReferenceImageFalOnce(apiKey, imageUrl, prompt);
+			const url = await generateReferenceImageOnce(
+				apiKey,
+				imageUrl,
+				prompt,
+				editorModelId
+			);
 			if (url) {
 				return url;
 			}
-			lastError = new Error("fal flux-2/edit returned no images");
+			lastError = new Error(`${editorModelId} returned no images`);
 		} catch (error) {
 			lastError =
 				error instanceof Error
 					? error
-					: new Error("fal flux-2/edit request failed");
+					: new Error(`${editorModelId} request failed`);
 		}
 		if (attempt < DEFAULT_RETRY_ATTEMPTS) {
 			await sleep(DEFAULT_RETRY_DELAY_MS);
 		}
 	}
-	throw lastError ?? new Error("fal flux-2/edit failed after retries");
+	throw lastError ?? new Error(`${editorModelId} failed after retries`);
 }
 
 export interface GeneratedReference {
@@ -394,6 +412,13 @@ export interface ReferenceDatasetResult {
 
 export interface BuildReferenceDatasetInput {
 	apiKey: string;
+	/**
+	 * fal.ai editor model id, e.g. `fal-ai/flux-2/edit`. Если не передан —
+	 * используется DEFAULT_DATASET_EDITOR_MODEL_ID. Каждый runner резолвит
+	 * актуальный id из admin runtime-config непосредственно перед вызовом,
+	 * чтобы смена модели применялась к новым job-ам без рестарта.
+	 */
+	editorModelId?: string;
 	genderHint: string | null;
 	onStart?: () => Promise<void>;
 	onVariantGenerated?: (info: {
@@ -430,10 +455,11 @@ export async function buildReferenceDataset(
 			triggerWord: input.triggerWord,
 			variant,
 		});
-		const url = await generateReferenceImageFal(
+		const url = await generateReferenceImage(
 			input.apiKey,
 			input.referencePhotoUrl,
-			prompt
+			prompt,
+			input.editorModelId
 		);
 		generatedReferences.push({ caption, url });
 		await input.onVariantGenerated?.({

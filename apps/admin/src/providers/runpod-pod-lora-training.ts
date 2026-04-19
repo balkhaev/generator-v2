@@ -217,6 +217,12 @@ interface RunpodPodLoraTrainingRunnerOptions {
 	eventPublisher?: EventPublisher | null;
 	falApiKeyForDataset: string;
 	fetchImpl?: typeof fetch;
+	/**
+	 * Резолвер активной dataset-editor-модели (см. dataset-builder-settings).
+	 * Вызывается перед каждым job-ом, чтобы смена модели в админке
+	 * применялась к новым тренировкам без рестарта worker-а.
+	 */
+	getDatasetEditorModelId?: () => Promise<string>;
 	gpuTypeIds: string[];
 	hfToken?: string;
 	imageName: string;
@@ -246,6 +252,7 @@ export class RunpodPodLoraTrainingRunner {
 	private readonly eventPublisher: EventPublisher | null;
 	private readonly falApiKeyForDataset: string;
 	private readonly fetchImpl: typeof fetch;
+	private readonly getDatasetEditorModelId: () => Promise<string>;
 	private readonly gpuTypeIds: string[];
 	private readonly hfToken?: string;
 	private readonly imageName: string;
@@ -270,6 +277,9 @@ export class RunpodPodLoraTrainingRunner {
 		this.eventPublisher = options.eventPublisher ?? null;
 		this.falApiKeyForDataset = options.falApiKeyForDataset;
 		this.fetchImpl = options.fetchImpl ?? fetch;
+		this.getDatasetEditorModelId =
+			options.getDatasetEditorModelId ??
+			(() => Promise.resolve("fal-ai/flux-2/edit"));
 		this.gpuTypeIds = options.gpuTypeIds;
 		this.hfToken = options.hfToken;
 		this.imageName = options.imageName;
@@ -621,8 +631,10 @@ export class RunpodPodLoraTrainingRunner {
 			},
 		});
 
+		const editorModelId = await this.getDatasetEditorModelId();
 		const dataset = await buildReferenceDataset({
 			apiKey: this.falApiKeyForDataset,
+			editorModelId,
 			genderHint,
 			onVariantGenerated: async ({ generated }) => {
 				await this.sendTrainingEvent({

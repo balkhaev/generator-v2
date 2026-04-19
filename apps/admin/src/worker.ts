@@ -8,6 +8,7 @@ import { createRedisIdempotencyLock, withIdempotency } from "@generator/queue";
 import { resolveS3StorageConfig } from "@generator/storage";
 
 import { createPersonsApiClient } from "@/clients/persons-api";
+import { createRedisDatasetBuilderSettings } from "@/domain/dataset-builder-settings";
 import { resolveTrainingProviderAvailability } from "@/domain/training-provider-availability";
 import {
 	createRedisTrainingProviderSettings,
@@ -61,9 +62,18 @@ if (!(personsApiUrl || eventPublisher)) {
 
 const defaultTrainingProvider = env.TRAINING_PROVIDER;
 
+const datasetBuilderSettings = createRedisDatasetBuilderSettings({ redisUrl });
+/**
+ * Резолвер выбранной editor-модели для генерации синтетических вариаций
+ * датасета. Передаём как функцию, чтобы значение читалось перед каждым job-ом
+ * и переключение в админке применялось без рестарта воркера.
+ */
+const getDatasetEditorModelId = () => datasetBuilderSettings.getEditorModelId();
+
 const falRunner = new FalZibLoraTrainingRunner({
 	apiKey: falKey,
 	eventPublisher,
+	getEditorModelId: getDatasetEditorModelId,
 	logger: console,
 	personsApiBaseUrl: personsApiUrl,
 	s3Config,
@@ -92,6 +102,7 @@ const runpodServerlessRunner =
 				endpointId: env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID,
 				eventPublisher,
 				falApiKeyForDataset: falKey,
+				getDatasetEditorModelId,
 				logger: console,
 				personsApiBaseUrl: personsApiUrl,
 				pollMs: env.RUNPOD_AI_TOOLKIT_POLL_MS,
@@ -110,6 +121,7 @@ const runpodPodRunner =
 				containerDiskInGb: env.RUNPOD_POD_CONTAINER_DISK_GB,
 				eventPublisher,
 				falApiKeyForDataset: falKey,
+				getDatasetEditorModelId,
 				gpuTypeIds: env.RUNPOD_POD_GPU_TYPE_IDS.split(",")
 					.map((id) => id.trim())
 					.filter((id) => id.length > 0),
@@ -330,6 +342,7 @@ await new Promise<void>((resolve) => {
 		await trainingLock.close();
 		await recoveryLock.close();
 		await trainingProviderSettings.close();
+		await datasetBuilderSettings.close();
 		stopHeartbeat();
 		await workerSettingsPublisher.close();
 		resolve();

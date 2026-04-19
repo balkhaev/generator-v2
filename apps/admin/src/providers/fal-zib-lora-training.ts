@@ -10,6 +10,9 @@ import {
 } from "@generator/storage";
 import { z } from "zod";
 
+import { DEFAULT_DATASET_EDITOR_MODEL_ID } from "@/providers/dataset-editor-models";
+import { generateReferenceImage } from "@/providers/lora-dataset-builder";
+
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const REQUEST_TIMEOUT_MS = 120_000;
 /**
@@ -25,35 +28,9 @@ const REQUEST_TIMEOUT_MS = 120_000;
 const DEFAULT_TRAINING_STEPS = 1200;
 const DEFAULT_TRAINING_POLL_MS = 30_000;
 const DEFAULT_TRAINING_TIMEOUT_MS = 90 * 60 * 1000;
-const DEFAULT_DATASET_POLL_MS = 5000;
-const DEFAULT_DATASET_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 2000;
-const FLUX_REFERENCE_EDIT_MODEL = "fal-ai/flux-2/edit";
 const fileExtensionPattern = /\.[^.]+$/u;
-
-/**
- * Параметры flux-2/edit, подобранные под максимальное сохранение идентичности.
- *
- * `guidance_scale` понижен с 2.5 до 1.8: при более высоком CFG модель
- * агрессивнее переписывает лицо под текстовый промпт, добавляя «обобщённую»
- * красоту вместо конкретных черт референса. 1.8 — нижний край, при котором
- * композиция сцены ещё надёжно собирается.
- *
- * `num_inference_steps` поднят с 28 до 36 — лишние шаги уходят в полировку
- * деталей лица, а не в перерисовку, и снижают вероятность артефактов глаз/носа,
- * которые потом «вмораживаются» LoRA.
- */
-const IDENTITY_GUIDANCE_SCALE = 1.8;
-const IDENTITY_INFERENCE_STEPS = 36;
-
-/**
- * Анти-дрейф для лица. flux-2/edit поддерживает negative_prompt у части
- * вариантов; даже если параметр игнорируется конкретной версией модели,
- * это безопасный no-op.
- */
-const IDENTITY_NEGATIVE_PROMPT =
-	"different person, different face, altered identity, swapped face, plastic surgery look, doll face, cartoon, anime, distorted face, asymmetric face, melted features, blurry face, deformed eyes, extra fingers";
 
 interface ReferenceVariant {
 	caption: string;
@@ -519,65 +496,6 @@ async function falPollUntilDone(
 	throw new Error(`fal job timed out after ${timeoutMs}ms`);
 }
 
-/**
- * Один проход flux-2/edit. Возвращает URL сгенерированного изображения или
- * `null`, если модель ничего не вернула (бывает при внутренних ошибках fal).
- * Внешний retry стоит в `generateReferenceImageFalWithRetry` — он умеет
- * перевызывать саму генерацию, а не только сетевой запрос.
- */
-async function generateReferenceImageFalOnce(
-	apiKey: string,
-	imageUrl: string,
-	prompt: string
-): Promise<string | null> {
-	const submit = await falSubmit(apiKey, FLUX_REFERENCE_EDIT_MODEL, {
-		enable_prompt_expansion: false,
-		guidance_scale: IDENTITY_GUIDANCE_SCALE,
-		image_size: "portrait_4_3",
-		image_urls: [imageUrl],
-		negative_prompt: IDENTITY_NEGATIVE_PROMPT,
-		num_images: 1,
-		num_inference_steps: IDENTITY_INFERENCE_STEPS,
-		output_format: "jpeg",
-		prompt,
-	});
-	const result = await falPollUntilDone(
-		apiKey,
-		submit,
-		FLUX_REFERENCE_EDIT_MODEL,
-		DEFAULT_DATASET_TIMEOUT_MS,
-		DEFAULT_DATASET_POLL_MS
-	);
-	const images = result.images as Array<{ url?: string }> | undefined;
-	return images?.[0]?.url ?? null;
-}
-
-async function generateReferenceImageFal(
-	apiKey: string,
-	imageUrl: string,
-	prompt: string
-): Promise<string> {
-	let lastError: Error | null = null;
-	for (let attempt = 1; attempt <= DEFAULT_RETRY_ATTEMPTS; attempt += 1) {
-		try {
-			const url = await generateReferenceImageFalOnce(apiKey, imageUrl, prompt);
-			if (url) {
-				return url;
-			}
-			lastError = new Error("fal flux-2/edit returned no images");
-		} catch (error) {
-			lastError =
-				error instanceof Error
-					? error
-					: new Error("fal flux-2/edit request failed");
-		}
-		if (attempt < DEFAULT_RETRY_ATTEMPTS) {
-			await sleep(DEFAULT_RETRY_DELAY_MS);
-		}
-	}
-	throw lastError ?? new Error("fal flux-2/edit failed after retries");
-}
-
 export class FalZibLoraTrainingRunner {
 	private readonly apiKey: string;
 	private readonly personsApiBaseUrl?: string;
@@ -585,10 +503,17 @@ export class FalZibLoraTrainingRunner {
 	private readonly s3Config?: S3StorageConfig;
 	private readonly logger: Pick<Console, "info" | "error">;
 	private readonly eventPublisher: EventPublisher | null;
+	/**
+	 * Резолвер активной dataset-editor-модели (см. dataset-builder-settings).
+	 * Вызывается перед каждым job-ом, чтобы смена модели в админке
+	 * применялась к новым тренировкам без рестарта worker-а.
+	 */
+	private readonly getEditorModelId: () => Promise<string>;
 
 	constructor(options: {
 		apiKey: string;
 		eventPublisher?: EventPublisher | null;
+		getEditorModelId?: () => Promise<string>;
 		personsApiBaseUrl?: string;
 		trainingControlToken: string;
 		s3Config?: S3StorageConfig;
@@ -600,6 +525,9 @@ export class FalZibLoraTrainingRunner {
 		this.s3Config = options.s3Config;
 		this.logger = options.logger ?? console;
 		this.eventPublisher = options.eventPublisher ?? null;
+		this.getEditorModelId =
+			options.getEditorModelId ??
+			(() => Promise.resolve(DEFAULT_DATASET_EDITOR_MODEL_ID));
 	}
 
 	private async sendTrainingEvent(input: {
@@ -675,6 +603,7 @@ export class FalZibLoraTrainingRunner {
 			parsed.triggerWord ?? buildDefaultTriggerWord(parsed.personSlug);
 		const genderHint = inferGenderHint(parsed.description);
 		const startedAt = new Date().toISOString();
+		const editorModelId = await this.getEditorModelId();
 
 		try {
 			const outputName =
@@ -684,6 +613,7 @@ export class FalZibLoraTrainingRunner {
 			this.logger.info("fal-zib-lora.generating-references", {
 				personId: parsed.personId,
 				count: REFERENCE_COUNT,
+				editorModelId,
 			});
 
 			await this.sendTrainingEvent({
@@ -691,7 +621,7 @@ export class FalZibLoraTrainingRunner {
 				event: {
 					debug: {
 						originalPhotoDuplicates: ORIGINAL_PHOTO_DUPLICATES,
-						referenceModel: FLUX_REFERENCE_EDIT_MODEL,
+						referenceModel: editorModelId,
 						referenceVariantCount: REFERENCE_COUNT,
 						sourceReferencePhotoUrl: parsed.referencePhotoUrl,
 						trainingModel: "fal-ai/z-image-trainer",
@@ -723,10 +653,11 @@ export class FalZibLoraTrainingRunner {
 					triggerWord,
 					variant,
 				});
-				const url = await generateReferenceImageFal(
+				const url = await generateReferenceImage(
 					this.apiKey,
 					parsed.referencePhotoUrl,
-					prompt
+					prompt,
+					editorModelId
 				);
 				generatedReferences.push({ caption, url });
 				this.logger.info("fal-zib-lora.reference-generated", {

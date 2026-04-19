@@ -349,6 +349,39 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the fal-seedance-1-5-pro image-to-video payload", () => {
+		const workflow = getWorkflowDefinition(
+			"fal-seedance-1-5-pro-image-to-video"
+		);
+
+		expect(
+			workflow?.buildProviderInput({
+				inputImageUrl: "https://storage.example.com/start.png",
+				params: {
+					aspectRatio: "9:16",
+					cameraFixed: true,
+					duration: 8,
+					endImageUrl: "https://storage.example.com/end.png",
+					resolution: "1080p",
+					seed: -1,
+				},
+				prompt: "slow orbit around the subject",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/bytedance/seedance/v1.5/pro/image-to-video",
+			aspect_ratio: "9:16",
+			camera_fixed: true,
+			duration: 8,
+			end_image_url: "https://storage.example.com/end.png",
+			enable_safety_checker: false,
+			generate_audio: true,
+			image_url: "https://storage.example.com/start.png",
+			prompt: "slow orbit around the subject",
+			resolution: "1080p",
+			seed: -1,
+		});
+	});
+
 	it("builds the fal-ltx-2-3 text-to-video payload with empty loras when no URL provided", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
 

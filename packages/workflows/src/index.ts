@@ -208,6 +208,21 @@ const falWan27ImageToVideoParamsSchema = z.object({
 	audioUrl: optionalUrlParamSchema,
 });
 
+// fal-ai/bytedance/seedance/v1.5/pro/image-to-video
+const falSeedance15ProImageToVideoParamsSchema = z.object({
+	aspectRatio: z
+		.enum(["21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "auto"])
+		.default("16:9"),
+	resolution: z.enum(["480p", "720p", "1080p"]).default("720p"),
+	duration: z.number().int().min(4).max(12).default(5),
+	cameraFixed: z.boolean().default(false),
+	enableSafetyChecker: z.boolean().default(false),
+	generateAudio: z.boolean().default(true),
+	/** fal: use -1 for random; omit to let the API choose. */
+	seed: z.number().int().optional(),
+	endImageUrl: optionalUrlParamSchema,
+});
+
 interface WanLoraEntry {
 	path: string;
 	scale: number;
@@ -378,6 +393,7 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-wan-2-2-text-to-video": 90 * SECOND,
 	"fal-wan-2-2-image-to-video": 90 * SECOND,
 	"fal-wan-2-7-image-to-video": 90 * SECOND,
+	"fal-seedance-1-5-pro-image-to-video": 90 * SECOND,
 	// ltx-2-pro генерирует медленнее wan'а; уточнить по живым трейсам
 	"fal-ltx-2-3-text-to-video": 2 * MINUTE,
 	"fal-ltx-2-3-image-to-video": 2 * MINUTE,
@@ -1120,6 +1136,70 @@ export const workflowRegistry = {
 				enable_safety_checker: parsed.enableSafetyChecker,
 				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
 				...(parsed.audioUrl ? { audio_url: parsed.audioUrl } : {}),
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"fal-seedance-1-5-pro-image-to-video": {
+		baseModel: "seedance-1-5-pro",
+		key: "fal-seedance-1-5-pro-image-to-video",
+		name: "Seedance 1.5 Pro I2V",
+		description:
+			"ByteDance Seedance 1.5 Pro image-to-video on fal.ai. Start/end frame, optional generated audio; 480p–1080p, 4–12s.",
+		requiresInputImage: true,
+		parameterSchema: falSeedance15ProImageToVideoParamsSchema,
+		parameterFields: [
+			{
+				description: "Optional last-frame image URL (first+last frame video).",
+				key: "endImageUrl",
+				label: "End image URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Output aspect ratio.",
+				enumValues: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "auto"],
+				key: "aspectRatio",
+				label: "Aspect ratio",
+				type: "text",
+			},
+			{
+				description: "Output resolution (480p faster, 1080p higher quality).",
+				enumValues: ["480p", "720p", "1080p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description: "Clip length in seconds (4–12).",
+				key: "duration",
+				label: "Duration (s)",
+				max: 12,
+				min: 4,
+				type: "number",
+			},
+			{
+				description:
+					"Optional seed (-1 = random per fal). Omit for API default.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = falSeedance15ProImageToVideoParamsSchema.parse(params);
+			return {
+				__falModel: "fal-ai/bytedance/seedance/v1.5/pro/image-to-video",
+				prompt,
+				image_url: inputImageUrl,
+				aspect_ratio: parsed.aspectRatio,
+				resolution: parsed.resolution,
+				duration: parsed.duration,
+				camera_fixed: parsed.cameraFixed,
+				enable_safety_checker: parsed.enableSafetyChecker,
+				generate_audio: parsed.generateAudio,
+				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},

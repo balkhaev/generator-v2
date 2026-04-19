@@ -103,6 +103,22 @@ describe("fal workflow registry", () => {
 		});
 	});
 
+	it("resolves fal-seedance-1-5-pro-image-to-video with correct defaults", () => {
+		const workflow = getWorkflowDefinition(
+			"fal-seedance-1-5-pro-image-to-video"
+		);
+		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("seedance-1-5-pro");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			aspectRatio: "16:9",
+			cameraFixed: false,
+			duration: 5,
+			enableSafetyChecker: false,
+			generateAudio: true,
+			resolution: "720p",
+		});
+	});
+
 	it("resolves fal-ltx-2-3-text-to-video with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
 		expect(workflow).toBeDefined();

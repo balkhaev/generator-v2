@@ -334,6 +334,19 @@ export const BASE_MODELS = [
 		],
 	},
 	{
+		id: "seedance-1-5-pro",
+		label: "Seedance 1.5 Pro",
+		family: "video",
+		modality: "video",
+		civitaiAliases: [
+			"seedance",
+			"seedance 1.5",
+			"seedance 1.5 pro",
+			"bytedance seedance",
+			"bytedance seedance 1.5",
+		],
+	},
+	{
 		id: "ltx-2",
 		label: "LTX-2",
 		family: "video",

@@ -320,6 +320,35 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the fal-wan-2-7 image-to-video payload", () => {
+		const workflow = getWorkflowDefinition("fal-wan-2-7-image-to-video");
+
+		expect(
+			workflow?.buildProviderInput({
+				inputImageUrl: "https://storage.example.com/first.png",
+				params: {
+					audioUrl: "https://storage.example.com/voice.mp3",
+					duration: 8,
+					endImageUrl: "https://storage.example.com/last.png",
+					negativePrompt: "blur",
+					resolution: "720p",
+				},
+				prompt: "slow dolly forward",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/wan/v2.7/image-to-video",
+			audio_url: "https://storage.example.com/voice.mp3",
+			duration: 8,
+			end_image_url: "https://storage.example.com/last.png",
+			enable_prompt_expansion: false,
+			enable_safety_checker: false,
+			image_url: "https://storage.example.com/first.png",
+			negative_prompt: "blur",
+			prompt: "slow dolly forward",
+			resolution: "720p",
+		});
+	});
+
 	it("builds the fal-ltx-2-3 text-to-video payload with empty loras when no URL provided", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
 

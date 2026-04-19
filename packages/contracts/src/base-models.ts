@@ -322,6 +322,18 @@ export const BASE_MODELS = [
 		],
 	},
 	{
+		id: "wan-2-7",
+		label: "Wan 2.7",
+		family: "video",
+		modality: "video",
+		civitaiAliases: [
+			"wan 2.7",
+			"wan video 2.7",
+			"wan 2.7 i2v",
+			"wan video 2.7 i2v",
+		],
+	},
+	{
 		id: "ltx-2",
 		label: "LTX-2",
 		family: "video",

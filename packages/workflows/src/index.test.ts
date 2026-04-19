@@ -91,6 +91,18 @@ describe("fal workflow registry", () => {
 		});
 	});
 
+	it("resolves fal-wan-2-7-image-to-video with correct defaults", () => {
+		const workflow = getWorkflowDefinition("fal-wan-2-7-image-to-video");
+		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("wan-2-7");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			duration: 5,
+			enablePromptExpansion: false,
+			enableSafetyChecker: false,
+			resolution: "1080p",
+		});
+	});
+
 	it("resolves fal-ltx-2-3-text-to-video with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-ltx-2-3-text-to-video");
 		expect(workflow).toBeDefined();

@@ -196,6 +196,18 @@ const falWan22ImageToVideoParamsSchema = falWan22TextToVideoParamsSchema.extend(
 	}
 );
 
+// fal-ai/wan/v2.7/image-to-video — без LoRA-слота; отдельная схема от Wan 2.2.
+const falWan27ImageToVideoParamsSchema = z.object({
+	negativePrompt: z.string().max(500).default(""),
+	resolution: z.enum(["720p", "1080p"]).default("1080p"),
+	duration: z.number().int().min(2).max(15).default(5),
+	enablePromptExpansion: z.boolean().default(false),
+	enableSafetyChecker: z.boolean().default(false),
+	seed: z.number().int().min(0).max(2_147_483_647).optional(),
+	endImageUrl: optionalUrlParamSchema,
+	audioUrl: optionalUrlParamSchema,
+});
+
 interface WanLoraEntry {
 	path: string;
 	scale: number;
@@ -365,6 +377,7 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	// queue ~10s + inference ~75-90s (5s 720p video)
 	"fal-wan-2-2-text-to-video": 90 * SECOND,
 	"fal-wan-2-2-image-to-video": 90 * SECOND,
+	"fal-wan-2-7-image-to-video": 90 * SECOND,
 	// ltx-2-pro генерирует медленнее wan'а; уточнить по живым трейсам
 	"fal-ltx-2-3-text-to-video": 2 * MINUTE,
 	"fal-ltx-2-3-image-to-video": 2 * MINUTE,
@@ -1034,6 +1047,79 @@ export const workflowRegistry = {
 				video_write_mode: parsed.videoWriteMode,
 				loras: buildWanLoras(parsed),
 				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"fal-wan-2-7-image-to-video": {
+		baseModel: "wan-2-7",
+		key: "fal-wan-2-7-image-to-video",
+		name: "Wan 2.7 I2V",
+		description:
+			"Image-to-video with Wan 2.7 on fal.ai. First/last frame, optional driving audio; 720p or 1080p, 2–15s clips.",
+		requiresInputImage: true,
+		parameterSchema: falWan27ImageToVideoParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Optional last-frame image URL for first-and-last-frame video.",
+				key: "endImageUrl",
+				label: "End image URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description:
+					"Optional driving audio URL (WAV or MP3; fal recommends 2–30s clips).",
+				key: "audioUrl",
+				label: "Audio URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Output video resolution tier.",
+				enumValues: ["720p", "1080p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description: "Output clip length in seconds (2–15).",
+				key: "duration",
+				label: "Duration (s)",
+				max: 15,
+				min: 2,
+				type: "number",
+			},
+			{
+				description:
+					"Content to discourage in the output (max 500 characters).",
+				key: "negativePrompt",
+				label: "Negative prompt",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Optional deterministic seed (0–2147483647).",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = falWan27ImageToVideoParamsSchema.parse(params);
+			return {
+				__falModel: "fal-ai/wan/v2.7/image-to-video",
+				image_url: inputImageUrl,
+				prompt,
+				negative_prompt: parsed.negativePrompt,
+				resolution: parsed.resolution,
+				duration: parsed.duration,
+				enable_prompt_expansion: parsed.enablePromptExpansion,
+				enable_safety_checker: parsed.enableSafetyChecker,
+				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
+				...(parsed.audioUrl ? { audio_url: parsed.audioUrl } : {}),
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},

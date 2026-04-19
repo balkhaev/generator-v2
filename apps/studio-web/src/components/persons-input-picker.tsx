@@ -71,9 +71,13 @@ function isPersonDatasetGeneration(generation: PersonGenerationRecord) {
  * соответственно. Без этого `grid-cols-4` + `aspect-[9/16]` на широком
  * контейнере раздувает превью до 200+px и они визуально «наезжают» друг
  * на друга при `max-h-*` overflow.
+ *
+ * `items-start` обязателен: иначе `align-items: stretch` растягивает ячейки по
+ * высоте строки и ломает расчёт `aspect-ratio` у портретных тайлов (визуально
+ * как «слот 16:9» с наложением 9:16 контента).
  */
 export const THUMB_GRID_CLASSES =
-	"grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1.5";
+	"grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1.5 items-start";
 
 interface IdentityTile {
 	id: string;
@@ -115,7 +119,7 @@ function IdentityTiles({
 	return (
 		<div className="grid gap-1.5">
 			<SectionLabel>Identity</SectionLabel>
-			<div className={THUMB_GRID_CLASSES}>
+			<div className={cn(THUMB_GRID_CLASSES, "min-w-0")}>
 				{tiles.map((tile) => {
 					const isActive = currentUrl === tile.url;
 					return (
@@ -125,7 +129,7 @@ function IdentityTiles({
 									<button
 										aria-label={tile.label}
 										className={cn(
-											"relative aspect-[9/16] overflow-hidden rounded-lg transition",
+											"relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"
@@ -164,6 +168,11 @@ interface RecentReference {
 export interface PersonsInputPickerProps {
 	className?: string;
 	currentUrl: string;
+	/**
+	 * Для сценариев «from image» в списке поколений персоны показываем только
+	 * изображения (видео скрываем — превью по URL видео в bg-cover не видно).
+	 */
+	imageGenerationsOnly?: boolean;
 	onPick: (pick: PersonInputPick) => void;
 	recentReferences: RecentReference[];
 	shots?: ScenarioShotRecord[];
@@ -173,6 +182,7 @@ export interface PersonsInputPickerProps {
 export default function PersonsInputPicker({
 	className,
 	currentUrl,
+	imageGenerationsOnly = false,
 	onPick,
 	recentReferences,
 	shots = [],
@@ -571,7 +581,10 @@ export default function PersonsInputPicker({
 		}
 		return (
 			<div
-				className={cn(THUMB_GRID_CLASSES, "max-h-60 overflow-y-auto py-0.5")}
+				className={cn(
+					THUMB_GRID_CLASSES,
+					"max-h-60 min-w-0 overflow-y-auto py-0.5"
+				)}
 			>
 				{recentReferences.map((reference) => {
 					const isActive = currentUrl === reference.url;
@@ -582,7 +595,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={reference.label}
 										className={cn(
-											"group relative aspect-[9/16] overflow-hidden rounded-lg transition",
+											"group relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-70 hover:opacity-100"
@@ -634,14 +647,19 @@ export default function PersonsInputPicker({
 			);
 		}
 		return (
-			<div className={cn(THUMB_GRID_CLASSES, "max-h-72 overflow-y-auto pr-1")}>
+			<div
+				className={cn(
+					THUMB_GRID_CLASSES,
+					"max-h-72 min-w-0 overflow-y-auto pr-1"
+				)}
+			>
 				{filteredPersons.map((person) => {
 					const isActive = selectedPersonId === person.id;
 					const thumbnail = person.photoUrl ?? person.referencePhotoUrl ?? null;
 					return (
 						<button
 							className={cn(
-								"group relative aspect-[9/16] overflow-hidden rounded-lg transition",
+								"group relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
 								isActive
 									? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 									: "opacity-80 hover:opacity-100"
@@ -678,16 +696,36 @@ export default function PersonsInputPicker({
 		const studioGenerations = personDetail.generations.filter(
 			(generation) => !isPersonDatasetGeneration(generation)
 		);
-		const readyGenerations = studioGenerations.filter(
-			(generation) =>
-				generation.status === "ready" &&
-				(generation.previewUrl ?? generation.sourceUrl)
-		);
+		const readyGenerations = studioGenerations.filter((generation) => {
+			if (generation.status !== "ready") {
+				return false;
+			}
+			if (!(generation.previewUrl ?? generation.sourceUrl)) {
+				return false;
+			}
+			if (imageGenerationsOnly && generation.mediaType !== "image") {
+				return false;
+			}
+			return true;
+		});
 		const hasLora = Boolean(personDetail.loraUrl);
-		const generationsEmptyHint =
-			studioGenerations.length === 0
-				? "No generations yet."
-				: "No ready generations yet.";
+		const hasReadyNonImage =
+			imageGenerationsOnly &&
+			studioGenerations.some(
+				(g) =>
+					g.status === "ready" &&
+					(g.previewUrl ?? g.sourceUrl) &&
+					g.mediaType !== "image"
+			);
+		let generationsEmptyHint: string;
+		if (studioGenerations.length === 0) {
+			generationsEmptyHint = "No generations yet.";
+		} else if (hasReadyNonImage) {
+			generationsEmptyHint =
+				"No ready images yet (video outputs are hidden for “from image” runs).";
+		} else {
+			generationsEmptyHint = "No ready generations yet.";
+		}
 
 		return (
 			<div className="grid gap-3 rounded-xl bg-muted/8 p-3 dark:bg-muted/4">
@@ -720,7 +758,12 @@ export default function PersonsInputPicker({
 				{readyGenerations.length > 0 ? (
 					<div className="grid gap-1.5">
 						<SectionLabel>Generations</SectionLabel>
-						<div className={cn(THUMB_GRID_CLASSES, "max-h-72 overflow-y-auto")}>
+						<div
+							className={cn(
+								THUMB_GRID_CLASSES,
+								"max-h-72 min-w-0 overflow-y-auto"
+							)}
+						>
 							{readyGenerations.map((generation) => {
 								const url = generation.previewUrl ?? generation.sourceUrl ?? "";
 								const isActive = currentUrl === url;
@@ -728,7 +771,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={generation.title}
 										className={cn(
-											"relative aspect-[9/16] overflow-hidden rounded-lg transition",
+											"relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"
@@ -823,7 +866,10 @@ export default function PersonsInputPicker({
 		}
 		return (
 			<div
-				className={cn(THUMB_GRID_CLASSES, "max-h-60 overflow-y-auto py-0.5")}
+				className={cn(
+					THUMB_GRID_CLASSES,
+					"max-h-60 min-w-0 overflow-y-auto py-0.5"
+				)}
 			>
 				{imageShots.map((shot) => {
 					const isActive = currentUrl === shot.artifactUrl;
@@ -834,7 +880,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={shot.scenarioName}
 										className={cn(
-											"group relative aspect-[9/16] overflow-hidden rounded-lg transition",
+											"group relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"

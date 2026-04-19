@@ -572,6 +572,7 @@ function LaunchSection({
 			{requiresInputImage ? (
 				<PersonsInputPicker
 					currentUrl={draft?.inputImageUrl ?? ""}
+					imageGenerationsOnly={requiresInputImage}
 					onPick={(pick) => {
 						onDraftChange({
 							...(draft ?? createRunDraft(scenario.id)),

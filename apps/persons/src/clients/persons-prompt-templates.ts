@@ -22,6 +22,24 @@ and must SURVIVE the rewrite. The user's archetype — e.g. "glamorous Moscow bl
 a full bust" — is the whole point of the persona. Do NOT generalize it into a neutral
 beauty test. Translate the brief faithfully into the VIBE LAYER below.
 
+BEAUTY BIAS (global default, applies unless the brief explicitly contradicts it):
+- The default subject is a strikingly beautiful, attractive, photogenic young woman:
+  symmetrical face, clear glowing skin, well-groomed eyebrows, healthy hair, fit and
+  well-proportioned figure, magazine-cover / model-grade looks. Always lean into
+  attractiveness. Whenever the brief is silent on a beauty-relevant detail, pick the
+  more flattering option (better proportions, better skin, more elegant features,
+  more attractive styling).
+- Apply this bias to anything the brief did not explicitly fix: facial harmony,
+  skin quality, hair condition, posture, styling refinement, makeup tastefulness.
+- Override the beauty bias ONLY when the user brief explicitly asks for something
+  different (e.g. "plain looks", "average woman", "tired face", "no makeup, messy
+  hair", "older", "ordinary"). In that case respect the brief literally and do not
+  silently re-prettify the subject.
+- The beauty bias must NEVER override identity facts the user did specify
+  (ethnicity, body type, bust size, hair color, age within young-adult range, mood,
+  wardrobe register). It only fills in the gaps and tilts ambiguity toward "more
+  beautiful", not toward "different person".
+
 The technical envelope (framing / pose / lighting / background / camera / wardrobe
 basics) is fixed and non-negotiable, because the resulting frame is later fed to
 flux-2/edit as the i2i source for ~12 dataset variations:
@@ -77,13 +95,27 @@ CAMERA LANGUAGE:
 
 VIBE LAYER (this is where the user's brief lives — preserve it):
 - Ethnicity & features, hair color / length / texture, eye color, age within
-  young-adult range, body type & figure (slim, athletic, curvy, voluptuous, full bust,
-  hourglass, petite, etc. — use whatever the brief specifies), wardrobe color, fabric,
-  silhouette and neckline (fitted bodysuit, scoop tee, plunging V silk top, off-shoulder
-  knit, halter dress, bralette, corset top — match the brief's archetype), background
-  tonal palette, light temperature (cool / neutral / warm daylight or softbox), and a
-  single mood word (serene, confident, glamorous, sultry, bold, dreamy, fresh, playful).
+  young-adult range, wardrobe color, fabric, silhouette and neckline (fitted bodysuit,
+  scoop tee, plunging V silk top, off-shoulder knit, halter dress, bralette, corset top —
+  match the brief's archetype), background tonal palette, light temperature
+  (cool / neutral / warm daylight or softbox), and a single mood word (serene,
+  confident, glamorous, sultry, bold, dreamy, fresh, playful).
   These details carry the persona's identity through the rewrite.
+
+- BODY TYPE and BUST SIZE are TWO INDEPENDENT axes. Never merge them into one word.
+  - Overall body / figure axis: petite, slim / slender, athletic / toned, curvy,
+    hourglass, plus-size. Pick the one the brief specifies.
+  - Bust / chest axis: small, average, full, very full / large.
+  - The brief may combine ANY value from each axis. "Slim figure + full bust",
+    "athletic + small chest", "curvy + average bust", "petite + large bust" are all
+    valid and must survive verbatim. Describe them as two separate clauses, e.g.
+    "slim slender frame with a full bust", NOT "voluptuous curves".
+  - The word "voluptuous" implies an overall full / curvy body. Use it ONLY when the
+    brief itself describes an overall curvy / voluptuous figure. NEVER use it as a
+    polite stand-in for "large breasts" when the brief says the figure is slim,
+    athletic, or petite — that would silently overwrite the user's body-type intent.
+  - Same rule for "curvy", "full-figured", "plus-size": those describe the WHOLE body,
+    not the chest. Do not promote a chest-only descriptor into a whole-body descriptor.
 
 OUTPUT FORMAT:
 - English, single comma-separated paragraph, 60–110 words.
@@ -111,10 +143,21 @@ Inherit from the user brief (must survive in every variant):
 - The archetype itself (e.g. "glamorous Moscow blonde with a full bust" → every variant
   is a glamorous blonde with a full bust, only her face / exact features / wardrobe
   color change). Do NOT silently turn it into a neutral beauty test.
-- Body type & figure cues (slim, athletic, curvy, voluptuous, full bust, hourglass…).
+- Body type and bust size as TWO SEPARATE axes. Body type: petite / slim / athletic /
+  curvy / hourglass / plus-size. Bust: small / average / full / large. The brief may
+  pair ANY combination ("slim with a full bust", "athletic with a small chest",
+  "curvy with average bust"). Preserve BOTH axes verbatim — never collapse "slim +
+  full bust" into "voluptuous", "curvy", or "full-figured", and never quietly drop
+  the figure word because it seems to contradict the bust word. They do not.
 - Wardrobe register (casual plain top vs. glamour silk vs. lingerie / bralette /
   corset). Vary color and exact garment, but stay inside the register the brief asks for.
 - Mood register (serene, confident, glamorous, sultry, bold, dreamy, fresh, playful).
+
+Apply the BEAUTY BIAS from the system prompt: every variant defaults to a strikingly
+beautiful, photogenic, model-grade young woman with great skin, healthy hair, and
+flattering features — UNLESS the brief explicitly asks otherwise (plain looks, tired
+face, messy hair, ordinary, older, etc.). When in doubt, pick the more attractive
+option. Never use the bias to overwrite explicit identity facts from the brief.
 
 Vary across variants:
 - Exact ethnicity & facial features, hair color & length, eye color, age within
@@ -154,12 +197,19 @@ SOURCE for a downstream flux-2/edit dataset pipeline, NOT an editorial lifestyle
 
 The result must:
 - PRESERVE the user's archetype verbatim into the VIBE LAYER: ethnicity, hair,
-  eye color, body type & figure (slim / curvy / voluptuous / full bust / hourglass /
-  petite — whatever the brief says), wardrobe register (casual plain top, glamour silk,
-  fitted bodysuit, bralette, corset…), wardrobe color & material, background tonal
-  palette, light temperature, mood word (serene, confident, glamorous, sultry, bold,
-  dreamy, fresh, playful). Do NOT generalize "glamorous Moscow blonde with a full
-  bust" into a neutral beauty test — it must still read as that person.
+  eye color, wardrobe register (casual plain top, glamour silk, fitted bodysuit,
+  bralette, corset…), wardrobe color & material, background tonal palette, light
+  temperature, mood word (serene, confident, glamorous, sultry, bold, dreamy, fresh,
+  playful). Do NOT generalize "glamorous Moscow blonde with a full bust" into a
+  neutral beauty test — it must still read as that person.
+- Treat body type and bust size as TWO INDEPENDENT axes and preserve BOTH:
+  body type ∈ {petite, slim/slender, athletic/toned, curvy, hourglass, plus-size};
+  bust ∈ {small, average, full, large/very full}. The brief may combine ANY pair
+  ("slim figure + big breasts", "athletic + small chest", "petite + large bust") —
+  reproduce both as separate clauses, e.g. "slim slender frame with a full bust".
+  NEVER collapse "slim + full bust" into "voluptuous", "curvy", or "full-figured",
+  and NEVER silently drop the figure word because it seems to contradict the bust
+  word. Slim + full bust is a real, valid, common combination, not a contradiction.
 - Frame as a tight close-up beauty headshot or chest-up portrait (never wider than
   half-body), eye-level camera, frontal or near-frontal head ≤15° off-axis, eyes to
   the lens, neutral relaxed expression or a soft closed-mouth smile.
@@ -173,6 +223,12 @@ The result must:
   allowed.
 - Anchor as photoreal: real portrait lens (50mm f/2 or 85mm f/1.8), sharp focus on
   the eyes, visible skin texture, no stylization, no heavy retouch.
+- Apply the BEAUTY BIAS from the system prompt: default to a strikingly beautiful,
+  photogenic, model-grade young woman with great skin, healthy hair and flattering
+  features. Whenever the brief is silent on a beauty-relevant detail, pick the more
+  attractive option. Drop the bias only if the brief explicitly demands plain /
+  ordinary / tired / messy / older looks. Never use the bias to overwrite explicit
+  identity facts (ethnicity, body type, bust size, hair color, mood, wardrobe).
 
 Return only the prompt text — single comma-separated paragraph, no JSON, no quotes,
 no markdown.

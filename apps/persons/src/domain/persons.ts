@@ -473,6 +473,19 @@ function readMetadataNumber(
 	return typeof value === "number" ? value : null;
 }
 
+function appendUniqueUrls(base: string[], extra: string[]): string[] {
+	const seen = new Set(base);
+	const next = [...base];
+	for (const url of extra) {
+		if (typeof url !== "string" || url.length === 0 || seen.has(url)) {
+			continue;
+		}
+		seen.add(url);
+		next.push(url);
+	}
+	return next;
+}
+
 function readMetadataString(
 	record: Record<string, unknown>,
 	key: string
@@ -1085,11 +1098,23 @@ export class PersonsService {
 				)
 			: [];
 
+		// Track variants that the operator just rejected so the dataset
+		// gallery can render placeholder slots and the Train CTA stays gated
+		// until every refill arrives. Only synth slots (variantId !== null,
+		// not `original-*` — already filtered above) participate; without a
+		// variantId we cannot reliably correlate the incoming refill back to
+		// a pending slot, so we do not gate Train in that edge case.
+		const nextPendingRefillVariantIds = this.appendPendingRefillVariantId(
+			training,
+			variantId
+		);
+
 		await this.repository.updatePerson(personId, {
 			metadata: {
 				...person.metadata,
 				training: {
 					...training,
+					pendingRefillVariantIds: nextPendingRefillVariantIds,
 					referenceImageCount: nextReferenceImageUrls.length,
 					referenceImageUrls: nextReferenceImageUrls,
 				},
@@ -1104,6 +1129,38 @@ export class PersonsService {
 		});
 
 		return this.repository.getPersonById(personId);
+	}
+
+	private appendPendingRefillVariantId(
+		training: Record<string, unknown>,
+		variantId: string | null
+	): string[] {
+		const existing = Array.isArray(training.pendingRefillVariantIds)
+			? training.pendingRefillVariantIds.filter(
+					(value): value is string =>
+						typeof value === "string" && value.length > 0
+				)
+			: [];
+		if (!variantId) {
+			return existing;
+		}
+		// Only refill while the dataset is still mutable. After the operator
+		// confirms training (status flips to `training`/`publishing`/`ready`)
+		// nothing will ever clear the pending entry, so the Train CTA would
+		// stay disabled forever — `maybePublishVariantRefill` already short
+		// circuits in that case, mirror it here.
+		const trainingStatus = readMetadataString(training, "status");
+		const isDatasetMutable =
+			trainingStatus === "queued" ||
+			trainingStatus === "generating" ||
+			trainingStatus === "awaiting-approval";
+		if (!isDatasetMutable) {
+			return existing;
+		}
+		if (existing.includes(variantId)) {
+			return existing;
+		}
+		return [...existing, variantId];
 	}
 
 	/**
@@ -1758,13 +1815,53 @@ export class PersonsService {
 		) {
 			return person;
 		}
-		const nextReferenceImageUrls =
+		const baseReferenceImageUrls =
 			parsedEvent.referenceImageUrls ??
 			(Array.isArray(currentTraining.referenceImageUrls)
 				? currentTraining.referenceImageUrls.filter(
 						(value): value is string => typeof value === "string"
 					)
 				: []);
+		// Refill events ship `referenceImageItems` (one new variant) without
+		// `referenceImageUrls`, so we must splice the new URLs into the
+		// existing list — otherwise the dataset gallery (which renders from
+		// `referenceImageUrls`) would never surface the regenerated photo
+		// even though the per-photo generation row already exists.
+		const nextReferenceImageUrls =
+			parsedEvent.referenceImageUrls === undefined &&
+			parsedEvent.referenceImageItems?.length
+				? appendUniqueUrls(
+						baseReferenceImageUrls,
+						parsedEvent.referenceImageItems.map((item) => item.url)
+					)
+				: baseReferenceImageUrls;
+		const incomingVariantIds = new Set(
+			parsedEvent.referenceImageItems?.map((item) => item.variantId) ?? []
+		);
+		const previousPendingRefillVariantIds = Array.isArray(
+			currentTraining.pendingRefillVariantIds
+		)
+			? currentTraining.pendingRefillVariantIds.filter(
+					(value): value is string =>
+						typeof value === "string" && value.length > 0
+				)
+			: [];
+		const nextPendingRefillVariantIds = previousPendingRefillVariantIds.filter(
+			(value) => !incomingVariantIds.has(value)
+		);
+		const refilledVariantIds = previousPendingRefillVariantIds.filter((value) =>
+			incomingVariantIds.has(value)
+		);
+		// `awaiting-approval` always wipes the pending list as well — the
+		// admin runner re-emits the full dataset snapshot at that point and
+		// the operator should review the whole lineup again from scratch.
+		const resetPendingForApproval =
+			parsedEvent.status === "awaiting-approval" &&
+			parsedEvent.phase !== "refilling-references" &&
+			(parsedEvent.referenceImageUrls?.length ?? 0) > 0;
+		const finalPendingRefillVariantIds = resetPendingForApproval
+			? []
+			: nextPendingRefillVariantIds;
 		const currentDebug =
 			currentTraining.debug &&
 			typeof currentTraining.debug === "object" &&
@@ -1926,6 +2023,7 @@ export class PersonsService {
 			providerJobId: nextProviderJobId,
 			providerRequestId: nextProviderRequestId,
 			providerStatus: nextProviderStatus,
+			pendingRefillVariantIds: finalPendingRefillVariantIds,
 			referenceImageCount: nextReferenceImageCount,
 			referenceImageTargetCount,
 			referenceImageUrls: nextReferenceImageUrls,
@@ -1943,7 +2041,8 @@ export class PersonsService {
 		if (parsedEvent.referenceImageItems?.length) {
 			await this.upsertDatasetGenerationsByVariantId(
 				personId,
-				parsedEvent.referenceImageItems
+				parsedEvent.referenceImageItems,
+				{ refilledVariantIds: new Set(refilledVariantIds) }
 			);
 		} else if (parsedEvent.referenceImageUrls?.length) {
 			const nextDatasetUrls = [...new Set(nextReferenceImageUrls)];
@@ -2013,6 +2112,22 @@ export class PersonsService {
 		);
 	}
 
+	private async deleteDatasetGenerationsNotInIncomingSet(
+		personId: string,
+		incomingVariantIds: Set<string>,
+		existingByVariantId: Map<string, PersonGenerationRecord>,
+		existingDatasetWithoutVariant: PersonGenerationRecord[]
+	) {
+		for (const [variantId, generation] of existingByVariantId.entries()) {
+			if (!incomingVariantIds.has(variantId)) {
+				await this.repository.deleteGeneration(personId, generation.id);
+			}
+		}
+		for (const generation of existingDatasetWithoutVariant) {
+			await this.repository.deleteGeneration(personId, generation.id);
+		}
+	}
+
 	private async upsertDatasetGenerationsByVariantId(
 		personId: string,
 		items: {
@@ -2020,7 +2135,8 @@ export class PersonsService {
 			s3Key: string | null;
 			url: string;
 			variantId: string;
-		}[]
+		}[],
+		options?: { refilledVariantIds?: Set<string> }
 	) {
 		const personSnapshot = await this.repository.getPersonById(personId);
 		if (!personSnapshot) {
@@ -2052,22 +2168,24 @@ export class PersonsService {
 		// the operator's reject (which goes through `deleteGeneration`) or by
 		// the previous training run's cleanup, so we only need to drop the
 		// stale DB rows here.
-		for (const [variantId, generation] of existingByVariantId.entries()) {
-			if (!incomingVariantIds.has(variantId)) {
-				await this.repository.deleteGeneration(personId, generation.id);
-			}
-		}
-		for (const generation of existingDatasetWithoutVariant) {
-			await this.repository.deleteGeneration(personId, generation.id);
-		}
+		await this.deleteDatasetGenerationsNotInIncomingSet(
+			personId,
+			incomingVariantIds,
+			existingByVariantId,
+			existingDatasetWithoutVariant
+		);
 
+		const refilledVariantIds = options?.refilledVariantIds ?? new Set<string>();
+		const refilledAt = new Date().toISOString();
 		for (const [index, item] of items.entries()) {
 			const existing = existingByVariantId.get(item.variantId);
+			const isRefill = refilledVariantIds.has(item.variantId);
 			const metadata: Record<string, unknown> = {
 				datasetCaption: item.caption,
 				datasetVariantId: item.variantId,
 				isDatasetPhoto: true,
 				...(item.s3Key ? { datasetS3Key: item.s3Key } : {}),
+				...(isRefill ? { refilledAt } : {}),
 			};
 
 			if (existing) {

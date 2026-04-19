@@ -83,6 +83,15 @@ export interface PersonLoraTrainingMeta {
 	lastEventAt?: string | null;
 	loraUrl?: string | null;
 	outputName?: string | null;
+	/**
+	 * `datasetVariantId`s of dataset photos that the operator rejected while
+	 * the run was in `awaiting-approval`. Each id stays here until the admin
+	 * worker emits a refill event for that variant; the frontend uses it to
+	 * (a) render placeholder slots in the dataset gallery and (b) gate the
+	 * "Train LoRA on this dataset" CTA so the operator must review the new
+	 * photos before training.
+	 */
+	pendingRefillVariantIds?: string[];
 	phase?: string | null;
 	progressPct?: number | null;
 	provider?: string | null;
@@ -287,6 +296,30 @@ export function getPersonLoraReferenceImageTarget(
 		return training.referenceImageTargetCount;
 	}
 	return DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT;
+}
+
+export function getPendingDatasetRefillVariantIds(
+	training: PersonLoraTrainingMeta | null
+): string[] {
+	const ids = training?.pendingRefillVariantIds;
+	if (!Array.isArray(ids)) {
+		return [];
+	}
+	return ids.filter(
+		(value): value is string => typeof value === "string" && value.length > 0
+	);
+}
+
+export function getPendingDatasetRefillCount(
+	training: PersonLoraTrainingMeta | null
+): number {
+	return getPendingDatasetRefillVariantIds(training).length;
+}
+
+export function hasPendingDatasetRefills(
+	training: PersonLoraTrainingMeta | null
+): boolean {
+	return getPendingDatasetRefillCount(training) > 0;
 }
 
 export type PersonLoraStageId = "queued" | "dataset" | "review" | "training";

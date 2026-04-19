@@ -3,6 +3,8 @@
 import {
 	clampProgressPct,
 	DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT,
+	getPendingDatasetRefillCount,
+	getPendingDatasetRefillVariantIds,
 	getPersonLoraReferenceImageCount,
 	getPersonLoraReferenceImageTarget,
 	getPersonLoraTrainingDisplayStatus,
@@ -864,6 +866,26 @@ function LoraTrainingStatusPanel({
 	);
 }
 
+function getLoraTrainingCtaLabel(input: {
+	hasLora: boolean;
+	isAwaitingApproval: boolean;
+	pendingRefillCount: number;
+}): string {
+	const { hasLora, isAwaitingApproval, pendingRefillCount } = input;
+	if (isAwaitingApproval && pendingRefillCount > 0) {
+		return pendingRefillCount === 1
+			? "Regenerating 1 photo…"
+			: `Regenerating ${pendingRefillCount} photos…`;
+	}
+	if (isAwaitingApproval) {
+		return "Train LoRA on this dataset";
+	}
+	if (hasLora) {
+		return "Retrain LoRA";
+	}
+	return "Train LoRA";
+}
+
 function LoraTrainingActions({
 	hasLora,
 	isAwaitingApproval,
@@ -871,6 +893,7 @@ function LoraTrainingActions({
 	isTraining,
 	onCancelTraining,
 	onTrainLora,
+	pendingRefillCount,
 }: {
 	hasLora: boolean;
 	isAwaitingApproval: boolean;
@@ -878,20 +901,28 @@ function LoraTrainingActions({
 	isTraining: boolean;
 	onCancelTraining: () => void;
 	onTrainLora: () => void;
+	pendingRefillCount: number;
 }) {
-	let actionLabel = "Train LoRA";
-	if (isAwaitingApproval) {
-		actionLabel = "Train LoRA on this dataset";
-	} else if (hasLora) {
-		actionLabel = "Retrain LoRA";
-	}
+	const isRegeneratingDataset = isAwaitingApproval && pendingRefillCount > 0;
+	const actionLabel = getLoraTrainingCtaLabel({
+		hasLora,
+		isAwaitingApproval,
+		pendingRefillCount,
+	});
 	const pendingLabel = hasLora ? "Retraining..." : "Training...";
 	// While the dataset is awaiting approval the operator MUST be able to
 	// click Train — that's the entire point of the gate. For every other
 	// active phase (queued / generating / training / publishing) the CTA is
-	// disabled to avoid duplicate submissions.
+	// disabled to avoid duplicate submissions. The regeneration loop adds a
+	// third gate: pending refills must land first so the operator can review
+	// the freshly generated photos before kicking off training.
 	const ctaDisabled =
-		isCancellingTraining || (isTraining && !isAwaitingApproval);
+		isCancellingTraining ||
+		isRegeneratingDataset ||
+		(isTraining && !isAwaitingApproval);
+
+	const showSpinner =
+		isRegeneratingDataset || (isTraining && !isAwaitingApproval);
 
 	return (
 		<>
@@ -899,9 +930,11 @@ function LoraTrainingActions({
 				disabled={ctaDisabled}
 				onClick={onTrainLora}
 				size="sm"
-				variant={isAwaitingApproval ? "default" : "outline"}
+				variant={
+					isAwaitingApproval && !isRegeneratingDataset ? "default" : "outline"
+				}
 			>
-				{isTraining && !isAwaitingApproval ? (
+				{showSpinner ? (
 					<Loader2 className="size-3.5 animate-spin" />
 				) : (
 					<Sparkles className="size-3.5" />
@@ -1012,6 +1045,7 @@ function LoraActions({
 	const isTraining = isActivePersonLoraTrainingStatus(effectiveStatus);
 	const isAwaitingApproval =
 		isApprovablePersonLoraTrainingStatus(effectiveStatus);
+	const pendingRefillCount = getPendingDatasetRefillCount(training);
 	const hasTrainingError = Boolean(training?.errorSummary);
 	const showTrainingSection = !hasLora || isTraining || hasTrainingError;
 
@@ -1040,13 +1074,26 @@ function LoraActions({
 						</p>
 					) : null}
 
-					{isAwaitingApproval ? (
+					{isAwaitingApproval && pendingRefillCount === 0 ? (
 						<p className="rounded-lg bg-amber-500/10 px-3 py-2 text-amber-700 text-xs leading-relaxed dark:text-amber-300">
 							Review the dataset photos in the gallery and remove any that don't
-							match the person. Rejected slots are regenerated automatically.
-							Click{" "}
+							match the person. Rejected slots are regenerated automatically and
+							appended to the end with a{" "}
+							<span className="font-semibold">New</span> badge — review them
+							too. Click{" "}
 							<span className="font-semibold">Train LoRA on this dataset</span>{" "}
 							when you're happy with the lineup.
+						</p>
+					) : null}
+
+					{isAwaitingApproval && pendingRefillCount > 0 ? (
+						<p className="rounded-lg bg-sky-500/10 px-3 py-2 text-sky-700 text-xs leading-relaxed dark:text-sky-300">
+							Regenerating {pendingRefillCount}{" "}
+							{pendingRefillCount === 1 ? "photo" : "photos"} you rejected. New
+							photos will appear at the end of the dataset gallery with a{" "}
+							<span className="font-semibold">New</span> badge. Training is
+							gated until every replacement lands so you can review the final
+							lineup.
 						</p>
 					) : null}
 
@@ -1057,6 +1104,7 @@ function LoraActions({
 						isTraining={isTraining}
 						onCancelTraining={onCancelTraining}
 						onTrainLora={onTrainLora}
+						pendingRefillCount={pendingRefillCount}
 					/>
 				</>
 			) : null}
@@ -1129,6 +1177,13 @@ interface DatasetImageItem {
 	 */
 	canDelete: boolean;
 	generationId: string | null;
+	/**
+	 * Set when this slot is a freshly regenerated replacement for a photo the
+	 * operator deleted in the current `awaiting-approval` cycle. Surfaces a
+	 * `New` badge so the operator can quickly find and review just-arrived
+	 * regenerations before kicking off training.
+	 */
+	isNew: boolean;
 	url: string;
 	variantId: string | null;
 }
@@ -1139,14 +1194,16 @@ function DatasetGallery({
 	onDelete,
 	onImageClick,
 	pendingDeleteId,
+	pendingRefillCount,
 }: {
 	isGenerating: boolean;
 	items: DatasetImageItem[];
 	onDelete: (generationId: string) => void;
 	onImageClick: (index: number) => void;
 	pendingDeleteId: string | null;
+	pendingRefillCount: number;
 }) {
-	if (items.length === 0 && !isGenerating) {
+	if (items.length === 0 && !isGenerating && pendingRefillCount === 0) {
 		return (
 			<EmptyState
 				hint="Dataset photos will appear here after LoRA training starts."
@@ -1154,6 +1211,10 @@ function DatasetGallery({
 			/>
 		);
 	}
+	const placeholderSlots = Array.from(
+		{ length: pendingRefillCount },
+		(_, index) => index
+	);
 	return (
 		<div className="grid gap-3">
 			{isGenerating ? (
@@ -1165,13 +1226,25 @@ function DatasetGallery({
 					</span>
 				</div>
 			) : null}
-			{items.length > 0 ? (
+			{pendingRefillCount > 0 ? (
+				<div className="flex items-center gap-2 text-sky-700 text-xs dark:text-sky-300">
+					<Loader2 className="size-3.5 animate-spin" />
+					<span>
+						Regenerating {pendingRefillCount}{" "}
+						{pendingRefillCount === 1 ? "photo" : "photos"}…
+					</span>
+				</div>
+			) : null}
+			{items.length > 0 || placeholderSlots.length > 0 ? (
 				<div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
 					{items.map((item, i) => (
 						<div className="group relative" key={item.url}>
 							<button
 								aria-label={`View reference ${i + 1}`}
-								className="relative aspect-[3/4] w-full overflow-hidden rounded-lg transition hover:ring-2 hover:ring-ring/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className={cn(
+									"relative aspect-[3/4] w-full overflow-hidden rounded-lg transition hover:ring-2 hover:ring-ring/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+									item.isNew && "ring-2 ring-emerald-400/70"
+								)}
 								onClick={() => onImageClick(i)}
 								type="button"
 							>
@@ -1183,6 +1256,14 @@ function DatasetGallery({
 									src={item.url}
 								/>
 							</button>
+							{item.isNew ? (
+								<span
+									className="pointer-events-none absolute top-1.5 left-1.5 inline-flex items-center gap-1 rounded-full bg-emerald-500/90 px-1.5 py-0.5 font-medium text-[10px] text-white shadow-sm"
+									title="Regenerated replacement — review before training"
+								>
+									New
+								</span>
+							) : null}
 							{item.generationId && item.canDelete ? (
 								<button
 									aria-label={`Delete reference ${i + 1}`}
@@ -1210,6 +1291,17 @@ function DatasetGallery({
 									Original
 								</span>
 							)}
+						</div>
+					))}
+					{placeholderSlots.map((slotIndex) => (
+						<div
+							className="relative flex aspect-[3/4] w-full items-center justify-center overflow-hidden rounded-lg border border-sky-400/40 border-dashed bg-sky-500/5 dark:bg-sky-400/10"
+							key={`pending-refill-${slotIndex}`}
+						>
+							<div className="flex flex-col items-center gap-1.5 px-2 text-center text-sky-700 text-xs dark:text-sky-300">
+								<Loader2 className="size-4 animate-spin" />
+								<span className="font-medium">Regenerating</span>
+							</div>
 						</div>
 					))}
 				</div>
@@ -1269,6 +1361,12 @@ function PersonDetailView({
 	const [lightbox, setLightbox] = useState<LightboxState | null>(null);
 	const trainingMeta = readPersonLoraTrainingMeta(person);
 	const isGeneratingDataset = trainingMeta?.status === "generating";
+	const isAwaitingDatasetApproval =
+		trainingMeta?.status === "awaiting-approval";
+	const pendingRefillVariantIds = isAwaitingDatasetApproval
+		? getPendingDatasetRefillVariantIds(trainingMeta)
+		: [];
+	const pendingRefillCount = pendingRefillVariantIds.length;
 	const generations = person.generations
 		.filter((g) => g.metadata.isDatasetPhoto !== true)
 		.sort(compareGenerationNewestFirst);
@@ -1284,9 +1382,18 @@ function PersonDetailView({
 				? generation.metadata.datasetVariantId
 				: null;
 		const isOriginal = variantId?.startsWith("original-") ?? false;
+		// `refilledAt` is stamped by the backend when this slot was created
+		// in response to an operator deletion. Only highlight it while we're
+		// still in the review gate — once training kicks off, the badge
+		// becomes noise (and the dataset rows are wiped on `ready` anyway).
+		const isNew =
+			isAwaitingDatasetApproval &&
+			typeof generation?.metadata.refilledAt === "string" &&
+			(generation.metadata.refilledAt as string).length > 0;
 		return {
 			canDelete: !isOriginal,
 			generationId: generation?.id ?? null,
+			isNew,
 			url: generation?.sourceUrl ?? fallbackUrl,
 			variantId,
 		};
@@ -1498,6 +1605,7 @@ function PersonDetailView({
 						onDelete={onDeleteGeneration}
 						onImageClick={openDatasetLightbox}
 						pendingDeleteId={deletingGenerationId}
+						pendingRefillCount={pendingRefillCount}
 					/>
 				) : null}
 			</div>

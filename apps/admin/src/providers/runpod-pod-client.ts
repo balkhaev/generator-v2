@@ -5,14 +5,38 @@ const TRAILING_SLASH = /\/$/u;
 const POD_STATUSES = ["RUNNING", "EXITED", "TERMINATED"] as const;
 export type RunpodPodStatus = (typeof POD_STATUSES)[number];
 
+/**
+ * Subset of `pod.machine` we care about for the training-details UI.
+ * RunPod's `/pods` responses nest the GPU/datacenter facts under
+ * `machine`, so this is what feeds the "what GPU is the inference
+ * actually running on" line in the UI.
+ *
+ * Everything is optional because RunPod has historically added/renamed
+ * machine fields without warning, and we don't want a dropped field to
+ * crash the whole training pipeline.
+ */
+const RUNPOD_MACHINE_SCHEMA = z
+	.object({
+		dataCenterId: z.string().nullable().optional(),
+		gpuDisplayName: z.string().nullable().optional(),
+		gpuTypeId: z.string().nullable().optional(),
+		location: z.string().nullable().optional(),
+		podHostId: z.string().nullable().optional(),
+		secureCloud: z.boolean().optional(),
+	})
+	.passthrough();
+
+export type RunpodMachineInfo = z.infer<typeof RUNPOD_MACHINE_SCHEMA>;
+
 const RUNPOD_POD_SCHEMA = z.object({
 	id: z.string().min(1),
 	name: z.string().nullable().optional(),
 	desiredStatus: z.enum(POD_STATUSES).optional(),
 	lastStatusChange: z.string().optional(),
 	costPerHr: z.number().optional(),
+	gpuCount: z.number().optional(),
 	image: z.string().optional(),
-	machine: z.unknown().optional(),
+	machine: RUNPOD_MACHINE_SCHEMA.nullable().optional(),
 });
 
 export type RunpodPodSnapshot = z.infer<typeof RUNPOD_POD_SCHEMA>;

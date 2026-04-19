@@ -62,7 +62,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-
+import { TrainingDetailsDialog } from "@/components/training-details-dialog";
 import {
 	type CreatePersonInput,
 	cancelGeneration,
@@ -761,6 +761,7 @@ function LoraTrainingStatusPanel({
 	effectiveStatus,
 	hasLora,
 	isTraining,
+	personName,
 	progressPct,
 	referenceImageCount,
 	referenceImageTarget,
@@ -769,6 +770,7 @@ function LoraTrainingStatusPanel({
 	effectiveStatus: PersonLoraTrainingStatus | "ready";
 	hasLora: boolean;
 	isTraining: boolean;
+	personName: string;
 	progressPct: number;
 	referenceImageCount: number;
 	referenceImageTarget: number;
@@ -777,65 +779,88 @@ function LoraTrainingStatusPanel({
 	const stages = getPersonLoraTrainingStages({ hasLora, training });
 	const elapsed = formatDurationMs(training?.trainingElapsedMs);
 	const lastEventAt = training?.lastEventAt ?? training?.updatedAt ?? null;
+	const [detailsOpen, setDetailsOpen] = useState(false);
+	const openDetails = useCallback(() => setDetailsOpen(true), []);
 
 	return (
-		<div className="grid gap-3 rounded-xl border border-border/50 bg-muted/10 p-3 dark:bg-muted/5">
-			<div className="flex flex-wrap items-center justify-between gap-2">
-				<div className="flex flex-wrap items-center gap-2">
-					<span
-						className={cn(
-							"inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs",
-							trainingStatusTone[effectiveStatus] ??
-								"bg-muted/10 text-muted-foreground"
-						)}
-					>
-						{getLoraStatusIcon(effectiveStatus, isTraining)}
-						{effectiveStatus}
-					</span>
-					{training?.triggerWord ? (
-						<span className="text-muted-foreground text-xs">
-							trigger: {training.triggerWord}
+		<>
+			<div className="grid gap-3 rounded-xl border border-border/50 bg-muted/10 p-3 dark:bg-muted/5">
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<div className="flex flex-wrap items-center gap-2">
+						<button
+							className={cn(
+								"inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring",
+								trainingStatusTone[effectiveStatus] ??
+									"bg-muted/10 text-muted-foreground"
+							)}
+							onClick={openDetails}
+							type="button"
+						>
+							{getLoraStatusIcon(effectiveStatus, isTraining)}
+							{effectiveStatus}
+						</button>
+						{training?.triggerWord ? (
+							<span className="text-muted-foreground text-xs">
+								trigger: {training.triggerWord}
+							</span>
+						) : null}
+					</div>
+					<div className="flex items-center gap-2 text-xs">
+						{training?.provider ? (
+							<span className="text-muted-foreground">{training.provider}</span>
+						) : null}
+						<span className="font-medium tabular-nums">{progressPct}%</span>
+						<button
+							className="rounded-md border border-border/60 bg-background/40 px-2 py-0.5 text-[11px] text-muted-foreground outline-none transition hover:border-border hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+							onClick={openDetails}
+							type="button"
+						>
+							Details
+						</button>
+					</div>
+				</div>
+
+				<LoraStageProgress onStageSelect={openDetails} stages={stages} />
+
+				<div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+					{referenceImageCount > 0 ? (
+						<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+							refs {referenceImageCount}/{referenceImageTarget}
+						</span>
+					) : null}
+					{training?.trainingSteps ? (
+						<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+							steps {training.trainingSteps}
+						</span>
+					) : null}
+					{training?.providerStatus ? (
+						<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+							provider {training.providerStatus}
+						</span>
+					) : null}
+					{elapsed ? (
+						<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+							elapsed {elapsed}
+						</span>
+					) : null}
+					{lastEventAt ? (
+						<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
+							updated {formatRelativeTime(lastEventAt)}
 						</span>
 					) : null}
 				</div>
-				<div className="flex items-center gap-2 text-xs">
-					{training?.provider ? (
-						<span className="text-muted-foreground">{training.provider}</span>
-					) : null}
-					<span className="font-medium tabular-nums">{progressPct}%</span>
-				</div>
 			</div>
 
-			<LoraStageProgress stages={stages} />
-
-			<div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-				{referenceImageCount > 0 ? (
-					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
-						refs {referenceImageCount}/{referenceImageTarget}
-					</span>
-				) : null}
-				{training?.trainingSteps ? (
-					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
-						steps {training.trainingSteps}
-					</span>
-				) : null}
-				{training?.providerStatus ? (
-					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
-						provider {training.providerStatus}
-					</span>
-				) : null}
-				{elapsed ? (
-					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
-						elapsed {elapsed}
-					</span>
-				) : null}
-				{lastEventAt ? (
-					<span className="rounded-full bg-muted/15 px-2 py-0.5 dark:bg-muted/8">
-						updated {formatRelativeTime(lastEventAt)}
-					</span>
-				) : null}
-			</div>
-		</div>
+			<TrainingDetailsDialog
+				effectiveStatus={effectiveStatus}
+				hasLora={hasLora}
+				onOpenChange={setDetailsOpen}
+				open={detailsOpen}
+				personName={personName}
+				progressPct={progressPct}
+				training={training}
+			/>
+		</>
 	);
 }
 
@@ -1001,6 +1026,7 @@ function LoraActions({
 							effectiveStatus={effectiveStatus}
 							hasLora={hasLora}
 							isTraining={isTraining}
+							personName={person.name}
 							progressPct={progressPct}
 							referenceImageCount={referenceImageCount}
 							referenceImageTarget={referenceImageTarget}

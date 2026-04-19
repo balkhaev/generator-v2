@@ -192,6 +192,48 @@ function clampProgressPct(value: number) {
 	return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+/**
+ * Builds the `debug.machine` payload we ship in `personLoraTrainingProgress`
+ * events so the persons-web "Training details" dialog can answer the
+ * "what GPU is this actually running on?" question without a separate
+ * API call. Returns `null` when RunPod hasn't populated `pod.machine`
+ * yet (e.g. the pod is still queued for a host).
+ */
+function summarizePodMachine(
+	pod: RunpodPodSnapshot
+): Record<string, unknown> | null {
+	const machine = pod.machine ?? null;
+	if (!machine && pod.costPerHr === undefined && pod.gpuCount === undefined) {
+		return null;
+	}
+	const summary: Record<string, unknown> = {};
+	if (machine?.gpuDisplayName) {
+		summary.gpuDisplayName = machine.gpuDisplayName;
+	}
+	if (machine?.gpuTypeId) {
+		summary.gpuTypeId = machine.gpuTypeId;
+	}
+	if (machine?.dataCenterId) {
+		summary.dataCenterId = machine.dataCenterId;
+	}
+	if (machine?.location) {
+		summary.location = machine.location;
+	}
+	if (machine?.podHostId) {
+		summary.podHostId = machine.podHostId;
+	}
+	if (typeof machine?.secureCloud === "boolean") {
+		summary.secureCloud = machine.secureCloud;
+	}
+	if (typeof pod.gpuCount === "number") {
+		summary.gpuCount = pod.gpuCount;
+	}
+	if (typeof pod.costPerHr === "number") {
+		summary.costPerHr = pod.costPerHr;
+	}
+	return Object.keys(summary).length === 0 ? null : summary;
+}
+
 function buildGeneratingProgress(completedImages: number) {
 	return clampProgressPct(10 + (completedImages / TOTAL_DATASET_COUNT) * 45);
 }
@@ -1249,6 +1291,7 @@ export class RunpodPodLoraTrainingRunner {
 			podId,
 		});
 
+		const machineSummary = summarizePodMachine(pod);
 		await this.sendTrainingEvent({
 			personId: parsed.personId,
 			event: {
@@ -1256,6 +1299,7 @@ export class RunpodPodLoraTrainingRunner {
 					podId,
 					podLogUrl: logPublicUrl,
 					runpodPodConsoleUrl: `https://runpod.io/console/pods/${podId}`,
+					...(machineSummary ? { machine: machineSummary } : {}),
 				},
 				debugCorrelationId: parsed.debugCorrelationId,
 				lastEventAt: new Date().toISOString(),
@@ -1763,6 +1807,7 @@ export class RunpodPodLoraTrainingRunner {
 		debugCorrelationId?: string;
 		logS3Key: string;
 		personId: string;
+		pod: RunpodPodSnapshot;
 		podId: string;
 		providerStatus: RunpodPodStatus;
 		referenceImageCount: number;
@@ -1781,11 +1826,17 @@ export class RunpodPodLoraTrainingRunner {
 			progress.step !== null && progress.total !== null
 				? { tqdmStep: progress.step, tqdmTotal: progress.total }
 				: null;
+		const machineSummary = summarizePodMachine(input.pod);
+		const debug = {
+			...(tqdmDebug ?? {}),
+			...(machineSummary ? { machine: machineSummary } : {}),
+		};
+		const hasDebug = Object.keys(debug).length > 0;
 
 		await this.sendTrainingEvent({
 			personId: input.personId,
 			event: {
-				...(tqdmDebug ? { debug: tqdmDebug } : {}),
+				...(hasDebug ? { debug } : {}),
 				debugCorrelationId: input.debugCorrelationId,
 				lastEventAt: new Date().toISOString(),
 				phase: "polling-training",
@@ -1854,6 +1905,7 @@ export class RunpodPodLoraTrainingRunner {
 				debugCorrelationId: input.debugCorrelationId,
 				logS3Key: input.logS3Key,
 				personId: input.personId,
+				pod,
 				podId: input.podId,
 				providerStatus: status,
 				referenceImageCount: input.referenceImageCount,

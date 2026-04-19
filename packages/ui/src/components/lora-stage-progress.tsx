@@ -41,20 +41,22 @@ function getLoraStageWidth(stage: PersonLoraStageItem) {
 	return 0;
 }
 
-function LoraStageBlock({ stage }: { stage: PersonLoraStageItem }) {
+function LoraStageBlock({
+	onSelect,
+	stage,
+}: {
+	onSelect?: (stage: PersonLoraStageItem) => void;
+	stage: PersonLoraStageItem;
+}) {
 	const isActive = stage.state === "active";
 	const isDone = stage.state === "done";
 	const isFailed = stage.state === "failed";
 	const widthPct = getLoraStageWidth(stage);
 	const showPercent = isActive || isFailed;
+	const interactive = Boolean(onSelect);
 
-	return (
-		<div
-			className={cn(
-				"relative overflow-hidden rounded-lg border bg-background/40 transition-colors",
-				getLoraStageBlockClass(stage.state)
-			)}
-		>
+	const content = (
+		<>
 			<div
 				aria-hidden
 				className={cn(
@@ -80,7 +82,30 @@ function LoraStageBlock({ stage }: { stage: PersonLoraStageItem }) {
 					<span className="truncate opacity-80">{stage.detail}</span>
 				) : null}
 			</div>
-		</div>
+		</>
+	);
+
+	const baseClass = cn(
+		"relative overflow-hidden rounded-lg border bg-background/40 transition-colors",
+		getLoraStageBlockClass(stage.state)
+	);
+
+	if (!interactive) {
+		return <div className={baseClass}>{content}</div>;
+	}
+
+	return (
+		<button
+			aria-label={`${stage.label} — open training details`}
+			className={cn(
+				baseClass,
+				"cursor-pointer text-left outline-none hover:bg-background/70 focus-visible:ring-2 focus-visible:ring-ring"
+			)}
+			onClick={() => onSelect?.(stage)}
+			type="button"
+		>
+			{content}
+		</button>
 	);
 }
 
@@ -95,15 +120,22 @@ function LoraStageBlock({ stage }: { stage: PersonLoraStageItem }) {
  */
 export function LoraStageProgress({
 	className,
+	onStageSelect,
 	stages,
 }: {
 	className?: string;
+	/**
+	 * When provided, every stage block becomes a clickable button. The
+	 * caller is expected to open a details panel/dialog with full
+	 * training metadata (provider, GPU, podId, etc.).
+	 */
+	onStageSelect?: (stage: PersonLoraStageItem) => void;
 	stages: PersonLoraStageItem[];
 }) {
 	return (
 		<div className={cn("grid grid-cols-2 gap-2 sm:grid-cols-4", className)}>
 			{stages.map((stage) => (
-				<LoraStageBlock key={stage.id} stage={stage} />
+				<LoraStageBlock key={stage.id} onSelect={onStageSelect} stage={stage} />
 			))}
 		</div>
 	);

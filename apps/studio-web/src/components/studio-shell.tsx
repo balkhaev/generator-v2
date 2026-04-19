@@ -201,9 +201,11 @@ function StudioStatusBar({
 							<span aria-hidden="true">·</span>
 							<RunProgressIndicator
 								etaMs={headlineLiveRun.etaMs}
+								expectedDurationMs={headlineLiveRun.expectedDurationMs}
 								phase={headlineLiveRun.phase}
 								progressPct={headlineLiveRun.progressPct}
 								queuePosition={headlineLiveRun.queuePosition}
+								runStartedAt={headlineLiveRun.createdAt}
 								status={headlineLiveRun.status}
 								variant="inline"
 							/>
@@ -392,6 +394,7 @@ function buildScenarioMediaAssets(
 					mediaType: getMediaType(run.inputImageUrl),
 					meta: run.scenarioName,
 					etaMs: run.etaMs ?? null,
+					expectedDurationMs: run.expectedDurationMs ?? null,
 					lastLogLine: run.lastLogLine ?? null,
 					phase: run.phase ?? null,
 					placeholder: true,

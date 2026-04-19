@@ -36,6 +36,13 @@ export interface StudioRunRecord {
 	errorSummary?: string | null;
 	/** Грубая оценка остатка в миллисекундах. Заполняется на live-обновлениях. */
 	etaMs?: number | null;
+	/**
+	 * Ожидаемая длительность всего ран'а из workflow-каталога (мс).
+	 * Используется фронтом для локальной soft-progress интерполяции между
+	 * Kafka-апдейтами — провайдеры вроде fal-wan-2-2 не отдают промежуточные
+	 * step-логи, и без этой подсказки прогресс-бар замирал бы на floor'е.
+	 */
+	expectedDurationMs?: number | null;
 	generatorRunId?: string | null;
 	id: string;
 	inputImageUrl: string;

@@ -1,5 +1,5 @@
 import { createDb } from "@generator/db";
-import { eq } from "@generator/db/operators";
+import { and, eq, inArray, isNotNull } from "@generator/db/operators";
 import { generatorExecution } from "@generator/db/schema/generator";
 import { getDatabaseUrl } from "@generator/env/server";
 
@@ -45,6 +45,18 @@ export function createDrizzleExecutionRepository(
 				.from(generatorExecution)
 				.where(eq(generatorExecution.id, executionId));
 			return row ? mapExecution(row) : null;
+		},
+		async listActiveExecutionsForStream() {
+			const rows = await database
+				.select()
+				.from(generatorExecution)
+				.where(
+					and(
+						inArray(generatorExecution.status, ["queued", "running"]),
+						isNotNull(generatorExecution.providerJobId)
+					)
+				);
+			return rows.map(mapExecution);
 		},
 		async updateExecution(executionId, input) {
 			const [row] = await database

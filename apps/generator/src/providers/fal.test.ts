@@ -413,11 +413,69 @@ describe("fal provider", () => {
 		});
 		const client = createFalClient({ apiKey: "fal_k", fetchImpl });
 		const job = await client.getStatus("req-2", "fal-ai/flux");
-		expect(statusUrl).toContain("logs=1");
+		const capturedUrl = statusUrl as string | null;
+		if (capturedUrl === null) {
+			throw new Error("expected statusUrl to be captured");
+		}
+		expect(capturedUrl).toContain("logs=1");
 		expect(job.status).toBe("running");
 		expect(job.queuePosition).toBe(2);
 		expect(job.progressPct).toBe(25);
 		expect(job.lastLogLine).toBe("Sampling step 10/40");
+	});
+
+	it("streams SSE status events and resolves on terminal completed", async () => {
+		const events: Array<{ status: string; queue?: number | null }> = [];
+		const sseChunks = [
+			`data: ${JSON.stringify({ status: "IN_QUEUE", queue_position: 3, request_id: "req-stream" })}\n\n`,
+			`data: ${JSON.stringify({ status: "IN_QUEUE", queue_position: 1, request_id: "req-stream" })}\n\n`,
+			`data: ${JSON.stringify({ status: "IN_PROGRESS", request_id: "req-stream", logs: [{ message: "Sampling step 10/40" }] })}\n\n`,
+			`data: ${JSON.stringify({ status: "COMPLETED", request_id: "req-stream" })}\n\n`,
+		];
+		const fetchImpl = mock((url: string) => {
+			if (url.includes("/status/stream")) {
+				const encoder = new TextEncoder();
+				const stream = new ReadableStream<Uint8Array>({
+					start(controller) {
+						for (const chunk of sseChunks) {
+							controller.enqueue(encoder.encode(chunk));
+						}
+						controller.close();
+					},
+				});
+				return Promise.resolve(
+					new Response(stream, {
+						status: 200,
+						headers: { "content-type": "text/event-stream" },
+					})
+				);
+			}
+			throw new Error(`unexpected: ${url}`);
+		});
+
+		const client = createFalClient({ apiKey: "fal_k", fetchImpl });
+		if (!client.streamStatus) {
+			throw new Error("streamStatus not implemented");
+		}
+		const handle = client.streamStatus({
+			endpointId: "fal-ai/flux",
+			jobId: "req-stream",
+			onEvent: (event) => {
+				events.push({
+					queue: event.job.queuePosition ?? null,
+					status: event.job.status,
+				});
+			},
+		});
+
+		await handle.done;
+
+		expect(events).toEqual([
+			{ status: "queued", queue: 3 },
+			{ status: "queued", queue: 1 },
+			{ status: "running", queue: null },
+			{ status: "succeeded", queue: null },
+		]);
 	});
 
 	it("extractFalProgressSnapshot handles step/percent/empty", () => {

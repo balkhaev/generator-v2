@@ -344,6 +344,17 @@ export interface WorkflowDefinition<
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 
+/**
+ * Полный ожидаемый цикл (включая ~10с очереди fal + сам инференс).
+ * Цифры подобраны по живым прод-наблюдениям, а не по «офицальной» оценке
+ * провайдера: реальное время на нашем тарифе обычно в 2-3× меньше
+ * усреднённых маркетинговых заявлений. Soft-progress кепится 90%, поэтому
+ * лучше слегка занизить — тогда индикатор «дойдёт до 90%» примерно одновременно
+ * с реальным завершением, а не за минуту до него.
+ *
+ * Источник чисел для wan/ltx: трассировки prod runs (см. application_logs
+ * generator-api), берётся медиана по 5+ запускам.
+ */
 const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-flux-schnell": 8 * SECOND,
 	"fal-flux-dev": 25 * SECOND,
@@ -351,10 +362,12 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-flux2-dev-edit": 30 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
-	"fal-wan-2-2-text-to-video": 4 * MINUTE,
-	"fal-wan-2-2-image-to-video": 4 * MINUTE,
-	"fal-ltx-2-3-text-to-video": 5 * MINUTE,
-	"fal-ltx-2-3-image-to-video": 5 * MINUTE,
+	// queue ~10s + inference ~75-90s (5s 720p video)
+	"fal-wan-2-2-text-to-video": 90 * SECOND,
+	"fal-wan-2-2-image-to-video": 90 * SECOND,
+	// ltx-2-pro генерирует медленнее wan'а; уточнить по живым трейсам
+	"fal-ltx-2-3-text-to-video": 2 * MINUTE,
+	"fal-ltx-2-3-image-to-video": 2 * MINUTE,
 };
 
 export function getWorkflowExpectedDurationMs(

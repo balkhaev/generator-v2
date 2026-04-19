@@ -2,6 +2,9 @@ import type {
 	InferenceClient,
 	InferenceJob,
 	InferenceStatus,
+	InferenceStreamEvent,
+	InferenceStreamHandle,
+	InferenceStreamOptions,
 	InferenceSubmission,
 } from "./inference";
 
@@ -262,6 +265,130 @@ function extractCanonicalEndpoint(
 	return fallback;
 }
 
+/**
+ * Минимальный SSE-парсер: читает text-stream, разбивает по `\n\n`, извлекает
+ * `data:`-строки. fal'овский /status/stream шлёт по одному JSON-объекту
+ * на каждое событие, multi-line data склеивается через `\n`.
+ */
+async function consumeFalSseStream(
+	body: ReadableStream<Uint8Array>,
+	onFrame: (data: string) => Promise<void> | void,
+	signal: AbortSignal
+): Promise<void> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+
+	try {
+		while (!signal.aborted) {
+			const { value, done } = await reader.read();
+			if (done) {
+				break;
+			}
+			buffer += decoder.decode(value, { stream: true });
+
+			let separatorIndex = buffer.indexOf("\n\n");
+			while (separatorIndex !== -1) {
+				const rawFrame = buffer.slice(0, separatorIndex);
+				buffer = buffer.slice(separatorIndex + 2);
+				const data = extractSseDataLines(rawFrame);
+				if (data !== null) {
+					await onFrame(data);
+				}
+				separatorIndex = buffer.indexOf("\n\n");
+			}
+		}
+	} finally {
+		try {
+			reader.releaseLock();
+		} catch {
+			// already released
+		}
+	}
+}
+
+function extractSseDataLines(frame: string): string | null {
+	const lines = frame.split("\n");
+	const dataParts: string[] = [];
+	for (const line of lines) {
+		if (line.startsWith(":")) {
+			continue;
+		}
+		if (line.startsWith("data:")) {
+			dataParts.push(line.slice(5).trimStart());
+		} else if (line.startsWith("data ")) {
+			dataParts.push(line.slice(5).trimStart());
+		}
+	}
+	return dataParts.length === 0 ? null : dataParts.join("\n");
+}
+
+interface FalStreamPayload {
+	error?: string;
+	logs?: FalLogEntry[];
+	queue_position?: number;
+	status?: string;
+}
+
+function parseFalStreamFrame(
+	rawData: string,
+	options: InferenceStreamOptions
+): InferenceStreamEvent | null {
+	let payload: FalStreamPayload;
+	try {
+		payload = JSON.parse(rawData) as FalStreamPayload;
+	} catch {
+		return null;
+	}
+
+	if (typeof payload.status !== "string") {
+		return null;
+	}
+
+	const isError = typeof payload.error === "string" && payload.error.length > 0;
+
+	if (isError) {
+		return {
+			job: {
+				endpointId: options.endpointId,
+				errorSummary: payload.error ?? "fal stream reported error",
+				jobId: options.jobId,
+				output: null,
+				status: "failed",
+			},
+			terminal: true,
+		};
+	}
+
+	let normalized: InferenceStatus;
+	try {
+		normalized = normalizeFalStatus(payload.status);
+	} catch {
+		return null;
+	}
+
+	const { lastLogLine, progressPct } = extractFalProgressSnapshot(payload.logs);
+	const queuePosition =
+		typeof payload.queue_position === "number" ? payload.queue_position : null;
+
+	return {
+		job: {
+			endpointId: options.endpointId,
+			errorSummary: null,
+			jobId: options.jobId,
+			lastLogLine,
+			// Терминальный COMPLETED-event приходит без output'а — его надо
+			// добрать отдельным GET'ом /requests/{id}. Здесь output=null,
+			// worker сам вызовет getStatus при terminal=true.
+			output: null,
+			progressPct,
+			queuePosition,
+			status: normalized,
+		},
+		terminal: normalized === "succeeded" || normalized === "failed",
+	};
+}
+
 export type FalClient = InferenceClient;
 
 export function createFalClient(options: {
@@ -403,6 +530,61 @@ export function createFalClient(options: {
 				progressPct: 100,
 				queuePosition: null,
 				status: "succeeded",
+			};
+		},
+
+		streamStatus(options: InferenceStreamOptions): InferenceStreamHandle {
+			const controller = new AbortController();
+			if (options.signal) {
+				if (options.signal.aborted) {
+					controller.abort();
+				} else {
+					options.signal.addEventListener("abort", () => controller.abort(), {
+						once: true,
+					});
+				}
+			}
+
+			const url = `${apiBaseUrl}/${options.endpointId}/requests/${options.jobId}/status/stream?logs=1`;
+
+			const done = (async () => {
+				let response: Response;
+				try {
+					response = await fetchImpl(url, {
+						headers: {
+							...authHeaders(),
+							accept: "text/event-stream",
+						},
+						signal: controller.signal,
+					});
+				} catch (error) {
+					if (controller.signal.aborted) {
+						return;
+					}
+					throw error;
+				}
+
+				if (!(response.ok && response.body)) {
+					throw new Error(
+						`fal.ai stream request failed with status ${response.status}`
+					);
+				}
+
+				await consumeFalSseStream(
+					response.body,
+					async (frame) => {
+						const event = parseFalStreamFrame(frame, options);
+						if (event) {
+							await options.onEvent(event);
+						}
+					},
+					controller.signal
+				);
+			})();
+
+			return {
+				close: () => controller.abort(),
+				done,
 			};
 		},
 

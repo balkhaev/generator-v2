@@ -45,6 +45,11 @@ export interface StudioMediaAsset {
 	createdAt: string;
 	/** Грубая оценка остатка в миллисекундах — для overlay-индикатора прогресса. */
 	etaMs?: number | null;
+	/**
+	 * Ожидаемая длительность ран'а из workflow-каталога (мс). Нужна для
+	 * локальной soft-progress интерполяции между Kafka-апдейтами.
+	 */
+	expectedDurationMs?: number | null;
 	id: string;
 	label: string;
 	/** Последняя строка лога, отображается под прогрессом. */
@@ -136,9 +141,11 @@ function PreviewBadges({ asset }: { asset: StudioMediaAsset }) {
 				<span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-50 backdrop-blur-md">
 					<RunProgressIndicator
 						etaMs={asset.etaMs}
+						expectedDurationMs={asset.expectedDurationMs}
 						phase={asset.phase}
 						progressPct={asset.progressPct}
 						queuePosition={asset.queuePosition}
+						runStartedAt={asset.createdAt}
 						status={asset.status}
 						variant="inline"
 					/>
@@ -168,10 +175,12 @@ function PreviewProgressOverlay({ asset }: { asset: StudioMediaAsset }) {
 		<div className="pointer-events-none absolute inset-x-2 bottom-2 rounded-lg bg-background/85 px-3 py-2 backdrop-blur-lg dark:bg-background/70">
 			<RunProgressIndicator
 				etaMs={asset.etaMs}
+				expectedDurationMs={asset.expectedDurationMs}
 				lastLogLine={asset.lastLogLine}
 				phase={asset.phase}
 				progressPct={asset.progressPct}
 				queuePosition={asset.queuePosition}
+				runStartedAt={asset.createdAt}
 				status={asset.status}
 			/>
 		</div>

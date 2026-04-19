@@ -113,9 +113,11 @@ export default function MediaStrip({
 									>
 										<RunProgressIndicator
 											etaMs={asset.etaMs}
+											expectedDurationMs={asset.expectedDurationMs}
 											phase={asset.phase}
 											progressPct={asset.progressPct}
 											queuePosition={asset.queuePosition}
+											runStartedAt={asset.createdAt}
 											size={36}
 											status={asset.status}
 											variant="circle"

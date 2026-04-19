@@ -15,7 +15,10 @@ import type {
 } from "@generator/contracts/studio";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import { normalizeBaseUrl } from "@generator/http/shared";
-import { getWorkflowDefinition } from "@generator/workflows";
+import {
+	getWorkflowDefinition,
+	getWorkflowExpectedDurationMs,
+} from "@generator/workflows";
 import { z } from "zod";
 
 import { RunUpdatesEmitter } from "@/domain/run-updates-emitter";
@@ -276,6 +279,8 @@ function toStudioRunRecord(entity: StudioRunEntity): StudioRunRecord {
 		createdAt: entity.createdAt.toISOString(),
 		errorSummary: entity.errorSummary,
 		etaMs: entity.etaMs ?? null,
+		expectedDurationMs:
+			getWorkflowExpectedDurationMs(entity.workflowKey) ?? null,
 		generatorRunId: entity.generatorRunId,
 		id: entity.id,
 		inputImageUrl: entity.inputImageUrl,

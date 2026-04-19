@@ -62,6 +62,11 @@ export interface ScenarioRunRecord {
 	errorSummary?: string | null;
 	/** Грубая оценка остатка в миллисекундах (только в live-стриме). */
 	etaMs?: number | null;
+	/**
+	 * Ожидаемая длительность ран'а из workflow-каталога (мс). Используется
+	 * для локальной soft-progress интерполяции между Kafka-апдейтами.
+	 */
+	expectedDurationMs?: number | null;
 	/** ID execution в generator-api (если ран уже привязан). */
 	generatorRunId?: string | null;
 	id: string;
@@ -240,6 +245,7 @@ function normalizeRunRecord(
 		createdAt: record.createdAt ?? new Date().toISOString(),
 		errorSummary: record.errorSummary ?? null,
 		etaMs: record.etaMs ?? null,
+		expectedDurationMs: record.expectedDurationMs ?? null,
 		generatorRunId: record.generatorRunId ?? null,
 		id: record.id,
 		inputImageUrl: record.inputImageUrl,

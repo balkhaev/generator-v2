@@ -13,7 +13,11 @@ import {
 } from "@generator/workflows";
 import { z } from "zod";
 
-import type { InferenceClient, InferenceJob } from "@/providers/inference";
+import type {
+	InferenceClient,
+	InferenceJob,
+	InferenceStreamHandle,
+} from "@/providers/inference";
 import type { StorageAdapter } from "@/providers/storage";
 import type { GeneratorExecutionQueue } from "@/queue/executions";
 import { BadRequestError } from "@/routes/utils";
@@ -46,10 +50,15 @@ interface ExecutionContext {
 
 const STUCK_QUEUE_RESUBMIT_AFTER_MS = 2 * 60_000;
 const STUCK_QUEUE_FAIL_AFTER_MS = 15 * 60_000;
-const DEFAULT_RUNNING_SYNC_DELAY_MS = 10_000;
-const DEFAULT_QUEUED_SYNC_DELAY_MS = 10_000;
-const MEDIUM_QUEUED_SYNC_DELAY_MS = 20_000;
-const LONG_QUEUED_SYNC_DELAY_MS = 30_000;
+// Live-апдейты приходят через SSE-стрим (см. subscribeToExecutionStream).
+// Polling здесь — safety net на случай разрыва стрима, поэтому интервалы
+// растянуты: для running ждём 30с, для queued — 20-60с в зависимости от
+// возраста. Реальный финальный update обычно прилетает раньше — через
+// `terminal` event стрима, который сам триггерит sync с delayMs:0.
+const DEFAULT_RUNNING_SYNC_DELAY_MS = 30_000;
+const DEFAULT_QUEUED_SYNC_DELAY_MS = 20_000;
+const MEDIUM_QUEUED_SYNC_DELAY_MS = 30_000;
+const LONG_QUEUED_SYNC_DELAY_MS = 60_000;
 
 function getNextSyncDelay(
 	status: GeneratorExecutionRecord["status"],
@@ -220,6 +229,13 @@ export interface ExecutionRepository {
 		input: Omit<ExecutionEntity, "createdAt" | "updatedAt">
 	): Promise<ExecutionEntity>;
 	getExecutionById(executionId: string): Promise<ExecutionEntity | null>;
+	/**
+	 * Возвращает все queued/running executions у которых уже есть providerJobId.
+	 * Нужно при старте worker'а чтобы переподписаться на SSE для активных
+	 * запросов после рестарта. Опционально — может не быть реализован
+	 * во всех реализациях (тесты могут вернуть пустой массив).
+	 */
+	listActiveExecutionsForStream?: () => Promise<ExecutionEntity[]>;
 	updateExecution(
 		executionId: string,
 		input: Partial<Omit<ExecutionEntity, "createdAt" | "updatedAt" | "id">>
@@ -391,10 +407,13 @@ export class ExecutionService {
 			errorSummary: null,
 			id: crypto.randomUUID(),
 			inputImageUrl: normalizedInputImageUrl,
+			lastLogLine: null,
 			params: normalizedParams,
+			progressPct: null,
 			providerEndpointId: null,
 			providerJobId: null,
 			prompt: parsed.prompt,
+			queuePosition: null,
 			status: "queued",
 			workflowKey: parsed.workflowKey,
 		});
@@ -570,6 +589,132 @@ export class ExecutionService {
 		}
 	}
 
+	/**
+	 * Live SSE-подписка на job-стрим провайдера. Открывается в фоне после
+	 * processExecutionSubmitJob. Каждое event'а:
+	 *  - не-terminal (queued/running) → light update progress полей в БД
+	 *    + dispatch callback. Не дёргаем `getStatus` — у нас уже есть свежий
+	 *    snapshot из стрима.
+	 *  - terminal (succeeded/failed) → enqueue `sync` job без задержки. Sync
+	 *    добёрет финальный output (`GET /requests/{id}`), персистит артефакты
+	 *    через стандартный путь.
+	 *
+	 * Это убирает 2-3-секундный polling lag для queue_position-апдейтов и
+	 * мгновенно сообщает о завершении (вместо ожидания следующего sync-job'а).
+	 *
+	 * Polling остаётся как safety net — если SSE упадёт по сети, sync-job
+	 * (с увеличенным интервалом) рано или поздно подтянет состояние.
+	 */
+	subscribeToExecutionStream(input: {
+		executionId: string;
+		providerEndpointId: string;
+		providerJobId: string;
+	}): InferenceStreamHandle | null {
+		if (!this.inferenceClient.streamStatus) {
+			return null;
+		}
+
+		const handle = this.inferenceClient.streamStatus({
+			endpointId: input.providerEndpointId,
+			jobId: input.providerJobId,
+			onEvent: async (event) => {
+				try {
+					await this.handleStreamEvent(input.executionId, event.job);
+					if (event.terminal) {
+						await this.queue.enqueueSync({
+							delayMs: 0,
+							executionId: input.executionId,
+						});
+					}
+				} catch (error) {
+					this.logger.error("generator.execution.stream-event.error", {
+						error: error instanceof Error ? error.message : "unknown",
+						executionId: input.executionId,
+						providerJobId: input.providerJobId,
+					});
+				}
+			},
+		});
+
+		handle.done.catch((error) => {
+			this.logger.error("generator.execution.stream.error", {
+				error: error instanceof Error ? error.message : "unknown",
+				executionId: input.executionId,
+				providerJobId: input.providerJobId,
+			});
+		});
+
+		this.logger.info("generator.execution.stream.subscribed", {
+			executionId: input.executionId,
+			providerEndpointId: input.providerEndpointId,
+			providerJobId: input.providerJobId,
+		});
+
+		return handle;
+	}
+
+	/**
+	 * Применяет live-снимок из SSE к текущему execution. Только light-update
+	 * прогресс/queue/log полей — для terminal-events запускается отдельный
+	 * sync-job, который добёрет output.
+	 */
+	private async handleStreamEvent(executionId: string, job: InferenceJob) {
+		const execution = await this.repository.getExecutionById(executionId);
+		if (
+			!execution ||
+			execution.status === "succeeded" ||
+			execution.status === "failed"
+		) {
+			return;
+		}
+
+		const progressUpdate = this.composeProgressUpdate(execution, job);
+		const statusChanged =
+			job.status !== "succeeded" &&
+			job.status !== "failed" &&
+			execution.status !== job.status;
+		if (!(progressUpdate.changed || statusChanged)) {
+			return;
+		}
+
+		const updated = await this.repository.updateExecution(execution.id, {
+			...progressUpdate.patch,
+			...(statusChanged ? { status: job.status } : {}),
+		});
+		if (updated) {
+			await this.dispatchExecutionCallback(updated);
+		}
+	}
+
+	/**
+	 * Восстанавливает SSE-подписки на старте процесса для всех executions, у
+	 * которых уже есть providerJobId и статус queued/running. Без этого после
+	 * рестарта worker'а live-апдейты не приходили бы до следующего polling.
+	 */
+	async resumeActiveExecutionStreams(): Promise<number> {
+		if (!this.repository.listActiveExecutionsForStream) {
+			return 0;
+		}
+		if (!this.inferenceClient.streamStatus) {
+			return 0;
+		}
+
+		const active = await this.repository.listActiveExecutionsForStream();
+		let started = 0;
+		for (const execution of active) {
+			if (!(execution.providerJobId && execution.providerEndpointId)) {
+				continue;
+			}
+			this.subscribeToExecutionStream({
+				executionId: execution.id,
+				providerEndpointId: execution.providerEndpointId,
+				providerJobId: execution.providerJobId,
+			});
+			started += 1;
+		}
+		return started;
+	}
+
 	async processExecutionSubmitJob(input: { executionId: string }) {
 		const execution = await this.repository.getExecutionById(input.executionId);
 		if (
@@ -648,6 +793,16 @@ export class ExecutionService {
 		}
 		await this.dispatchExecutionCallback(updatedExecution);
 
+		// Поднимаем live SSE-стрим — live-апдейты приходят моментально, без
+		// 2-3 секундного polling lag'а.
+		this.subscribeToExecutionStream({
+			executionId: execution.id,
+			providerEndpointId: submission.endpointId,
+			providerJobId: submission.jobId,
+		});
+
+		// Polling остаётся как safety net на случай разрыва стрима. Интервал
+		// здесь сознательно растянут — стрим должен покрывать «горячий путь».
 		await this.queue.enqueueSync({
 			delayMs: getNextSyncDelay(submission.status, 0),
 			executionId: execution.id,
@@ -799,6 +954,11 @@ export class ExecutionService {
 			if (resubmittedExecution) {
 				await this.dispatchExecutionCallback(resubmittedExecution);
 			}
+			this.subscribeToExecutionStream({
+				executionId: execution.id,
+				providerEndpointId: resubmission.endpointId,
+				providerJobId: resubmission.jobId,
+			});
 			await this.queue.enqueueSync({
 				delayMs: getNextSyncDelay(resubmission.status, 0),
 				executionId: execution.id,

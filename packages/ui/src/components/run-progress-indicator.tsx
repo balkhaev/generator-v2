@@ -3,6 +3,7 @@
 import type { ExecutionPhase } from "@generator/contracts/generator";
 import { cn } from "@generator/ui/lib/utils";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export type RunProgressStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -14,6 +15,14 @@ export interface RunProgressIndicatorProps {
 	errorSummary?: string | null;
 	/** Грубая оценка остатка в миллисекундах — рендерится как ETA. */
 	etaMs?: number | null;
+	/**
+	 * Ожидаемая длительность всего ран'а (мс). При наличии этого пропа и
+	 * `runStartedAt` индикатор начинает локально тикать soft-progress
+	 * по формуле `(1 − exp(−elapsed / expected)) × 90%`, не дожидаясь
+	 * Kafka/SSE апдейтов. Нужно для моделей, которые не отдают
+	 * пошаговые `step X/Y`-логи (например, fal-wan-2-2).
+	 */
+	expectedDurationMs?: number | null;
 	/** Скрыть процент. Полезно, когда вокруг и так много текста. */
 	hidePercent?: boolean;
 	/** Скрыть подпись фазы под прогрессом (для inline-варианта). */
@@ -26,12 +35,77 @@ export interface RunProgressIndicatorProps {
 	progressPct?: number | null;
 	/** Позиция в очереди провайдера (только если phase = in_queue). */
 	queuePosition?: number | null;
+	/**
+	 * Время старта ран'а (ISO-строка из `record.createdAt` либо `Date`).
+	 * Точка отсчёта soft-progress интерполяции.
+	 */
+	runStartedAt?: Date | string | null;
 	/** Размер circle-варианта в px. По умолчанию 40. Игнорируется для bar/inline. */
 	size?: number;
 	/** Текущий статус run'а — определяет цвет и иконку. */
 	status: RunProgressStatus;
 	/** Геометрия: горизонтальный bar (default), круг или inline-чип. */
 	variant?: RunProgressVariant;
+}
+
+const SOFT_PROGRESS_CAP_PCT = 90;
+const SOFT_PROGRESS_TICK_MS = 500;
+
+/**
+ * Та же формула, что у backend'а в `derivePhaseAndProgress` — асимптотический
+ * подход к 90% по экспоненте. Так клиент и сервер сходятся к одному значению,
+ * без скачков, когда наконец-то прилетает Kafka-апдейт.
+ */
+function computeSoftProgressPct(elapsedMs: number, expectedMs: number): number {
+	if (expectedMs <= 0 || elapsedMs <= 0) {
+		return 0;
+	}
+	const fraction = 1 - Math.exp(-elapsedMs / expectedMs);
+	return Math.round(fraction * SOFT_PROGRESS_CAP_PCT);
+}
+
+function parseRunStartedAt(
+	value: Date | string | null | undefined
+): number | null {
+	if (!value) {
+		return null;
+	}
+	const ms = value instanceof Date ? value.getTime() : Date.parse(value);
+	return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Локально пересчитывает soft-progress каждые ~500ms пока ран в `running`.
+ * Возвращает `null`, если интерполировать нечем (нет startedAt/expected или
+ * статус терминальный).
+ */
+function useSoftProgressPct(input: {
+	expectedDurationMs: number | null | undefined;
+	runStartedAt: Date | string | null | undefined;
+	status: RunProgressStatus;
+}): number | null {
+	const startedAtMs = parseRunStartedAt(input.runStartedAt);
+	const expectedMs = input.expectedDurationMs ?? null;
+	const isActive = input.status === "running" || input.status === "queued";
+	const canTick = isActive && startedAtMs !== null && (expectedMs ?? 0) > 0;
+
+	const [now, setNow] = useState<number>(() => Date.now());
+
+	useEffect(() => {
+		if (!canTick) {
+			return;
+		}
+		setNow(Date.now());
+		const handle = setInterval(() => {
+			setNow(Date.now());
+		}, SOFT_PROGRESS_TICK_MS);
+		return () => clearInterval(handle);
+	}, [canTick]);
+
+	if (!canTick || startedAtMs === null || expectedMs === null) {
+		return null;
+	}
+	return computeSoftProgressPct(now - startedAtMs, expectedMs);
 }
 
 const PHASE_LABEL_RU: Record<ExecutionPhase, string> = {
@@ -372,21 +446,37 @@ export function RunProgressIndicator({
 	className,
 	errorSummary,
 	etaMs,
+	expectedDurationMs,
 	hidePercent,
 	hidePhaseLabel,
 	lastLogLine,
 	phase,
 	progressPct,
 	queuePosition,
+	runStartedAt,
 	size = 40,
 	status,
 	variant = "bar",
 }: RunProgressIndicatorProps) {
 	const tone = getStatusTone(status);
+	const softProgressPct = useSoftProgressPct({
+		expectedDurationMs,
+		runStartedAt,
+		status,
+	});
+	const serverProgressPct =
+		typeof progressPct === "number" ? progressPct : null;
+	// Серверное значение задаёт нижнюю границу (включая floor 8% / 2%), soft —
+	// плавную интерполяцию между апдейтами. Берём max, чтобы прогресс никогда
+	// не двигался назад. Для terminal-статусов soft игнорируем (хук вернёт null).
+	const effectiveProgressPct =
+		serverProgressPct === null && softProgressPct === null
+			? null
+			: Math.max(serverProgressPct ?? 0, softProgressPct ?? 0);
 	const phaseLabel = buildPhaseLabel(phase, queuePosition, etaMs, status);
-	const hasProgress = typeof progressPct === "number";
+	const hasProgress = typeof effectiveProgressPct === "number";
 	const clamped = hasProgress
-		? Math.max(0, Math.min(100, progressPct as number))
+		? Math.max(0, Math.min(100, effectiveProgressPct as number))
 		: 0;
 
 	if (variant === "circle") {

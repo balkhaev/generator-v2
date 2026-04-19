@@ -282,10 +282,12 @@ function RunLiveProgress({ run }: { run: ScenarioRunRecord }) {
 	return (
 		<RunProgressIndicator
 			etaMs={run.etaMs}
+			expectedDurationMs={run.expectedDurationMs}
 			lastLogLine={run.lastLogLine}
 			phase={run.phase}
 			progressPct={run.progressPct}
 			queuePosition={run.queuePosition}
+			runStartedAt={run.createdAt}
 			status={run.status}
 		/>
 	);

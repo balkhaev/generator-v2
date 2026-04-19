@@ -59,6 +59,21 @@ const worker = createGeneratorExecutionWorker({
 	redisUrl,
 });
 
+// После старта переподключаем SSE-стримы для активных executions, чтобы не
+// ждать polling'а после каждого рестарта worker'a (deploy/crash).
+service
+	.resumeActiveExecutionStreams()
+	.then((count) => {
+		if (count > 0) {
+			console.info("generator.worker.streams-resumed", { count });
+		}
+	})
+	.catch((error) => {
+		console.error("generator.worker.streams-resume.failed", {
+			message: error instanceof Error ? error.message : "unknown",
+		});
+	});
+
 await new Promise<void>((resolve) => {
 	let isShuttingDown = false;
 

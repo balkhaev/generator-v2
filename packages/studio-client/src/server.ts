@@ -34,7 +34,9 @@ export function getStudioRunDebugBundleForRequest(
 	return requestJsonWithForwardedHeaders<StudioRunDebugBundle>(
 		`${normalizedBaseUrl}/api/runs/${encodeURIComponent(runId)}/debug`,
 		requestHeaders,
-		{ cache: "no-store" }
+		// `cache` есть в DOM-варианте RequestInit, но не в @types/node. Нам важно,
+		// чтобы Next.js не кэшировал запрос debug-bundle'а — поэтому каст безопасен.
+		{ cache: "no-store" } as RequestInit
 	);
 }
 

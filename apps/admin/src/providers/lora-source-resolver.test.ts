@@ -134,6 +134,82 @@ describe("createLoraSourceResolver", () => {
 		expect(low?.downloadUrl).toBe("https://civitai.com/api/download/101");
 	});
 
+	it("prefers dual-expert high version when no modelVersionId is specified", async () => {
+		// Mirrors a real Civitai model that mixes LTX and Wan 2.2 versions
+		// (e.g. /models/1343431). Without an explicit modelVersionId the
+		// resolver should still surface the Wan 2.2 high+low pair so the
+		// admin form can offer pair-import on the very first preview.
+		const resolver = createLoraSourceResolver({
+			fetchImpl() {
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							id: 1_343_431,
+							name: "Bouncing Boobs - LTX / Wan",
+							type: "LORA",
+							modelVersions: [
+								{
+									id: 2_864_091,
+									name: "LTX 2.3 V2.5",
+									baseModel: "LTXV 2.3",
+									files: [
+										{
+											downloadUrl: "https://civitai.com/api/download/ltx",
+											name: "bounceV2_5_LTX23_I2V.comfy.safetensors",
+											primary: true,
+											sizeKb: 1024,
+										},
+									],
+								},
+								{
+									id: 2_191_217,
+									name: "WAN 2_2 Bounce High",
+									baseModel: "Wan Video 2.2 I2V-A14B",
+									files: [
+										{
+											downloadUrl: "https://civitai.com/api/download/high",
+											name: "BounceHighWan2_2.safetensors",
+											primary: true,
+											sizeKb: 4096,
+										},
+									],
+								},
+								{
+									id: 2_191_270,
+									name: "WAN 2_2 Bounce Low",
+									baseModel: "Wan Video 2.2 I2V-A14B",
+									files: [
+										{
+											downloadUrl: "https://civitai.com/api/download/low",
+											name: "BounceLowWan2_2.safetensors",
+											primary: true,
+											sizeKb: 4096,
+										},
+									],
+								},
+							],
+						}),
+						{ status: 200 }
+					)
+				);
+			},
+		});
+
+		const source = await resolver.resolve({
+			baseModel: "other",
+			sourceUrl: "https://civitai.red/models/1343431/bouncing-boobs-ltx-wan",
+		});
+
+		expect(source.baseModel).toBe("wan-2-2");
+		expect(source.variant).toBe("high");
+		expect(source.sourceVersionId).toBe(2_191_217);
+		expect(source.pairedFiles).toHaveLength(2);
+		const high = source.pairedFiles?.find((file) => file.variant === "high");
+		const low = source.pairedFiles?.find((file) => file.variant === "low");
+		expect(high?.downloadUrl).toBe("https://civitai.com/api/download/high");
+		expect(low?.downloadUrl).toBe("https://civitai.com/api/download/low");
+	});
+
 	it("detects high/low pair from sibling files of the same Wan version", async () => {
 		const resolver = createLoraSourceResolver({
 			fetchImpl() {

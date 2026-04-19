@@ -419,15 +419,17 @@ export default function LoraForm() {
 		const variant = previewData?.variants?.find(
 			(item) => item.versionId === versionId
 		);
-		if (!variant) {
-			return;
-		}
-		if (variant.baseModel) {
+		if (variant?.baseModel) {
 			setBaseModel(variant.baseModel);
 		}
-		if (variant.description) {
+		if (variant?.description) {
 			setDescription((current) => current || variant.description || "");
 		}
+		// Re-fetch preview so the backend can re-run high/low pair detection
+		// against the newly selected primary version. Without this, switching
+		// to e.g. "WAN 2.2 High" on a model whose default primary is LTX
+		// would keep `pairedFiles` empty and hide the pair-import badge.
+		loadPreview({ silent: true, versionId });
 	}
 
 	return (

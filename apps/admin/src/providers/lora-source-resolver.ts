@@ -351,15 +351,44 @@ function selectCivitaiVersion(
 		throw new Error(`Civitai model "${model.name}" has no versions.`);
 	}
 
-	const version = modelVersionId
-		? versions.find((item) => item.id === modelVersionId)
-		: versions[0];
-	if (!version) {
-		throw new Error(
-			`Civitai model "${model.name}" does not contain version ${modelVersionId}.`
-		);
+	if (modelVersionId) {
+		const version = versions.find((item) => item.id === modelVersionId);
+		if (!version) {
+			throw new Error(
+				`Civitai model "${model.name}" does not contain version ${modelVersionId}.`
+			);
+		}
+		return version;
 	}
-	return version;
+
+	// When no specific version is requested, prefer the high half of a
+	// dual-expert (Wan 2.2) pair if the model exposes one. Otherwise multi-base
+	// models like "Bouncing Boobs - LTX / Wan" would default to their newest
+	// version (e.g. LTX) and the pair-import flow would never trigger from the
+	// auto-preview of a bare /models/{id} URL.
+	const dualExpertHigh = pickDualExpertHighVersion(versions);
+	return dualExpertHigh ?? (versions[0] as CivitaiModelVersion);
+}
+
+function pickDualExpertHighVersion(
+	versions: CivitaiModelVersion[]
+): CivitaiModelVersion | undefined {
+	const dualExpertVersions = versions.filter((version) => {
+		const baseModel = mapCivitaiBaseModel(version.baseModel);
+		return baseModel ? isDualExpertBaseModel(baseModel) : false;
+	});
+	if (dualExpertVersions.length < 2) {
+		return;
+	}
+	const high = dualExpertVersions.find(
+		(version) =>
+			detectVariantForVersion(version, selectCivitaiFile(version)) === "high"
+	);
+	const low = dualExpertVersions.find(
+		(version) =>
+			detectVariantForVersion(version, selectCivitaiFile(version)) === "low"
+	);
+	return high && low ? high : undefined;
 }
 
 function selectCivitaiFile(version: CivitaiModelVersion): CivitaiFile | null {

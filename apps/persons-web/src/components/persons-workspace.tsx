@@ -2500,7 +2500,6 @@ export default function PersonsWorkspace({
 					/>
 				) : (
 					<div className="flex h-full min-h-0 flex-col gap-3">
-						<AdorelyImportPanel onImported={refreshPersons} />
 						<div className="min-h-0 flex-1">
 							<CreatePersonForm
 								enhance={enhanceWithGrok}
@@ -2511,6 +2510,7 @@ export default function PersonsWorkspace({
 								onSubmit={handleCreatePerson}
 							/>
 						</div>
+						<AdorelyImportPanel onImported={refreshPersons} />
 					</div>
 				)
 			}

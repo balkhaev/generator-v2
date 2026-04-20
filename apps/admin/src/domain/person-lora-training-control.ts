@@ -5,6 +5,7 @@ import type { PersonLoraTrainingQueue } from "@/queue/person-lora-training";
 export const enqueuePersonLoraTrainingSchema = z.object({
 	debugCorrelationId: z.string().trim().min(1).optional(),
 	description: z.string().trim().optional(),
+	mode: z.enum(["prep-only", "auto-train"]).optional(),
 	outputName: z.string().trim().min(1).optional(),
 	personId: z.string().trim().min(1),
 	personName: z.string().trim().min(1),
@@ -12,6 +13,16 @@ export const enqueuePersonLoraTrainingSchema = z.object({
 	referencePhotoUrl: z.url(),
 	referencePrompt: z.string().trim().min(1).optional(),
 	reuseDatasetUrl: z.url().optional(),
+	seedReferenceImages: z
+		.array(
+			z.object({
+				caption: z.string(),
+				s3Key: z.string().nullable().optional(),
+				url: z.url(),
+				variantId: z.string().trim().min(1),
+			})
+		)
+		.optional(),
 	trainingRunId: z.string().trim().min(1),
 	triggerWord: z.string().trim().min(1).optional(),
 });

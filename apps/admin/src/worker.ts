@@ -3,6 +3,8 @@ import {
 	createKafkaEventConsumer,
 	createKafkaEventPublisher,
 	eventTopics,
+	type PersonDatasetVariantRefillRequest,
+	type PersonLoraTrainingConfirmation,
 } from "@generator/events";
 import { createRedisIdempotencyLock, withIdempotency } from "@generator/queue";
 import { resolveS3StorageConfig } from "@generator/storage";
@@ -23,7 +25,10 @@ import { RunpodAiToolkitLoraTrainingRunner } from "@/providers/runpod-ai-toolkit
 import { RunpodPodClient } from "@/providers/runpod-pod-client";
 import { RunpodPodLoraTrainingRunner } from "@/providers/runpod-pod-lora-training";
 import type { PersonLoraTrainingJobData } from "@/queue/person-lora-training";
-import { createPersonLoraTrainingWorker } from "@/queue/person-lora-training";
+import {
+	createPersonLoraTrainingQueueClient,
+	createPersonLoraTrainingWorker,
+} from "@/queue/person-lora-training";
 import { recoverInterruptedTrainings } from "@/recovery/training-recovery";
 
 const TRAILING_FILENAME_PATTERN = /[^/]*$/u;
@@ -227,6 +232,19 @@ const recoveryLock = createRedisIdempotencyLock({
 });
 
 /**
+ * Idempotency lock prefix for refill jobs. Each refill request carries a
+ * unique `requestNonce` (from persons-service) so duplicate Kafka deliveries
+ * for the same rejected slot don't double-spend fal.ai credits.
+ */
+const REFILL_LOCK_PREFIX = "admin:person-dataset-refill";
+const REFILL_LOCK_TTL_SECONDS = 30 * 60;
+const refillLock = createRedisIdempotencyLock({
+	keyPrefix: REFILL_LOCK_PREFIX,
+	redisUrl,
+	ttlSeconds: REFILL_LOCK_TTL_SECONDS,
+});
+
+/**
  * Tracks training runs currently being processed by this worker so we can
  * release their idempotency locks during graceful shutdown. Without this, a
  * mid-poll SIGTERM (e.g. deploy) would leave the lock held for 24h, blocking
@@ -289,29 +307,102 @@ const runTrainingOnce = async (
 	}
 };
 
+const confirmTrainingOnce = async (
+	source: "bullmq",
+	data: PersonLoraTrainingConfirmation
+) => {
+	if (!runpodPodRunner) {
+		console.warn(
+			"admin.worker: training confirmation ignored, runpod-pod runner is not configured",
+			{
+				personId: data.personId,
+				trainingRunId: data.trainingRunId,
+			}
+		);
+		return;
+	}
+
+	const outcome = await withIdempotency(
+		trainingLock,
+		buildConfirmLockKey(data.trainingRunId),
+		async () => {
+			activeTrainingRunIds.add(data.trainingRunId);
+			console.info("admin.worker: starting training confirmation", {
+				personId: data.personId,
+				source,
+				trainingRunId: data.trainingRunId,
+			});
+			try {
+				await runpodPodRunner.confirmAndTrain(data);
+			} finally {
+				activeTrainingRunIds.delete(data.trainingRunId);
+			}
+		}
+	);
+
+	if (!outcome.acquired) {
+		console.info("admin.worker: skipped duplicate training confirmation", {
+			personId: data.personId,
+			source,
+			trainingRunId: data.trainingRunId,
+		});
+	}
+};
+
+const refillDatasetVariantOnce = async (
+	source: "bullmq",
+	data: PersonDatasetVariantRefillRequest
+) => {
+	if (!runpodPodRunner) {
+		console.warn(
+			"admin.worker: refill request ignored, runpod-pod runner is not configured",
+			{
+				personId: data.personId,
+				variantId: data.variantId,
+			}
+		);
+		return;
+	}
+
+	const lockKey = `${data.trainingRunId}:${data.requestNonce}`;
+	const outcome = await withIdempotency(refillLock, lockKey, () =>
+		runpodPodRunner.refillVariant(data)
+	);
+	if (!outcome.acquired) {
+		console.info("admin.worker: skipped duplicate refill request", {
+			personId: data.personId,
+			source,
+			trainingRunId: data.trainingRunId,
+			variantId: data.variantId,
+		});
+	}
+};
+
 console.info(
 	`admin.worker: ready (default training provider: ${defaultTrainingProvider}, runpod ${runpodRunner ? `enabled (mode=${runpodMode})` : "disabled"}, dataset upload: S3)`
 );
 
+const trainingQueue = createPersonLoraTrainingQueueClient(redisUrl);
 const queueWorker = createPersonLoraTrainingWorker({
 	handler: async (job) => {
-		await runTrainingOnce("bullmq", job.data);
+		switch (job.name) {
+			case "confirm":
+				await confirmTrainingOnce("bullmq", job.data);
+				return;
+			case "refill":
+				await refillDatasetVariantOnce("bullmq", job.data);
+				return;
+			case "run":
+				await runTrainingOnce("bullmq", job.data);
+				return;
+			default: {
+				const exhaustive: never = job;
+				throw new Error(`Unsupported person lora training job: ${exhaustive}`);
+			}
+		}
 	},
 	logger: console,
 	redisUrl,
-});
-
-/**
- * Idempotency lock prefix for refill jobs. Each refill request carries a
- * unique `requestNonce` (from persons-service) so duplicate Kafka deliveries
- * for the same rejected slot don't double-spend fal.ai credits.
- */
-const REFILL_LOCK_PREFIX = "admin:person-dataset-refill";
-const REFILL_LOCK_TTL_SECONDS = 30 * 60;
-const refillLock = createRedisIdempotencyLock({
-	keyPrefix: REFILL_LOCK_PREFIX,
-	redisUrl,
-	ttlSeconds: REFILL_LOCK_TTL_SECONDS,
 });
 
 const eventConsumer = kafkaConfig
@@ -330,17 +421,9 @@ const eventConsumer = kafkaConfig
 						);
 						return;
 					}
-					const lockKey = `${event.data.trainingRunId}:${event.data.requestNonce}`;
-					const outcome = await withIdempotency(refillLock, lockKey, () =>
-						runpodPodRunner.refillVariant(event.data)
-					);
-					if (!outcome.acquired) {
-						console.info("admin.worker: skipped duplicate refill request", {
-							personId: event.data.personId,
-							trainingRunId: event.data.trainingRunId,
-							variantId: event.data.variantId,
-						});
-					}
+					await trainingQueue.enqueueRefill(event.data, {
+						jobId: `kafka-refill-${event.id}`,
+					});
 				},
 				onPersonLoraTrainingConfirmed: async (event) => {
 					if (!runpodPodRunner) {
@@ -353,30 +436,14 @@ const eventConsumer = kafkaConfig
 						);
 						return;
 					}
-					const outcome = await withIdempotency(
-						trainingLock,
-						buildConfirmLockKey(event.data.trainingRunId),
-						async () => {
-							activeTrainingRunIds.add(event.data.trainingRunId);
-							try {
-								await runpodPodRunner.confirmAndTrain(event.data);
-							} finally {
-								activeTrainingRunIds.delete(event.data.trainingRunId);
-							}
-						}
-					);
-					if (!outcome.acquired) {
-						console.info(
-							"admin.worker: skipped duplicate training confirmation",
-							{
-								personId: event.data.personId,
-								trainingRunId: event.data.trainingRunId,
-							}
-						);
-					}
+					await trainingQueue.enqueueConfirmation(event.data, {
+						jobId: `kafka-confirm-${event.id}`,
+					});
 				},
 				onPersonLoraTrainingRequested: async (event) => {
-					await runTrainingOnce("kafka", event.data);
+					await trainingQueue.enqueue(event.data, {
+						jobId: `kafka-run-${event.id}`,
+					});
 				},
 			},
 			logger: console,
@@ -418,8 +485,9 @@ await new Promise<void>((resolve) => {
 		}
 
 		isShuttingDown = true;
-		await queueWorker.close();
 		await eventConsumer?.close();
+		await queueWorker.close();
+		await trainingQueue.close();
 		await eventPublisher?.close();
 		const releaseSnapshot = Array.from(activeTrainingRunIds);
 		await Promise.all(

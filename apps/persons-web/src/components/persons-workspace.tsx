@@ -533,46 +533,50 @@ function PersonCard({
 
 	return (
 		<Link
-			className="group relative block aspect-[9/16] overflow-hidden rounded-2xl bg-black ring-1 ring-border/30 transition-all hover:shadow-black/5 hover:shadow-xl hover:ring-border/60 dark:hover:shadow-black/20"
+			className="group block overflow-hidden rounded-2xl bg-black ring-1 ring-border/30 transition-all hover:shadow-black/5 hover:shadow-xl hover:ring-border/60 dark:hover:shadow-black/20"
 			href={getHref(person.slug)}
 		>
-			<Image
-				alt={person.name}
-				className="object-contain"
-				fill
-				sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
-				src={person.referencePhotoUrl}
-			/>
-			<div className="absolute inset-x-0 bottom-0 grid gap-1.5 bg-gradient-to-t from-black/75 via-black/35 to-transparent px-3 pt-12 pb-3">
-				<div className="min-w-0 text-white">
-					<h3 className="truncate font-semibold text-sm tracking-tight drop-shadow">
-						{person.name}
-					</h3>
-					{person.description ? (
-						<p className="mt-0.5 line-clamp-1 text-white/65 text-xs">
-							{person.description}
-						</p>
-					) : null}
-				</div>
-				<div className="flex min-w-0 items-center justify-between gap-2">
-					<span className="min-w-0 truncate text-white/60 text-xs tabular-nums">
-						{person.generations.length} generation
-						{person.generations.length === 1 ? "" : "s"}
-					</span>
-					{showTrainingBadge && status ? (
-						<span
-							className={cn(
-								"inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium text-[11px]",
-								trainingStatusTone[status]
-							)}
-						>
-							{isTraining ? <Loader2 className="size-3 animate-spin" /> : null}
-							{status}
-							{isTraining ? (
-								<span className="tabular-nums">{progressPct}%</span>
-							) : null}
+			<div className="relative w-full" style={{ aspectRatio: "9 / 16" }}>
+				<Image
+					alt={person.name}
+					className="object-contain"
+					fill
+					sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
+					src={person.referencePhotoUrl}
+				/>
+				<div className="absolute inset-x-0 bottom-0 grid gap-1.5 bg-gradient-to-t from-black/75 via-black/35 to-transparent px-3 pt-12 pb-3">
+					<div className="min-w-0 text-white">
+						<h3 className="truncate font-semibold text-sm tracking-tight drop-shadow">
+							{person.name}
+						</h3>
+						{person.description ? (
+							<p className="mt-0.5 line-clamp-1 text-white/65 text-xs">
+								{person.description}
+							</p>
+						) : null}
+					</div>
+					<div className="flex min-w-0 items-center justify-between gap-2">
+						<span className="min-w-0 truncate text-white/60 text-xs tabular-nums">
+							{person.generations.length} generation
+							{person.generations.length === 1 ? "" : "s"}
 						</span>
-					) : null}
+						{showTrainingBadge && status ? (
+							<span
+								className={cn(
+									"inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium text-[11px]",
+									trainingStatusTone[status]
+								)}
+							>
+								{isTraining ? (
+									<Loader2 className="size-3 animate-spin" />
+								) : null}
+								{status}
+								{isTraining ? (
+									<span className="tabular-nums">{progressPct}%</span>
+								) : null}
+							</span>
+						) : null}
+					</div>
 				</div>
 			</div>
 		</Link>

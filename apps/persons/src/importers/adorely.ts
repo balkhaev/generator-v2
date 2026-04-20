@@ -230,6 +230,7 @@ export class AdorelyDebugMcpClient {
 		includeCounts?: boolean;
 		limit?: number;
 		offset?: number;
+		riskLevel?: number;
 		status?: AdorelyCompanionStatus;
 	}) {
 		return this.callTool<AdorelyCompanionListResult>("list_companions", input);
@@ -343,7 +344,8 @@ function buildAppearanceDescription(companion: AdorelyCompanionDetail) {
 async function listAllCompanions(
 	client: AdorelyDebugMcpClient,
 	status: AdorelyCompanionStatus,
-	limit: number
+	limit: number,
+	riskLevel: number
 ) {
 	const companions: AdorelyCompanionListItem[] = [];
 	let offset = 0;
@@ -353,6 +355,7 @@ async function listAllCompanions(
 			includeCounts: true,
 			limit,
 			offset,
+			riskLevel,
 			status,
 		});
 		companions.push(...page.companions);
@@ -630,7 +633,12 @@ export async function importAdorelyCompanions(
 		options.targetDatasetCount ??
 		DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT;
 	const riskLevel = options.riskLevel ?? 2;
-	const { companions, total } = await listAllCompanions(client, status, limit);
+	const { companions, total } = await listAllCompanions(
+		client,
+		status,
+		limit,
+		riskLevel
+	);
 	const results: ImportAdorelyCompanionResult[] = [];
 	const context: ImportContext = {
 		client,

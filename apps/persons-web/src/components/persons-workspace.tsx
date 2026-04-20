@@ -536,7 +536,10 @@ function PersonCard({
 			className="group block overflow-hidden rounded-2xl bg-black ring-1 ring-border/30 transition-all hover:shadow-black/5 hover:shadow-xl hover:ring-border/60 dark:hover:shadow-black/20"
 			href={getHref(person.slug)}
 		>
-			<div className="relative w-full" style={{ aspectRatio: "9 / 16" }}>
+			<div
+				className="relative w-full"
+				style={{ paddingBottom: "177.7777778%" }}
+			>
 				<Image
 					alt={person.name}
 					className="object-contain"

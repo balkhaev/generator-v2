@@ -598,7 +598,7 @@ function CastGrid({
 	}
 
 	return (
-		<div className="grid min-h-0 content-start gap-4 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+		<div className="grid h-full min-h-0 content-start gap-4 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
 			{persons.map((person) => (
 				<PersonCard getHref={getHref} key={person.id} person={person} />
 			))}

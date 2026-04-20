@@ -266,8 +266,8 @@ export default function WorkspaceShell({
 				</header>
 
 				{context ? <div className="min-h-0">{context}</div> : null}
-				<div className="flex min-h-0 flex-col gap-3">
-					<div className="min-h-0 flex-1">{children}</div>
+				<div className="flex min-h-0 flex-col gap-3 overflow-hidden">
+					<div className="min-h-0 flex-1 overflow-hidden">{children}</div>
 					{bottomDock ? (
 						<div className="min-h-0 shrink-0">{bottomDock}</div>
 					) : null}

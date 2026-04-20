@@ -8,6 +8,7 @@ import { pingDatabase } from "@generator/db/health";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import {
 	DEBUG_CORRELATION_HEADER,
+	GENERATOR_INTERNAL_TOKEN_HEADER,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
 import type { S3StorageConfig } from "@generator/storage";
@@ -38,6 +39,7 @@ interface AppOptions {
 		request: Request
 	) => Promise<{ session: unknown; user: unknown } | null>;
 	grokClient?: GrokClient;
+	internalToken?: string;
 	loraReadRepository?: LoraReadRepository;
 	operatorServerClient?: OperatorServerClient;
 	repository: PersonsRepository;
@@ -48,6 +50,16 @@ const isPublicApiPath = createPublicPathMatcher({
 	exact: ["/api/health", "/api/ready"],
 	prefixes: ["/api/auth/", "/api/internal/"],
 });
+
+function createInternalTokenAuthorizer(token: string | undefined) {
+	const internalToken = token?.trim();
+	if (!internalToken) {
+		return undefined;
+	}
+
+	return (request: Request) =>
+		request.headers.get(GENERATOR_INTERNAL_TOKEN_HEADER) === internalToken;
+}
 
 export function createApp(options: AppOptions) {
 	const service = new PersonsService({
@@ -78,7 +90,12 @@ export function createApp(options: AppOptions) {
 		cors({
 			origin: options.corsOrigins,
 			allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-			allowHeaders: ["Content-Type", "Authorization", DEBUG_CORRELATION_HEADER],
+			allowHeaders: [
+				"Content-Type",
+				"Authorization",
+				DEBUG_CORRELATION_HEADER,
+				GENERATOR_INTERNAL_TOKEN_HEADER,
+			],
 			credentials: true,
 		})
 	);
@@ -87,6 +104,9 @@ export function createApp(options: AppOptions) {
 			"/api/*",
 			createSessionMiddleware({
 				getSession: options.getSession,
+				isAuthorizedRequest: createInternalTokenAuthorizer(
+					options.internalToken
+				),
 				isPublicPath: isPublicApiPath,
 			})
 		);

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
-import { GENERATOR_CALLBACK_TOKEN_HEADER } from "@generator/http/shared";
+import {
+	GENERATOR_CALLBACK_TOKEN_HEADER,
+	GENERATOR_INTERNAL_TOKEN_HEADER,
+} from "@generator/http/shared";
 
 import { createApp } from "@/app";
 import type {
@@ -1024,10 +1027,18 @@ describe("persons api", () => {
 			getSession() {
 				return Promise.resolve(null);
 			},
+			internalToken: "persons-internal-token",
 			repository,
 		});
 		const protectedResponse = await app.request("http://localhost/api/persons");
 		expect(protectedResponse.status).toBe(401);
+
+		const internalResponse = await app.request("http://localhost/api/persons", {
+			headers: {
+				[GENERATOR_INTERNAL_TOKEN_HEADER]: "persons-internal-token",
+			},
+		});
+		expect(internalResponse.status).toBe(200);
 
 		const unauthorizedResponse = await app.request(
 			"http://localhost/api/internal/persons"

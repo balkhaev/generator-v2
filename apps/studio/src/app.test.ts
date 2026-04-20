@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import type { StudioRunDebugBundle } from "@generator/contracts/studio";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
+import { GENERATOR_INTERNAL_TOKEN_HEADER } from "@generator/http/shared";
 import type { S3StorageConfig } from "@generator/storage";
 
 import { createApp } from "@/app";
@@ -222,6 +223,31 @@ describe("studio backend", () => {
 
 		const response = await app.request("http://localhost/api/scenarios");
 		expect(response.status).toBe(401);
+	});
+
+	it("accepts protected scenario routes with the internal token", async () => {
+		const { app } = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub(),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve(null);
+			},
+			internalToken: "studio-internal-token",
+			repository: createMemoryRepository(),
+			s3Config: fakeS3Config,
+		});
+
+		const response = await app.request("http://localhost/api/scenarios", {
+			headers: {
+				[GENERATOR_INTERNAL_TOKEN_HEADER]: "studio-internal-token",
+			},
+		});
+
+		expect(response.status).toBe(200);
 	});
 
 	it("creates local scenarios and delegates execution to generator", async () => {

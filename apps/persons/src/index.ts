@@ -55,6 +55,7 @@ const app = createApp({
 	},
 	corsOrigins: effectiveCorsOrigins,
 	getSession: getRequestSession,
+	internalToken: env.GENERATOR_INTERNAL_TOKEN,
 	grokClient,
 	loraReadRepository,
 	operatorServerClient,

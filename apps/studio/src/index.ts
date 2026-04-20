@@ -35,6 +35,7 @@ const { app, service } = createApp({
 	}),
 	generatorBaseUrl,
 	getSession: getRequestSession,
+	internalToken: getGeneratorInternalToken(),
 	loggerImpl: console,
 	loraReadRepository,
 	personsApiBaseUrl: env.PERSONS_API_URL,

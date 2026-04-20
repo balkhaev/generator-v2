@@ -11,6 +11,7 @@ import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import { proxyHttpRequest } from "@generator/http/proxy";
 import {
 	DEBUG_CORRELATION_HEADER,
+	GENERATOR_INTERNAL_TOKEN_HEADER,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
 import type { S3ClientLike, S3StorageConfig } from "@generator/storage";
@@ -51,6 +52,7 @@ interface AppOptions {
 	getSession: (
 		request: Request
 	) => Promise<{ session: unknown; user: unknown } | null>;
+	internalToken?: string;
 	loggerImpl?: Pick<Console, "info" | "error" | "warn">;
 	loraReadRepository?: LoraReadRepository;
 	/** Base URL persons-api (same cookie domain) — для подстановки LoRA персоны в ран. */
@@ -101,6 +103,16 @@ const isPublicApiPath = createPublicPathMatcher({
 	exact: ["/api/health", "/api/ready", "/api/studio-snapshot"],
 	prefixes: ["/api/auth/", "/api/internal/"],
 });
+
+function createInternalTokenAuthorizer(token: string | undefined) {
+	const internalToken = token?.trim();
+	if (!internalToken) {
+		return undefined;
+	}
+
+	return (request: Request) =>
+		request.headers.get(GENERATOR_INTERNAL_TOKEN_HEADER) === internalToken;
+}
 
 function createPromptHint(workflowName: string) {
 	return `Describe the ${workflowName} shot, camera movement, and effect you want the generated clip to amplify.`;
@@ -213,7 +225,12 @@ export function createApp(options: AppOptions): {
 		cors({
 			origin: options.corsOrigins,
 			allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-			allowHeaders: ["Content-Type", "Authorization", DEBUG_CORRELATION_HEADER],
+			allowHeaders: [
+				"Content-Type",
+				"Authorization",
+				DEBUG_CORRELATION_HEADER,
+				GENERATOR_INTERNAL_TOKEN_HEADER,
+			],
 			credentials: true,
 		})
 	);
@@ -230,6 +247,7 @@ export function createApp(options: AppOptions): {
 		"/api/*",
 		createSessionMiddleware({
 			getSession: options.getSession,
+			isAuthorizedRequest: createInternalTokenAuthorizer(options.internalToken),
 			isPublicPath: isPublicApiPath,
 		})
 	);

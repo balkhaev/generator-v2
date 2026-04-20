@@ -74,6 +74,7 @@ import {
 	createPerson,
 	deleteGeneration,
 	deletePerson,
+	enhancePersonsGenerationPrompt,
 	enhancePersonsPrompt,
 	generateWithLora,
 	getPersonsDashboard,
@@ -1035,15 +1036,9 @@ function LoraActions({
 	person: PersonRecord;
 	onCancelTraining: () => void;
 	onTrainLora: () => void;
-	onGenerateWithLora: (
-		prompt: string,
-		options?: {
-			enhance?: boolean;
-		}
-	) => void;
+	onGenerateWithLora: (prompt: string) => void;
 }) {
 	const [loraPrompt, setLoraPrompt] = useState("");
-	const [enhanceLoraPrompt, setEnhanceLoraPrompt] = useState(false);
 	const training = readPersonLoraTrainingMeta(person);
 	const hasLora = Boolean(person.loraUrl);
 	const effectiveStatus = getPersonLoraTrainingDisplayStatus(training, hasLora);
@@ -1124,13 +1119,14 @@ function LoraActions({
 							Generate with LoRA
 						</Label>
 						<EnhancePromptButton
-							enhance={enhancePersonsPrompt}
+							enhance={enhancePersonsGenerationPrompt}
 							onEnhanced={(enhanced) => {
 								setLoraPrompt(enhanced);
 								toast.success("Prompt enhanced with Grok");
 							}}
 							onError={(message) => toast.error(message)}
 							prompt={loraPrompt}
+							tooltip="Improve this scene prompt for generating with the trained LoRA"
 						/>
 					</div>
 					<textarea
@@ -1140,20 +1136,11 @@ function LoraActions({
 						placeholder="portrait photo, studio lighting..."
 						value={loraPrompt}
 					/>
-					<EnhanceWithGrokToggle
-						checked={enhanceLoraPrompt}
-						id={`enhanceLoraPrompt-${person.id}`}
-						onChange={setEnhanceLoraPrompt}
-						tooltip="Grok перепишет ваш промт, добавив детали для более качественной генерации"
-					/>
 					<Button
 						disabled={!loraPrompt.trim()}
 						onClick={() => {
-							onGenerateWithLora(loraPrompt.trim(), {
-								enhance: enhanceLoraPrompt,
-							});
+							onGenerateWithLora(loraPrompt.trim());
 							setLoraPrompt("");
-							setEnhanceLoraPrompt(false);
 						}}
 						size="sm"
 					>
@@ -1358,12 +1345,7 @@ function PersonDetailView({
 	onCancelTraining: () => void;
 	onDeleteGeneration: (generationId: string) => void;
 	onTrainLora: () => void;
-	onGenerateWithLora: (
-		prompt: string,
-		options?: {
-			enhance?: boolean;
-		}
-	) => void;
+	onGenerateWithLora: (prompt: string) => void;
 }) {
 	const [activeTab, setActiveTab] = useState<DetailTab>("generations");
 	const [lightbox, setLightbox] = useState<LightboxState | null>(null);
@@ -2368,12 +2350,7 @@ export default function PersonsWorkspace({
 		}
 	}
 
-	async function handleGenerateWithLora(
-		prompt: string,
-		options?: {
-			enhance?: boolean;
-		}
-	) {
+	async function handleGenerateWithLora(prompt: string) {
 		if (!selectedPerson) {
 			return;
 		}
@@ -2389,11 +2366,7 @@ export default function PersonsWorkspace({
 			)
 		);
 		try {
-			const updated = await generateWithLora(
-				selectedPerson.id,
-				prompt,
-				options
-			);
+			const updated = await generateWithLora(selectedPerson.id, prompt);
 			setPersons((current) =>
 				current.map((p) => (p.id === updated.id ? updated : p))
 			);

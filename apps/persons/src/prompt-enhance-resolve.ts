@@ -160,6 +160,10 @@ export function createPersonsPromptEnhanceProxy(): GrokClient | undefined {
 	}
 
 	return {
+		async enhanceGenerationPrompt(prompt: string) {
+			const client = await resolveOrThrow();
+			return client.enhanceGenerationPrompt(prompt);
+		},
 		async enhancePrompt(prompt: string) {
 			const client = await resolveOrThrow();
 			return client.enhancePrompt(prompt);

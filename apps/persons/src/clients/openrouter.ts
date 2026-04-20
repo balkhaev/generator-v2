@@ -5,9 +5,11 @@ import type {
 } from "@/clients/grok";
 import {
 	buildPersonsEnhanceUserPrompt,
+	buildPersonsLoraGenerationEnhanceUserPrompt,
 	buildPersonsRefineUserPrompt,
 	buildPersonsVariantUserPrompt,
 	PERSONS_ENHANCE_SYSTEM_PROMPT,
+	PERSONS_LORA_GENERATION_ENHANCE_SYSTEM_PROMPT,
 	parsePersonsPromptArray,
 	stripPromptCodeFences,
 	stripSurroundingQuotes,
@@ -96,7 +98,10 @@ export function createPersonsOpenRouterClient(
 	const referer = options.httpReferer?.trim();
 	const appName = options.appName?.trim();
 
-	async function chat(userPrompt: string): Promise<string> {
+	async function chat(
+		userPrompt: string,
+		systemPrompt = PERSONS_ENHANCE_SYSTEM_PROMPT
+	): Promise<string> {
 		const headers: Record<string, string> = {
 			authorization: `Bearer ${apiKey}`,
 			"content-type": "application/json",
@@ -119,7 +124,7 @@ export function createPersonsOpenRouterClient(
 				body: JSON.stringify({
 					max_tokens: OPENROUTER_MAX_TOKENS,
 					messages: [
-						{ role: "system", content: PERSONS_ENHANCE_SYSTEM_PROMPT },
+						{ role: "system", content: systemPrompt },
 						{ role: "user", content: userPrompt },
 					],
 					model,
@@ -162,6 +167,17 @@ export function createPersonsOpenRouterClient(
 	}
 
 	return {
+		async enhanceGenerationPrompt(prompt: string) {
+			const trimmed = prompt.trim();
+			if (!trimmed) {
+				throw new Error("Cannot enhance an empty prompt");
+			}
+			const content = await chat(
+				buildPersonsLoraGenerationEnhanceUserPrompt(trimmed),
+				PERSONS_LORA_GENERATION_ENHANCE_SYSTEM_PROMPT
+			);
+			return stripSurroundingQuotes(stripPromptCodeFences(content));
+		},
 		async enhancePrompt(prompt: string) {
 			const trimmed = prompt.trim();
 			if (!trimmed) {

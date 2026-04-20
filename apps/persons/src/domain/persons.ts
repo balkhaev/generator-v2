@@ -914,7 +914,8 @@ export class PersonsService {
 			return userPrompt;
 		}
 		try {
-			const enhanced = await this.grokClient.enhancePrompt(userPrompt);
+			const enhanced =
+				await this.grokClient.enhanceGenerationPrompt(userPrompt);
 			return enhanced.trim().length > 0 ? enhanced : userPrompt;
 		} catch {
 			return userPrompt;

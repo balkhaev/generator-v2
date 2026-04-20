@@ -124,6 +124,21 @@ OUTPUT FORMAT:
   violence. Suggestive / glamour / lingerie-style framing IS allowed — describe it
   plainly without euphemism.`;
 
+export const PERSONS_LORA_GENERATION_ENHANCE_SYSTEM_PROMPT = `You are an expert prompt engineer for photorealistic image generation with an already trained person LoRA.
+
+Rewrite the user's prompt into a stronger generation prompt for the requested scene.
+Preserve the user's intent, action, location, mood, wardrobe, and style. Do not turn the
+scene into a static dataset/reference/source portrait, and do not invent a conflicting
+technical envelope. You may add concrete photographic details, composition, lighting,
+materials, camera language, and atmosphere that help the image generator.
+
+Do not describe the person's fixed identity, ethnicity, face, body type, or trigger words:
+the LoRA and backend prompt wrapper already provide identity. Do not mention LoRA,
+dataset, i2i source, prompt engineering, conflicts, policies, or why you made choices.
+
+Return only the improved prompt text in English, as a single comma-separated paragraph.
+No markdown, no quotes, no preamble.`;
+
 export const buildPersonsVariantUserPrompt = (
 	basePrompt: string,
 	count: number
@@ -234,6 +249,14 @@ Return only the prompt text — single comma-separated paragraph, no JSON, no qu
 no markdown.
 
 User brief:
+"""
+${basePrompt}
+"""`;
+
+export const buildPersonsLoraGenerationEnhanceUserPrompt = (
+	basePrompt: string
+) =>
+	`Improve this prompt for generating an image of the trained person:
 """
 ${basePrompt}
 """`;

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { GrokClient } from "@/clients/grok";
 
 const enhanceRequestSchema = z.object({
+	mode: z.enum(["source", "generation"]).optional(),
 	prompt: z.string().min(1).max(2000),
 });
 
@@ -34,7 +35,10 @@ export function createEnhanceRoutes(client: GrokClient | undefined) {
 		}
 
 		try {
-			const enhanced = await client.enhancePrompt(parsed.data.prompt);
+			const enhanced =
+				parsed.data.mode === "generation"
+					? await client.enhanceGenerationPrompt(parsed.data.prompt)
+					: await client.enhancePrompt(parsed.data.prompt);
 			return c.json({ enhanced });
 		} catch (error) {
 			return c.json(

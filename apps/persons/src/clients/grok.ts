@@ -1,8 +1,10 @@
 import {
 	buildPersonsEnhanceUserPrompt,
+	buildPersonsLoraGenerationEnhanceUserPrompt,
 	buildPersonsRefineUserPrompt,
 	buildPersonsVariantUserPrompt,
 	PERSONS_ENHANCE_SYSTEM_PROMPT,
+	PERSONS_LORA_GENERATION_ENHANCE_SYSTEM_PROMPT,
 	parsePersonsPromptArray,
 	stripPromptCodeFences,
 	stripSurroundingQuotes,
@@ -37,6 +39,7 @@ export interface GrokRefinePromptOptions {
  * touching `PersonsService` and every callsite that already depends on it.
  */
 export interface GrokClient {
+	enhanceGenerationPrompt(prompt: string): Promise<string>;
 	enhancePrompt(prompt: string): Promise<string>;
 	expandPrompt(options: GrokExpandPromptOptions): Promise<string[]>;
 	refinePrompt(options: GrokRefinePromptOptions): Promise<string>;
@@ -57,11 +60,14 @@ export function createGrokClient(options: GrokClientOptions): GrokClient {
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const model = options.model ?? DEFAULT_MODEL;
 
-	async function chat(userPrompt: string): Promise<string> {
+	async function chat(
+		userPrompt: string,
+		systemPrompt = PERSONS_ENHANCE_SYSTEM_PROMPT
+	): Promise<string> {
 		const response = await fetchImpl(`${XAI_BASE_URL}/chat/completions`, {
 			body: JSON.stringify({
 				messages: [
-					{ role: "system", content: PERSONS_ENHANCE_SYSTEM_PROMPT },
+					{ role: "system", content: systemPrompt },
 					{ role: "user", content: userPrompt },
 				],
 				model,
@@ -91,6 +97,17 @@ export function createGrokClient(options: GrokClientOptions): GrokClient {
 	}
 
 	return {
+		async enhanceGenerationPrompt(prompt) {
+			const trimmed = prompt.trim();
+			if (!trimmed) {
+				throw new Error("Cannot enhance an empty prompt");
+			}
+			const content = await chat(
+				buildPersonsLoraGenerationEnhanceUserPrompt(trimmed),
+				PERSONS_LORA_GENERATION_ENHANCE_SYSTEM_PROMPT
+			);
+			return stripSurroundingQuotes(stripPromptCodeFences(content));
+		},
 		async enhancePrompt(prompt) {
 			const trimmed = prompt.trim();
 			if (!trimmed) {

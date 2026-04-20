@@ -11,6 +11,7 @@ import type {
 	AdminTrainingClient,
 	StartPersonLoraTrainingInput,
 } from "@/clients/admin-training";
+import type { GrokClient } from "@/clients/grok";
 import {
 	type OperatorServerClient,
 	type PersonGenerationRecord,
@@ -323,7 +324,66 @@ function createRegistryEntry(
 	};
 }
 
+function createPromptEnhanceClient(
+	overrides: Partial<GrokClient> = {}
+): GrokClient {
+	return {
+		enhanceGenerationPrompt(prompt) {
+			return Promise.resolve(`generation:${prompt}`);
+		},
+		enhancePrompt(prompt) {
+			return Promise.resolve(`source:${prompt}`);
+		},
+		expandPrompt({ count, prompt }) {
+			return Promise.resolve(
+				Array.from({ length: count }, (_, index) => `${prompt} ${index + 1}`)
+			);
+		},
+		refinePrompt({ basePrompt, instruction }) {
+			return Promise.resolve(`${basePrompt}, ${instruction}`);
+		},
+		...overrides,
+	};
+}
+
 describe("persons api", () => {
+	it("routes prompt enhancement modes separately", async () => {
+		const app = createApp({
+			corsOrigins: ["http://localhost:3004"],
+			grokClient: createPromptEnhanceClient(),
+			repository: createMemoryRepository(),
+		});
+
+		const sourceResponse = await app.request(
+			"http://localhost/api/enhance-prompt",
+			{
+				body: JSON.stringify({ prompt: "Dances salsa on Red Square" }),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+		const generationResponse = await app.request(
+			"http://localhost/api/enhance-prompt",
+			{
+				body: JSON.stringify({
+					mode: "generation",
+					prompt: "Dances salsa on Red Square",
+				}),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+
+		expect(sourceResponse.status).toBe(200);
+		expect(generationResponse.status).toBe(200);
+		expect(await sourceResponse.json()).toEqual({
+			enhanced: "source:Dances salsa on Red Square",
+		});
+		expect(await generationResponse.json()).toEqual({
+			enhanced: "generation:Dances salsa on Red Square",
+		});
+	});
+
 	it("creates persons with a mandatory reference photo and imports server runs", async () => {
 		const app = createApp({
 			corsOrigins: ["http://localhost:3004"],
@@ -856,6 +916,70 @@ describe("persons api", () => {
 		expect(runningPerson.generations[0]?.metadata.progressPct).toBe(42);
 		expect(runningPerson.generations[0]?.metadata.generatorStatus).toBe(
 			"running"
+		);
+	});
+
+	it("enhances generate-with-lora prompts with generation mode", async () => {
+		const capturedExecutionInputs: Parameters<
+			OperatorServerClient["createExecution"]
+		>[0][] = [];
+		const app = createApp({
+			corsOrigins: ["http://localhost:3004"],
+			grokClient: createPromptEnhanceClient(),
+			operatorServerClient: {
+				...createOperatorClient(),
+				createExecution(input) {
+					capturedExecutionInputs.push(input);
+					return Promise.resolve({
+						artifacts: [],
+						errorSummary: null,
+						id: "execution-lora-enhanced",
+						inputImageUrl: input.inputImageUrl ?? "",
+						providerEndpointId: null,
+						providerJobId: "provider-lora-enhanced",
+						status: "queued",
+						workflowKey: input.workflowKey,
+					});
+				},
+			},
+			repository: createMemoryRepository(),
+		});
+		const createResponse = await app.request("http://localhost/api/persons", {
+			body: JSON.stringify({
+				description: "Realistic person with a trained LoRA.",
+				loraUrl: "https://assets.example.com/person.safetensors",
+				name: "Enhanced Lora Subject",
+				referencePhotoUrl: "https://assets.example.com/reference.png",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const { person } = (await createResponse.json()) as {
+			person: PersonRecord;
+		};
+
+		const response = await app.request(
+			`http://localhost/api/persons/${person.id}/generate-with-lora`,
+			{
+				body: JSON.stringify({
+					enhance: true,
+					prompt: "Dances salsa on Red Square",
+				}),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+
+		expect(response.status).toBe(202);
+		const executionInput = capturedExecutionInputs[0];
+		if (!executionInput) {
+			throw new Error("Expected generator execution input to be captured");
+		}
+		expect(executionInput.prompt).toContain(
+			"generation:Dances salsa on Red Square"
+		);
+		expect(executionInput.prompt).not.toContain(
+			"source:Dances salsa on Red Square"
 		);
 	});
 

@@ -533,10 +533,10 @@ function PersonCard({
 
 	return (
 		<Link
-			className="group relative overflow-hidden rounded-2xl bg-background/60 ring-1 ring-border/30 transition-all hover:shadow-black/5 hover:shadow-xl hover:ring-border/60 dark:bg-background/40 dark:hover:shadow-black/20"
+			className="group grid h-full min-h-[22rem] grid-rows-[minmax(0,1fr)_auto] overflow-hidden rounded-2xl bg-background/60 ring-1 ring-border/30 transition-all hover:shadow-black/5 hover:shadow-xl hover:ring-border/60 dark:bg-background/40 dark:hover:shadow-black/20"
 			href={getHref(person.slug)}
 		>
-			<div className="relative aspect-[3/4] overflow-hidden">
+			<div className="relative min-h-0 overflow-hidden">
 				<Image
 					alt={person.name}
 					className="object-cover transition-transform duration-500 group-hover:scale-[1.03]"
@@ -598,7 +598,7 @@ function CastGrid({
 	}
 
 	return (
-		<div className="grid h-full min-h-0 content-start gap-4 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+		<div className="grid h-full min-h-0 auto-rows-[minmax(22rem,auto)] content-start gap-4 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
 			{persons.map((person) => (
 				<PersonCard getHref={getHref} key={person.id} person={person} />
 			))}

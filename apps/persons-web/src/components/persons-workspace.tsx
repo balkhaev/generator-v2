@@ -596,7 +596,7 @@ function CastGrid({
 	if (persons.length === 0) {
 		return (
 			<EmptyState
-				className="h-full"
+				className="min-h-[min(100%,20rem)]"
 				hint="Use the form on the right to create your first person."
 				icon={UsersRound}
 				message="No persons in the cast yet."
@@ -605,7 +605,7 @@ function CastGrid({
 	}
 
 	return (
-		<div className="grid h-full min-h-0 content-start gap-4 overflow-y-auto pr-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+		<div className="grid content-start gap-4 pr-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
 			{persons.map((person) => (
 				<PersonCard getHref={getHref} key={person.id} person={person} />
 			))}
@@ -2557,7 +2557,9 @@ export default function PersonsWorkspace({
 					studioUrl={studioUrl}
 				/>
 			) : (
-				<CastGrid getHref={getPersonHref} persons={persons} />
+				<div className="absolute inset-0 overflow-y-auto overscroll-y-contain">
+					<CastGrid getHref={getPersonHref} persons={persons} />
+				</div>
 			)}
 		</WorkspaceShell>
 	);

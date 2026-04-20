@@ -5,8 +5,10 @@ import {
 	getWorkspaceRoot,
 	type ServiceName,
 } from "@generator/debug-tools/shared";
+import { type Job, Queue } from "bullmq";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
+import IORedis, { type Redis } from "ioredis";
 import {
 	type EachMessagePayload,
 	Kafka,
@@ -41,6 +43,11 @@ const DEFAULT_KAFKA_TIMEOUT_MS = 5000;
 const MAX_KAFKA_TIMEOUT_MS = 30_000;
 const DEFAULT_KAFKA_SAMPLE_LIMIT = 10;
 const MAX_KAFKA_SAMPLE_LIMIT = 100;
+const ADMIN_LORA_TRAINING_QUEUE = "admin-person-lora-training";
+const DEFAULT_QUEUE_JOB_LIMIT = 25;
+const MAX_QUEUE_JOB_LIMIT = 100;
+const DEFAULT_LOCK_LIMIT = 100;
+const MAX_LOCK_LIMIT = 500;
 
 const toolDefinitions = [
 	{
@@ -299,6 +306,31 @@ const toolDefinitions = [
 	},
 	{
 		description:
+			"Read-only snapshot of the admin LoRA training BullMQ queue and related Redis idempotency locks. Use when person LoRA trainings or dataset refills appear stuck.",
+		inputSchema: {
+			properties: {
+				includeLocks: {
+					description:
+						"Whether to include Redis idempotency lock keys and TTLs. Defaults to true.",
+					type: "boolean",
+				},
+				jobLimit: {
+					description:
+						"Max jobs per BullMQ state to return. Defaults to 25, max 100.",
+					type: "number",
+				},
+				lockLimit: {
+					description:
+						"Max Redis lock keys per prefix to return. Defaults to 100, max 500.",
+					type: "number",
+				},
+			},
+			type: "object",
+		},
+		name: "admin_lora_training_queue_snapshot",
+	},
+	{
+		description:
 			"Describe the configured Kafka cluster, brokers, controller, and topic count.",
 		inputSchema: {
 			properties: {},
@@ -476,6 +508,84 @@ function parseOptionalNumber(value: unknown) {
 	return typeof value === "number" && Number.isFinite(value)
 		? value
 		: undefined;
+}
+
+function requireRedisUrl(id: JsonRpcResponse["id"]) {
+	const redisUrl = process.env.REDIS_URL;
+	if (!redisUrl) {
+		return {
+			error: createErrorResponse(
+				id,
+				"REDIS_URL is not configured for the MCP server"
+			),
+			redisUrl: null as string | null,
+		};
+	}
+	return { error: null, redisUrl };
+}
+
+function createRedisClient(redisUrl: string) {
+	return new IORedis(redisUrl, {
+		maxRetriesPerRequest: null,
+	});
+}
+
+function serializeQueueJob(job: Job) {
+	const data =
+		job.data && typeof job.data === "object" && !Array.isArray(job.data)
+			? (job.data as Record<string, unknown>)
+			: {};
+
+	return {
+		attemptsMade: job.attemptsMade,
+		data: {
+			personId: data.personId ?? null,
+			trainingRunId: data.trainingRunId ?? null,
+			variantId: data.variantId ?? null,
+		},
+		delay: job.delay,
+		failedReason: job.failedReason ?? null,
+		finishedOn: job.finishedOn ?? null,
+		id: job.id ?? null,
+		name: job.name,
+		processedOn: job.processedOn ?? null,
+		stacktrace: job.stacktrace.slice(0, 3),
+		timestamp: job.timestamp,
+	};
+}
+
+async function scanRedisKeys(
+	connection: Redis,
+	pattern: string,
+	limit: number
+) {
+	let cursor = "0";
+	const keys: string[] = [];
+
+	do {
+		const [nextCursor, batch] = await connection.scan(
+			cursor,
+			"MATCH",
+			pattern,
+			"COUNT",
+			"100"
+		);
+		cursor = nextCursor;
+		for (const key of batch) {
+			keys.push(key);
+			if (keys.length >= limit) {
+				cursor = "0";
+				break;
+			}
+		}
+	} while (cursor !== "0");
+
+	return Promise.all(
+		keys.sort().map(async (key) => ({
+			key,
+			ttlSeconds: await connection.ttl(key),
+		}))
+	);
 }
 
 function parseKafkaBrokers() {
@@ -978,6 +1088,120 @@ async function handleTrainingProviderToolCall(
 	return createErrorResponse(id, `Unknown training-provider tool: ${name}`);
 }
 
+async function handleAdminLoraTrainingQueueToolCall(
+	_name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const { error, redisUrl } = requireRedisUrl(id);
+	if (error) {
+		return error;
+	}
+
+	const jobLimit = clampInteger(
+		parseOptionalNumber(argumentsPayload.jobLimit),
+		DEFAULT_QUEUE_JOB_LIMIT,
+		MAX_QUEUE_JOB_LIMIT
+	);
+	const lockLimit = clampInteger(
+		parseOptionalNumber(argumentsPayload.lockLimit),
+		DEFAULT_LOCK_LIMIT,
+		MAX_LOCK_LIMIT
+	);
+	const includeLocks =
+		parseOptionalBoolean(argumentsPayload.includeLocks) ?? true;
+	const connection = createRedisClient(redisUrl);
+	const queue = new Queue(ADMIN_LORA_TRAINING_QUEUE, { connection });
+
+	try {
+		const [
+			counts,
+			activeJobs,
+			waitingJobs,
+			delayedJobs,
+			failedJobs,
+			prioritizedJobs,
+			waitingChildrenJobs,
+			isPaused,
+		] = await Promise.all([
+			queue.getJobCounts(
+				"active",
+				"completed",
+				"delayed",
+				"failed",
+				"paused",
+				"prioritized",
+				"waiting",
+				"waiting-children"
+			),
+			queue.getJobs(["active"], 0, jobLimit - 1, true),
+			queue.getJobs(["waiting"], 0, jobLimit - 1, true),
+			queue.getJobs(["delayed"], 0, jobLimit - 1, true),
+			queue.getJobs(["failed"], 0, jobLimit - 1, true),
+			queue.getJobs(["prioritized"], 0, jobLimit - 1, true),
+			queue.getJobs(["waiting-children"], 0, jobLimit - 1, true),
+			queue.isPaused(),
+		]);
+		const lockPatterns = {
+			refill: "admin:person-dataset-refill:*",
+			training: "admin:person-lora-training:*",
+			trainingRecovery: "admin:training-recovery:*",
+		};
+		const locks = includeLocks
+			? Object.fromEntries(
+					await Promise.all(
+						Object.entries(lockPatterns).map(async ([name, pattern]) => [
+							name,
+							await scanRedisKeys(connection, pattern, lockLimit),
+						])
+					)
+				)
+			: null;
+
+		return createOkResponse(
+			id,
+			createToolResult({
+				counts,
+				includeLocks,
+				isPaused,
+				jobLimit,
+				jobs: {
+					active: activeJobs.map(serializeQueueJob),
+					delayed: delayedJobs.map(serializeQueueJob),
+					failed: failedJobs.map(serializeQueueJob),
+					prioritized: prioritizedJobs.map(serializeQueueJob),
+					waiting: waitingJobs.map(serializeQueueJob),
+					waitingChildren: waitingChildrenJobs.map(serializeQueueJob),
+				},
+				lockLimit,
+				locks,
+				queueName: ADMIN_LORA_TRAINING_QUEUE,
+			})
+		);
+	} catch (toolError) {
+		return createOkResponse(
+			id,
+			createToolResult(
+				{
+					error:
+						toolError instanceof Error
+							? toolError.message
+							: "Queue snapshot failed",
+					tool: "admin_lora_training_queue_snapshot",
+				},
+				true
+			)
+		);
+	} finally {
+		await queue.close().catch(() => {
+			// ignore close errors after diagnostics
+		});
+		await connection.quit().catch(() => {
+			// ignore close errors after diagnostics
+		});
+	}
+}
+
 async function handleLoraToolCall(
 	name: string,
 	argumentsPayload: Record<string, unknown>,
@@ -1110,6 +1334,7 @@ type ToolHandler = (
 ) => Promise<JsonRpcResponse>;
 
 const toolHandlers: Record<string, ToolHandler> = {
+	admin_lora_training_queue_snapshot: handleAdminLoraTrainingQueueToolCall,
 	admin_settings_get: handleTrainingProviderToolCall,
 	generator_execution_submit: handleGeneratorExecutionToolCall,
 	generator_execution_sync: handleGeneratorExecutionToolCall,

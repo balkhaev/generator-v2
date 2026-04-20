@@ -48,6 +48,7 @@ bun --cwd packages/debug-tools run mcp
 Тулы:
 
 - workspace/health: `workspace_summary`, `service_health`, `service_request`
+- admin queue: `admin_lora_training_queue_snapshot`
 - generator: `generator_workflows_get`, `generator_execution_submit`, `generator_execution_sync`
 - test users: `test_user_upsert`, `test_user_get`
 - kafka: `kafka_cluster_info`, `kafka_topics_list`, `kafka_topic_offsets`, `kafka_consumer_groups_list`, `kafka_consumer_group_describe`, `kafka_topic_sample`

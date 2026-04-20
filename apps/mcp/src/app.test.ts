@@ -48,6 +48,7 @@ describe("mcp app", () => {
 		expect(toolNames).toContain("lora_list");
 		expect(toolNames).toContain("lora_get");
 		expect(toolNames).toContain("studio_run_mark_failed");
+		expect(toolNames).toContain("admin_lora_training_queue_snapshot");
 	});
 
 	it("returns public health without auth", async () => {

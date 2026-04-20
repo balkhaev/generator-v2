@@ -533,31 +533,29 @@ function PersonCard({
 
 	return (
 		<Link
-			className="group grid overflow-hidden rounded-2xl bg-background/60 ring-1 ring-border/30 transition-all hover:shadow-black/5 hover:shadow-xl hover:ring-border/60 dark:bg-background/40 dark:hover:shadow-black/20"
+			className="group relative block aspect-[9/16] overflow-hidden rounded-2xl bg-black ring-1 ring-border/30 transition-all hover:shadow-black/5 hover:shadow-xl hover:ring-border/60 dark:hover:shadow-black/20"
 			href={getHref(person.slug)}
 		>
-			<div className="relative aspect-[9/16] overflow-hidden bg-black/90">
-				<Image
-					alt={person.name}
-					className="object-contain"
-					fill
-					sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 16vw"
-					src={person.referencePhotoUrl}
-				/>
-			</div>
-			<div className="grid gap-1.5 px-3 py-2.5">
-				<div className="min-w-0">
-					<h3 className="truncate font-semibold text-sm tracking-tight">
+			<Image
+				alt={person.name}
+				className="object-contain"
+				fill
+				sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
+				src={person.referencePhotoUrl}
+			/>
+			<div className="absolute inset-x-0 bottom-0 grid gap-1.5 bg-gradient-to-t from-black/75 via-black/35 to-transparent px-3 pt-12 pb-3">
+				<div className="min-w-0 text-white">
+					<h3 className="truncate font-semibold text-sm tracking-tight drop-shadow">
 						{person.name}
 					</h3>
 					{person.description ? (
-						<p className="mt-0.5 line-clamp-1 text-muted-foreground/65 text-xs">
+						<p className="mt-0.5 line-clamp-1 text-white/65 text-xs">
 							{person.description}
 						</p>
 					) : null}
 				</div>
 				<div className="flex min-w-0 items-center justify-between gap-2">
-					<span className="min-w-0 truncate text-muted-foreground/60 text-xs tabular-nums">
+					<span className="min-w-0 truncate text-white/60 text-xs tabular-nums">
 						{person.generations.length} generation
 						{person.generations.length === 1 ? "" : "s"}
 					</span>
@@ -600,7 +598,7 @@ function CastGrid({
 	}
 
 	return (
-		<div className="grid h-full min-h-0 content-start gap-4 overflow-y-auto pr-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+		<div className="grid h-full min-h-0 content-start gap-4 overflow-y-auto pr-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
 			{persons.map((person) => (
 				<PersonCard getHref={getHref} key={person.id} person={person} />
 			))}

@@ -572,6 +572,8 @@ export interface PreparedDatasetPhoto {
 	variantId: string;
 }
 
+export type SeedDatasetPhoto = PreparedDatasetPhoto;
+
 const leadingDotPattern = /^\./u;
 
 /**
@@ -748,8 +750,66 @@ interface PrepareDatasetPhotosInput {
 	referencePhotoUrl: string;
 	referencePrompt?: string | null;
 	s3Config?: S3StorageConfig;
+	seedPhotos?: readonly SeedDatasetPhoto[];
 	trainingRunId: string;
 	triggerWord: string;
+}
+
+function dedupeSeedPhotos(
+	seedPhotos: readonly SeedDatasetPhoto[] | undefined
+): PreparedDatasetPhoto[] {
+	if (!seedPhotos?.length) {
+		return [];
+	}
+
+	const seenUrls = new Set<string>();
+	const seenVariantIds = new Set<string>();
+	const photos: PreparedDatasetPhoto[] = [];
+
+	for (const photo of seedPhotos) {
+		const url = photo.url.trim();
+		const variantId = photo.variantId.trim();
+		if (!(url && variantId)) {
+			continue;
+		}
+		if (seenUrls.has(url) || seenVariantIds.has(variantId)) {
+			continue;
+		}
+		seenUrls.add(url);
+		seenVariantIds.add(variantId);
+		photos.push({
+			caption: photo.caption,
+			s3Key: photo.s3Key,
+			url,
+			variantId,
+		});
+		if (photos.length >= TOTAL_DATASET_COUNT) {
+			break;
+		}
+	}
+
+	return photos;
+}
+
+function buildMissingVariantIds(
+	seedCount: number,
+	usedVariantIds: Set<string>
+) {
+	const missingCount = Math.max(0, TOTAL_DATASET_COUNT - seedCount);
+	const originalIds = Array.from(
+		{ length: ORIGINAL_PHOTO_DUPLICATES },
+		(_, i) => buildOriginalVariantId(i)
+	);
+	const syntheticIds = Array.from({ length: REFERENCE_VARIANT_COUNT }, (_, i) =>
+		buildSyntheticVariantId(i)
+	);
+	const defaultOrder = [...originalIds, ...syntheticIds];
+	const seedFillOrder = [...syntheticIds, ...originalIds];
+	const candidates = seedCount > 0 ? seedFillOrder : defaultOrder;
+
+	return candidates
+		.filter((variantId) => !usedVariantIds.has(variantId))
+		.slice(0, missingCount);
 }
 
 /**
@@ -763,8 +823,18 @@ interface PrepareDatasetPhotosInput {
 export async function prepareDatasetPhotos(
 	input: PrepareDatasetPhotosInput
 ): Promise<PreparedDatasetPhoto[]> {
-	const photos: PreparedDatasetPhoto[] = [];
-	for (let i = 0; i < ORIGINAL_PHOTO_DUPLICATES; i += 1) {
+	const photos = dedupeSeedPhotos(input.seedPhotos);
+	for (const seedPhoto of photos) {
+		await input.onPhotoReady(seedPhoto);
+	}
+
+	const usedVariantIds = new Set(photos.map((photo) => photo.variantId));
+	const missingVariantIds = buildMissingVariantIds(
+		photos.length,
+		usedVariantIds
+	);
+
+	for (const variantId of missingVariantIds) {
 		const photo = await generateSingleVariant({
 			apiKey: input.apiKey,
 			editorModelId: input.editorModelId,
@@ -775,27 +845,12 @@ export async function prepareDatasetPhotos(
 			s3Config: input.s3Config,
 			trainingRunId: input.trainingRunId,
 			triggerWord: input.triggerWord,
-			variantId: buildOriginalVariantId(i),
+			variantId,
 		});
 		photos.push(photo);
 		await input.onPhotoReady(photo);
 	}
-	for (let i = 0; i < REFERENCE_VARIANT_COUNT; i += 1) {
-		const photo = await generateSingleVariant({
-			apiKey: input.apiKey,
-			editorModelId: input.editorModelId,
-			genderHint: input.genderHint,
-			personId: input.personId,
-			referencePhotoUrl: input.referencePhotoUrl,
-			referencePrompt: input.referencePrompt,
-			s3Config: input.s3Config,
-			trainingRunId: input.trainingRunId,
-			triggerWord: input.triggerWord,
-			variantId: buildSyntheticVariantId(i),
-		});
-		photos.push(photo);
-		await input.onPhotoReady(photo);
-	}
+
 	return photos;
 }
 

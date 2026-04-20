@@ -1,5 +1,6 @@
 import type { GeneratorExecutionRecord } from "@generator/contracts/generator";
 import {
+	DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT,
 	isActivePersonLoraTrainingStatus,
 	PERSONS_AVATAR_WORKFLOWS,
 } from "@generator/contracts/persons";
@@ -241,6 +242,39 @@ export const startPersonLoraTrainingInputSchema = z.object({
 	referencePrompt: optionalStringSchema,
 	triggerWord: optionalStringSchema,
 });
+
+const importDatasetPhotoInputSchema = z.object({
+	caption: z.string().trim().default(""),
+	metadata: z.record(z.string(), z.unknown()).default({}),
+	s3Key: optionalStringSchema,
+	sourceUrl: z.url("Dataset source URL must be valid"),
+	variantId: z.string().trim().min(1, "Dataset variant id is required"),
+});
+
+export const importExternalPersonInputSchema = z.object({
+	datasetPhotos: z.array(importDatasetPhotoInputSchema).default([]),
+	datasetUrl: optionalUrlSchema,
+	description: z.string().trim().default(""),
+	externalId: z.string().trim().min(1, "External id is required"),
+	externalSource: z.string().trim().min(1, "External source is required"),
+	loraUrl: optionalUrlSchema,
+	metadata: z.record(z.string(), z.unknown()).default({}),
+	name: z.string().trim().min(1, "Person name is required"),
+	photoUrl: optionalUrlSchema,
+	referencePhotoUrl: z.url("Reference photo URL must be valid"),
+	slug: optionalStringSchema,
+	targetDatasetCount: z
+		.number()
+		.int()
+		.min(1)
+		.max(100)
+		.default(DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT),
+	videoUrl: optionalUrlSchema,
+	voiceWavUrl: optionalUrlSchema,
+});
+type ParsedImportExternalPersonInput = z.output<
+	typeof importExternalPersonInputSchema
+>;
 
 const personLoraTrainingStatusSchema = z.enum([
 	"queued",
@@ -492,6 +526,54 @@ function readMetadataString(
 ): string | null {
 	const value = record[key];
 	return typeof value === "string" ? value : null;
+}
+
+function readMetadataRecord(
+	record: Record<string, unknown>,
+	key: string
+): Record<string, unknown> | null {
+	const value = record[key];
+	if (value && typeof value === "object" && !Array.isArray(value)) {
+		return value as Record<string, unknown>;
+	}
+	return null;
+}
+
+function readExternalImportId(
+	metadata: Record<string, unknown>,
+	externalSource: string
+): string | null {
+	const imports = readMetadataRecord(metadata, "imports");
+	const sourceImport = imports
+		? readMetadataRecord(imports, externalSource)
+		: null;
+	return sourceImport ? readMetadataString(sourceImport, "id") : null;
+}
+
+function buildImportedPersonMetadata(
+	currentMetadata: Record<string, unknown>,
+	parsed: ParsedImportExternalPersonInput
+) {
+	const imports = readMetadataRecord(currentMetadata, "imports") ?? {};
+	const currentTraining = readMetadataRecord(currentMetadata, "training");
+	const incomingMetadata = Object.fromEntries(
+		Object.entries(parsed.metadata).filter(([key]) => key !== "training")
+	);
+
+	return {
+		...currentMetadata,
+		...incomingMetadata,
+		imports: {
+			...imports,
+			[parsed.externalSource]: {
+				id: parsed.externalId,
+				lastImportedAt: new Date().toISOString(),
+				source: parsed.externalSource,
+				targetDatasetCount: parsed.targetDatasetCount,
+			},
+		},
+		...(currentTraining ? { training: currentTraining } : {}),
+	};
 }
 
 function clampProgressPct(value: number) {
@@ -1010,6 +1092,112 @@ export class PersonsService {
 		);
 	}
 
+	async importExternalPerson(
+		input: z.output<typeof importExternalPersonInputSchema>
+	) {
+		const parsed = importExternalPersonInputSchema.parse(input);
+		const baseSlug = slugifySegment(parsed.slug ?? parsed.name);
+		const existingPerson = await this.findPersonByExternalIdentity({
+			externalId: parsed.externalId,
+			externalSource: parsed.externalSource,
+			slug: baseSlug,
+		});
+		const metadata = buildImportedPersonMetadata(
+			existingPerson?.metadata ?? {},
+			parsed
+		);
+		const datasetPhotos = parsed.datasetPhotos.slice(
+			0,
+			parsed.targetDatasetCount
+		);
+
+		const person =
+			existingPerson ??
+			(await this.createPersonRecord({
+				datasetUrl: parsed.datasetUrl ?? null,
+				description: parsed.description,
+				generations: [],
+				loraUrl: parsed.loraUrl ?? null,
+				metadata,
+				name: parsed.name,
+				photoUrl: parsed.photoUrl ?? parsed.referencePhotoUrl,
+				referencePhotoUrl: parsed.referencePhotoUrl,
+				slug: parsed.slug ?? baseSlug,
+				videoUrl: parsed.videoUrl ?? null,
+				voiceWavUrl: parsed.voiceWavUrl ?? null,
+			}));
+
+		const updatedPerson = existingPerson
+			? await this.repository.updatePerson(existingPerson.id, {
+					datasetUrl: parsed.datasetUrl ?? existingPerson.datasetUrl,
+					description: parsed.description,
+					loraUrl: parsed.loraUrl ?? existingPerson.loraUrl,
+					metadata,
+					name: parsed.name,
+					photoUrl: parsed.photoUrl ?? parsed.referencePhotoUrl,
+					referencePhotoUrl: parsed.referencePhotoUrl,
+					videoUrl: parsed.videoUrl ?? existingPerson.videoUrl,
+					voiceWavUrl: parsed.voiceWavUrl ?? existingPerson.voiceWavUrl,
+				})
+			: person;
+		const targetPerson = updatedPerson ?? person;
+		const triggerWord = buildDefaultPersonTriggerWord(targetPerson.slug);
+		const genderHint = inferGenderHint(targetPerson.description);
+		const subject = genderHint ? `${triggerWord} ${genderHint}` : triggerWord;
+
+		await this.upsertDatasetGenerationsByVariantId(
+			targetPerson.id,
+			datasetPhotos.map((photo, index) => ({
+				caption:
+					photo.caption ||
+					`a photo of ${subject}, imported external reference photo ${index + 1}`,
+				metadata: {
+					...photo.metadata,
+					datasetImportedFrom: parsed.externalSource,
+					datasetOrder: index,
+					externalPersonId: parsed.externalId,
+				},
+				s3Key: photo.s3Key ?? null,
+				url: photo.sourceUrl,
+				variantId: photo.variantId,
+			})),
+			{ pruneMissing: false }
+		);
+
+		const hydratedPerson =
+			(await this.repository.getPersonById(targetPerson.id)) ?? targetPerson;
+		const missingDatasetPhotoCount = Math.max(
+			0,
+			parsed.targetDatasetCount - datasetPhotos.length
+		);
+
+		return {
+			created: !existingPerson,
+			importedDatasetPhotoCount: datasetPhotos.length,
+			missingDatasetPhotoCount,
+			person: hydratedPerson,
+		};
+	}
+
+	private async findPersonByExternalIdentity(input: {
+		externalId: string;
+		externalSource: string;
+		slug: string;
+	}) {
+		const persons = await this.repository.listPersons();
+		return (
+			persons.find(
+				(person) =>
+					readExternalImportId(person.metadata, input.externalSource) ===
+					input.externalId
+			) ??
+			persons.find(
+				(person) => input.slug.length > 0 && person.slug === input.slug
+			) ??
+			null
+		);
+	}
+
 	private resolveUpdatedSlug(
 		parsed: ParsedUpdatePersonInput,
 		current: PersonRecord,
@@ -1098,15 +1286,15 @@ export class PersonsService {
 				)
 			: [];
 
+		const isRefillableSyntheticVariant = variantId?.startsWith("variant-");
 		// Track variants that the operator just rejected so the dataset
 		// gallery can render placeholder slots and the Train CTA stays gated
-		// until every refill arrives. Only synth slots (variantId !== null,
-		// not `original-*` — already filtered above) participate; without a
-		// variantId we cannot reliably correlate the incoming refill back to
-		// a pending slot, so we do not gate Train in that edge case.
+		// until every refill arrives. Only generated synthetic slots
+		// (`variant-*`) participate; imported Adorely slots are source photos,
+		// not templates the admin runner knows how to regenerate.
 		const nextPendingRefillVariantIds = this.appendPendingRefillVariantId(
 			training,
-			variantId
+			isRefillableSyntheticVariant ? variantId : null
 		);
 
 		await this.repository.updatePerson(personId, {
@@ -1125,7 +1313,7 @@ export class PersonsService {
 			deletedGeneration,
 			person,
 			training,
-			variantId,
+			variantId: isRefillableSyntheticVariant ? variantId : null,
 		});
 
 		return this.repository.getPersonById(personId);
@@ -1372,9 +1560,47 @@ export class PersonsService {
 		});
 	}
 
+	private getSeedReferenceImagesForTraining(
+		person: PersonRecord,
+		triggerWord: string
+	) {
+		const genderHint = inferGenderHint(person.description);
+		const subject = genderHint ? `${triggerWord} ${genderHint}` : triggerWord;
+
+		return person.generations
+			.filter(
+				(generation) =>
+					generation.status === "ready" &&
+					generation.mediaType === "image" &&
+					generation.metadata.isDatasetPhoto === true
+			)
+			.sort((left, right) => {
+				const leftOrder = readMetadataNumber(left.metadata, "datasetOrder");
+				const rightOrder = readMetadataNumber(right.metadata, "datasetOrder");
+				if (leftOrder !== null || rightOrder !== null) {
+					return (
+						(leftOrder ?? Number.MAX_SAFE_INTEGER) -
+						(rightOrder ?? Number.MAX_SAFE_INTEGER)
+					);
+				}
+				return left.createdAt.getTime() - right.createdAt.getTime();
+			})
+			.slice(0, DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT)
+			.map((generation, index) => ({
+				caption:
+					readMetadataString(generation.metadata, "datasetCaption") ??
+					`a photo of ${subject}, imported reference photo ${index + 1}`,
+				s3Key: readMetadataString(generation.metadata, "datasetS3Key"),
+				url: generation.sourceUrl,
+				variantId:
+					readMetadataString(generation.metadata, "datasetVariantId") ??
+					generation.id,
+			}));
+	}
+
 	async startLoraTraining(
 		personId: string,
-		input: z.input<typeof startPersonLoraTrainingInputSchema>,
+		input: z.output<typeof startPersonLoraTrainingInputSchema>,
 		options?: {
 			debugCorrelationId?: string;
 		}
@@ -1416,12 +1642,17 @@ export class PersonsService {
 			parsed.outputName ??
 			`${person.slug}-sdxl-lora-${new Date().toISOString().slice(0, 10)}`;
 		const requestedAt = new Date().toISOString();
+		const seedReferenceImages = this.getSeedReferenceImagesForTraining(
+			person,
+			triggerWord
+		);
 		const trainingMetadata = {
 			assetReleaseId: null,
 			completedAt: null,
 			datasetUrl: person.datasetUrl,
 			datasetZipSizeBytes: null,
 			debug: {
+				importedSeedReferenceCount: seedReferenceImages.length,
 				sourceReferencePhotoUrl: person.referencePhotoUrl,
 			},
 			debugCorrelationId: options?.debugCorrelationId ?? null,
@@ -1436,7 +1667,7 @@ export class PersonsService {
 					providerJobId: null,
 					providerRequestId: null,
 					providerStatus: null,
-					referenceImageCount: 0,
+					referenceImageCount: seedReferenceImages.length,
 					status: "queued",
 				},
 			],
@@ -1449,9 +1680,10 @@ export class PersonsService {
 			providerJobId: null,
 			providerRequestId: null,
 			providerStatus: null,
-			referenceImageCount: 0,
-			referenceImageTargetCount: null,
-			referenceImageUrls: [],
+			referenceImageCount: seedReferenceImages.length,
+			referenceImageTargetCount:
+				DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT,
+			referenceImageUrls: seedReferenceImages.map((item) => item.url),
 			referencePrompt: parsed.referencePrompt ?? null,
 			requestedAt,
 			startedAt: requestedAt,
@@ -1503,6 +1735,9 @@ export class PersonsService {
 				referencePhotoUrl: person.referencePhotoUrl,
 				referencePrompt: parsed.referencePrompt ?? undefined,
 				reuseDatasetUrl,
+				...(reuseDatasetUrl || seedReferenceImages.length === 0
+					? {}
+					: { seedReferenceImages }),
 				trainingRunId,
 				triggerWord,
 			},
@@ -2042,7 +2277,12 @@ export class PersonsService {
 			await this.upsertDatasetGenerationsByVariantId(
 				personId,
 				parsedEvent.referenceImageItems,
-				{ refilledVariantIds: new Set(refilledVariantIds) }
+				{
+					pruneMissing:
+						parsedEvent.status === "awaiting-approval" &&
+						parsedEvent.phase !== "refilling-references",
+					refilledVariantIds: new Set(refilledVariantIds),
+				}
 			);
 		} else if (parsedEvent.referenceImageUrls?.length) {
 			const nextDatasetUrls = [...new Set(nextReferenceImageUrls)];
@@ -2132,11 +2372,12 @@ export class PersonsService {
 		personId: string,
 		items: {
 			caption: string;
+			metadata?: Record<string, unknown>;
 			s3Key: string | null;
 			url: string;
 			variantId: string;
 		}[],
-		options?: { refilledVariantIds?: Set<string> }
+		options?: { pruneMissing?: boolean; refilledVariantIds?: Set<string> }
 	) {
 		const personSnapshot = await this.repository.getPersonById(personId);
 		if (!personSnapshot) {
@@ -2162,18 +2403,17 @@ export class PersonsService {
 
 		const incomingVariantIds = new Set(items.map((item) => item.variantId));
 
-		// Drop legacy dataset rows that don't belong to the new variantId set
-		// — those came from the old "URL-only" event path or were rejected
-		// during the current run. Their S3 objects were cleaned up either by
-		// the operator's reject (which goes through `deleteGeneration`) or by
-		// the previous training run's cleanup, so we only need to drop the
-		// stale DB rows here.
-		await this.deleteDatasetGenerationsNotInIncomingSet(
-			personId,
-			incomingVariantIds,
-			existingByVariantId,
-			existingDatasetWithoutVariant
-		);
+		if (options?.pruneMissing === true) {
+			// Drop legacy dataset rows that don't belong to the full incoming
+			// variantId set. Incremental per-photo events intentionally skip this,
+			// otherwise every new slot would delete the slots emitted before it.
+			await this.deleteDatasetGenerationsNotInIncomingSet(
+				personId,
+				incomingVariantIds,
+				existingByVariantId,
+				existingDatasetWithoutVariant
+			);
+		}
 
 		const refilledVariantIds = options?.refilledVariantIds ?? new Set<string>();
 		const refilledAt = new Date().toISOString();
@@ -2184,6 +2424,7 @@ export class PersonsService {
 				datasetCaption: item.caption,
 				datasetVariantId: item.variantId,
 				isDatasetPhoto: true,
+				...(item.metadata ?? {}),
 				...(item.s3Key ? { datasetS3Key: item.s3Key } : {}),
 				...(isRefill ? { refilledAt } : {}),
 			};

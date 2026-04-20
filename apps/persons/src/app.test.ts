@@ -4,12 +4,16 @@ import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import { GENERATOR_CALLBACK_TOKEN_HEADER } from "@generator/http/shared";
 
 import { createApp } from "@/app";
-import type { AdminTrainingClient } from "@/clients/admin-training";
 import type {
-	OperatorServerClient,
-	PersonGenerationRecord,
-	PersonRecord,
-	PersonsRepository,
+	AdminTrainingClient,
+	StartPersonLoraTrainingInput,
+} from "@/clients/admin-training";
+import {
+	type OperatorServerClient,
+	type PersonGenerationRecord,
+	type PersonRecord,
+	type PersonsRepository,
+	PersonsService,
 } from "@/domain/persons";
 
 function createMemoryRepository(): PersonsRepository {
@@ -557,6 +561,98 @@ describe("persons api", () => {
 		});
 	});
 
+	it("imports external dataset photos as seed references for lora prep", async () => {
+		const repository = createMemoryRepository();
+		const trainingRequests: StartPersonLoraTrainingInput[] = [];
+		const adminTrainingClient: AdminTrainingClient = {
+			cacheExternalLora(sourceUrl) {
+				return Promise.resolve(sourceUrl);
+			},
+			confirmPersonLoraTraining() {
+				return Promise.resolve({
+					accepted: true,
+					jobId: "confirm-job",
+				});
+			},
+			requestVariantRefill() {
+				return Promise.resolve();
+			},
+			startPersonLoraTraining(input) {
+				trainingRequests.push(input);
+				return Promise.resolve({
+					accepted: true,
+					jobId: "training-job",
+				});
+			},
+		};
+		const service = new PersonsService({
+			adminTrainingClient,
+			repository,
+		});
+
+		const importResult = await service.importExternalPerson({
+			datasetPhotos: [
+				{
+					caption: "Imported main portrait",
+					metadata: { adorelyAssetId: "main-1" },
+					sourceUrl: "https://assets.example.com/main.png",
+					variantId: "adorely-main-1",
+				},
+				{
+					caption: "Imported gallery portrait",
+					metadata: { adorelyAssetId: "gallery-1" },
+					sourceUrl: "https://assets.example.com/gallery.png",
+					variantId: "adorely-gallery-1",
+				},
+			],
+			description: "A realistic woman with brown hair.",
+			externalId: "companion-1",
+			externalSource: "adorely",
+			metadata: {},
+			name: "Imported Ada",
+			referencePhotoUrl: "https://assets.example.com/main.png",
+			slug: "adorely-companion-1",
+			targetDatasetCount: 25,
+		});
+
+		expect(importResult.created).toBe(true);
+		expect(importResult.importedDatasetPhotoCount).toBe(2);
+		expect(importResult.missingDatasetPhotoCount).toBe(23);
+		expect(
+			importResult.person.generations.filter(
+				(generation) => generation.metadata.isDatasetPhoto === true
+			)
+		).toHaveLength(2);
+
+		await service.startLoraTraining(importResult.person.id, {});
+
+		expect(trainingRequests).toHaveLength(1);
+		expect(trainingRequests[0]?.mode).toBe("prep-only");
+		expect(trainingRequests[0]?.seedReferenceImages).toEqual([
+			{
+				caption: "Imported main portrait",
+				s3Key: null,
+				url: "https://assets.example.com/main.png",
+				variantId: "adorely-main-1",
+			},
+			{
+				caption: "Imported gallery portrait",
+				s3Key: null,
+				url: "https://assets.example.com/gallery.png",
+				variantId: "adorely-gallery-1",
+			},
+		]);
+
+		const trainingPerson = await repository.getPersonById(
+			importResult.person.id
+		);
+		const training = trainingPerson?.metadata.training as
+			| { referenceImageCount?: number; referenceImageTargetCount?: number }
+			| undefined;
+		expect(training?.referenceImageCount).toBe(2);
+		expect(training?.referenceImageTargetCount).toBe(25);
+	});
+
 	it("cancels active lora training and ignores later callbacks for that run", async () => {
 		const app = createApp({
 			adminTrainingClient: createAdminTrainingClient(),
@@ -848,19 +944,19 @@ describe("persons api", () => {
 			person: PersonRecord;
 		};
 
-		// Initial event from the dataset upload step: 17 unique URLs but the
-		// zip actually packs 20 images (the original photo is duplicated 4×).
+		// Initial event from the dataset upload step: 20 unique URLs but the
+		// zip actually packs 25 images (the original photo is duplicated 6×).
 		await app.request("http://localhost/api/internal/lora-trainings", {
 			body: JSON.stringify({
 				context: { personId: person.id },
 				event: {
 					phase: "starting-training",
-					referenceImageCount: 20,
-					referenceImageTargetCount: 20,
+					referenceImageCount: 25,
+					referenceImageTargetCount: 25,
 					referenceImageUrls: [
 						"https://assets.example.com/reference.png",
 						...Array.from(
-							{ length: 16 },
+							{ length: 19 },
 							(_, index) => `https://assets.example.com/dataset-${index}.png`
 						),
 					],
@@ -876,7 +972,7 @@ describe("persons api", () => {
 
 		// A subsequent polling callback that does NOT carry referenceImageCount
 		// must not downgrade the previously-recorded value to the URL count
-		// (17). Otherwise the UI would render a stuck-looking "refs 17/20".
+		// (20). Otherwise the UI would render a stuck-looking "refs 20/25".
 		await app.request("http://localhost/api/internal/lora-trainings", {
 			body: JSON.stringify({
 				context: { personId: person.id },
@@ -901,7 +997,7 @@ describe("persons api", () => {
 		};
 		const training = (hydratedPerson.metadata as { training?: unknown })
 			.training as { referenceImageCount?: number } | undefined;
-		expect(training?.referenceImageCount).toBe(20);
+		expect(training?.referenceImageCount).toBe(25);
 	});
 
 	it("exposes internal persons snapshot to bearer-authorized callers", async () => {
@@ -949,6 +1045,152 @@ describe("persons api", () => {
 		expect(response.status).toBe(200);
 		const { persons } = (await response.json()) as { persons: PersonRecord[] };
 		expect(persons.map((person) => person.name)).toEqual(["Internal Snapshot"]);
+	});
+
+	it("previews Adorely risk-2 imports through the integrations route", async () => {
+		const previousFetch = globalThis.fetch;
+		const previousToken = process.env.ADORELY_DEBUG_MCP_TOKEN;
+		const toolCalls: string[] = [];
+		process.env.ADORELY_DEBUG_MCP_TOKEN = "test-adorely-token";
+		const jsonResponse = (body: unknown) =>
+			Promise.resolve(Response.json(body));
+		globalThis.fetch = ((_input, init) => {
+			const request = JSON.parse(String(init?.body)) as {
+				method: string;
+				params?: { arguments?: Record<string, unknown>; name?: string };
+			};
+			if (request.method === "initialize") {
+				return jsonResponse({ jsonrpc: "2.0", result: {} });
+			}
+			if (request.method !== "tools/call") {
+				return jsonResponse({ error: { message: "unsupported" } });
+			}
+			const toolName = request.params?.name ?? "";
+			toolCalls.push(toolName);
+			switch (toolName) {
+				case "list_companions":
+					return jsonResponse({
+						jsonrpc: "2.0",
+						result: {
+							structuredContent: {
+								companions: [
+									{
+										avatarUrl: "https://assets.example.com/main.png",
+										id: "adorely-1",
+										mainPhotoUrl: "https://assets.example.com/main.png",
+										name: "Risk Two",
+										status: "active",
+										tenantId: "default",
+									},
+								],
+								limit: 100,
+								nextOffset: null,
+								offset: 0,
+								total: 1,
+							},
+						},
+					});
+				case "get_companion":
+					return jsonResponse({
+						jsonrpc: "2.0",
+						result: {
+							structuredContent: {
+								assetCounts: { totalAssets: 1 },
+								bio: null,
+								categories: [],
+								description: "Risk two profile",
+								greeting: "Hi",
+								id: "adorely-1",
+								mainPhotoUrl: "https://assets.example.com/main.png",
+								metadata: {
+									age: 25,
+									artStyle: "realistic",
+									bodyType: "average",
+									ethnicity: "latina",
+									gender: "female",
+									hairColor: "brown",
+									hairStyle: "long",
+									riskLevel: 2,
+									skinTone: "tan",
+								},
+								name: "Risk Two",
+								promptContext: {},
+								status: "active",
+								tagline: "R2",
+								tenantId: "default",
+								translations: {},
+							},
+						},
+					});
+				case "list_companion_assets":
+					return jsonResponse({
+						jsonrpc: "2.0",
+						result: {
+							structuredContent: {
+								assets: [
+									{
+										assetId: "asset-1",
+										assetRef: "companion_media:asset-1",
+										assetSourceTable: "companion_media",
+										caption: null,
+										createdAt: "2026-04-20T00:00:00.000Z",
+										isMainPhoto: true,
+										kind: "main",
+										order: 0,
+										source: "media:gallery",
+										type: "image",
+										url: "https://assets.example.com/main.png",
+										visibility: {
+											isDraft: false,
+											isPremium: false,
+											isPrivate: false,
+										},
+									},
+								],
+								hasMore: false,
+								nextOffset: null,
+								total: 1,
+							},
+						},
+					});
+				default:
+					return jsonResponse({ error: { message: "unknown tool" } });
+			}
+		}) as typeof fetch;
+
+		try {
+			const app = createApp({
+				corsOrigins: ["http://localhost:3004"],
+				repository: createMemoryRepository(),
+			});
+			const response = await app.request(
+				"http://localhost/api/integrations/adorely-import",
+				{
+					body: JSON.stringify({ mode: "preview" }),
+					headers: { "content-type": "application/json" },
+					method: "POST",
+				}
+			);
+
+			expect(response.status).toBe(200);
+			const payload = (await response.json()) as {
+				summary: { imported: number; skipped: number };
+			};
+			expect(payload.summary.imported).toBe(1);
+			expect(payload.summary.skipped).toBe(0);
+			expect(toolCalls).toEqual([
+				"list_companions",
+				"get_companion",
+				"list_companion_assets",
+			]);
+		} finally {
+			globalThis.fetch = previousFetch;
+			if (previousToken === undefined) {
+				process.env.ADORELY_DEBUG_MCP_TOKEN = undefined;
+			} else {
+				process.env.ADORELY_DEBUG_MCP_TOKEN = previousToken;
+			}
+		}
 	});
 
 	it("deletes generations and removes deleted dataset photos from training metadata", async () => {

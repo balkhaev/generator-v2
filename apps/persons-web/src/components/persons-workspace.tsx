@@ -64,6 +64,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
+import { AdorelyImportPanel } from "@/components/adorely-import-panel";
 import { TrainingDetailsDialog } from "@/components/training-details-dialog";
 import {
 	type CreatePersonInput,
@@ -1721,7 +1722,7 @@ function CreatePersonForm({
 	const isEnhanceActive = enhance && !enhanceDisabled;
 
 	return (
-		<WorkspacePane className="min-h-0">
+		<WorkspacePane className="h-full min-h-0">
 			<div className="grid h-full min-h-0 gap-0">
 				<div className="px-4 py-3">
 					<SectionLabel>New person</SectionLabel>
@@ -2162,6 +2163,12 @@ export default function PersonsWorkspace({
 		});
 	}, [selectedPerson]);
 
+	const refreshPersons = useCallback(async () => {
+		const snapshot = await getPersonsDashboard();
+		setPersons(snapshot.persons);
+		return snapshot;
+	}, []);
+
 	const needsPolling =
 		persons.some((person) =>
 			person.generations.some((generation) => generation.status === "queued")
@@ -2178,15 +2185,14 @@ export default function PersonsWorkspace({
 
 		const timer = window.setInterval(async () => {
 			try {
-				const snapshot = await getPersonsDashboard();
-				setPersons(snapshot.persons);
+				await refreshPersons();
 			} catch {
 				// Keep UI stable until the next successful refresh.
 			}
 		}, 5000);
 
 		return () => window.clearInterval(timer);
-	}, [needsPolling]);
+	}, [needsPolling, refreshPersons]);
 
 	const totalGenerations = persons.reduce(
 		(total, person) => total + person.generations.length,
@@ -2486,14 +2492,19 @@ export default function PersonsWorkspace({
 						person={selectedPerson}
 					/>
 				) : (
-					<CreatePersonForm
-						enhance={enhanceWithGrok}
-						formState={formState}
-						isCreating={isCreating}
-						onEnhanceChange={setEnhanceWithGrok}
-						onFieldChange={updateFormField}
-						onSubmit={handleCreatePerson}
-					/>
+					<div className="flex h-full min-h-0 flex-col gap-3">
+						<AdorelyImportPanel onImported={refreshPersons} />
+						<div className="min-h-0 flex-1">
+							<CreatePersonForm
+								enhance={enhanceWithGrok}
+								formState={formState}
+								isCreating={isCreating}
+								onEnhanceChange={setEnhanceWithGrok}
+								onFieldChange={updateFormField}
+								onSubmit={handleCreatePerson}
+							/>
+						</div>
+					</div>
 				)
 			}
 			navigation={createWorkspaceNavigation("persons", {

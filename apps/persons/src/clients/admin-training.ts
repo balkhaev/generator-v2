@@ -34,6 +34,12 @@ export interface StartPersonLoraTrainingInput {
 	 * fal.ai-генерацию и подаст этот zip pod'у напрямую через DATASET_URL.
 	 */
 	reuseDatasetUrl?: string;
+	seedReferenceImages?: {
+		caption: string;
+		s3Key?: string | null;
+		url: string;
+		variantId: string;
+	}[];
 	trainingRunId: string;
 	triggerWord?: string;
 }

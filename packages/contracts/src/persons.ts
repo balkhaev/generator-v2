@@ -20,7 +20,7 @@ export const PERSON_LORA_ACTIVE_TRAINING_STATUSES = [
 export type ActivePersonLoraTrainingStatus =
 	(typeof PERSON_LORA_ACTIVE_TRAINING_STATUSES)[number];
 
-export const DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT = 20;
+export const DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT = 25;
 
 /**
  * Workflow keys, hardcoded inside the persons service for the avatar onboarding

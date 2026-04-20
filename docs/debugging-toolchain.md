@@ -97,3 +97,10 @@ curl -H 'x-debug-correlation-id: dbg-manual-123' http://localhost:3005/api/healt
 
 - Replicate API docs: <https://replicate.com/docs/reference/http>
 - MCP official docs: <https://modelcontextprotocol.io/introduction>
+
+## Adorely Import
+
+Импорт Adorely companions в `persons` идёт через read-only Adorely Debug MCP
+(`list_companions`, `get_companion`, `list_companion_assets`) и CLI
+`bun run --cwd apps/persons import:adorely`. Подробности и режимы dry-run/apply:
+`docs/adorely-import.md`.

@@ -30,6 +30,42 @@ export interface PersonsDashboard {
 	warnings: string[];
 }
 
+export type AdorelyImportMode =
+	| "import"
+	| "import-and-start-training"
+	| "preview";
+
+export interface AdorelyImportResult {
+	companionId: string;
+	importedDatasetPhotoCount: number;
+	missingDatasetPhotoCount: number;
+	name: string;
+	personId: string | null;
+	skipped: boolean;
+	skipReason: string | null;
+	startedTraining: boolean;
+}
+
+export interface AdorelyImportSummary {
+	created: number;
+	dryRun: boolean;
+	failed: number;
+	imported: number;
+	results: AdorelyImportResult[];
+	skipped: number;
+	startedTraining: number;
+	total: number;
+	updated: number;
+}
+
+export interface AdorelyImportResponse {
+	filter: {
+		riskLevel: 2;
+		status: "active";
+	};
+	summary: AdorelyImportSummary;
+}
+
 export async function getPersonsDashboard(): Promise<PersonsDashboard> {
 	const warnings: string[] = [];
 
@@ -45,6 +81,19 @@ export async function getPersonsDashboard(): Promise<PersonsDashboard> {
 		);
 		return { persons: [], warnings };
 	}
+}
+
+export function runAdorelyImport(input: {
+	mode: AdorelyImportMode;
+}): Promise<AdorelyImportResponse> {
+	return requestJson<AdorelyImportResponse>(
+		`${API_BASE_URL}/api/integrations/adorely-import`,
+		{
+			body: JSON.stringify(input),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		}
+	);
 }
 
 export async function createPerson(input: CreatePersonInput) {

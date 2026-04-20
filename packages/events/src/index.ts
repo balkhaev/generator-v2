@@ -110,6 +110,16 @@ const personLoraTrainingRequestSchema = z.object({
 	personSlug: z.string().min(1),
 	referencePhotoUrl: z.string().min(1),
 	referencePrompt: z.string().optional(),
+	seedReferenceImages: z
+		.array(
+			z.object({
+				caption: z.string(),
+				s3Key: z.string().nullable().optional(),
+				url: z.string().min(1),
+				variantId: z.string().min(1),
+			})
+		)
+		.optional(),
 	/**
 	 * Если задано — runner пропускает повторную генерацию reference-датасета
 	 * через fal.ai/flux-2/edit и передаёт этот URL прямо в pod_runner как

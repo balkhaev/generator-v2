@@ -19,7 +19,7 @@ import type { RunpodPodLoraTrainingRunner } from "@/providers/runpod-pod-lora-tr
  */
 const STALENESS_THRESHOLD_MS = 3 * 60 * 1000;
 
-const DEFAULT_REFERENCE_IMAGE_TARGET_COUNT = 20;
+const DEFAULT_REFERENCE_IMAGE_TARGET_COUNT = 25;
 
 export interface TrainingRecoveryDeps {
 	client: PersonsApiClient;
@@ -79,6 +79,12 @@ interface PrepRecoveryCandidate {
 	personName: string;
 	personSlug: string;
 	referencePhotoUrl: string;
+	seedReferenceImages: {
+		caption: string;
+		s3Key?: string | null;
+		url: string;
+		variantId: string;
+	}[];
 	trainingRunId: string;
 	triggerWord: string | null;
 }
@@ -92,6 +98,34 @@ function readDebugString(
 	}
 	const value = debug[key];
 	return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readGenerationMetadataString(
+	metadata: Record<string, unknown>,
+	key: string
+): string | null {
+	const value = metadata[key];
+	return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function getSeedReferenceImages(person: PersonRecord) {
+	return person.generations
+		.filter(
+			(generation) =>
+				generation.status === "ready" &&
+				generation.mediaType === "image" &&
+				generation.metadata.isDatasetPhoto === true
+		)
+		.map((generation) => ({
+			caption:
+				readGenerationMetadataString(generation.metadata, "datasetCaption") ??
+				"",
+			s3Key: readGenerationMetadataString(generation.metadata, "datasetS3Key"),
+			url: generation.sourceUrl,
+			variantId:
+				readGenerationMetadataString(generation.metadata, "datasetVariantId") ??
+				generation.id,
+		}));
 }
 
 function resumableProvider(
@@ -231,6 +265,7 @@ function pickPrepRecoveryCandidate(
 		personName: person.name,
 		personSlug: person.slug,
 		referencePhotoUrl,
+		seedReferenceImages: getSeedReferenceImages(person),
 		trainingRunId,
 		triggerWord: training.triggerWord ?? null,
 	};
@@ -328,6 +363,7 @@ async function tryResumePrep(
 					personName: candidate.personName,
 					personSlug: candidate.personSlug,
 					referencePhotoUrl: candidate.referencePhotoUrl,
+					seedReferenceImages: candidate.seedReferenceImages,
 					trainingRunId: candidate.trainingRunId,
 					triggerWord: candidate.triggerWord ?? undefined,
 				});

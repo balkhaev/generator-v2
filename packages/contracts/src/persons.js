@@ -5,7 +5,7 @@ export const PERSON_LORA_ACTIVE_TRAINING_STATUSES = [
 	"training",
 	"publishing",
 ];
-export const DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT = 20;
+export const DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT = 25;
 /**
  * Workflow keys, hardcoded inside the persons service for the avatar onboarding
  * pipeline. Exposed here so that admin tooling can surface them in the

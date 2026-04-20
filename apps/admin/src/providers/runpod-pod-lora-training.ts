@@ -56,6 +56,7 @@ import {
 	type PreparedDatasetPhoto,
 	prepareDatasetPhotos,
 	REFERENCE_VARIANT_COUNT,
+	type SeedDatasetPhoto,
 	sanitizeSegment,
 	TOTAL_DATASET_COUNT,
 } from "@/providers/lora-dataset-builder";
@@ -107,6 +108,16 @@ export const startRunpodPodTrainingSchema = z.object({
 	personSlug: z.string().trim().min(1),
 	referencePhotoUrl: z.url(),
 	referencePrompt: z.string().trim().min(1).optional(),
+	seedReferenceImages: z
+		.array(
+			z.object({
+				caption: z.string(),
+				s3Key: z.string().nullable().optional(),
+				url: z.url(),
+				variantId: z.string().trim().min(1),
+			})
+		)
+		.optional(),
 	/**
 	 * URL уже готового reference-zip от предыдущей тренировки. Если задан —
 	 * runner полностью пропускает фазы `generating-references` /
@@ -236,6 +247,32 @@ function summarizePodMachine(
 
 function buildGeneratingProgress(completedImages: number) {
 	return clampProgressPct(10 + (completedImages / TOTAL_DATASET_COUNT) * 45);
+}
+
+function normalizeSeedReferenceImages(input: StartInput): SeedDatasetPhoto[] {
+	const seedReferenceImages = input.seedReferenceImages ?? [];
+	const seenUrls = new Set<string>();
+	const seenVariantIds = new Set<string>();
+	const seedPhotos: SeedDatasetPhoto[] = [];
+
+	for (const item of seedReferenceImages) {
+		if (seenUrls.has(item.url) || seenVariantIds.has(item.variantId)) {
+			continue;
+		}
+		seenUrls.add(item.url);
+		seenVariantIds.add(item.variantId);
+		seedPhotos.push({
+			caption: item.caption,
+			s3Key: item.s3Key ?? null,
+			url: item.url,
+			variantId: item.variantId,
+		});
+		if (seedPhotos.length >= TOTAL_DATASET_COUNT) {
+			break;
+		}
+	}
+
+	return seedPhotos;
 }
 
 async function retry<T>(operation: () => Promise<T>): Promise<T> {
@@ -837,12 +874,14 @@ export class RunpodPodLoraTrainingRunner {
 
 			const accumulated: PreparedDatasetPhoto[] = [];
 			const editorModelId = await this.getDatasetEditorModelId();
+			const seedPhotos = normalizeSeedReferenceImages(parsed);
 
 			await this.sendTrainingEvent({
 				personId: parsed.personId,
 				event: {
 					debug: {
 						baseModel: this.baseModel,
+						importedSeedReferenceCount: seedPhotos.length,
 						originalPhotoDuplicates: ORIGINAL_PHOTO_DUPLICATES,
 						outputName,
 						referenceVariantCount: REFERENCE_VARIANT_COUNT,
@@ -852,9 +891,10 @@ export class RunpodPodLoraTrainingRunner {
 					debugCorrelationId: parsed.debugCorrelationId,
 					lastEventAt: startedAt,
 					phase: "generating-references",
-					progressPct: buildGeneratingProgress(0),
-					referenceImageCount: 0,
+					progressPct: buildGeneratingProgress(seedPhotos.length),
+					referenceImageCount: seedPhotos.length,
 					referenceImageTargetCount: TOTAL_DATASET_COUNT,
+					referenceImageUrls: seedPhotos.map((entry) => entry.url),
 					status: "generating",
 					trainingRunId: parsed.trainingRunId,
 					triggerWord,
@@ -888,6 +928,7 @@ export class RunpodPodLoraTrainingRunner {
 				referencePhotoUrl: parsed.referencePhotoUrl,
 				referencePrompt: parsed.referencePrompt,
 				s3Config: this.s3Config,
+				seedPhotos,
 				trainingRunId: parsed.trainingRunId,
 				triggerWord,
 			});

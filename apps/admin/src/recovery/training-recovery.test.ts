@@ -80,8 +80,8 @@ function buildPerson(
 					overrides.providerJobId === undefined
 						? `fal-job-${id}`
 						: overrides.providerJobId,
-				referenceImageCount: 17,
-				referenceImageTargetCount: 20,
+				referenceImageCount: 20,
+				referenceImageTargetCount: 25,
 				referenceImageUrls: [`https://cdn.example.com/${id}/00.png`],
 				status: overrides.status === undefined ? "training" : overrides.status,
 				trainingRunId:

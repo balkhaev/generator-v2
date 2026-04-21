@@ -6,6 +6,29 @@ import {
 } from "@generator/storage";
 
 const dataUrlScheme = "data:";
+const rootPath = "/";
+const trailingSlashesPattern = /\/+$/u;
+
+function isConfiguredStorageEndpointUrl(
+	config: Pick<S3StorageConfig, "endpoint">,
+	url: URL
+): boolean {
+	const endpoint = new URL(config.endpoint);
+	if (url.origin !== endpoint.origin) {
+		return false;
+	}
+
+	const endpointPath = endpoint.pathname.replace(trailingSlashesPattern, "");
+	if (
+		endpointPath &&
+		url.pathname !== endpointPath &&
+		!url.pathname.startsWith(`${endpointPath}/`)
+	) {
+		return false;
+	}
+
+	return url.pathname !== rootPath;
+}
 
 export interface StorageAdapter {
 	/** Exposes the underlying persister for tests / migration tools. */
@@ -13,11 +36,12 @@ export interface StorageAdapter {
 	/**
 	 * Validates an external input image URL. Accepts:
 	 *   - `data:` URLs (inline previews / placeholders);
-	 *   - URLs that already live in our owned S3 bucket
-	 *     (i.e. `${publicBaseUrl}/...`).
-	 * Anything else is rejected so callers are forced to upload assets to our
-	 * S3 (`/api/input-assets` in studio, persons internal flows, etc.) before
-	 * passing them into the generator.
+	 *   - URLs that already live in our owned S3 bucket;
+	 *   - URLs from the same configured object-storage endpoint. Studio may pass
+	 *     source assets from sibling buckets (for example Adorely gallery assets)
+	 *     and those are still public, trusted object-storage URLs.
+	 * Anything else is rejected so callers are forced to upload assets to trusted
+	 * storage before passing them into the generator.
 	 */
 	normalizeInputImageUrl(url: string): string;
 	/**
@@ -73,14 +97,20 @@ export function createStorageAdapter(
 				);
 			}
 
-			if (!persister.isOwnedAssetUrl(parsed.toString())) {
+			const normalizedUrl = parsed.toString();
+			if (
+				!(
+					persister.isOwnedAssetUrl(normalizedUrl) ||
+					isConfiguredStorageEndpointUrl(config, parsed)
+				)
+			) {
 				throw new Error(
-					`Input image URL must be hosted in our S3 (${config.publicBaseUrl}); ` +
-						`got ${parsed.toString()}. Upload it via /api/input-assets first.`
+					`Input image URL must be hosted in trusted S3 storage (${config.publicBaseUrl} or ${config.endpoint}); ` +
+						`got ${normalizedUrl}. Upload it via /api/input-assets first.`
 				);
 			}
 
-			return parsed.toString();
+			return normalizedUrl;
 		},
 		persistArtifactUrls(input) {
 			return persister.persistArtifactUrls(input);

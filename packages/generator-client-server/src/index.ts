@@ -57,10 +57,41 @@ async function requestJson<T>(
 	const response = await fetchImpl(input, init);
 
 	if (!response.ok) {
-		throw new Error(`${response.status} ${response.statusText}`.trim());
+		throw new Error(await responseErrorMessage(response));
 	}
 
 	return (await response.json()) as T;
+}
+
+async function responseErrorMessage(response: Response): Promise<string> {
+	const status = `${response.status} ${response.statusText}`.trim();
+	const contentType = response.headers.get("content-type") ?? "";
+
+	if (contentType.includes("application/json")) {
+		try {
+			const payload = (await response.json()) as unknown;
+			if (
+				payload &&
+				typeof payload === "object" &&
+				typeof (payload as { error?: unknown }).error === "string"
+			) {
+				return `${status}: ${(payload as { error: string }).error}`;
+			}
+		} catch {
+			return status;
+		}
+	}
+
+	try {
+		const body = await response.text();
+		if (body.trim()) {
+			return `${status}: ${body.trim().slice(0, 500)}`;
+		}
+	} catch {
+		return status;
+	}
+
+	return status;
 }
 
 function isGeneratorHealthResponse(

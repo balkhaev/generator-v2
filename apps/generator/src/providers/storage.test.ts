@@ -3,7 +3,7 @@ import type { S3StorageConfig } from "@generator/storage";
 
 import { createStorageAdapter } from "@/providers/storage";
 
-const ownedBucketErrorPattern = /must be hosted in our S3/u;
+const trustedStorageErrorPattern = /must be hosted in trusted S3 storage/u;
 const unsupportedSchemeErrorPattern = /must use http\(s\) or data: scheme/u;
 
 const config: S3StorageConfig = {
@@ -54,11 +54,18 @@ describe("storage adapter", () => {
 		expect(adapter.normalizeInputImageUrl(owned)).toBe(owned);
 	});
 
+	it("accepts sibling bucket URLs from the configured storage endpoint", () => {
+		const { adapter } = createTestAdapter();
+		const sibling =
+			"https://hel1.example.com/adorely/tenants/default/gallery/uploaded/source.png";
+		expect(adapter.normalizeInputImageUrl(sibling)).toBe(sibling);
+	});
+
 	it("rejects external HTTP(S) input image URLs", () => {
 		const { adapter } = createTestAdapter();
 		expect(() =>
 			adapter.normalizeInputImageUrl("https://v3.fal.media/files/abc.png")
-		).toThrow(ownedBucketErrorPattern);
+		).toThrow(trustedStorageErrorPattern);
 	});
 
 	it("rejects unsupported schemes", () => {

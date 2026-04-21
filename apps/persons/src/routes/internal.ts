@@ -238,6 +238,7 @@ async function buildAdorelyRepairPlan(input: {
 				asset: item.asset,
 				datasetOrder: item.datasetOrder,
 				generationId: item.generationId,
+				previousUrl: item.previousUrl,
 			})),
 			mainAsset: toRepairAsset(mainAsset),
 			personId: person.id,

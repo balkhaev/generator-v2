@@ -427,6 +427,7 @@ export interface AdorelyAssetRepairItem {
 	asset: AdorelyAssetRepairSource;
 	datasetOrder: number;
 	generationId: string;
+	previousUrl?: string;
 }
 
 export interface AdorelyAssetRepairInput {
@@ -783,6 +784,67 @@ export class PersonsService {
 			sizeBytes: remoteAsset.data.byteLength,
 			url: buildPublicAssetUrl(this.s3Storage, key),
 		};
+	}
+
+	private async updateTrainingReferenceImageUrls(
+		personId: string,
+		metadata: Record<string, unknown>,
+		replacements: {
+			replacementByDatasetOrder: Map<number, string>;
+			replacementByUrl: Map<string, string>;
+		}
+	) {
+		const training = readMetadataRecord(metadata, "training");
+		if (!training) {
+			return;
+		}
+
+		let didChange = false;
+		const referenceImageUrls = Array.isArray(training.referenceImageUrls)
+			? training.referenceImageUrls
+					.filter((url): url is string => typeof url === "string")
+					.map((url, index) => {
+						const nextUrl =
+							replacements.replacementByUrl.get(url) ??
+							(url.includes("/adorely/")
+								? replacements.replacementByDatasetOrder.get(index)
+								: undefined) ??
+							url;
+						didChange ||= nextUrl !== url;
+						return nextUrl;
+					})
+			: null;
+
+		const referenceImageItems = Array.isArray(training.referenceImageItems)
+			? training.referenceImageItems.map((item) => {
+					if (!(item && typeof item === "object" && !Array.isArray(item))) {
+						return item;
+					}
+					const record = item as Record<string, unknown>;
+					const url = typeof record.url === "string" ? record.url : null;
+					const nextUrl = url ? replacements.replacementByUrl.get(url) : null;
+					if (!nextUrl) {
+						return item;
+					}
+					didChange = true;
+					return { ...record, url: nextUrl };
+				})
+			: null;
+
+		if (!didChange) {
+			return;
+		}
+
+		await this.repository.updatePerson(personId, {
+			metadata: {
+				...metadata,
+				training: {
+					...training,
+					...(referenceImageItems ? { referenceImageItems } : {}),
+					...(referenceImageUrls ? { referenceImageUrls } : {}),
+				},
+			},
+		});
 	}
 
 	private createExecutionCallback(context: Record<string, unknown>) {
@@ -1185,6 +1247,8 @@ export class PersonsService {
 
 		const uploadedAt = new Date().toISOString();
 		const uploads = new Map<string, UploadedAdorelyRepairAsset>();
+		const replacementByUrl = new Map<string, string>();
+		const replacementByDatasetOrder = new Map<number, string>();
 		const uploadAsset = async (asset: AdorelyAssetRepairSource) => {
 			const existing = uploads.get(asset.assetId);
 			if (existing) {
@@ -1221,6 +1285,12 @@ export class PersonsService {
 			}
 
 			const uploaded = await uploadAsset(item.asset);
+			replacementByUrl.set(item.asset.url, uploaded.url);
+			replacementByUrl.set(generation.sourceUrl, uploaded.url);
+			if (item.previousUrl) {
+				replacementByUrl.set(item.previousUrl, uploaded.url);
+			}
+			replacementByDatasetOrder.set(item.datasetOrder, uploaded.url);
 			const caption =
 				item.asset.caption ??
 				readMetadataString(generation.metadata, "datasetCaption") ??
@@ -1254,6 +1324,15 @@ export class PersonsService {
 				url: uploaded.url,
 			});
 		}
+
+		await this.updateTrainingReferenceImageUrls(
+			input.personId,
+			person.metadata,
+			{
+				replacementByDatasetOrder,
+				replacementByUrl,
+			}
+		);
 
 		const repairedPerson = await this.repository.getPersonById(input.personId);
 		if (!repairedPerson) {

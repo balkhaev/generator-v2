@@ -67,7 +67,7 @@ interface AdorelyCompanionDetail {
 type AdorelyAssetKind = "dataset" | "gallery" | "main" | "welcome";
 type AdorelyAssetType = "audio" | "dataset" | "image" | "video";
 
-interface AdorelyCompanionAsset {
+export interface AdorelyCompanionAsset {
 	assetId: string;
 	assetRef: string;
 	assetSourceTable: "companion_dataset" | "companion_media";
@@ -267,7 +267,7 @@ function readMcpErrorText(result: McpToolResponse<unknown>) {
 	return result.content?.find((item) => item.type === "text")?.text ?? null;
 }
 
-function sanitizeExternalId(value: string) {
+export function sanitizeExternalId(value: string) {
 	return value
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/giu, "-")
@@ -298,7 +298,11 @@ function getAssetRank(asset: AdorelyCompanionAsset) {
 	return 5;
 }
 
-function selectReferenceAssets(assets: AdorelyCompanionAsset[]) {
+export function getAdorelyAssetVariantId(asset: AdorelyCompanionAsset) {
+	return `adorely-${sanitizeExternalId(asset.assetId)}`;
+}
+
+export function selectAdorelyReferenceAssets(assets: AdorelyCompanionAsset[]) {
 	const seenUrls = new Set<string>();
 	return assets
 		.filter(isReferenceImageAsset)
@@ -368,7 +372,7 @@ async function listAllCompanions(
 	return { companions, total };
 }
 
-async function listAllCompanionAssets(
+export async function listAllAdorelyCompanionAssets(
 	client: AdorelyDebugMcpClient,
 	companionId: string
 ) {
@@ -585,8 +589,11 @@ async function importOneAdorelyCompanion(
 	context: ImportContext
 ): Promise<ImportOutcome> {
 	const companion = await context.client.getCompanion(companionListItem.id);
-	const assets = await listAllCompanionAssets(context.client, companion.id);
-	const referenceAssets = selectReferenceAssets(assets);
+	const assets = await listAllAdorelyCompanionAssets(
+		context.client,
+		companion.id
+	);
+	const referenceAssets = selectAdorelyReferenceAssets(assets);
 	const skipReason = getCompanionSkipReason(
 		companion,
 		referenceAssets,

@@ -47,6 +47,7 @@ describe("mcp app", () => {
 		expect(toolNames).toContain("test_user_get");
 		expect(toolNames).toContain("lora_list");
 		expect(toolNames).toContain("lora_get");
+		expect(toolNames).toContain("persons_reupload_adorely_assets");
 		expect(toolNames).toContain("studio_run_mark_failed");
 		expect(toolNames).toContain("admin_lora_training_queue_snapshot");
 	});

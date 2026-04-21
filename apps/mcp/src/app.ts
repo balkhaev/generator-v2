@@ -272,6 +272,34 @@ const toolDefinitions = [
 	},
 	{
 		description:
+			"Reupload Adorely-imported person reference assets into Generator storage and update broken dataset/photo URLs. Dry-run by default; set apply=true to mutate prod data.",
+		inputSchema: {
+			properties: {
+				apply: {
+					description: "When true, uploads files and updates the person.",
+					type: "boolean",
+				},
+				companionId: {
+					description:
+						"Optional Adorely companion id override. Defaults to person.metadata.imports.adorely.id.",
+					type: "string",
+				},
+				personId: {
+					type: "string",
+				},
+				targetImportedAssetCount: {
+					description:
+						"Optional cap for imported Adorely dataset rows to repair.",
+					type: "number",
+				},
+			},
+			required: ["personId"],
+			type: "object",
+		},
+		name: "persons_reupload_adorely_assets",
+	},
+	{
+		description:
 			"Read the currently configured LoRA training provider and per-provider availability (env-vars status, source: worker vs gateway-fallback).",
 		inputSchema: {
 			properties: {},
@@ -1016,6 +1044,42 @@ async function handlePersonsToolCall(
 				await fetchServiceSnapshot(
 					"persons",
 					`/api/internal/persons/${encodeURIComponent(personId)}/retrain-lora`,
+					{
+						body: JSON.stringify(body),
+						headers: {
+							authorization: `Bearer ${token}`,
+							"content-type": "application/json",
+						},
+						method: "POST",
+					}
+				)
+			)
+		);
+	}
+
+	if (name === "persons_reupload_adorely_assets") {
+		const body: Record<string, unknown> = {};
+		const apply = parseOptionalBoolean(argumentsPayload.apply);
+		const companionId = parseOptionalString(argumentsPayload.companionId);
+		const targetImportedAssetCount = parseOptionalNumber(
+			argumentsPayload.targetImportedAssetCount
+		);
+		if (apply !== undefined) {
+			body.apply = apply;
+		}
+		if (companionId) {
+			body.companionId = companionId;
+		}
+		if (targetImportedAssetCount !== undefined) {
+			body.targetImportedAssetCount = targetImportedAssetCount;
+		}
+
+		return createOkResponse(
+			id,
+			createToolResult(
+				await fetchServiceSnapshot(
+					"persons",
+					`/api/internal/persons/${encodeURIComponent(personId)}/reupload-adorely-assets`,
 					{
 						body: JSON.stringify(body),
 						headers: {

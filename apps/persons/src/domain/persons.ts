@@ -7,8 +7,12 @@ import {
 import { env } from "@generator/env/server";
 import type { GeneratorExecutionClient } from "@generator/generator-client-server";
 import {
+	buildPublicAssetUrl,
+	createS3Client,
 	deleteObjectFromS3,
+	downloadRemoteAsset,
 	extractS3KeyFromPublicUrl,
+	inferImageFileExtension,
 	type S3StorageConfig,
 } from "@generator/storage";
 import { z } from "zod";
@@ -407,6 +411,38 @@ export interface PersonsRepository {
 	): Promise<PersonRecord | null>;
 }
 
+export interface AdorelyAssetRepairSource {
+	assetId: string;
+	assetRef: string;
+	assetSource: string;
+	assetSourceTable: string;
+	caption: string | null;
+	kind: string;
+	order: number | null;
+	url: string;
+	variantId: string;
+}
+
+export interface AdorelyAssetRepairItem {
+	asset: AdorelyAssetRepairSource;
+	datasetOrder: number;
+	generationId: string;
+}
+
+export interface AdorelyAssetRepairInput {
+	companionId: string;
+	items: AdorelyAssetRepairItem[];
+	mainAsset: AdorelyAssetRepairSource;
+	personId: string;
+}
+
+interface UploadedAdorelyRepairAsset {
+	contentType: string;
+	key: string;
+	sizeBytes: number;
+	url: string;
+}
+
 /**
  * Канонический клиент `generator-api`, используемый persons-сервисом.
  * На текущем этапе persons обращается только к executions + health,
@@ -470,6 +506,7 @@ function buildDefaultPersonTriggerWord(slug: string) {
 
 const imageMediaUrlPattern = /\.(png|jpe?g|webp|gif)(\?.*)?$/;
 const audioMediaUrlPattern = /\.(wav|mp3|ogg|m4a)(\?.*)?$/;
+const remoteImageMaxBytes = 20 * 1024 * 1024;
 const CANCELLED_GENERATION_ERROR = "Generation cancelled by operator";
 const CANCELLED_LORA_PIPELINE_ERROR = "LoRA pipeline cancelled by operator";
 
@@ -699,6 +736,53 @@ export class PersonsService {
 			return null;
 		}
 		return extractS3KeyFromPublicUrl(generation.sourceUrl, this.s3Storage);
+	}
+
+	private async uploadAdorelyRepairAsset(input: {
+		asset: AdorelyAssetRepairSource;
+		companionId: string;
+	}): Promise<UploadedAdorelyRepairAsset> {
+		if (!this.s3Storage) {
+			throw new Error("S3 storage is not configured for persons-api");
+		}
+
+		const remoteAsset = await downloadRemoteAsset(input.asset.url, {
+			attempts: 2,
+			delayMs: 500,
+		});
+		if (!remoteAsset.contentType.startsWith("image/")) {
+			throw new Error(
+				`Adorely asset ${input.asset.assetId} is not an image (${remoteAsset.contentType})`
+			);
+		}
+		if (remoteAsset.data.byteLength > remoteImageMaxBytes) {
+			throw new Error(
+				`Adorely asset ${input.asset.assetId} exceeds ${remoteImageMaxBytes} bytes`
+			);
+		}
+
+		const extension = inferImageFileExtension({
+			contentType: remoteAsset.contentType,
+			fallback: ".png",
+			url: input.asset.url,
+		});
+		const key = [
+			"persons",
+			"adorely-imports",
+			slugifySegment(input.companionId),
+			`${slugifySegment(input.asset.assetId) || "asset"}${extension}`,
+		].join("/");
+
+		await createS3Client(this.s3Storage).write(key, remoteAsset.data, {
+			type: remoteAsset.contentType,
+		} as never);
+
+		return {
+			contentType: remoteAsset.contentType,
+			key,
+			sizeBytes: remoteAsset.data.byteLength,
+			url: buildPublicAssetUrl(this.s3Storage, key),
+		};
 	}
 
 	private createExecutionCallback(context: Record<string, unknown>) {
@@ -1091,6 +1175,101 @@ export class PersonsService {
 			personId,
 			buildPersonUpdatePatch(parsed, nextSlug)
 		);
+	}
+
+	async reuploadAdorelyImportedAssets(input: AdorelyAssetRepairInput) {
+		const person = await this.repository.getPersonById(input.personId);
+		if (!person) {
+			return null;
+		}
+
+		const uploadedAt = new Date().toISOString();
+		const uploads = new Map<string, UploadedAdorelyRepairAsset>();
+		const uploadAsset = async (asset: AdorelyAssetRepairSource) => {
+			const existing = uploads.get(asset.assetId);
+			if (existing) {
+				return existing;
+			}
+			const uploaded = await this.uploadAdorelyRepairAsset({
+				asset,
+				companionId: input.companionId,
+			});
+			uploads.set(asset.assetId, uploaded);
+			return uploaded;
+		};
+
+		const mainUpload = await uploadAsset(input.mainAsset);
+		await this.repository.updatePerson(input.personId, {
+			photoUrl: mainUpload.url,
+			referencePhotoUrl: mainUpload.url,
+		});
+
+		const updatedGenerations: {
+			assetId: string;
+			generationId: string;
+			key: string;
+			url: string;
+		}[] = [];
+		const generationById = new Map(
+			person.generations.map((generation) => [generation.id, generation])
+		);
+
+		for (const item of input.items) {
+			const generation = generationById.get(item.generationId);
+			if (!generation) {
+				continue;
+			}
+
+			const uploaded = await uploadAsset(item.asset);
+			const caption =
+				item.asset.caption ??
+				readMetadataString(generation.metadata, "datasetCaption") ??
+				`Adorely ${item.asset.kind} reference ${item.datasetOrder + 1}`;
+
+			await this.repository.updateGeneration(generation.id, {
+				metadata: {
+					...generation.metadata,
+					adorelyAssetId: item.asset.assetId,
+					adorelyAssetRef: item.asset.assetRef,
+					adorelyAssetSource: item.asset.assetSource,
+					adorelyAssetSourceTable: item.asset.assetSourceTable,
+					datasetCaption: caption,
+					datasetImportedFrom: "adorely",
+					datasetOrder: item.datasetOrder,
+					datasetS3Key: uploaded.key,
+					datasetVariantId: item.asset.variantId,
+					externalPersonId: input.companionId,
+					isDatasetPhoto: true,
+					reuploadedAt: uploadedAt,
+					reuploadedFromUrl: item.asset.url,
+				},
+				previewUrl: uploaded.url,
+				sourceUrl: uploaded.url,
+			});
+
+			updatedGenerations.push({
+				assetId: item.asset.assetId,
+				generationId: generation.id,
+				key: uploaded.key,
+				url: uploaded.url,
+			});
+		}
+
+		const repairedPerson = await this.repository.getPersonById(input.personId);
+		if (!repairedPerson) {
+			throw new Error("Person disappeared during Adorely asset repair");
+		}
+
+		return {
+			main: {
+				assetId: input.mainAsset.assetId,
+				key: mainUpload.key,
+				url: mainUpload.url,
+			},
+			person: repairedPerson,
+			reuploadedAssetCount: uploads.size,
+			updatedGenerations,
+		};
 	}
 
 	async importExternalPerson(

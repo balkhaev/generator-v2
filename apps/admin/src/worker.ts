@@ -219,6 +219,22 @@ const selectActiveRunner = async () => {
 	return { provider: "fal" as TrainingProviderName, runner: falRunner };
 };
 
+const selectActiveConfirmationRunner = async () => {
+	const requested = await trainingProviderSettings.getProvider();
+	if (requested === "runpod") {
+		if (runpodPodRunner) {
+			return {
+				provider: "runpod" as TrainingProviderName,
+				runner: runpodPodRunner,
+			};
+		}
+		console.warn(
+			"admin.worker: TRAINING_PROVIDER=runpod requested for confirmation but runpod-pod runner is missing, falling back to fal"
+		);
+	}
+	return { provider: "fal" as TrainingProviderName, runner: falRunner };
+};
+
 const trainingLock = createRedisIdempotencyLock({
 	keyPrefix: TRAINING_LOCK_PREFIX,
 	redisUrl,
@@ -258,13 +274,13 @@ const activeTrainingRunIds = new Set<string>();
  * The runpod-pod approval flow splits a single LoRA run into two distinct
  * worker handlers — `personLoraTrainingRequested` (does dataset prep, then
  * stops at `awaiting-approval`) and `personLoraTrainingConfirmed` (uploads
- * the dataset zip and submits the actual training job). Both handlers are
- * wrapped in `withIdempotency` against `trainingLock`, so they MUST use
- * non-overlapping keys: otherwise the prep handler keeps the lock for the
- * full 24h TTL after a successful prep, and every later confirm event for
- * the same `trainingRunId` is silently dropped as a "duplicate" — which is
- * exactly the bug that left `kisunya` stuck at "Training 5%" with no
- * runpod job ever submitted.
+ * the dataset zip and submits the actual training job on the provider that is
+ * active at confirm time). Both handlers are wrapped in `withIdempotency`
+ * against `trainingLock`, so they MUST use non-overlapping keys: otherwise
+ * the prep handler keeps the lock for the full 24h TTL after a successful
+ * prep, and every later confirm event for the same `trainingRunId` is
+ * silently dropped as a "duplicate" — which is exactly the bug that left
+ * `kisunya` stuck at "Training 5%" with no runpod job ever submitted.
  */
 function buildRequestLockKey(trainingRunId: string): string {
 	return `request:${trainingRunId}`;
@@ -311,29 +327,20 @@ const confirmTrainingOnce = async (
 	source: "bullmq",
 	data: PersonLoraTrainingConfirmation
 ) => {
-	if (!runpodPodRunner) {
-		console.warn(
-			"admin.worker: training confirmation ignored, runpod-pod runner is not configured",
-			{
-				personId: data.personId,
-				trainingRunId: data.trainingRunId,
-			}
-		);
-		return;
-	}
-
 	const outcome = await withIdempotency(
 		trainingLock,
 		buildConfirmLockKey(data.trainingRunId),
 		async () => {
 			activeTrainingRunIds.add(data.trainingRunId);
+			const selected = await selectActiveConfirmationRunner();
 			console.info("admin.worker: starting training confirmation", {
 				personId: data.personId,
+				provider: selected.provider,
 				source,
 				trainingRunId: data.trainingRunId,
 			});
 			try {
-				await runpodPodRunner.confirmAndTrain(data);
+				await selected.runner.confirmAndTrain(data);
 			} finally {
 				activeTrainingRunIds.delete(data.trainingRunId);
 			}
@@ -426,16 +433,6 @@ const eventConsumer = kafkaConfig
 					});
 				},
 				onPersonLoraTrainingConfirmed: async (event) => {
-					if (!runpodPodRunner) {
-						console.warn(
-							"admin.worker: training confirmation ignored, runpod-pod runner is not configured",
-							{
-								personId: event.data.personId,
-								trainingRunId: event.data.trainingRunId,
-							}
-						);
-						return;
-					}
 					await trainingQueue.enqueueConfirmation(event.data, {
 						jobId: `kafka-confirm-${event.id}`,
 					});

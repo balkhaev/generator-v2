@@ -1,6 +1,10 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { env } from "@generator/env/server";
-import type { EventPublisher } from "@generator/events";
+import type {
+	ApprovedDatasetItem,
+	EventPublisher,
+	PersonLoraTrainingConfirmation,
+} from "@generator/events";
 import {
 	buildZipFromBuffers,
 	downloadImageAsset,
@@ -11,7 +15,11 @@ import {
 import { z } from "zod";
 
 import { DEFAULT_DATASET_EDITOR_MODEL_ID } from "@/providers/dataset-editor-models";
-import { generateReferenceImage } from "@/providers/lora-dataset-builder";
+import {
+	assembleDatasetZipFromItems,
+	generateReferenceImage,
+	ORIGINAL_VARIANT_ID_PREFIX,
+} from "@/providers/lora-dataset-builder";
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -351,6 +359,29 @@ function buildOriginalPhotoCaption(input: {
 	return `a photo of ${subject}, ${input.slot.caption}`;
 }
 
+function resolveApprovedDatasetDefaultCaption(input: {
+	approvedItems: readonly ApprovedDatasetItem[];
+	genderHint: string | null;
+	triggerWord: string;
+}) {
+	const originalCaption = input.approvedItems.find((item) =>
+		item.variantId.startsWith(ORIGINAL_VARIANT_ID_PREFIX)
+	)?.caption;
+	if (originalCaption) {
+		return originalCaption;
+	}
+
+	const firstCaption = input.approvedItems[0]?.caption;
+	if (firstCaption) {
+		return firstCaption;
+	}
+
+	const subject = input.genderHint
+		? `${input.triggerWord} ${input.genderHint}`
+		: input.triggerWord;
+	return `a photo of ${subject}`;
+}
+
 function clampProgressPct(value: number) {
 	return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -530,6 +561,16 @@ export class FalZibLoraTrainingRunner {
 			(() => Promise.resolve(DEFAULT_DATASET_EDITOR_MODEL_ID));
 	}
 
+	private resolveOutputName(parsed: {
+		outputName?: string;
+		personSlug: string;
+	}): string {
+		return (
+			parsed.outputName ??
+			`${sanitizeSegment(parsed.personSlug)}-zib-lora-${Date.now()}`
+		);
+	}
+
 	private async sendTrainingEvent(input: {
 		personId: string;
 		event: {
@@ -598,15 +639,15 @@ export class FalZibLoraTrainingRunner {
 	}
 
 	/**
-	 * ⚠️ APPROVAL FLOW NOT SUPPORTED.
+	 * ⚠️ PREP-ONLY APPROVAL FLOW NOT SUPPORTED.
 	 *
 	 * This runner still does the legacy "prep + zip + train" pipeline in one
 	 * shot. It does NOT honour `mode === "prep-only"` and never publishes the
 	 * `awaiting-approval` event, so persons-service will land directly in
 	 * `training` after dataset prep — operator-side reject/refill won't work
-	 * until the same refactor that landed in `RunpodPodLoraTrainingRunner`
-	 * is applied here. Use the runpod-pod runner if the approval flow is
-	 * required.
+	 * until the same prep refactor that landed in `RunpodPodLoraTrainingRunner`
+	 * is applied here. `confirmAndTrain` below can still consume an already
+	 * approved dataset produced by runpod-pod prep.
 	 */
 	async run(input: StartInput) {
 		const parsed = startFalZibLoraTrainingSchema.parse(input);
@@ -617,9 +658,7 @@ export class FalZibLoraTrainingRunner {
 		const editorModelId = await this.getEditorModelId();
 
 		try {
-			const outputName =
-				parsed.outputName ??
-				`${sanitizeSegment(parsed.personSlug)}-zib-lora-${Date.now()}`;
+			const outputName = this.resolveOutputName(parsed);
 
 			this.logger.info("fal-zib-lora.generating-references", {
 				personId: parsed.personId,
@@ -784,96 +823,18 @@ export class FalZibLoraTrainingRunner {
 				triggerWord,
 			});
 
-			await this.sendTrainingEvent({
-				personId: parsed.personId,
-				event: {
-					datasetUrl,
-					datasetZipSizeBytes: zipData.length,
-					debug: {
-						defaultCaption,
-						originalPhotoDuplicates: ORIGINAL_DATASET_COUNT,
-						outputName,
-					},
-					debugCorrelationId: parsed.debugCorrelationId,
-					lastEventAt: new Date().toISOString(),
-					phase: "starting-training",
-					progressPct: 70,
-					provider: "fal",
-					referenceImageCount:
-						generatedReferences.length + ORIGINAL_DATASET_COUNT,
-					referenceImageTargetCount: TOTAL_DATASET_COUNT,
-					referenceImageUrls: [
-						parsed.referencePhotoUrl,
-						...generatedReferences.map((entry) => entry.url),
-					],
-					status: "training",
-					trainingRunId: parsed.trainingRunId,
-					trainingStartedAt: new Date().toISOString(),
-					trainingSteps:
-						env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS,
-					triggerWord,
-					uploadMethod: "s3",
-				},
-			});
-
-			const trainingSteps =
-				env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS;
-
-			this.logger.info("fal-zib-lora.starting-training", {
-				personId: parsed.personId,
-				steps: trainingSteps,
-			});
-			const trainingModel = "fal-ai/z-image-trainer";
-			const trainingStartedAt = new Date().toISOString();
-			const trainingStartedMs = Date.now();
-			const trainingSubmit = await falSubmit(this.apiKey, trainingModel, {
-				image_data_url: datasetUrl,
-				steps: trainingSteps,
-				default_caption: defaultCaption,
-				learning_rate: 0.0001,
-				training_type: "content",
-			});
-
-			this.logger.info("fal-zib-lora.training-started", {
-				personId: parsed.personId,
-				requestId: trainingSubmit.request_id,
-			});
-
-			await this.sendTrainingEvent({
-				personId: parsed.personId,
-				event: {
-					debug: {
-						falStatusUrl:
-							trainingSubmit.status_url ??
-							`${FAL_QUEUE_BASE}/${trainingModel}/requests/${trainingSubmit.request_id}/status`,
-						falResponseUrl:
-							trainingSubmit.response_url ??
-							`${FAL_QUEUE_BASE}/${trainingModel}/requests/${trainingSubmit.request_id}`,
-					},
-					debugCorrelationId: parsed.debugCorrelationId,
-					lastEventAt: new Date().toISOString(),
-					phase: "polling-training",
-					progressPct: 76,
-					provider: "fal",
-					providerJobId: trainingSubmit.request_id,
-					providerRequestId: trainingSubmit.request_id,
-					providerStatus: "IN_PROGRESS",
-					status: "training",
-					trainingElapsedMs: 0,
-					trainingRunId: parsed.trainingRunId,
-					trainingStartedAt,
-					trainingSteps,
-					triggerWord,
-				},
-			});
-
-			await this.pollTrainingAndPublish({
+			await this.submitDatasetToFalTraining({
 				datasetUrl,
+				datasetZipSizeBytes: zipData.length,
+				debug: {
+					originalPhotoDuplicates: ORIGINAL_DATASET_COUNT,
+					outputName,
+				},
 				debugCorrelationId: parsed.debugCorrelationId,
+				defaultCaption,
 				genderHint,
 				outputName,
 				personId: parsed.personId,
-				providerJobId: trainingSubmit.request_id,
 				referenceImageCount:
 					generatedReferences.length + ORIGINAL_DATASET_COUNT,
 				referenceImageTargetCount: TOTAL_DATASET_COUNT,
@@ -882,10 +843,8 @@ export class FalZibLoraTrainingRunner {
 					...generatedReferences.map((entry) => entry.url),
 				],
 				trainingRunId: parsed.trainingRunId,
-				trainingStartedAt,
-				trainingStartedMs,
-				trainingSteps,
 				triggerWord,
+				uploadMethod: "s3",
 			});
 		} catch (error) {
 			const errorSummary =
@@ -910,6 +869,238 @@ export class FalZibLoraTrainingRunner {
 			});
 			throw error;
 		}
+	}
+
+	/**
+	 * Approval-flow entry point used when dataset prep happened on RunPod-pod
+	 * but the operator switched the runtime training provider to fal.ai before
+	 * pressing "Train LoRA". We reuse the operator-approved images instead of
+	 * regenerating the dataset.
+	 */
+	async confirmAndTrain(input: PersonLoraTrainingConfirmation): Promise<void> {
+		const { approvedItems, ...request } = input;
+		const parsed = startFalZibLoraTrainingSchema.parse(request);
+		await this.executeApprovedDatasetTraining(parsed, approvedItems);
+	}
+
+	private async executeApprovedDatasetTraining(
+		parsed: StartInput,
+		approvedItems: readonly ApprovedDatasetItem[]
+	): Promise<void> {
+		const triggerWord =
+			parsed.triggerWord ?? buildDefaultTriggerWord(parsed.personSlug);
+		const genderHint = inferGenderHint(parsed.description);
+		const outputName = this.resolveOutputName(parsed);
+
+		try {
+			const defaultCaption = resolveApprovedDatasetDefaultCaption({
+				approvedItems,
+				genderHint,
+				triggerWord,
+			});
+			const dataset = await assembleDatasetZipFromItems({
+				defaultCaption,
+				items: approvedItems.map((item) => ({
+					caption: item.caption,
+					url: item.url,
+					variantId: item.variantId,
+				})),
+			});
+			const zipData = buildZipFromBuffers(dataset.zipFiles);
+			if (!this.s3Config) {
+				throw new Error("S3 config is required to persist LoRA dataset");
+			}
+
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debug: {
+						approvedItemCount: approvedItems.length,
+						outputName,
+						trainingModel: "fal-ai/z-image-trainer",
+					},
+					debugCorrelationId: parsed.debugCorrelationId,
+					datasetZipSizeBytes: zipData.length,
+					lastEventAt: new Date().toISOString(),
+					phase: "uploading-dataset",
+					progressPct: 62,
+					provider: "fal",
+					referenceImageCount: approvedItems.length,
+					referenceImageTargetCount: TOTAL_DATASET_COUNT,
+					referenceImageUrls: dataset.referenceImageUrls,
+					status: "training",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+					uploadMethod: "s3",
+				},
+			});
+
+			this.logger.info("fal-zib-lora.uploading-approved-dataset", {
+				personId: parsed.personId,
+				zipSizeBytes: zipData.length,
+			});
+
+			const datasetUrl = await uploadZipToS3(
+				zipData,
+				`${outputName}-dataset.zip`,
+				this.s3Config
+			);
+
+			await this.submitDatasetToFalTraining({
+				datasetUrl,
+				datasetZipSizeBytes: zipData.length,
+				debug: {
+					approvedItemCount: approvedItems.length,
+					outputName,
+				},
+				debugCorrelationId: parsed.debugCorrelationId,
+				defaultCaption: dataset.defaultCaption,
+				genderHint,
+				outputName,
+				personId: parsed.personId,
+				referenceImageCount: approvedItems.length,
+				referenceImageTargetCount: TOTAL_DATASET_COUNT,
+				referenceImageUrls: dataset.referenceImageUrls,
+				trainingRunId: parsed.trainingRunId,
+				triggerWord,
+				uploadMethod: "s3",
+			});
+		} catch (error) {
+			const errorSummary =
+				error instanceof Error ? error.message : "Fal ZIB LoRA training failed";
+			this.logger.error("fal-zib-lora.approved-dataset-failed", {
+				personId: parsed.personId,
+				error: errorSummary,
+			});
+			await this.sendTrainingEvent({
+				personId: parsed.personId,
+				event: {
+					debugCorrelationId: parsed.debugCorrelationId,
+					errorSummary,
+					failedAt: new Date().toISOString(),
+					lastEventAt: new Date().toISOString(),
+					phase: "failed",
+					provider: "fal",
+					status: "failed",
+					trainingRunId: parsed.trainingRunId,
+					triggerWord,
+				},
+			});
+			throw error;
+		}
+	}
+
+	private async submitDatasetToFalTraining(input: {
+		datasetUrl: string;
+		datasetZipSizeBytes: number;
+		debug?: Record<string, unknown>;
+		debugCorrelationId?: string;
+		defaultCaption: string;
+		genderHint: string | null;
+		outputName: string;
+		personId: string;
+		referenceImageCount: number;
+		referenceImageTargetCount: number;
+		referenceImageUrls: string[];
+		trainingRunId: string;
+		triggerWord: string;
+		uploadMethod: string;
+	}): Promise<void> {
+		const trainingSteps =
+			env.PERSON_LORA_TRAINING_STEPS ?? DEFAULT_TRAINING_STEPS;
+		const trainingModel = "fal-ai/z-image-trainer";
+		const trainingStartedAt = new Date().toISOString();
+		const trainingStartedMs = Date.now();
+
+		await this.sendTrainingEvent({
+			personId: input.personId,
+			event: {
+				datasetUrl: input.datasetUrl,
+				datasetZipSizeBytes: input.datasetZipSizeBytes,
+				debug: {
+					...(input.debug ?? {}),
+					defaultCaption: input.defaultCaption,
+					outputName: input.outputName,
+				},
+				debugCorrelationId: input.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				phase: "starting-training",
+				progressPct: 70,
+				provider: "fal",
+				referenceImageCount: input.referenceImageCount,
+				referenceImageTargetCount: input.referenceImageTargetCount,
+				referenceImageUrls: input.referenceImageUrls,
+				status: "training",
+				trainingRunId: input.trainingRunId,
+				trainingStartedAt,
+				trainingSteps,
+				triggerWord: input.triggerWord,
+				uploadMethod: input.uploadMethod,
+			},
+		});
+
+		this.logger.info("fal-zib-lora.starting-training", {
+			personId: input.personId,
+			steps: trainingSteps,
+		});
+
+		const trainingSubmit = await falSubmit(this.apiKey, trainingModel, {
+			default_caption: input.defaultCaption,
+			image_data_url: input.datasetUrl,
+			learning_rate: 0.0001,
+			steps: trainingSteps,
+			training_type: "content",
+		});
+
+		this.logger.info("fal-zib-lora.training-started", {
+			personId: input.personId,
+			requestId: trainingSubmit.request_id,
+		});
+
+		await this.sendTrainingEvent({
+			personId: input.personId,
+			event: {
+				debug: {
+					falStatusUrl:
+						trainingSubmit.status_url ??
+						`${FAL_QUEUE_BASE}/${trainingModel}/requests/${trainingSubmit.request_id}/status`,
+					falResponseUrl:
+						trainingSubmit.response_url ??
+						`${FAL_QUEUE_BASE}/${trainingModel}/requests/${trainingSubmit.request_id}`,
+				},
+				debugCorrelationId: input.debugCorrelationId,
+				lastEventAt: new Date().toISOString(),
+				phase: "polling-training",
+				progressPct: 76,
+				provider: "fal",
+				providerJobId: trainingSubmit.request_id,
+				providerRequestId: trainingSubmit.request_id,
+				providerStatus: "IN_PROGRESS",
+				status: "training",
+				trainingElapsedMs: 0,
+				trainingRunId: input.trainingRunId,
+				trainingStartedAt,
+				trainingSteps,
+				triggerWord: input.triggerWord,
+			},
+		});
+
+		await this.pollTrainingAndPublish({
+			datasetUrl: input.datasetUrl,
+			debugCorrelationId: input.debugCorrelationId,
+			genderHint: input.genderHint,
+			outputName: input.outputName,
+			personId: input.personId,
+			providerJobId: trainingSubmit.request_id,
+			referenceImageCount: input.referenceImageCount,
+			referenceImageTargetCount: input.referenceImageTargetCount,
+			referenceImageUrls: input.referenceImageUrls,
+			trainingRunId: input.trainingRunId,
+			trainingStartedAt,
+			trainingStartedMs,
+			trainingSteps,
+			triggerWord: input.triggerWord,
+		});
 	}
 
 	/**

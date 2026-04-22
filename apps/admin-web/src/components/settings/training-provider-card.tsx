@@ -53,7 +53,7 @@ export function TrainingProviderCard({
 					</div>
 				) : null
 			}
-			description="Selected provider takes effect for new training jobs immediately. In-flight jobs finish on their original provider. Persisted in Redis."
+			description="Selected provider takes effect for new training jobs and pending approvals. Already submitted jobs finish on their original provider. Persisted in Redis."
 			title="LoRA training provider"
 		>
 			<div className="grid gap-2">

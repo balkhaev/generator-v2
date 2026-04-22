@@ -11,8 +11,10 @@ import {
 	checkStorageHealth,
 	createStoragePresignedUpload,
 	deleteStorageObject,
+	deleteStorageOrphans,
 	fetchStorageObjects,
 	fetchStorageOverview,
+	scanStorageOrphans,
 	uploadStorageObject,
 } from "@/lib/storage-client";
 
@@ -51,6 +53,22 @@ export function useStorageObjects(
 export function useStorageHealthCheck() {
 	return useMutation({
 		mutationFn: checkStorageHealth,
+	});
+}
+
+export function useScanStorageOrphans() {
+	return useMutation({
+		mutationFn: scanStorageOrphans,
+	});
+}
+
+export function useDeleteStorageOrphans() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: deleteStorageOrphans,
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["admin", "storage"] });
+		},
 	});
 }
 

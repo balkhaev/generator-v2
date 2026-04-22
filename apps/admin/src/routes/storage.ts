@@ -1,10 +1,9 @@
 import type {
-	StorageCategorySummary,
 	StorageConfigSnapshot,
 	StorageHealthSnapshot,
 	StorageListObjectsResponse,
-	StorageObjectCategory,
-	StorageObjectSummary,
+	StorageOrphanDeleteInput,
+	StorageOrphanScanInput,
 	StorageOverviewSnapshot,
 	StoragePresignUploadInput,
 	StoragePresignUploadResponse,
@@ -15,11 +14,19 @@ import {
 	createPresignedPutUrl,
 	deleteObjectFromS3,
 	listS3Objects,
-	type S3ListedObject,
 	type S3StorageConfig,
 	uploadObjectToS3,
 } from "@generator/storage";
 import { Hono } from "hono";
+import {
+	createStorageCleanupService,
+	type StorageCleanupService,
+} from "@/domain/storage-cleanup";
+import {
+	inferStorageObjectCategory,
+	STORAGE_CATEGORIES,
+	toStorageObjectSummary,
+} from "@/domain/storage-metadata";
 import { toErrorResponse } from "@/routes/utils";
 
 const DEFAULT_LIST_LIMIT = 100;
@@ -29,51 +36,6 @@ const MAX_PRESIGN_EXPIRES_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_UPLOAD_CONTENT_TYPE = "application/octet-stream";
 const leadingSlashesPattern = /^\/+/u;
 const backslashPattern = /\\/u;
-
-const STORAGE_CATEGORIES: StorageCategorySummary[] = [
-	{
-		description: "Everything in the configured bucket",
-		id: "all",
-		label: "All",
-		prefix: "",
-	},
-	{
-		description: "Persisted generator outputs",
-		id: "run-outputs",
-		label: "Run outputs",
-		prefix: "generator-artifacts/",
-	},
-	{
-		description: "Studio prompt inputs",
-		id: "studio-inputs",
-		label: "Studio inputs",
-		prefix: "studio-inputs/",
-	},
-	{
-		description: "Persons reference inputs",
-		id: "persons-inputs",
-		label: "Persons inputs",
-		prefix: "persons-inputs/",
-	},
-	{
-		description: "LoRA training datasets",
-		id: "datasets",
-		label: "Datasets",
-		prefix: "datasets/",
-	},
-	{
-		description: "Imported and trained LoRA weights",
-		id: "loras",
-		label: "LoRAs",
-		prefix: "loras/",
-	},
-	{
-		description: "RunPod pod training logs",
-		id: "runpod-logs",
-		label: "RunPod logs",
-		prefix: "loras/runpod-pod/logs/",
-	},
-];
 
 function createStorageConfigSnapshot(
 	config: S3StorageConfig | undefined
@@ -119,6 +81,17 @@ function requireStorageConfig(
 	return config;
 }
 
+function requireCleanupService(
+	service: StorageCleanupService | undefined
+): StorageCleanupService {
+	if (!service) {
+		throw new Error(
+			"S3 storage cleanup is not available because S3 storage is not configured."
+		);
+	}
+	return service;
+}
+
 function normalizeStorageKey(value: unknown): string {
 	if (typeof value !== "string") {
 		throw new Error("key is required");
@@ -155,40 +128,6 @@ function parseExpires(value: unknown): number {
 	return Math.min(Math.trunc(parsed), MAX_PRESIGN_EXPIRES_SECONDS);
 }
 
-function inferCategory(key: string): StorageObjectCategory {
-	if (key.startsWith("loras/runpod-pod/logs/")) {
-		return "runpod-logs";
-	}
-	if (key.startsWith("generator-artifacts/")) {
-		return "run-outputs";
-	}
-	if (key.startsWith("studio-inputs/")) {
-		return "studio-inputs";
-	}
-	if (key.startsWith("persons-inputs/")) {
-		return "persons-inputs";
-	}
-	if (key.startsWith("datasets/")) {
-		return "datasets";
-	}
-	if (key.startsWith("loras/")) {
-		return "loras";
-	}
-	return "unknown";
-}
-
-function toStorageObjectSummary(object: S3ListedObject): StorageObjectSummary {
-	return {
-		category: inferCategory(object.key),
-		contentType: object.type,
-		etag: object.etag,
-		key: object.key,
-		lastModified: object.lastModified?.toISOString() ?? null,
-		sizeBytes: object.sizeBytes,
-		url: object.url,
-	};
-}
-
 function createOverview(
 	config: S3StorageConfig | undefined
 ): StorageOverviewSnapshot {
@@ -209,8 +148,29 @@ function readStringFormValue(value: unknown): string {
 	return typeof value === "string" ? value : "";
 }
 
-export function createStorageRoutes(options: { s3Config?: S3StorageConfig }) {
+async function readJsonBody<T>(request: {
+	json(): Promise<unknown>;
+}): Promise<T> {
+	try {
+		return (await request.json()) as T;
+	} catch {
+		return {} as T;
+	}
+}
+
+export function createStorageRoutes(options: {
+	cleanupService?: StorageCleanupService;
+	s3Config?: S3StorageConfig;
+}) {
 	const app = new Hono();
+	const cleanupService =
+		options.cleanupService ??
+		(options.s3Config
+			? createStorageCleanupService({
+					config: options.s3Config,
+					configSnapshot: createStorageConfigSnapshot(options.s3Config),
+				})
+			: undefined);
 
 	app.get("/", (c) => c.json(createOverview(options.s3Config)));
 
@@ -270,6 +230,31 @@ export function createStorageRoutes(options: { s3Config?: S3StorageConfig }) {
 		}
 	});
 
+	app.post("/orphans/scan", async (c) => {
+		try {
+			const service = requireCleanupService(cleanupService);
+			const payload = await readJsonBody<StorageOrphanScanInput>(c.req);
+			return c.json(await service.scanOrphans(payload));
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
+	app.post("/orphans/delete", async (c) => {
+		try {
+			const service = requireCleanupService(cleanupService);
+			const payload = await readJsonBody<StorageOrphanDeleteInput>(c.req);
+			if (!(Array.isArray(payload.keys) && payload.keys.length > 0)) {
+				throw new Error("keys are required");
+			}
+			return c.json(await service.deleteOrphans(payload));
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
 	app.post("/objects", async (c) => {
 		try {
 			const config = requireStorageConfig(options.s3Config);
@@ -296,7 +281,7 @@ export function createStorageRoutes(options: { s3Config?: S3StorageConfig }) {
 			);
 			const body: StorageUploadResponse = {
 				object: {
-					category: inferCategory(uploaded.key),
+					category: inferStorageObjectCategory(uploaded.key),
 					contentType,
 					etag: null,
 					key: uploaded.key,

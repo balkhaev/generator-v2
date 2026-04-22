@@ -2,6 +2,10 @@ import type {
 	StorageHealthSnapshot,
 	StorageListObjectsQuery,
 	StorageListObjectsResponse,
+	StorageOrphanDeleteInput,
+	StorageOrphanDeleteResponse,
+	StorageOrphanScanInput,
+	StorageOrphanScanResponse,
 	StorageOverviewSnapshot,
 	StoragePresignUploadInput,
 	StoragePresignUploadResponse,
@@ -49,6 +53,34 @@ export async function checkStorageHealth(): Promise<StorageHealthSnapshot> {
 		`${API_BASE_URL}/api/admin/storage/health-check`,
 		{
 			credentials: "include",
+			method: "POST",
+		}
+	);
+}
+
+export async function scanStorageOrphans(
+	input: StorageOrphanScanInput
+): Promise<StorageOrphanScanResponse> {
+	return await requestJson<StorageOrphanScanResponse>(
+		`${API_BASE_URL}/api/admin/storage/orphans/scan`,
+		{
+			body: JSON.stringify(input),
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
+			method: "POST",
+		}
+	);
+}
+
+export async function deleteStorageOrphans(
+	input: StorageOrphanDeleteInput
+): Promise<StorageOrphanDeleteResponse> {
+	return await requestJson<StorageOrphanDeleteResponse>(
+		`${API_BASE_URL}/api/admin/storage/orphans/delete`,
+		{
+			body: JSON.stringify(input),
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
 			method: "POST",
 		}
 	);

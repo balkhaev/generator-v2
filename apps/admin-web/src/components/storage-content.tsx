@@ -4,6 +4,8 @@ import type {
 	StorageCategorySummary,
 	StorageHealthSnapshot,
 	StorageObjectSummary,
+	StorageOrphanDeleteResponse,
+	StorageOrphanScanResponse,
 	StorageOverviewSnapshot,
 } from "@generator/contracts/admin";
 import { Button, buttonVariants } from "@generator/ui/components/button";
@@ -36,6 +38,8 @@ import { useId, useMemo, useState } from "react";
 import {
 	useCreateStoragePresignedUpload,
 	useDeleteStorageObject,
+	useDeleteStorageOrphans,
+	useScanStorageOrphans,
 	useStorageHealthCheck,
 	useStorageObjects,
 	useStorageOverview,
@@ -43,6 +47,9 @@ import {
 } from "@/hooks/use-storage";
 
 const OBJECT_PAGE_SIZE = 100;
+const DEFAULT_CLEANUP_PREFIXES =
+	"admin-uploads/, datasets/, generator-artifacts/, loras/, persons-inputs/, studio-inputs/";
+const cleanupPrefixSplitPattern = /[,\n]/u;
 const safeFileNamePattern = /[^a-z0-9._-]+/gu;
 const trimDashPattern = /^-+|-+$/gu;
 
@@ -65,6 +72,13 @@ function copyText(value: string) {
 
 function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : "Request failed";
+}
+
+function parsePrefixes(value: string): string[] {
+	return value
+		.split(cleanupPrefixSplitPattern)
+		.map((item) => item.trim())
+		.filter((item) => item.length > 0);
 }
 
 export default function StorageContent({
@@ -174,6 +188,7 @@ export default function StorageContent({
 									onPrefixChange={selectPrefix}
 									prefix={prefix}
 								/>
+								<StorageCleanupCard currentPrefix={prefix} />
 								<div className="grid gap-4 lg:grid-cols-2">
 									<StorageUploadCard currentPrefix={prefix} />
 									<PresignedUploadCard currentPrefix={prefix} />
@@ -195,6 +210,296 @@ export default function StorageContent({
 					/>
 				)}
 			</div>
+		</div>
+	);
+}
+
+function StorageCleanupCard({ currentPrefix }: { currentPrefix: string }) {
+	const scanMutation = useScanStorageOrphans();
+	const deleteMutation = useDeleteStorageOrphans();
+	const [minimumAgeHours, setMinimumAgeHours] = useState("24");
+	const [maxPages, setMaxPages] = useState("20");
+	const [prefixes, setPrefixes] = useState(DEFAULT_CLEANUP_PREFIXES);
+	const [confirmingDelete, setConfirmingDelete] = useState(false);
+	const ageInputId = useId();
+	const maxPagesInputId = useId();
+	const prefixesInputId = useId();
+	const scanResult = scanMutation.data ?? null;
+	const scannedObjects = scanResult?.objects ?? [];
+
+	function scan() {
+		setConfirmingDelete(false);
+		scanMutation.mutate({
+			maxKeys: OBJECT_PAGE_SIZE,
+			maxPages: Number(maxPages),
+			minimumAgeHours: Number(minimumAgeHours),
+			prefixes: parsePrefixes(prefixes),
+		});
+	}
+
+	function deleteListed() {
+		if (!scanMutation.data) {
+			return;
+		}
+		deleteMutation.mutate({
+			keys: scanMutation.data.objects.map((object) => object.key),
+			maxKeys: OBJECT_PAGE_SIZE,
+			maxPages: Number(maxPages),
+			minimumAgeHours: scanMutation.data.minimumAgeHours,
+			prefixes: scanMutation.data.prefixes,
+		});
+		setConfirmingDelete(false);
+	}
+
+	return (
+		<Card size="sm">
+			<CardHeader>
+				<div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+					<div className="grid gap-1">
+						<CardTitle>Orphan cleanup</CardTitle>
+						<CardDescription>
+							Dry-run scans app-owned prefixes, compares objects with DB
+							references, and protects recent uploads.
+						</CardDescription>
+					</div>
+					{scanMutation.data ? (
+						<StatusPill
+							tone={scanMutation.data.orphanCount > 0 ? "warning" : "success"}
+							value={`${scanMutation.data.orphanCount} orphan${scanMutation.data.orphanCount === 1 ? "" : "s"}`}
+						/>
+					) : null}
+				</div>
+			</CardHeader>
+			<CardContent>
+				<div className="grid gap-3">
+					<div className="grid gap-3 lg:grid-cols-[120px_120px_minmax(0,1fr)_auto]">
+						<label className="grid gap-1" htmlFor={ageInputId}>
+							<span className="font-mono text-[10px] text-muted-foreground uppercase tracking-[0.18em]">
+								Min age h
+							</span>
+							<Input
+								id={ageInputId}
+								inputMode="numeric"
+								onChange={(event) => setMinimumAgeHours(event.target.value)}
+								value={minimumAgeHours}
+							/>
+						</label>
+						<label className="grid gap-1" htmlFor={maxPagesInputId}>
+							<span className="font-mono text-[10px] text-muted-foreground uppercase tracking-[0.18em]">
+								Max pages
+							</span>
+							<Input
+								id={maxPagesInputId}
+								inputMode="numeric"
+								onChange={(event) => setMaxPages(event.target.value)}
+								value={maxPages}
+							/>
+						</label>
+						<label className="grid gap-1" htmlFor={prefixesInputId}>
+							<span className="font-mono text-[10px] text-muted-foreground uppercase tracking-[0.18em]">
+								Prefixes
+							</span>
+							<Input
+								className="font-mono"
+								id={prefixesInputId}
+								onChange={(event) => setPrefixes(event.target.value)}
+								value={prefixes}
+							/>
+						</label>
+						<div className="flex items-end gap-2">
+							<Button
+								disabled={scanMutation.isPending}
+								onClick={scan}
+								type="button"
+								variant="outline"
+							>
+								{scanMutation.isPending ? (
+									<Loader2 className="animate-spin" data-icon="inline-start" />
+								) : (
+									<RefreshCw data-icon="inline-start" />
+								)}
+								Scan
+							</Button>
+							<Button
+								disabled={!currentPrefix}
+								onClick={() => setPrefixes(currentPrefix)}
+								type="button"
+								variant="ghost"
+							>
+								Current
+							</Button>
+						</div>
+					</div>
+
+					{scanMutation.data ? (
+						<StorageCleanupSummary scan={scanMutation.data} />
+					) : null}
+
+					<StorageCleanupDeletePanel
+						confirmingDelete={confirmingDelete}
+						isDeleting={deleteMutation.isPending}
+						isScanning={scanMutation.isPending}
+						objects={scannedObjects}
+						onCancel={() => setConfirmingDelete(false)}
+						onConfirm={deleteListed}
+						onRequestConfirm={() => setConfirmingDelete(true)}
+					/>
+
+					{deleteMutation.data ? (
+						<StorageCleanupDeleteResult result={deleteMutation.data} />
+					) : null}
+
+					{(scanMutation.error ?? deleteMutation.error) ? (
+						<p className="text-destructive text-xs">
+							{getErrorMessage(scanMutation.error ?? deleteMutation.error)}
+						</p>
+					) : null}
+				</div>
+			</CardContent>
+		</Card>
+	);
+}
+
+function StorageCleanupDeletePanel({
+	confirmingDelete,
+	isDeleting,
+	isScanning,
+	objects,
+	onCancel,
+	onConfirm,
+	onRequestConfirm,
+}: {
+	confirmingDelete: boolean;
+	isDeleting: boolean;
+	isScanning: boolean;
+	objects: StorageObjectSummary[];
+	onCancel: () => void;
+	onConfirm: () => void;
+	onRequestConfirm: () => void;
+}) {
+	if (objects.length === 0) {
+		return null;
+	}
+	const canDelete = !(isScanning || isDeleting);
+	return (
+		<div className="grid gap-2">
+			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+				<p className="text-muted-foreground text-xs">
+					Delete rechecks DB references before removing each object.
+				</p>
+				{confirmingDelete ? (
+					<div className="flex items-center gap-2">
+						<Button
+							disabled={!canDelete}
+							onClick={onConfirm}
+							type="button"
+							variant="destructive"
+						>
+							{isDeleting ? (
+								<Loader2 className="animate-spin" data-icon="inline-start" />
+							) : (
+								<Trash2 data-icon="inline-start" />
+							)}
+							Delete
+						</Button>
+						<Button
+							disabled={isDeleting}
+							onClick={onCancel}
+							type="button"
+							variant="ghost"
+						>
+							Cancel
+						</Button>
+					</div>
+				) : (
+					<Button
+						disabled={!canDelete}
+						onClick={onRequestConfirm}
+						type="button"
+						variant="destructive"
+					>
+						<Trash2 data-icon="inline-start" />
+						Delete listed
+					</Button>
+				)}
+			</div>
+			<StorageOrphanList objects={objects} />
+		</div>
+	);
+}
+
+function StorageCleanupDeleteResult({
+	result,
+}: {
+	result: StorageOrphanDeleteResponse;
+}) {
+	return (
+		<div className="grid gap-1 rounded-sm bg-muted/25 p-3 text-xs">
+			<p className="font-medium">
+				Deleted {result.deletedCount} objects ·{" "}
+				{formatBytes(result.deletedSizeBytes)}
+			</p>
+			{result.skippedReferenced.length > 0 ? (
+				<p className="text-muted-foreground">
+					Skipped referenced: {result.skippedReferenced.length}
+				</p>
+			) : null}
+			{result.failed.length > 0 ? (
+				<p className="text-destructive">Failed: {result.failed.length}</p>
+			) : null}
+		</div>
+	);
+}
+
+function StorageCleanupSummary({ scan }: { scan: StorageOrphanScanResponse }) {
+	return (
+		<div className="grid gap-2 rounded-sm bg-muted/25 p-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+			<SummaryMetric label="Scanned" value={String(scan.scannedCount)} />
+			<SummaryMetric
+				label="Referenced"
+				value={String(scan.referencedKeyCount)}
+			/>
+			<SummaryMetric
+				label="Orphan size"
+				value={formatBytes(scan.orphanSizeBytes)}
+			/>
+			<SummaryMetric
+				label="Protected"
+				value={`${scan.protectedRecentCount} recent · ${scan.unknownAgeCount} unknown age`}
+			/>
+		</div>
+	);
+}
+
+function StorageOrphanList({ objects }: { objects: StorageObjectSummary[] }) {
+	return (
+		<div className="grid max-h-80 gap-1.5 overflow-y-auto rounded-sm border border-foreground/10 p-2">
+			{objects.map((object) => (
+				<div
+					className="grid gap-1 rounded-sm bg-background px-2 py-1.5"
+					key={object.key}
+				>
+					<p className="break-all font-mono text-xs">{object.key}</p>
+					<div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+						<span>{formatBytes(object.sizeBytes)}</span>
+						<span>{object.category}</span>
+						<span>
+							{object.lastModified ? formatDateTime(object.lastModified) : "—"}
+						</span>
+					</div>
+				</div>
+			))}
+		</div>
+	);
+}
+
+function SummaryMetric({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="grid gap-0.5">
+			<span className="font-mono text-[10px] text-muted-foreground uppercase tracking-[0.18em]">
+				{label}
+			</span>
+			<span className="font-medium">{value}</span>
 		</div>
 	);
 }

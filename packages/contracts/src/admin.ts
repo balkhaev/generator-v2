@@ -293,3 +293,47 @@ export interface StoragePresignUploadResponse {
 	requiredHeaders: Record<string, string>;
 	url: string;
 }
+
+export interface StorageOrphanScanInput {
+	maxKeys?: number;
+	maxPages?: number;
+	minimumAgeHours?: number;
+	prefixes?: string[];
+}
+
+export interface StorageOrphanScanResponse {
+	checkedAt: string;
+	config: StorageConfigSnapshot;
+	isTruncated: boolean;
+	minimumAgeHours: number;
+	objects: StorageObjectSummary[];
+	orphanCount: number;
+	orphanSizeBytes: number;
+	pagesScanned: number;
+	prefixes: string[];
+	protectedRecentCount: number;
+	referencedKeyCount: number;
+	scannedCount: number;
+	scannedSizeBytes: number;
+	unknownAgeCount: number;
+}
+
+export interface StorageOrphanDeleteInput extends StorageOrphanScanInput {
+	keys: string[];
+}
+
+export interface StorageOrphanDeleteFailure {
+	error: string;
+	key: string;
+}
+
+export interface StorageOrphanDeleteResponse {
+	checkedAt: string;
+	deleted: StorageObjectSummary[];
+	deletedCount: number;
+	deletedSizeBytes: number;
+	failed: StorageOrphanDeleteFailure[];
+	minimumAgeHours: number;
+	skippedRecent: StorageObjectSummary[];
+	skippedReferenced: StorageObjectSummary[];
+}

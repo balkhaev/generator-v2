@@ -32,5 +32,14 @@ export {
 	uploadObjectToS3,
 	uploadZipToS3,
 } from "./lora-cache";
+export {
+	createPresignedGetUrl,
+	type ListS3ObjectsInput,
+	type ListS3ObjectsResult,
+	listS3Objects,
+	type S3ListedObject,
+	type S3ObjectStat,
+	statS3Object,
+} from "./objects";
 export { createPresignedPutUrl } from "./presign";
 export { buildZipFromBuffers } from "./zip";

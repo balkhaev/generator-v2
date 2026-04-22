@@ -205,3 +205,91 @@ export interface AdminSettingsSnapshot {
 	trainingProvider: TrainingProviderSettingsSnapshot;
 	workerHealth: AdminWorkerHealthStatus;
 }
+
+export type StorageObjectCategory =
+	| "all"
+	| "datasets"
+	| "loras"
+	| "persons-inputs"
+	| "run-outputs"
+	| "runpod-logs"
+	| "studio-inputs"
+	| "unknown";
+
+export interface StorageCategorySummary {
+	description: string;
+	id: Exclude<StorageObjectCategory, "unknown">;
+	label: string;
+	prefix: string;
+}
+
+export interface StorageConfigSnapshot {
+	accessKeyConfigured: boolean;
+	bucket: string | null;
+	configured: boolean;
+	endpoint: string | null;
+	missing: string[];
+	publicBaseUrl: string | null;
+	region: string | null;
+	secretAccessKeyConfigured: boolean;
+}
+
+export interface StorageOverviewSnapshot {
+	categories: StorageCategorySummary[];
+	checkedAt: string;
+	config: StorageConfigSnapshot;
+}
+
+export interface StorageObjectSummary {
+	category: StorageObjectCategory;
+	contentType: string | null;
+	etag: string | null;
+	key: string;
+	lastModified: string | null;
+	sizeBytes: number;
+	url: string;
+}
+
+export interface StorageListObjectsQuery {
+	cursor?: string;
+	maxKeys?: number;
+	prefix?: string;
+}
+
+export interface StorageListObjectsResponse {
+	config: StorageConfigSnapshot;
+	cursor: string | null;
+	isTruncated: boolean;
+	nextCursor: string | null;
+	objects: StorageObjectSummary[];
+	prefix: string;
+	scannedCount: number;
+	totalSizeBytes: number;
+}
+
+export interface StorageHealthSnapshot {
+	checkedAt: string;
+	error: string | null;
+	latencyMs: number;
+	ok: boolean;
+	sampleCount: number;
+}
+
+export interface StorageUploadResponse {
+	object: StorageObjectSummary;
+}
+
+export interface StoragePresignUploadInput {
+	contentType?: string;
+	expiresInSeconds?: number;
+	key: string;
+}
+
+export interface StoragePresignUploadResponse {
+	expiresInSeconds: number;
+	key: string;
+	method: "PUT";
+	publicUrl: string;
+	requiredHeaders: Record<string, string>;
+	url: string;
+}

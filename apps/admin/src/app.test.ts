@@ -172,6 +172,40 @@ describe("admin gateway", () => {
 		});
 	});
 
+	it("exposes storage configuration status for authenticated requests", async () => {
+		const app = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3001"],
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			loadDashboardSnapshot() {
+				return Promise.resolve(createEmptyDashboardSnapshot());
+			},
+			loadSetupStatus() {
+				return Promise.resolve({ setupRequired: false });
+			},
+			studioBaseUrl: "http://studio.internal",
+		});
+
+		const response = await app.request("http://localhost/api/admin/storage");
+
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as {
+			categories: unknown[];
+			config: { configured: boolean; missing: string[] };
+		};
+		expect(body.config.configured).toBe(false);
+		expect(body.config.missing).toContain("S3_BUCKET");
+		expect(body.categories.length).toBeGreaterThan(0);
+	});
+
 	it("exposes users CRUD for authenticated requests", async () => {
 		const usersStore = new Map<string, AdminUser>();
 		const credentialStore = new Map<string, string>();

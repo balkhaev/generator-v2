@@ -9,6 +9,7 @@ import { cn } from "@generator/ui/lib/utils";
 import {
 	Boxes,
 	GraduationCap,
+	HardDrive,
 	type LucideIcon,
 	Settings,
 	Sparkles,
@@ -57,6 +58,12 @@ const ITEMS: AdminSideNavItem[] = [
 		icon: Tags,
 		label: "LoRAs",
 		description: "Shared registry",
+	},
+	{
+		href: "/storage" as Route,
+		icon: HardDrive,
+		label: "Storage",
+		description: "S3 assets",
 	},
 	{
 		href: "/users" as Route,

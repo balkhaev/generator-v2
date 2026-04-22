@@ -44,6 +44,7 @@ import {
 	createRuntimeConfigInternalRoutes,
 	type RuntimeConfigRoutesDeps,
 } from "@/routes/runtime-config";
+import { createStorageRoutes } from "@/routes/storage";
 import {
 	createTrainingProviderRoutes,
 	type TrainingProviderAvailabilityResolver,
@@ -309,6 +310,11 @@ export function createApp(options: AppOptions) {
 			createAdminLoraRoutes(options.loraRegistryService)
 		);
 	}
+
+	app.route(
+		"/api/admin/storage",
+		createStorageRoutes({ s3Config: options.s3Config })
+	);
 
 	if (options.usersService) {
 		app.route("/api/admin/users", createAdminUserRoutes(options.usersService));

@@ -48,8 +48,34 @@ describe("mcp app", () => {
 		expect(toolNames).toContain("lora_list");
 		expect(toolNames).toContain("lora_get");
 		expect(toolNames).toContain("persons_reupload_adorely_assets");
+		expect(toolNames).toContain("persons_lora_generation_debug");
 		expect(toolNames).toContain("studio_run_mark_failed");
 		expect(toolNames).toContain("admin_lora_training_queue_snapshot");
+	});
+
+	it("validates lora generation debug target before touching data sources", async () => {
+		const response = await app.request("/mcp", {
+			body: JSON.stringify({
+				id: 1,
+				jsonrpc: "2.0",
+				method: "tools/call",
+				params: {
+					arguments: {},
+					name: "persons_lora_generation_debug",
+				},
+			}),
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		expect(response.status).toBe(200);
+		const payload = (await response.json()) as {
+			error?: { message: string };
+		};
+		expect(payload.error?.message).toBe("personId or personSlug is required");
 	});
 
 	it("returns public health without auth", async () => {

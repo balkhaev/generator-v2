@@ -693,13 +693,15 @@ describe("persons api", () => {
 		expect(trainingRequests[0]?.mode).toBe("prep-only");
 		expect(trainingRequests[0]?.seedReferenceImages).toEqual([
 			{
-				caption: "Imported main portrait",
+				caption:
+					"a photo of ohwx_adorely_companion_1 woman, imported reference photo 1",
 				s3Key: null,
 				url: "https://assets.example.com/main.png",
 				variantId: "adorely-main-1",
 			},
 			{
-				caption: "Imported gallery portrait",
+				caption:
+					"a photo of ohwx_adorely_companion_1 woman, imported reference photo 2",
 				s3Key: null,
 				url: "https://assets.example.com/gallery.png",
 				variantId: "adorely-gallery-1",
@@ -714,6 +716,84 @@ describe("persons api", () => {
 			| undefined;
 		expect(training?.referenceImageCount).toBe(2);
 		expect(training?.referenceImageTargetCount).toBe(25);
+	});
+
+	it("normalizes approved dataset captions before confirmed runpod training", async () => {
+		const repository = createMemoryRepository();
+		const confirmRequests: Parameters<
+			AdminTrainingClient["confirmPersonLoraTraining"]
+		>[0][] = [];
+		const adminTrainingClient: AdminTrainingClient = {
+			cacheExternalLora(sourceUrl) {
+				return Promise.resolve(sourceUrl);
+			},
+			confirmPersonLoraTraining(input) {
+				confirmRequests.push(input);
+				return Promise.resolve({
+					accepted: true,
+					jobId: "confirm-job",
+				});
+			},
+			requestVariantRefill() {
+				return Promise.resolve();
+			},
+			startPersonLoraTraining() {
+				return Promise.resolve({
+					accepted: true,
+					jobId: "training-job",
+				});
+			},
+		};
+		const service = new PersonsService({
+			adminTrainingClient,
+			repository,
+		});
+		const importResult = await service.importExternalPerson({
+			datasetPhotos: [
+				{
+					caption: "Chatty imported caption without trigger",
+					metadata: { adorelyAssetId: "main-1" },
+					sourceUrl: "https://assets.example.com/main.png",
+					variantId: "adorely-main-1",
+				},
+				{
+					caption: "a photo of ohwx_adorely_confirm_1 woman, studio pose",
+					metadata: { adorelyAssetId: "gallery-1" },
+					sourceUrl: "https://assets.example.com/gallery.png",
+					variantId: "adorely-gallery-1",
+				},
+			],
+			description: "A realistic woman with brown hair.",
+			externalId: "confirm-1",
+			externalSource: "adorely",
+			metadata: {},
+			name: "Confirm Ada",
+			referencePhotoUrl: "https://assets.example.com/main.png",
+			slug: "adorely-confirm-1",
+			targetDatasetCount: 25,
+		});
+		await repository.updatePerson(importResult.person.id, {
+			metadata: {
+				...importResult.person.metadata,
+				training: {
+					outputName: "confirm-output",
+					phase: "awaiting-approval",
+					status: "awaiting-approval",
+					trainingRunId: "training-run-confirm",
+					triggerWord: "ohwx_adorely_confirm_1",
+				},
+			},
+		});
+
+		await service.confirmDatasetAndStartTraining(importResult.person.id);
+
+		expect(confirmRequests).toHaveLength(1);
+		expect(
+			confirmRequests[0]?.approvedItems.map((item) => item.caption)
+		).toEqual([
+			"a photo of ohwx_adorely_confirm_1 woman, imported reference photo 1",
+			"a photo of ohwx_adorely_confirm_1 woman, studio pose",
+		]);
 	});
 
 	it("cancels active lora training and ignores later callbacks for that run", async () => {

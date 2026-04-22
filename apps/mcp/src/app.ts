@@ -1,3 +1,7 @@
+import { createDb } from "@generator/db";
+import { and, desc, eq, inArray } from "@generator/db/operators";
+import { generatorExecution } from "@generator/db/schema/generator";
+import { person, personGeneration } from "@generator/db/schema/persons";
 import {
 	collectServiceHealth,
 	fetchServiceSnapshot,
@@ -5,6 +9,8 @@ import {
 	getWorkspaceRoot,
 	type ServiceName,
 } from "@generator/debug-tools/shared";
+import { getDatabaseUrl } from "@generator/env/server";
+import { getWorkflowDefinition } from "@generator/workflows";
 import { type Job, Queue } from "bullmq";
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
@@ -48,6 +54,8 @@ const DEFAULT_QUEUE_JOB_LIMIT = 25;
 const MAX_QUEUE_JOB_LIMIT = 100;
 const DEFAULT_LOCK_LIMIT = 100;
 const MAX_LOCK_LIMIT = 500;
+const DEFAULT_LORA_DEBUG_GENERATION_LIMIT = 5;
+const MAX_LORA_DEBUG_GENERATION_LIMIT = 20;
 
 const toolDefinitions = [
 	{
@@ -297,6 +305,39 @@ const toolDefinitions = [
 			type: "object",
 		},
 		name: "persons_reupload_adorely_assets",
+	},
+	{
+		description:
+			"Debug whether person generations used the trained LoRA by reading person, generation and generator execution records.",
+		inputSchema: {
+			properties: {
+				executionId: {
+					description:
+						"Optional generator execution id to inspect even if the generation row is not among the latest rows.",
+					type: "string",
+				},
+				generationId: {
+					description: "Optional person generation id to inspect.",
+					type: "string",
+				},
+				limit: {
+					description:
+						"How many recent generations to inspect when generationId is omitted. Defaults to 5, max 20.",
+					type: "number",
+				},
+				personId: {
+					description: "Person id. Either personId or personSlug is required.",
+					type: "string",
+				},
+				personSlug: {
+					description:
+						"Person slug, e.g. adorely-p8gbnrfcgndvpasxlhc-j. Used when personId is not known.",
+					type: "string",
+				},
+			},
+			type: "object",
+		},
+		name: "persons_lora_generation_debug",
 	},
 	{
 		description:
@@ -963,6 +1004,429 @@ function fetchAdminLoras(query: string, token: string) {
 	);
 }
 
+type McpDatabase = ReturnType<typeof createDb>;
+type PersonRow = typeof person.$inferSelect;
+type PersonGenerationRow = typeof personGeneration.$inferSelect;
+type GeneratorExecutionRow = typeof generatorExecution.$inferSelect;
+type GenerationDebugMetadata = ReturnType<typeof pickGenerationMetadata>;
+
+let mcpDatabase: McpDatabase | null = null;
+
+function getMcpDatabase() {
+	mcpDatabase ??= createDb(getDatabaseUrl());
+	return mcpDatabase;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function readRecordString(record: Record<string, unknown> | null, key: string) {
+	const value = record?.[key];
+	return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readRecordNumber(record: Record<string, unknown> | null, key: string) {
+	const value = record?.[key];
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readRecordBoolean(
+	record: Record<string, unknown> | null,
+	key: string
+) {
+	const value = record?.[key];
+	return typeof value === "boolean" ? value : null;
+}
+
+function toIsoString(value: Date | null) {
+	return value ? value.toISOString() : null;
+}
+
+function pickGenerationMetadata(metadata: Record<string, unknown>) {
+	const record = asRecord(metadata);
+	return {
+		generatedWithLora: readRecordBoolean(record, "generatedWithLora"),
+		generatorExecutionId: readRecordString(record, "generatorExecutionId"),
+		generatorStatus: readRecordString(record, "generatorStatus"),
+		generatorWorkflowKey: readRecordString(record, "generatorWorkflowKey"),
+		workflowKey: readRecordString(record, "workflowKey"),
+	};
+}
+
+function getPersonTrainingMetadata(row: PersonRow) {
+	const metadata = asRecord(row.metadata);
+	const training = asRecord(metadata?.training);
+	const trainingDebug = asRecord(training?.debug);
+	return {
+		baseModel: readRecordString(trainingDebug, "baseModel"),
+		completedAt: readRecordString(training, "completedAt"),
+		defaultCaption: readRecordString(trainingDebug, "defaultCaption"),
+		loraUrl: readRecordString(training, "loraUrl"),
+		outputName: readRecordString(training, "outputName"),
+		phase: readRecordString(training, "phase"),
+		provider: readRecordString(training, "provider"),
+		status: readRecordString(training, "status"),
+		trainingModel: readRecordString(trainingDebug, "trainingModel"),
+		trainingRunId: readRecordString(training, "trainingRunId"),
+		trainingSteps: readRecordNumber(training, "trainingSteps"),
+		triggerWord: readRecordString(training, "triggerWord"),
+	};
+}
+
+const providerPayloadSummaryKeys = [
+	"__falModel",
+	"image_size",
+	"image_url",
+	"num_images",
+	"num_inference_steps",
+	"output_format",
+	"strength",
+	"enable_safety_checker",
+	"loras",
+] as const;
+
+function summarizeProviderPayload(payload: Record<string, unknown>) {
+	const summary: Record<string, unknown> = {};
+	for (const key of providerPayloadSummaryKeys) {
+		const value = payload[key];
+		if (value !== undefined) {
+			summary[key] = value;
+		}
+	}
+	summary.loraCount = Array.isArray(payload.loras)
+		? payload.loras.length
+		: null;
+	return summary;
+}
+
+function buildProviderPayloadDebug(execution: GeneratorExecutionRow) {
+	const workflow = getWorkflowDefinition(execution.workflowKey);
+	if (!workflow) {
+		return {
+			error: `Unknown workflow: ${execution.workflowKey}`,
+			payload: null,
+			workflowFound: false,
+		};
+	}
+
+	try {
+		const payload = workflow.buildProviderInput({
+			inputImageUrl: execution.inputImageUrl ?? undefined,
+			params: execution.params ?? {},
+			prompt: execution.prompt,
+		});
+		return {
+			error: null,
+			payload: summarizeProviderPayload(payload),
+			workflowFound: true,
+		};
+	} catch (error) {
+		return {
+			error:
+				error instanceof Error
+					? error.message
+					: "Failed to build provider payload",
+			payload: null,
+			workflowFound: true,
+		};
+	}
+}
+
+function getProviderPayloadLoraCount(
+	providerPayload: ReturnType<typeof buildProviderPayloadDebug>
+) {
+	const loraCount = providerPayload.payload?.loraCount;
+	return typeof loraCount === "number" ? loraCount : null;
+}
+
+function summarizeExecutionDebug(input: {
+	execution: GeneratorExecutionRow;
+	generationMetadata: GenerationDebugMetadata | null;
+	personLoraUrl: string | null;
+	triggerWord: string | null;
+}) {
+	const params = asRecord(input.execution.params);
+	const loraUrl = readRecordString(params, "loraUrl");
+	const providerPayload = buildProviderPayloadDebug(input.execution);
+	const providerLoraCount = getProviderPayloadLoraCount(providerPayload);
+	const promptContainsTriggerWord = input.triggerWord
+		? input.execution.prompt.includes(input.triggerWord)
+		: null;
+	const loraUrlMatchesPerson =
+		input.personLoraUrl && loraUrl ? loraUrl === input.personLoraUrl : null;
+	const checks = {
+		generatedWithLoraFlag: input.generationMetadata?.generatedWithLora ?? null,
+		loraUrlMatchesPerson,
+		paramsHasLoraUrl: Boolean(loraUrl),
+		promptContainsTriggerWord,
+		providerPayloadHasLora:
+			typeof providerLoraCount === "number" ? providerLoraCount > 0 : null,
+	};
+
+	let diagnosis = "lora_applied_by_pipeline";
+	if (!input.personLoraUrl) {
+		diagnosis = "person_has_no_lora_url";
+	} else if (!checks.paramsHasLoraUrl) {
+		diagnosis = "generator_execution_missing_lora_url";
+	} else if (checks.loraUrlMatchesPerson === false) {
+		diagnosis = "generator_execution_lora_url_mismatch";
+	} else if (checks.providerPayloadHasLora === false) {
+		diagnosis = "provider_payload_missing_lora";
+	} else if (checks.promptContainsTriggerWord === false) {
+		diagnosis = "prompt_missing_trigger_word";
+	}
+
+	return {
+		artifacts: input.execution.artifacts,
+		checks,
+		createdAt: toIsoString(input.execution.createdAt),
+		diagnosis,
+		errorSummary: input.execution.errorSummary,
+		id: input.execution.id,
+		inputImageUrl: input.execution.inputImageUrl,
+		params: {
+			enableSafetyChecker: readRecordBoolean(params, "enableSafetyChecker"),
+			extraLoraUrl: readRecordString(params, "extraLoraUrl"),
+			extraLoraWeight: readRecordNumber(params, "extraLoraWeight"),
+			imageSize: readRecordString(params, "imageSize"),
+			loraUrl,
+			loraWeight: readRecordNumber(params, "loraWeight"),
+			numImages: readRecordNumber(params, "numImages"),
+			numInferenceSteps: readRecordNumber(params, "numInferenceSteps"),
+			outputFormat: readRecordString(params, "outputFormat"),
+		},
+		progressPct: input.execution.progressPct,
+		prompt: input.execution.prompt,
+		providerEndpointId: input.execution.providerEndpointId,
+		providerJobId: input.execution.providerJobId,
+		providerPayload,
+		status: input.execution.status,
+		updatedAt: toIsoString(input.execution.updatedAt),
+		workflowKey: input.execution.workflowKey,
+	};
+}
+
+function summarizeGenerationDebug(input: {
+	executionById: Map<string, GeneratorExecutionRow>;
+	generation: PersonGenerationRow;
+}) {
+	const metadata = pickGenerationMetadata(input.generation.metadata);
+	return {
+		createdAt: toIsoString(input.generation.createdAt),
+		errorSummary: input.generation.errorSummary,
+		executionFound: metadata.generatorExecutionId
+			? input.executionById.has(metadata.generatorExecutionId)
+			: null,
+		id: input.generation.id,
+		metadata,
+		previewUrl: input.generation.previewUrl,
+		prompt: input.generation.prompt,
+		sourceUrl: input.generation.sourceUrl,
+		status: input.generation.status,
+		title: input.generation.title,
+		updatedAt: toIsoString(input.generation.updatedAt),
+	};
+}
+
+async function findPersonForLoraGenerationDebug(input: {
+	database: McpDatabase;
+	personId?: string;
+	personSlug?: string;
+}) {
+	const [personRow] = await input.database
+		.select()
+		.from(person)
+		.where(
+			input.personId
+				? eq(person.id, input.personId)
+				: eq(person.slug, input.personSlug ?? "")
+		);
+	return personRow ?? null;
+}
+
+async function listGenerationsForLoraGenerationDebug(input: {
+	database: McpDatabase;
+	generationId?: string;
+	limit: number;
+	personId: string;
+	requestedExecutionId?: string;
+}) {
+	if (input.generationId) {
+		return await input.database
+			.select()
+			.from(personGeneration)
+			.where(
+				and(
+					eq(personGeneration.id, input.generationId),
+					eq(personGeneration.personId, input.personId)
+				)
+			)
+			.limit(1);
+	}
+
+	return await input.database
+		.select()
+		.from(personGeneration)
+		.where(eq(personGeneration.personId, input.personId))
+		.orderBy(desc(personGeneration.createdAt))
+		.limit(
+			input.requestedExecutionId ? MAX_LORA_DEBUG_GENERATION_LIMIT : input.limit
+		);
+}
+
+function selectVisibleGenerationRows(input: {
+	generationId?: string;
+	generationRows: PersonGenerationRow[];
+	limit: number;
+	requestedExecutionId?: string;
+}) {
+	if (!(input.requestedExecutionId && !input.generationId)) {
+		return input.generationRows;
+	}
+
+	const selectedRows = input.generationRows.filter(
+		(row) =>
+			pickGenerationMetadata(row.metadata).generatorExecutionId ===
+			input.requestedExecutionId
+	);
+	return selectedRows.length > 0
+		? selectedRows
+		: input.generationRows.slice(0, input.limit);
+}
+
+function collectExecutionDebugInputs(input: {
+	generationRows: PersonGenerationRow[];
+	requestedExecutionId?: string;
+}) {
+	const metadataByExecutionId = new Map<string, GenerationDebugMetadata>();
+	const executionIds = new Set<string>();
+	if (input.requestedExecutionId) {
+		executionIds.add(input.requestedExecutionId);
+	}
+	for (const generation of input.generationRows) {
+		const metadata = pickGenerationMetadata(generation.metadata);
+		if (metadata.generatorExecutionId) {
+			metadataByExecutionId.set(metadata.generatorExecutionId, metadata);
+			executionIds.add(metadata.generatorExecutionId);
+		}
+	}
+	return { executionIds, metadataByExecutionId };
+}
+
+async function listGeneratorExecutionsForLoraDebug(input: {
+	database: McpDatabase;
+	executionIds: Set<string>;
+}) {
+	return input.executionIds.size > 0
+		? await input.database
+				.select()
+				.from(generatorExecution)
+				.where(inArray(generatorExecution.id, [...input.executionIds]))
+		: [];
+}
+
+async function handlePersonsLoraGenerationDebugToolCall(
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const personId = parseOptionalString(argumentsPayload.personId);
+	const personSlug = parseOptionalString(argumentsPayload.personSlug);
+	if (!(personId || personSlug)) {
+		return createErrorResponse(id, "personId or personSlug is required");
+	}
+
+	const generationId = parseOptionalString(argumentsPayload.generationId);
+	const requestedExecutionId = parseOptionalString(
+		argumentsPayload.executionId
+	);
+	const limit = clampInteger(
+		parseOptionalNumber(argumentsPayload.limit),
+		DEFAULT_LORA_DEBUG_GENERATION_LIMIT,
+		MAX_LORA_DEBUG_GENERATION_LIMIT
+	);
+	const database = getMcpDatabase();
+	const personRow = await findPersonForLoraGenerationDebug({
+		database,
+		personId,
+		personSlug,
+	});
+	if (!personRow) {
+		return createOkResponse(
+			id,
+			createToolResult(
+				{
+					error: "Person not found",
+					personId: personId ?? null,
+					personSlug: personSlug ?? null,
+				},
+				true
+			)
+		);
+	}
+
+	const generationRows = await listGenerationsForLoraGenerationDebug({
+		database,
+		generationId,
+		limit,
+		personId: personRow.id,
+		requestedExecutionId,
+	});
+	const visibleGenerationRows = selectVisibleGenerationRows({
+		generationId,
+		generationRows,
+		limit,
+		requestedExecutionId,
+	});
+	const { executionIds, metadataByExecutionId } = collectExecutionDebugInputs({
+		generationRows: visibleGenerationRows,
+		requestedExecutionId,
+	});
+	const executionRows = await listGeneratorExecutionsForLoraDebug({
+		database,
+		executionIds,
+	});
+	const executionById = new Map(
+		executionRows.map((execution) => [execution.id, execution])
+	);
+	const training = getPersonTrainingMetadata(personRow);
+	const triggerWord = training.triggerWord ?? training.defaultCaption;
+
+	return createOkResponse(
+		id,
+		createToolResult({
+			executions: executionRows.map((execution) =>
+				summarizeExecutionDebug({
+					execution,
+					generationMetadata: metadataByExecutionId.get(execution.id) ?? null,
+					personLoraUrl: personRow.loraUrl,
+					triggerWord,
+				})
+			),
+			generations: visibleGenerationRows.map((generation) =>
+				summarizeGenerationDebug({ executionById, generation })
+			),
+			limit,
+			person: {
+				hasLoraUrl: Boolean(personRow.loraUrl),
+				id: personRow.id,
+				loraUrl: personRow.loraUrl,
+				name: personRow.name,
+				slug: personRow.slug,
+				training,
+			},
+			requested: {
+				executionId: requestedExecutionId ?? null,
+				generationId: generationId ?? null,
+				personId: personId ?? null,
+				personSlug: personSlug ?? null,
+			},
+		})
+	);
+}
+
 function requireTrainingControlToken(id: JsonRpcResponse["id"]) {
 	const token = process.env.TRAINING_CONTROL_TOKEN;
 	if (!token) {
@@ -982,6 +1446,10 @@ async function handlePersonsToolCall(
 	argumentsPayload: Record<string, unknown>,
 	id: JsonRpcResponse["id"]
 ) {
+	if (name === "persons_lora_generation_debug") {
+		return handlePersonsLoraGenerationDebugToolCall(argumentsPayload, id);
+	}
+
 	const { error, token } = requireTrainingControlToken(id);
 	if (error) {
 		return error;

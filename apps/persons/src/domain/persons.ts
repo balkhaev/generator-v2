@@ -505,6 +505,42 @@ function buildDefaultPersonTriggerWord(slug: string) {
 	return `ohwx_${stem}`.slice(0, 60);
 }
 
+function buildPersonLoraSubject(input: {
+	description: string;
+	triggerWord: string;
+}) {
+	const genderHint = inferGenderHint(input.description);
+	return genderHint ? `${input.triggerWord} ${genderHint}` : input.triggerWord;
+}
+
+function buildPersonLoraTrainingCaption(input: {
+	caption: string | null;
+	index: number;
+	subject: string;
+	triggerWord: string;
+}) {
+	if (input.caption?.includes(input.triggerWord)) {
+		return input.caption;
+	}
+
+	return `a photo of ${input.subject}, imported reference photo ${input.index + 1}`;
+}
+
+function compareDatasetGenerationOrder(
+	left: PersonGenerationRecord,
+	right: PersonGenerationRecord
+) {
+	const leftOrder = readMetadataNumber(left.metadata, "datasetOrder");
+	const rightOrder = readMetadataNumber(right.metadata, "datasetOrder");
+	if (leftOrder !== null || rightOrder !== null) {
+		return (
+			(leftOrder ?? Number.MAX_SAFE_INTEGER) -
+			(rightOrder ?? Number.MAX_SAFE_INTEGER)
+		);
+	}
+	return left.createdAt.getTime() - right.createdAt.getTime();
+}
+
 const imageMediaUrlPattern = /\.(png|jpe?g|webp|gif)(\?.*)?$/;
 const audioMediaUrlPattern = /\.(wav|mp3|ogg|m4a)(\?.*)?$/;
 const remoteImageMaxBytes = 20 * 1024 * 1024;
@@ -1823,8 +1859,10 @@ export class PersonsService {
 		person: PersonRecord,
 		triggerWord: string
 	) {
-		const genderHint = inferGenderHint(person.description);
-		const subject = genderHint ? `${triggerWord} ${genderHint}` : triggerWord;
+		const subject = buildPersonLoraSubject({
+			description: person.description,
+			triggerWord,
+		});
 
 		return person.generations
 			.filter(
@@ -1833,22 +1871,15 @@ export class PersonsService {
 					generation.mediaType === "image" &&
 					generation.metadata.isDatasetPhoto === true
 			)
-			.sort((left, right) => {
-				const leftOrder = readMetadataNumber(left.metadata, "datasetOrder");
-				const rightOrder = readMetadataNumber(right.metadata, "datasetOrder");
-				if (leftOrder !== null || rightOrder !== null) {
-					return (
-						(leftOrder ?? Number.MAX_SAFE_INTEGER) -
-						(rightOrder ?? Number.MAX_SAFE_INTEGER)
-					);
-				}
-				return left.createdAt.getTime() - right.createdAt.getTime();
-			})
+			.sort(compareDatasetGenerationOrder)
 			.slice(0, DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT)
 			.map((generation, index) => ({
-				caption:
-					readMetadataString(generation.metadata, "datasetCaption") ??
-					`a photo of ${subject}, imported reference photo ${index + 1}`,
+				caption: buildPersonLoraTrainingCaption({
+					caption: readMetadataString(generation.metadata, "datasetCaption"),
+					index,
+					subject,
+					triggerWord,
+				}),
 				s3Key: readMetadataString(generation.metadata, "datasetS3Key"),
 				url: generation.sourceUrl,
 				variantId:
@@ -2050,15 +2081,24 @@ export class PersonsService {
 			throw new Error("Training metadata is incomplete");
 		}
 
+		const subject = buildPersonLoraSubject({
+			description: person.description,
+			triggerWord,
+		});
 		const approvedItems = person.generations
 			.filter(
 				(generation) =>
 					generation.metadata.isDatasetPhoto === true &&
 					generation.status === "ready"
 			)
-			.map((generation) => ({
-				caption:
-					readMetadataString(generation.metadata, "datasetCaption") ?? "",
+			.sort(compareDatasetGenerationOrder)
+			.map((generation, index) => ({
+				caption: buildPersonLoraTrainingCaption({
+					caption: readMetadataString(generation.metadata, "datasetCaption"),
+					index,
+					subject,
+					triggerWord,
+				}),
 				s3Key: readMetadataString(generation.metadata, "datasetS3Key"),
 				url: generation.sourceUrl,
 				variantId:

@@ -50,7 +50,7 @@ bun --cwd packages/debug-tools run mcp
 - workspace/health: `workspace_summary`, `service_health`, `service_request`
 - admin queue: `admin_lora_training_queue_snapshot`
 - generator: `generator_workflows_get`, `generator_execution_submit`, `generator_execution_sync`
-- persons: `persons_list`, `persons_get`, `persons_retrain_lora`, `persons_reupload_adorely_assets`
+- persons: `persons_list`, `persons_get`, `persons_retrain_lora`, `persons_reupload_adorely_assets`, `persons_lora_generation_debug`
 - test users: `test_user_upsert`, `test_user_get`
 - kafka: `kafka_cluster_info`, `kafka_topics_list`, `kafka_topic_offsets`, `kafka_consumer_groups_list`, `kafka_consumer_group_describe`, `kafka_topic_sample`
 
@@ -112,3 +112,9 @@ curl -H 'x-debug-correlation-id: dbg-manual-123' http://localhost:3005/api/healt
 bucket. Tool берёт актуальные assets из read-only Adorely Debug MCP, загружает их
 в storage `persons-api` и обновляет person/dataset URL. По умолчанию dry-run;
 для записи нужно явно передать `apply: true`.
+
+`persons_lora_generation_debug` — read-only tool для разбора жалоб
+«генерация без LoRA»: принимает `personId` или `personSlug`, опционально
+`generationId`/`executionId`, читает person/generation/generator execution
+записи из БД и возвращает проверки `params.loraUrl`, совпадения с `person.loraUrl`,
+trigger word в prompt и summary provider payload (`__falModel`, `loras`).

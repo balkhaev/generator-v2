@@ -762,17 +762,64 @@ export class PersonsService {
 		}
 	}
 
-	private resolveS3KeyForGeneration(
+	private addS3KeyForUrl(keys: Set<string>, url: string | null | undefined) {
+		if (!this.s3Storage) {
+			return;
+		}
+		if (!url) {
+			return;
+		}
+		const key = extractS3KeyFromPublicUrl(url, this.s3Storage);
+		if (key) {
+			keys.add(key);
+		}
+	}
+
+	private resolveS3KeysForGeneration(
 		generation: PersonGenerationRecord
-	): string | null {
+	): string[] {
+		const keys = new Set<string>();
 		const stored = readMetadataString(generation.metadata, "datasetS3Key");
 		if (stored) {
-			return stored;
+			keys.add(stored);
 		}
-		if (!this.s3Storage) {
-			return null;
+		this.addS3KeyForUrl(keys, generation.sourceUrl);
+		this.addS3KeyForUrl(keys, generation.previewUrl);
+		return [...keys];
+	}
+
+	private async deleteGenerationS3ObjectsQuietly(
+		generation: PersonGenerationRecord
+	) {
+		for (const key of this.resolveS3KeysForGeneration(generation)) {
+			await this.deleteS3ObjectQuietly(key);
 		}
-		return extractS3KeyFromPublicUrl(generation.sourceUrl, this.s3Storage);
+	}
+
+	private resolveS3KeysForPerson(person: PersonRecord): string[] {
+		const keys = new Set<string>();
+		for (const url of [
+			person.datasetUrl,
+			person.loraUrl,
+			person.photoUrl,
+			person.referencePhotoUrl,
+			person.videoUrl,
+			person.voiceWavUrl,
+		]) {
+			this.addS3KeyForUrl(keys, url);
+		}
+		for (const generation of person.generations) {
+			for (const key of this.resolveS3KeysForGeneration(generation)) {
+				keys.add(key);
+			}
+		}
+		return [...keys];
+	}
+
+	private async deletePersonS3ObjectsQuietly(person: PersonRecord) {
+		for (const key of this.resolveS3KeysForPerson(person)) {
+			await this.deleteS3ObjectQuietly(key);
+		}
 	}
 
 	private async uploadAdorelyRepairAsset(input: {
@@ -1517,7 +1564,13 @@ export class PersonsService {
 		return this.ensureUniqueSlug(candidateSlug, personId);
 	}
 
-	deletePerson(personId: string) {
+	async deletePerson(personId: string) {
+		const person = await this.repository.getPersonById(personId);
+		if (!person) {
+			return false;
+		}
+
+		await this.deletePersonS3ObjectsQuietly(person);
 		return this.repository.deletePerson(personId);
 	}
 
@@ -1535,6 +1588,20 @@ export class PersonsService {
 			return null;
 		}
 
+		const isDatasetPhoto = generation.metadata.isDatasetPhoto === true;
+		const variantId = readMetadataString(
+			generation.metadata,
+			"datasetVariantId"
+		);
+		// Original reference photo duplicates are essential for training and
+		// must never be removed individually — the UI hides the Delete button
+		// for them. This server-side guard exists so a stray DELETE request
+		// (e.g. via API client or replayed event) cannot leave the dataset
+		// short an "anchor" copy of the canonical reference photo.
+		if (isDatasetPhoto && variantId?.startsWith("original-")) {
+			return this.repository.getPersonById(personId);
+		}
+
 		const deletedGeneration = await this.repository.deleteGeneration(
 			personId,
 			generationId
@@ -1543,26 +1610,11 @@ export class PersonsService {
 			return null;
 		}
 
-		if (deletedGeneration.metadata.isDatasetPhoto !== true) {
+		await this.deleteGenerationS3ObjectsQuietly(deletedGeneration);
+
+		if (!isDatasetPhoto) {
 			return this.repository.getPersonById(personId);
 		}
-
-		const variantId = readMetadataString(
-			deletedGeneration.metadata,
-			"datasetVariantId"
-		);
-		// Original reference photo duplicates are essential for training and
-		// must never be removed individually — the UI hides the Delete button
-		// for them. This server-side guard exists so a stray DELETE request
-		// (e.g. via API client or replayed event) cannot leave the dataset
-		// short an "anchor" copy of the canonical reference photo.
-		if (variantId?.startsWith("original-")) {
-			return this.repository.getPersonById(personId);
-		}
-
-		await this.deleteS3ObjectQuietly(
-			this.resolveS3KeyForGeneration(deletedGeneration)
-		);
 
 		const training =
 			person.metadata.training &&
@@ -2767,9 +2819,7 @@ export class PersonsService {
 		);
 
 		for (const generation of datasetGenerations) {
-			await this.deleteS3ObjectQuietly(
-				this.resolveS3KeyForGeneration(generation)
-			);
+			await this.deleteGenerationS3ObjectsQuietly(generation);
 			await this.repository.deleteGeneration(personId, generation.id);
 		}
 	}

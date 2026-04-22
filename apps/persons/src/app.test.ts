@@ -5,6 +5,7 @@ import {
 	GENERATOR_CALLBACK_TOKEN_HEADER,
 	GENERATOR_INTERNAL_TOKEN_HEADER,
 } from "@generator/http/shared";
+import type { S3StorageConfig } from "@generator/storage";
 
 import { createApp } from "@/app";
 import type {
@@ -19,6 +20,114 @@ import {
 	type PersonsRepository,
 	PersonsService,
 } from "@/domain/persons";
+
+const testS3Storage = {
+	accessKeyId: "test-access-key",
+	bucket: "test-bucket",
+	endpoint: "https://s3.example.com",
+	publicBaseUrl: "https://cdn.example.com",
+	region: "us-east-1",
+	secretAccessKey: "test-secret-key",
+} satisfies S3StorageConfig;
+
+type StoredPersonInput = Omit<
+	PersonRecord,
+	"createdAt" | "generations" | "updatedAt"
+>;
+type StoredGenerationInput = Omit<
+	PersonGenerationRecord,
+	"createdAt" | "updatedAt"
+>;
+
+function createStoredPerson(
+	input: Partial<StoredPersonInput> & Pick<StoredPersonInput, "id">
+): StoredPersonInput {
+	const { id, ...rest } = input;
+	return {
+		datasetUrl: null,
+		description: "",
+		id,
+		loraUrl: null,
+		metadata: {},
+		name: "Test Person",
+		photoUrl: null,
+		referencePhotoUrl: "https://assets.example.com/reference.png",
+		slug: id,
+		videoUrl: null,
+		voiceWavUrl: null,
+		...rest,
+	};
+}
+
+function createStoredGeneration(
+	input: Partial<StoredGenerationInput> &
+		Pick<StoredGenerationInput, "id" | "personId" | "sourceUrl">
+): StoredGenerationInput {
+	const { id, personId, sourceUrl, ...rest } = input;
+	return {
+		errorSummary: null,
+		id,
+		mediaType: "image",
+		metadata: {},
+		operatorRunId: null,
+		operatorScenarioId: null,
+		personId,
+		previewUrl: sourceUrl,
+		prompt: "",
+		sourceUrl,
+		status: "ready",
+		title: "Test generation",
+		...rest,
+	};
+}
+
+function getFetchInputUrl(input: Parameters<typeof fetch>[0]) {
+	if (typeof input === "string") {
+		return input;
+	}
+	if (input instanceof URL) {
+		return input.toString();
+	}
+	return input.url;
+}
+
+function installS3DeleteRecorder() {
+	const previousFetch = globalThis.fetch;
+	const requests: { method: string; url: string }[] = [];
+	globalThis.fetch = ((
+		input: Parameters<typeof fetch>[0],
+		init?: Parameters<typeof fetch>[1]
+	) => {
+		requests.push({
+			method: init?.method ?? "GET",
+			url: getFetchInputUrl(input),
+		});
+		return Promise.resolve(new Response(null, { status: 204 }));
+	}) as typeof fetch;
+
+	return {
+		requests,
+		restore() {
+			globalThis.fetch = previousFetch;
+		},
+	};
+}
+
+function buildS3DeleteUrl(key: string) {
+	return `${testS3Storage.endpoint}/${testS3Storage.bucket}/${key}`;
+}
+
+function expectS3DeleteRequests(
+	requests: { method: string; url: string }[],
+	keys: string[]
+) {
+	expect(requests.map((request) => request.method)).toEqual(
+		keys.map(() => "DELETE")
+	);
+	expect(new Set(requests.map((request) => request.url))).toEqual(
+		new Set(keys.map(buildS3DeleteUrl))
+	);
+}
 
 function createMemoryRepository(): PersonsRepository {
 	const persons = new Map<string, PersonRecord>();
@@ -1405,6 +1514,96 @@ describe("persons api", () => {
 			} else {
 				process.env.ADORELY_DEBUG_MCP_TOKEN = previousToken;
 			}
+		}
+	});
+
+	it("deletes owned s3 objects when deleting a generation", async () => {
+		const recorder = installS3DeleteRecorder();
+		try {
+			const repository = createMemoryRepository();
+			await repository.createPerson({
+				generations: [
+					createStoredGeneration({
+						id: "generation-owned-s3",
+						personId: "person-generation-owned-s3",
+						previewUrl: "https://cdn.example.com/generations/thumb.png",
+						sourceUrl: "https://cdn.example.com/generations/output.png",
+					}),
+				],
+				person: createStoredPerson({
+					id: "person-generation-owned-s3",
+					name: "Generation Owned S3",
+					slug: "generation-owned-s3",
+				}),
+			});
+			const service = new PersonsService({
+				repository,
+				s3Storage: testS3Storage,
+			});
+
+			const person = await service.deleteGeneration(
+				"person-generation-owned-s3",
+				"generation-owned-s3"
+			);
+
+			expect(person?.generations).toHaveLength(0);
+			expectS3DeleteRequests(recorder.requests, [
+				"generations/output.png",
+				"generations/thumb.png",
+			]);
+		} finally {
+			recorder.restore();
+		}
+	});
+
+	it("deletes owned s3 objects when deleting a person", async () => {
+		const recorder = installS3DeleteRecorder();
+		try {
+			const repository = createMemoryRepository();
+			await repository.createPerson({
+				generations: [
+					createStoredGeneration({
+						id: "generation-person-owned-s3",
+						metadata: {
+							datasetS3Key: "datasets/reference-source.png",
+						},
+						personId: "person-owned-s3",
+						previewUrl: "https://cdn.example.com/generations/person-thumb.png",
+						sourceUrl: "https://cdn.example.com/generations/person-output.png",
+					}),
+				],
+				person: createStoredPerson({
+					datasetUrl: "https://cdn.example.com/datasets/person.zip",
+					id: "person-owned-s3",
+					loraUrl: "https://cdn.example.com/loras/person.safetensors",
+					name: "Person Owned S3",
+					photoUrl: "https://cdn.example.com/persons/photo.png",
+					referencePhotoUrl: "https://cdn.example.com/persons/photo.png",
+					slug: "person-owned-s3",
+					videoUrl: "https://assets.example.com/external-video.mp4",
+					voiceWavUrl: "https://cdn.example.com/persons/voice.wav",
+				}),
+			});
+			const service = new PersonsService({
+				repository,
+				s3Storage: testS3Storage,
+			});
+
+			const deleted = await service.deletePerson("person-owned-s3");
+
+			expect(deleted).toBe(true);
+			expect(await repository.getPersonById("person-owned-s3")).toBeNull();
+			expectS3DeleteRequests(recorder.requests, [
+				"datasets/person.zip",
+				"loras/person.safetensors",
+				"persons/photo.png",
+				"persons/voice.wav",
+				"datasets/reference-source.png",
+				"generations/person-output.png",
+				"generations/person-thumb.png",
+			]);
+		} finally {
+			recorder.restore();
 		}
 	});
 

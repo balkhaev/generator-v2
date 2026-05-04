@@ -114,7 +114,7 @@ const falFastFooocusSdxlParamsSchema = z.object({
 	enablePromptExpansion: z.boolean().default(true),
 	enableRefiner: booleanParamSchema(true),
 	seed: z.number().int().nonnegative().optional(),
-	embeddingUrl: optionalUrlParamSchema,
+	loraUrl: optionalUrlParamSchema,
 	embeddingTokens: z.string().default(""),
 });
 
@@ -292,9 +292,9 @@ function buildWanLoras(parsed: {
 
 function buildFooocusEmbeddings(parsed: {
 	embeddingTokens: string;
-	embeddingUrl?: string;
+	loraUrl?: string;
 }): Array<{ path: string; tokens?: string[] }> {
-	if (!parsed.embeddingUrl) {
+	if (!parsed.loraUrl) {
 		return [];
 	}
 	const tokens = parsed.embeddingTokens
@@ -303,7 +303,7 @@ function buildFooocusEmbeddings(parsed: {
 		.filter((token) => token.length > 0);
 	return [
 		{
-			path: parsed.embeddingUrl,
+			path: parsed.loraUrl,
 			...(tokens.length > 0 ? { tokens } : {}),
 		},
 	];
@@ -636,10 +636,10 @@ export const workflowRegistry = {
 			},
 			{
 				description:
-					"Optional public URL pointing to Fooocus embedding weights.",
-				key: "embeddingUrl",
+					"Optional public URL pointing to SDXL LoRA or Fooocus embedding weights.",
+				key: "loraUrl",
 				kind: "lora-url",
-				label: "Embedding URL",
+				label: "LoRA URL",
 				optional: true,
 				type: "text",
 			},

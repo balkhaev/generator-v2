@@ -294,16 +294,17 @@ describe("fal workflow registry", () => {
 		}
 	});
 
-	it("exposes optional embedding URL field for fal-fast-fooocus-sdxl", () => {
+	it("exposes optional LoRA URL field for fal-fast-fooocus-sdxl", () => {
 		const workflows = listWorkflows();
 		const workflow = workflows.find(
 			(entry) => entry.key === "fal-fast-fooocus-sdxl"
 		);
-		const embeddingField = workflow?.parameterFields.find(
-			(field) => field.key === "embeddingUrl"
+		const loraField = workflow?.parameterFields.find(
+			(field) => field.key === "loraUrl"
 		);
-		expect(embeddingField?.kind).toBe("lora-url");
-		expect(embeddingField?.optional).toBe(true);
+		expect(loraField?.kind).toBe("lora-url");
+		expect(loraField?.optional).toBe(true);
+		expect(loraField?.label).toBe("LoRA URL");
 
 		const refinerField = workflow?.parameterFields.find(
 			(field) => field.key === "enableRefiner"
@@ -423,8 +424,8 @@ describe("fal workflow registry", () => {
 		expect(
 			buildInput({
 				embeddingTokens: "style_token, detail_token",
-				embeddingUrl: "https://example.com/fooocus-embedding.safetensors",
 				enableRefiner: "false",
+				loraUrl: "https://example.com/fooocus-embedding.safetensors",
 				outputFormat: "png",
 			})
 		).toMatchObject({

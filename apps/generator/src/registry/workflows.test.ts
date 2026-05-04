@@ -223,10 +223,10 @@ describe("workflow registry", () => {
 			workflow?.buildProviderInput({
 				params: {
 					embeddingTokens: "fooocus_style, subject_token",
-					embeddingUrl: "https://storage.example.com/fooocus.safetensors",
 					enableRefiner: "false",
 					guidanceScale: 2.5,
 					imageSize: "portrait_4_3",
+					loraUrl: "https://storage.example.com/fooocus.safetensors",
 					negativePrompt: "blur, watermark",
 					numImages: 2,
 					numInferenceSteps: 12,

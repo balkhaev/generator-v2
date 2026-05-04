@@ -46,6 +46,11 @@ const PROMPT_LIMIT = 1500;
 const promptCleanupPattern = /[^\p{L}\p{N}\s]/gu;
 const promptSplitPattern = /\s+/u;
 const loraUrlSuffixPattern = /Url$/i;
+const portraitOutputDefaults: Record<string, string> = {
+	aspectRatio: "9:16",
+	imageSize: "portrait_16_9",
+	videoSize: "portrait_16_9",
+};
 
 const promptStopWords = new Set([
 	"a",
@@ -69,6 +74,34 @@ const promptStopWords = new Set([
 	"to",
 	"with",
 ]);
+
+function getPortraitOutputDefault(
+	parameter: WorkflowParameter,
+	workflow: WorkflowDefinition
+) {
+	const defaultValue = portraitOutputDefaults[parameter.key];
+	if (!(defaultValue && parameter.enumValues?.includes(defaultValue))) {
+		return null;
+	}
+	if (workflow.requiresInputImage && parameter.enumValues.includes("auto")) {
+		return null;
+	}
+	return defaultValue;
+}
+
+export function createComposeScenarioFormState(
+	workflow: WorkflowDefinition
+): ScenarioFormState {
+	const form = createScenarioFormState(workflow);
+	const params = { ...form.params };
+	for (const parameter of workflow.parameters) {
+		const defaultValue = getPortraitOutputDefault(parameter, workflow);
+		if (defaultValue) {
+			params[parameter.key] = defaultValue;
+		}
+	}
+	return { ...form, params };
+}
 
 // Reference image for prompt enhance: scenario-level workflows expose
 // `image-url` parameters (e.g. `endImageUrl`) that point to a frame the
@@ -555,7 +588,7 @@ export default function ComposeForm({
 		if (!nextWorkflow || nextWorkflow.key === form.workflowKey) {
 			return;
 		}
-		const next = createScenarioFormState(nextWorkflow);
+		const next = createComposeScenarioFormState(nextWorkflow);
 		onFormChange({
 			...next,
 			name: form.name,

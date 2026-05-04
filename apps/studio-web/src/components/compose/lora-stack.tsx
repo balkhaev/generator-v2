@@ -92,6 +92,53 @@ function getSlotIndexForVariant(
 	);
 }
 
+const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
+
+function getCivitaiSourceUrl(entry: LoraRegistryEntry) {
+	if (!entry.sourceUrl) {
+		return null;
+	}
+	if (entry.sourceProvider === "civitai") {
+		return entry.sourceUrl;
+	}
+	try {
+		const url = new URL(entry.sourceUrl);
+		return civitaiHostPattern.test(url.hostname) ? entry.sourceUrl : null;
+	} catch {
+		return null;
+	}
+}
+
+function CivitaiSourceLink({
+	compact = false,
+	entry,
+}: {
+	compact?: boolean;
+	entry: LoraRegistryEntry;
+}) {
+	const sourceUrl = getCivitaiSourceUrl(entry);
+	if (!sourceUrl) {
+		return null;
+	}
+
+	const className = compact
+		? "mt-1.5 mr-2 inline-flex shrink-0 items-center gap-1 rounded-md px-1 py-0.5 text-[10px] text-muted-foreground underline-offset-4 transition hover:text-foreground hover:underline"
+		: "mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground underline-offset-4 transition hover:text-foreground hover:underline";
+
+	return (
+		<a
+			aria-label={`Open ${entry.name} on Civitai`}
+			className={className}
+			href={sourceUrl}
+			rel="noopener noreferrer"
+			target="_blank"
+		>
+			Civitai
+			<ExternalLink aria-hidden="true" className="size-2.5" />
+		</a>
+	);
+}
+
 function SlotPickerCard({
 	adminHref,
 	availableLoras,
@@ -153,6 +200,7 @@ function SlotPickerCard({
 							<span>· {formatBytes(entry.sizeBytes)}</span>
 						) : null}
 					</div>
+					<CivitaiSourceLink entry={entry} />
 					{availableLoras.length === 0 ? (
 						<a
 							className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground underline transition hover:text-foreground"
@@ -349,9 +397,12 @@ function PickerPopover({
 			{filtered.length > 0 ? (
 				<ul className="grid max-h-64 gap-0.5 overflow-y-auto pr-0.5">
 					{filtered.map((entry) => (
-						<li key={entry.id}>
+						<li
+							className="flex items-start rounded-lg transition hover:bg-foreground/[0.05]"
+							key={entry.id}
+						>
 							<button
-								className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-foreground/[0.05]"
+								className="flex min-w-0 flex-1 items-start gap-2 px-2 py-1.5 text-left"
 								onClick={() => onPickEntry(entry)}
 								type="button"
 							>
@@ -370,6 +421,7 @@ function PickerPopover({
 									{entry.baseModel}
 								</span>
 							</button>
+							<CivitaiSourceLink compact entry={entry} />
 						</li>
 					))}
 				</ul>

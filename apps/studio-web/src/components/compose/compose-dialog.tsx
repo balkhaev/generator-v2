@@ -14,7 +14,6 @@ import {
 import {
 	buildCreateScenarioInput,
 	buildScenarioFormStateFromRecord,
-	createScenarioFormState,
 	type WorkflowDefinition,
 } from "@generator/studio-client/shared";
 import { Button } from "@generator/ui/components/button";
@@ -31,7 +30,7 @@ import { AlertCircle, Loader2, Plus, Save } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import ComposeForm from "./compose-form";
+import ComposeForm, { createComposeScenarioFormState } from "./compose-form";
 
 interface ComposeDialogProps {
 	editingScenario?: ScenarioRecord | null;
@@ -139,7 +138,7 @@ function ComposeDialogBody({
 	const [form, setForm] = useState<ScenarioFormState>(() =>
 		editingScenario
 			? buildScenarioFormStateFromRecord(editingScenario, initialWorkflow)
-			: createScenarioFormState(initialWorkflow)
+			: createComposeScenarioFormState(initialWorkflow)
 	);
 
 	const selectedWorkflow = useMemo(

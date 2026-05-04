@@ -54,6 +54,23 @@ describe("fal workflow registry", () => {
 		});
 	});
 
+	it("resolves fal-fast-fooocus-sdxl with correct defaults", () => {
+		const workflow = getWorkflowDefinition("fal-fast-fooocus-sdxl");
+		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("sdxl");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			embeddingTokens: "",
+			enablePromptExpansion: true,
+			enableRefiner: true,
+			guidanceScale: 2,
+			imageSize: "square_hd",
+			negativePrompt: "",
+			numImages: 1,
+			numInferenceSteps: 8,
+			outputFormat: "jpeg",
+		});
+	});
+
 	it("resolves fal-wan-2-2-text-to-video with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-wan-2-2-text-to-video");
 		expect(workflow).toBeDefined();
@@ -277,6 +294,30 @@ describe("fal workflow registry", () => {
 		}
 	});
 
+	it("exposes optional embedding URL field for fal-fast-fooocus-sdxl", () => {
+		const workflows = listWorkflows();
+		const workflow = workflows.find(
+			(entry) => entry.key === "fal-fast-fooocus-sdxl"
+		);
+		const embeddingField = workflow?.parameterFields.find(
+			(field) => field.key === "embeddingUrl"
+		);
+		expect(embeddingField?.kind).toBe("lora-url");
+		expect(embeddingField?.optional).toBe(true);
+
+		const refinerField = workflow?.parameterFields.find(
+			(field) => field.key === "enableRefiner"
+		);
+		expect(refinerField?.enumValues).toEqual(["true", "false"]);
+		expect(refinerField?.optional).toBeUndefined();
+
+		expect(
+			workflow?.parameterFields.some(
+				(field) => field.key === "safetyCheckerVersion"
+			)
+		).toBe(false);
+	});
+
 	it("exposes paired high+low lora-url fields for fal-wan-2-2 workflows", () => {
 		const workflows = listWorkflows();
 		for (const key of [
@@ -353,6 +394,49 @@ describe("fal workflow registry", () => {
 			__falModel: "fal-ai/fast-sdxl",
 			format: "png",
 			loras: [{ path: "https://example.com/sdxl.safetensors", scale: 0.4 }],
+		});
+	});
+
+	it("builds fal-fast-fooocus-sdxl payloads with optional embeddings", () => {
+		const workflow = getWorkflowDefinition("fal-fast-fooocus-sdxl");
+		const buildInput = (extra: Record<string, unknown> = {}) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "test",
+			}) as Record<string, unknown>;
+
+		expect(buildInput()).toMatchObject({
+			__falModel: "fal-ai/fast-fooocus-sdxl",
+			embeddings: [],
+			enable_refiner: true,
+			enable_safety_checker: false,
+			expand_prompt: true,
+			format: "jpeg",
+			guidance_scale: 2,
+			image_size: "square_hd",
+			negative_prompt: "",
+			num_images: 1,
+			num_inference_steps: 8,
+			prompt: "test",
+		});
+
+		expect(
+			buildInput({
+				embeddingTokens: "style_token, detail_token",
+				embeddingUrl: "https://example.com/fooocus-embedding.safetensors",
+				enableRefiner: "false",
+				outputFormat: "png",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/fast-fooocus-sdxl",
+			embeddings: [
+				{
+					path: "https://example.com/fooocus-embedding.safetensors",
+					tokens: ["style_token", "detail_token"],
+				},
+			],
+			enable_refiner: false,
+			format: "png",
 		});
 	});
 

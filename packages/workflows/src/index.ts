@@ -61,6 +61,17 @@ const optionalUrlParamSchema = z.preprocess(
 	z.string().url().optional()
 );
 
+const booleanParamSchema = (defaultValue: boolean) =>
+	z.preprocess((value) => {
+		if (value === "true") {
+			return true;
+		}
+		if (value === "false") {
+			return false;
+		}
+		return value;
+	}, z.boolean().default(defaultValue));
+
 const falFastSdxlParamsSchema = z.object({
 	imageSize: z
 		.enum([
@@ -82,6 +93,29 @@ const falFastSdxlParamsSchema = z.object({
 	seed: z.number().int().nonnegative().optional(),
 	loraUrl: optionalUrlParamSchema,
 	loraScale: z.number().min(0).max(1).default(1),
+});
+
+const falFastFooocusSdxlParamsSchema = z.object({
+	imageSize: z
+		.enum([
+			"square_hd",
+			"square",
+			"landscape_4_3",
+			"landscape_16_9",
+			"portrait_4_3",
+			"portrait_16_9",
+		])
+		.default("square_hd"),
+	numInferenceSteps: z.number().int().min(1).max(24).default(8),
+	guidanceScale: z.number().min(0).max(20).default(2),
+	numImages: z.number().int().min(1).max(8).default(1),
+	negativePrompt: z.string().default(""),
+	outputFormat: z.enum(["jpeg", "png"]).default("jpeg"),
+	enablePromptExpansion: z.boolean().default(true),
+	enableRefiner: booleanParamSchema(true),
+	seed: z.number().int().nonnegative().optional(),
+	embeddingUrl: optionalUrlParamSchema,
+	embeddingTokens: z.string().default(""),
 });
 
 // Flux Dev always targets the `/flux-lora` endpoint — LoRA is optional and we
@@ -256,6 +290,25 @@ function buildWanLoras(parsed: {
 	return loras;
 }
 
+function buildFooocusEmbeddings(parsed: {
+	embeddingTokens: string;
+	embeddingUrl?: string;
+}): Array<{ path: string; tokens?: string[] }> {
+	if (!parsed.embeddingUrl) {
+		return [];
+	}
+	const tokens = parsed.embeddingTokens
+		.split(",")
+		.map((token) => token.trim())
+		.filter((token) => token.length > 0);
+	return [
+		{
+			path: parsed.embeddingUrl,
+			...(tokens.length > 0 ? { tokens } : {}),
+		},
+	];
+}
+
 const wanLoraParameterFields: readonly WorkflowField[] = [
 	{
 		description:
@@ -362,6 +415,7 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-flux-dev": 25 * SECOND,
 	"fal-flux2-turbo": 12 * SECOND,
 	"fal-fast-sdxl": 10 * SECOND,
+	"fal-fast-fooocus-sdxl": 10 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
 	// queue ~10s + inference ~75-90s (5s 720p video)
@@ -518,6 +572,114 @@ export const workflowRegistry = {
 				loras: parsed.loraUrl
 					? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
 					: [],
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectFalImageUrls,
+	},
+	"fal-fast-fooocus-sdxl": {
+		baseModel: "sdxl",
+		key: "fal-fast-fooocus-sdxl",
+		name: "Fast Fooocus SDXL",
+		description:
+			"Fooocus extreme speed mode for Stable Diffusion XL text-to-image generation on fal.ai. Optionally accepts embedding weights.",
+		requiresInputImage: false,
+		parameterSchema: falFastFooocusSdxlParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Output image size preset controlling aspect ratio and resolution.",
+				key: "imageSize",
+				label: "Image size",
+				type: "text",
+			},
+			{
+				description: "Number of denoising steps.",
+				key: "numInferenceSteps",
+				label: "Steps",
+				max: 24,
+				min: 1,
+				step: 1,
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "Guidance scale",
+				max: 20,
+				min: 0,
+				step: 0.1,
+				type: "number",
+			},
+			{
+				description: "Number of images to generate per request.",
+				key: "numImages",
+				label: "Number of images",
+				max: 8,
+				min: 1,
+				step: 1,
+				type: "number",
+			},
+			{
+				description: "Output image format.",
+				enumValues: ["jpeg", "png"],
+				key: "outputFormat",
+				label: "Output format",
+				type: "text",
+			},
+			{
+				description: "Negative prompt to discourage unwanted content.",
+				key: "negativePrompt",
+				label: "Negative prompt",
+				optional: true,
+				type: "text",
+			},
+			{
+				description:
+					"Optional public URL pointing to Fooocus embedding weights.",
+				key: "embeddingUrl",
+				kind: "lora-url",
+				label: "Embedding URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description:
+					"Optional comma-separated trigger tokens for the embedding.",
+				key: "embeddingTokens",
+				label: "Embedding tokens",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Run Fooocus refiner after the fast base pass.",
+				enumValues: ["true", "false"],
+				key: "enableRefiner",
+				label: "Refiner",
+				type: "text",
+			},
+			{
+				description: "Optional deterministic seed for repeatable outputs.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = falFastFooocusSdxlParamsSchema.parse(params);
+			return {
+				__falModel: "fal-ai/fast-fooocus-sdxl",
+				prompt,
+				image_size: parsed.imageSize,
+				num_inference_steps: parsed.numInferenceSteps,
+				guidance_scale: parsed.guidanceScale,
+				num_images: parsed.numImages,
+				negative_prompt: parsed.negativePrompt,
+				format: parsed.outputFormat,
+				expand_prompt: parsed.enablePromptExpansion,
+				enable_refiner: parsed.enableRefiner,
+				enable_safety_checker: false,
+				embeddings: buildFooocusEmbeddings(parsed),
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},

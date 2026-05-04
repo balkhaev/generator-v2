@@ -216,6 +216,45 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the fal-fast-fooocus-sdxl payload with optional embedding", () => {
+		const workflow = getWorkflowDefinition("fal-fast-fooocus-sdxl");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					embeddingTokens: "fooocus_style, subject_token",
+					embeddingUrl: "https://storage.example.com/fooocus.safetensors",
+					enableRefiner: "false",
+					guidanceScale: 2.5,
+					imageSize: "portrait_4_3",
+					negativePrompt: "blur, watermark",
+					numImages: 2,
+					numInferenceSteps: 12,
+					outputFormat: "png",
+				},
+				prompt: "studio portrait of my_character, cinematic lighting",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/fast-fooocus-sdxl",
+			embeddings: [
+				{
+					path: "https://storage.example.com/fooocus.safetensors",
+					tokens: ["fooocus_style", "subject_token"],
+				},
+			],
+			enable_refiner: false,
+			enable_safety_checker: false,
+			expand_prompt: true,
+			format: "png",
+			guidance_scale: 2.5,
+			image_size: "portrait_4_3",
+			negative_prompt: "blur, watermark",
+			num_images: 2,
+			num_inference_steps: 12,
+			prompt: "studio portrait of my_character, cinematic lighting",
+		});
+	});
+
 	it("omits image_size for fal-flux2-dev-edit when set to auto", () => {
 		const workflow = getWorkflowDefinition("fal-flux2-dev-edit");
 

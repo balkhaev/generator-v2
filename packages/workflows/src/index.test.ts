@@ -37,6 +37,23 @@ describe("fal workflow registry", () => {
 		});
 	});
 
+	it("resolves fal-fast-sdxl with correct defaults", () => {
+		const workflow = getWorkflowDefinition("fal-fast-sdxl");
+		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("sdxl");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			enablePromptExpansion: false,
+			enableSafetyChecker: false,
+			guidanceScale: 7.5,
+			imageSize: "square_hd",
+			loraScale: 1,
+			negativePrompt: "",
+			numImages: 1,
+			numInferenceSteps: 25,
+			outputFormat: "jpeg",
+		});
+	});
+
 	it("resolves fal-wan-2-2-text-to-video with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-wan-2-2-text-to-video");
 		expect(workflow).toBeDefined();
@@ -245,6 +262,7 @@ describe("fal workflow registry", () => {
 	it("marks loraUrl fields as optional in enriched parameter list", () => {
 		const workflows = listWorkflows();
 		const keys = [
+			"fal-fast-sdxl",
 			"fal-flux-dev",
 			"fal-zimage-turbo",
 			"fal-zimage-turbo-image-to-image",
@@ -302,6 +320,40 @@ describe("fal workflow registry", () => {
 				workflow?.parameterFields.some((field) => field.key === "loraScale")
 			).toBe(true);
 		}
+	});
+
+	it("builds fal-fast-sdxl payloads with optional LoRA", () => {
+		const workflow = getWorkflowDefinition("fal-fast-sdxl");
+		const buildInput = (extra: Record<string, unknown> = {}) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "test",
+			}) as Record<string, unknown>;
+
+		expect(buildInput()).toMatchObject({
+			__falModel: "fal-ai/fast-sdxl",
+			expand_prompt: false,
+			format: "jpeg",
+			guidance_scale: 7.5,
+			image_size: "square_hd",
+			loras: [],
+			negative_prompt: "",
+			num_images: 1,
+			num_inference_steps: 25,
+			prompt: "test",
+		});
+
+		expect(
+			buildInput({
+				loraScale: 0.4,
+				loraUrl: "https://example.com/sdxl.safetensors",
+				outputFormat: "png",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/fast-sdxl",
+			format: "png",
+			loras: [{ path: "https://example.com/sdxl.safetensors", scale: 0.4 }],
+		});
 	});
 
 	it("always targets the /lora endpoints for fal-flux-dev and fal-zimage-turbo", () => {

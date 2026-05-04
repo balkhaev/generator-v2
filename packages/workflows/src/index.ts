@@ -61,6 +61,29 @@ const optionalUrlParamSchema = z.preprocess(
 	z.string().url().optional()
 );
 
+const falFastSdxlParamsSchema = z.object({
+	imageSize: z
+		.enum([
+			"square_hd",
+			"square",
+			"landscape_4_3",
+			"landscape_16_9",
+			"portrait_4_3",
+			"portrait_16_9",
+		])
+		.default("square_hd"),
+	numInferenceSteps: z.number().int().min(1).max(50).default(25),
+	guidanceScale: z.number().min(0).max(20).default(7.5),
+	numImages: z.number().int().min(1).max(8).default(1),
+	negativePrompt: z.string().default(""),
+	outputFormat: z.enum(["jpeg", "png"]).default("jpeg"),
+	enablePromptExpansion: z.boolean().default(false),
+	enableSafetyChecker: z.boolean().default(false),
+	seed: z.number().int().nonnegative().optional(),
+	loraUrl: optionalUrlParamSchema,
+	loraScale: z.number().min(0).max(1).default(1),
+});
+
 // Flux Dev always targets the `/flux-lora` endpoint — LoRA is optional and we
 // send `loras: []` when no URL is provided. The LoRA endpoint is a strict
 // superset of the base `flux/dev` endpoint, so this avoids maintaining two
@@ -338,6 +361,7 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-flux-schnell": 8 * SECOND,
 	"fal-flux-dev": 25 * SECOND,
 	"fal-flux2-turbo": 12 * SECOND,
+	"fal-fast-sdxl": 10 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
 	// queue ~10s + inference ~75-90s (5s 720p video)
@@ -395,6 +419,105 @@ export const workflowRegistry = {
 				num_inference_steps: parsed.numInferenceSteps,
 				num_images: parsed.numImages,
 				enable_safety_checker: parsed.enableSafetyChecker,
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectFalImageUrls,
+	},
+	"fal-fast-sdxl": {
+		baseModel: "sdxl",
+		key: "fal-fast-sdxl",
+		name: "Fast SDXL",
+		description:
+			"Fast Stable Diffusion XL text-to-image generation on fal.ai. Optionally accepts a LoRA URL to apply custom style weights.",
+		requiresInputImage: false,
+		parameterSchema: falFastSdxlParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Output image size preset controlling aspect ratio and resolution.",
+				key: "imageSize",
+				label: "Image size",
+				type: "text",
+			},
+			{
+				description: "Number of denoising steps.",
+				key: "numInferenceSteps",
+				label: "Steps",
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "Guidance scale",
+				max: 20,
+				min: 0,
+				step: 0.1,
+				type: "number",
+			},
+			{
+				description: "Number of images to generate per request.",
+				key: "numImages",
+				label: "Number of images",
+				max: 8,
+				min: 1,
+				step: 1,
+				type: "number",
+			},
+			{
+				description: "Output image format.",
+				enumValues: ["jpeg", "png"],
+				key: "outputFormat",
+				label: "Output format",
+				type: "text",
+			},
+			{
+				description: "Negative prompt to discourage unwanted content.",
+				key: "negativePrompt",
+				label: "Negative prompt",
+				optional: true,
+				type: "text",
+			},
+			{
+				description:
+					"Optional public URL pointing to trained LoRA weights — leave empty to run the base model.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the LoRA effect when a URL is provided.",
+				key: "loraScale",
+				label: "LoRA scale",
+				max: 1,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description: "Optional deterministic seed for repeatable outputs.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = falFastSdxlParamsSchema.parse(params);
+			return {
+				__falModel: "fal-ai/fast-sdxl",
+				prompt,
+				image_size: parsed.imageSize,
+				num_inference_steps: parsed.numInferenceSteps,
+				guidance_scale: parsed.guidanceScale,
+				num_images: parsed.numImages,
+				negative_prompt: parsed.negativePrompt,
+				format: parsed.outputFormat,
+				expand_prompt: parsed.enablePromptExpansion,
+				enable_safety_checker: parsed.enableSafetyChecker,
+				loras: parsed.loraUrl
+					? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
+					: [],
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
 		},

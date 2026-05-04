@@ -179,6 +179,43 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the fal-fast-sdxl payload with optional LoRA", () => {
+		const workflow = getWorkflowDefinition("fal-fast-sdxl");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					guidanceScale: 8,
+					imageSize: "portrait_4_3",
+					loraScale: 0.45,
+					loraUrl: "https://storage.example.com/sdxl-style.safetensors",
+					negativePrompt: "blur, watermark",
+					numImages: 2,
+					numInferenceSteps: 30,
+					outputFormat: "png",
+				},
+				prompt: "studio portrait of my_character, cinematic lighting",
+			})
+		).toMatchObject({
+			__falModel: "fal-ai/fast-sdxl",
+			enable_safety_checker: false,
+			expand_prompt: false,
+			format: "png",
+			guidance_scale: 8,
+			image_size: "portrait_4_3",
+			loras: [
+				{
+					path: "https://storage.example.com/sdxl-style.safetensors",
+					scale: 0.45,
+				},
+			],
+			negative_prompt: "blur, watermark",
+			num_images: 2,
+			num_inference_steps: 30,
+			prompt: "studio portrait of my_character, cinematic lighting",
+		});
+	});
+
 	it("omits image_size for fal-flux2-dev-edit when set to auto", () => {
 		const workflow = getWorkflowDefinition("fal-flux2-dev-edit");
 

@@ -39,7 +39,20 @@ describe("derivePhaseAndProgress", () => {
 	it("phase=submitting when queued without providerJobId", () => {
 		const result = derivePhaseAndProgress(input({ status: "queued" }));
 		expect(result.phase).toBe("submitting");
-		expect(result.progressPct).toBeGreaterThanOrEqual(2);
+		expect(result.progressPct).toBe(0);
+	});
+
+	it("keeps queued progress at 0 even with stale provider progress", () => {
+		const result = derivePhaseAndProgress(
+			input({
+				jobSnapshot: { progressPct: 45, queuePosition: 2 },
+				persistedProgressPct: 30,
+				providerJobId: "job-1",
+				status: "queued",
+			})
+		);
+		expect(result.phase).toBe("in_queue");
+		expect(result.progressPct).toBe(0);
 	});
 
 	it("phase=in_queue when queue_position > 0", () => {
@@ -91,7 +104,19 @@ describe("derivePhaseAndProgress", () => {
 		expect(result.progressPct).toBeGreaterThanOrEqual(60);
 	});
 
-	it("caps progress at 95 even with very long elapsed", () => {
+	it("starts running soft progress from updatedAt instead of queue age", () => {
+		const result = derivePhaseAndProgress(
+			input({
+				createdAt: new Date(Date.now() - 10 * 60_000),
+				providerJobId: "job-1",
+				status: "running",
+				updatedAt: new Date(),
+			})
+		);
+		expect(result.progressPct).toBe(8);
+	});
+
+	it("caps progress at 90 even with very long running elapsed", () => {
 		const longAgo = new Date(Date.now() - 10 * 60_000);
 		const result = derivePhaseAndProgress(
 			input({
@@ -100,9 +125,10 @@ describe("derivePhaseAndProgress", () => {
 				persistedProgressPct: null,
 				providerJobId: "job-1",
 				status: "running",
+				updatedAt: longAgo,
 			})
 		);
-		expect(result.progressPct).toBeLessThanOrEqual(95);
+		expect(result.progressPct).toBeLessThanOrEqual(90);
 	});
 
 	it("etaMs is positive for running and decreases over time", () => {
@@ -111,6 +137,7 @@ describe("derivePhaseAndProgress", () => {
 				createdAt: new Date(Date.now() - 1000),
 				providerJobId: "job-1",
 				status: "running",
+				updatedAt: new Date(Date.now() - 1000),
 			})
 		);
 		const t2 = derivePhaseAndProgress(
@@ -118,6 +145,7 @@ describe("derivePhaseAndProgress", () => {
 				createdAt: new Date(Date.now() - 5000),
 				providerJobId: "job-1",
 				status: "running",
+				updatedAt: new Date(Date.now() - 5000),
 			})
 		);
 		expect(t1.etaMs).not.toBeNull();

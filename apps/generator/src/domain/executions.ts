@@ -82,15 +82,7 @@ function getNextSyncDelay(
 }
 
 const PROGRESS_CAP_PCT = 90;
-const PROGRESS_FLOOR_BY_STATUS: Record<
-	GeneratorExecutionRecord["status"],
-	number
-> = {
-	queued: 2,
-	running: 8,
-	succeeded: 100,
-	failed: 100,
-};
+const RUNNING_PROGRESS_FLOOR_PCT = 8;
 
 interface DeriveProgressInput {
 	createdAt: Date;
@@ -114,6 +106,7 @@ interface DeriveProgressResult {
 /**
  * Sole source of truth для (phase, progressPct, etaMs):
  * - terminal статусы → 100% / done|failed.
+ * - queued/submitting/in_queue → 0%, без persisted/provider/soft-progress.
  * - реальный progress от провайдера задаёт нижнюю границу.
  * - soft-progress по 1 - exp(-elapsed / expected) пока running.
  * - монотонность через max(persisted, computed).
@@ -131,10 +124,18 @@ export function derivePhaseAndProgress(
 		return { etaMs: 0, phase: "failed", progressPct: 100 };
 	}
 
-	const expectedMs = getWorkflowExpectedDurationMs(input.workflowKey);
-	const elapsedMs = Date.now() - input.createdAt.getTime();
-
 	const phase = derivePhase(input);
+	const expectedMs = getWorkflowExpectedDurationMs(input.workflowKey);
+
+	if (input.status === "queued") {
+		return {
+			etaMs: expectedMs ?? null,
+			phase,
+			progressPct: 0,
+		};
+	}
+
+	const elapsedMs = Date.now() - input.updatedAt.getTime();
 
 	const realProgress =
 		typeof input.jobSnapshot?.progressPct === "number"
@@ -146,11 +147,10 @@ export function derivePhaseAndProgress(
 			? Math.round((1 - Math.exp(-elapsedMs / expectedMs)) * PROGRESS_CAP_PCT)
 			: null;
 
-	const floor = PROGRESS_FLOOR_BY_STATUS[input.status];
 	const persisted = input.persistedProgressPct ?? 0;
 
 	const computed = Math.max(
-		floor,
+		RUNNING_PROGRESS_FLOOR_PCT,
 		realProgress ?? 0,
 		softProgress ?? 0,
 		persisted
@@ -159,11 +159,7 @@ export function derivePhaseAndProgress(
 
 	let etaMs: number | null = null;
 	if (expectedMs) {
-		if (input.status === "running") {
-			etaMs = Math.max(0, expectedMs - elapsedMs);
-		} else {
-			etaMs = expectedMs;
-		}
+		etaMs = Math.max(0, expectedMs - elapsedMs);
 	}
 
 	return { etaMs, phase, progressPct };
@@ -867,7 +863,7 @@ export class ExecutionService {
 		let changed = false;
 
 		const incomingProgress =
-			typeof job.progressPct === "number"
+			job.status !== "queued" && typeof job.progressPct === "number"
 				? clampProgressPct(job.progressPct)
 				: null;
 		if (incomingProgress !== null) {

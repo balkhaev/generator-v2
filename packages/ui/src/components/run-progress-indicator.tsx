@@ -17,10 +17,10 @@ export interface RunProgressIndicatorProps {
 	etaMs?: number | null;
 	/**
 	 * Ожидаемая длительность всего ран'а (мс). При наличии этого пропа и
-	 * `runStartedAt` индикатор начинает локально тикать soft-progress
+	 * статуса `running` индикатор начинает локально тикать soft-progress
 	 * по формуле `(1 − exp(−elapsed / expected)) × 90%`, не дожидаясь
-	 * Kafka/SSE апдейтов. Нужно для моделей, которые не отдают
-	 * пошаговые `step X/Y`-логи (например, fal-wan-2-2).
+	 * Kafka/SSE апдейтов. В `queued` soft-progress отключен. Нужно для моделей,
+	 * которые не отдают пошаговые `step X/Y`-логи (например, fal-wan-2-2).
 	 */
 	expectedDurationMs?: number | null;
 	/** Скрыть процент. Полезно, когда вокруг и так много текста. */
@@ -91,8 +91,8 @@ function useSoftProgressPct(input: {
 }): number | null {
 	const startedAtMs = parseRunStartedAt(input.runStartedAt);
 	const expectedMs = input.expectedDurationMs ?? null;
-	const isActive = input.status === "running" || input.status === "queued";
-	const canTick = isActive && startedAtMs !== null && (expectedMs ?? 0) > 0;
+	const canTick =
+		input.status === "running" && startedAtMs !== null && (expectedMs ?? 0) > 0;
 
 	const [now, setNow] = useState<number>(() => Date.now());
 
@@ -436,10 +436,10 @@ function RunProgressBarVariant({
  * полям run'а (`progressPct`, `phase`, `etaMs`, `queuePosition`, `lastLogLine`).
  *
  * Дизайн-логика:
+ *   - В `queued` всегда показываем 0%, без shimmer/soft-progress.
  *   - Если `progressPct` есть (real или soft-progress) — рисуем заполнение.
- *   - Если нет (только что добавлен в очередь / старая запись из БД без поля) —
- *     рисуем shimmer-плейсхолдер вместо нулевой полосы, чтобы UI не выглядел
- *     застывшим.
+ *   - Если нет — рисуем shimmer-плейсхолдер вместо нулевой полосы, чтобы UI
+ *     не выглядел застывшим.
  *   - Цвет и иконка определяются `status`, а не `phase`: это самые жёсткие
  *     инварианты, которые приходят из сервера всегда.
  *   - Подпись фазы (`PHASE_LABEL_RU[phase]`) и ETA — необязательные, спрятать
@@ -472,12 +472,14 @@ export function RunProgressIndicator({
 	});
 	const serverProgressPct =
 		typeof progressPct === "number" ? progressPct : null;
-	// Серверное значение задаёт нижнюю границу (включая floor 8% / 2%), soft —
+	// Серверное значение задаёт нижнюю границу (включая running floor 8%), soft —
 	// плавную интерполяцию между апдейтами. Берём max, чтобы прогресс никогда
 	// не двигался назад. Для terminal-статусов soft игнорируем (хук вернёт null).
 	let combinedRaw: number | null = null;
 	if (status === "succeeded") {
 		combinedRaw = 100;
+	} else if (status === "queued") {
+		combinedRaw = 0;
 	} else if (serverProgressPct !== null || softProgressPct !== null) {
 		combinedRaw = Math.max(serverProgressPct ?? 0, softProgressPct ?? 0);
 	}
@@ -494,6 +496,10 @@ export function RunProgressIndicator({
 			setPeakProgressPct(100);
 			return;
 		}
+		if (status === "queued") {
+			setPeakProgressPct(0);
+			return;
+		}
 		if (status === "failed") {
 			return;
 		}
@@ -505,6 +511,8 @@ export function RunProgressIndicator({
 	let effectiveProgressPct: number | null = null;
 	if (status === "succeeded") {
 		effectiveProgressPct = 100;
+	} else if (status === "queued") {
+		effectiveProgressPct = 0;
 	} else if (typeof combinedRaw === "number") {
 		effectiveProgressPct = Math.max(combinedRaw, peakProgressPct);
 	}

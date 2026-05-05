@@ -72,6 +72,7 @@ interface CommandSidebarProps {
 	selectedPersonId: string | null;
 	selectedScenarioId: string | null;
 	snapshot: AdminSnapshot;
+	sourceImageTransfer?: SourceImageTransfer | null;
 }
 
 type RunFilter = "all" | "live" | "ready" | "failed";
@@ -81,6 +82,11 @@ type RunDraft = LaunchRunInput & {
 	inputPersonId?: string | null;
 	uploadStorage?: UploadedInputAsset["storage"] | null;
 };
+
+export interface SourceImageTransfer {
+	scenarioId: string;
+	url: string;
+}
 
 type LinkedPersonState = {
 	personSlug: string;
@@ -215,35 +221,35 @@ function getLatestScenarioInputImage(
 }
 
 function getRecentReferenceOptions(
-	runs: ScenarioRunRecord[],
-	selectedScenarioId: string | null
-) {
+	runs: ScenarioRunRecord[]
+): { id: string; label: string; url: string }[] {
 	const uniqueUrls = new Set<string>();
-	return runs
-		.filter((run) => run.inputImageUrl.length > 0)
-		.sort((left, right) => {
-			if (
-				left.scenarioId === selectedScenarioId &&
-				right.scenarioId !== selectedScenarioId
-			) {
-				return -1;
+	const references: { id: string; label: string; url: string }[] = [];
+	const sortedRuns = [...runs].sort((left, right) =>
+		right.createdAt.localeCompare(left.createdAt)
+	);
+
+	for (const run of sortedRuns) {
+		for (const [index, url] of run.artifactUrls.entries()) {
+			if (getMediaType(url) !== "image" || uniqueUrls.has(url)) {
+				continue;
 			}
-			if (
-				right.scenarioId === selectedScenarioId &&
-				left.scenarioId !== selectedScenarioId
-			) {
-				return 1;
+			uniqueUrls.add(url);
+			references.push({
+				id: `${run.id}:output:${index}`,
+				label:
+					run.artifactUrls.length > 1
+						? `${run.scenarioName} output ${index + 1}`
+						: `${run.scenarioName} output`,
+				url,
+			});
+			if (references.length >= 16) {
+				return references;
 			}
-			return right.createdAt.localeCompare(left.createdAt);
-		})
-		.filter((run) => {
-			if (uniqueUrls.has(run.inputImageUrl)) {
-				return false;
-			}
-			uniqueUrls.add(run.inputImageUrl);
-			return true;
-		})
-		.slice(0, 16);
+		}
+	}
+
+	return references;
 }
 
 function getStorageLabel(
@@ -1118,6 +1124,7 @@ export default function CommandSidebar({
 	selectedPersonId,
 	selectedScenarioId,
 	snapshot,
+	sourceImageTransfer,
 }: CommandSidebarProps) {
 	// Раньше здесь был локальный useState<AdminSnapshot>(initialSnapshot) +
 	// useEffect(setSnapshot(initialSnapshot)). Это давало двойной ререндер на
@@ -1159,13 +1166,8 @@ export default function CommandSidebar({
 		[runFilter, selectedScenarioRuns]
 	);
 	const recentReferences = useMemo(
-		() =>
-			getRecentReferenceOptions(runs, selectedScenarioId).map((run) => ({
-				id: run.id,
-				label: run.inputLabel,
-				url: run.inputImageUrl,
-			})),
-		[runs, selectedScenarioId]
+		() => getRecentReferenceOptions(runs),
+		[runs]
 	);
 	const selectedRunDraft = selectedScenario
 		? (runDrafts[selectedScenario.id] ?? createRunDraft(selectedScenario.id))
@@ -1206,6 +1208,28 @@ export default function CommandSidebar({
 			return changed ? nextDrafts : current;
 		});
 	}, [runs, scenarios]);
+
+	useEffect(() => {
+		if (!sourceImageTransfer) {
+			return;
+		}
+		setRunDrafts((current) => {
+			const existing =
+				current[sourceImageTransfer.scenarioId] ??
+				createRunDraft(sourceImageTransfer.scenarioId);
+			return {
+				...current,
+				[sourceImageTransfer.scenarioId]: {
+					...existing,
+					inputImageUrl: sourceImageTransfer.url,
+					inputPersonGenerationId: null,
+					inputPersonId: null,
+					scenarioId: sourceImageTransfer.scenarioId,
+					uploadStorage: null,
+				},
+			};
+		});
+	}, [sourceImageTransfer]);
 
 	useEffect(() => {
 		const targetRunId = focusedRunId;

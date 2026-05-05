@@ -23,13 +23,15 @@ import WorkspaceShell, {
 	WorkspaceStatus,
 } from "@generator/ui/components/workspace-shell";
 import { createWorkspaceNavigation } from "@generator/ui/lib/workspace-nav";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Send, Trash2 } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import CommandSidebar from "@/components/command-sidebar";
+import CommandSidebar, {
+	type SourceImageTransfer,
+} from "@/components/command-sidebar";
 import ComposeDialog from "@/components/compose/compose-dialog";
 import MediaStrip from "@/components/media-strip";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -347,6 +349,85 @@ function DeleteScenarioDialog({
 	);
 }
 
+function SendToWorkflowDialog({
+	asset,
+	onOpenChange,
+	onSelectScenario,
+	open,
+	snapshot,
+}: {
+	asset: StudioMediaAsset | null;
+	onOpenChange: (open: boolean) => void;
+	onSelectScenario: (scenarioId: string) => void;
+	open: boolean;
+	snapshot: AdminSnapshot;
+}) {
+	const targets = useMemo(() => {
+		if (!asset) {
+			return [];
+		}
+		return snapshot.scenarios.flatMap((scenario) => {
+			if (scenario.id === asset.scenarioId) {
+				return [];
+			}
+			const workflow = snapshot.workflows.find(
+				(entry) => entry.key === scenario.workflowKey
+			);
+			if (!workflow?.requiresInputImage) {
+				return [];
+			}
+			return [{ scenario, workflow }];
+		});
+	}, [asset, snapshot.scenarios, snapshot.workflows]);
+
+	return (
+		<Dialog onOpenChange={onOpenChange} open={open && asset !== null}>
+			<DialogContent className="max-w-lg">
+				<DialogHeader>
+					<DialogTitle>Send as source image</DialogTitle>
+					<DialogDescription>
+						Choose another image-input workflow to receive this generation.
+					</DialogDescription>
+				</DialogHeader>
+				<DialogBody>
+					{targets.length === 0 ? (
+						<p className="rounded-md bg-muted/10 px-3 py-2 text-muted-foreground text-xs dark:bg-muted/5">
+							No other image-input workflows are available.
+						</p>
+					) : (
+						<div className="grid max-h-80 gap-2 overflow-y-auto pr-1">
+							{targets.map(({ scenario, workflow }) => (
+								<button
+									className="grid min-w-0 gap-1 rounded-lg bg-muted/8 px-3 py-2 text-left ring-1 ring-foreground/6 transition hover:bg-muted/15 hover:ring-foreground/15 dark:bg-muted/5"
+									key={scenario.id}
+									onClick={() => onSelectScenario(scenario.id)}
+									type="button"
+								>
+									<span className="truncate text-sm">{scenario.name}</span>
+									<span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+										<Send className="size-3 shrink-0" />
+										<span className="truncate">{workflow.key}</span>
+									</span>
+								</button>
+							))}
+						</div>
+					)}
+				</DialogBody>
+				<DialogFooter>
+					<Button
+						onClick={() => onOpenChange(false)}
+						size="sm"
+						type="button"
+						variant="ghost"
+					>
+						Cancel
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
 function buildScenarioMediaAssets(
 	runs: ScenarioRunRecord[]
 ): StudioMediaAsset[] {
@@ -457,6 +538,10 @@ export default function StudioShell({
 	const [editingScenarioId, setEditingScenarioId] = useState<string | null>(
 		null
 	);
+	const [sourceImageDialogAsset, setSourceImageDialogAsset] =
+		useState<StudioMediaAsset | null>(null);
+	const [sourceImageTransfer, setSourceImageTransfer] =
+		useState<SourceImageTransfer | null>(null);
 	const pathname = usePathname();
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -718,6 +803,34 @@ export default function StudioShell({
 		setSnapshot(nextSnapshot);
 	}
 
+	function handleSendAssetToScenario(scenarioId: string) {
+		const asset = sourceImageDialogAsset;
+		if (!asset) {
+			return;
+		}
+		const scenario = snapshot.scenarios.find(
+			(entry) => entry.id === scenarioId
+		);
+		setSourceImageTransfer({
+			scenarioId,
+			url: asset.url,
+		});
+		setSourceImageDialogAsset(null);
+		router.replace(
+			buildStudioHref(pathname, currentSearch, {
+				assetId: null,
+				personId: null,
+				runId: null,
+				scenarioId,
+				tab: "launch",
+			}),
+			{ scroll: false }
+		);
+		toast.success(
+			`Source image set for ${scenario?.name ?? "selected workflow"}.`
+		);
+	}
+
 	const handleAfterScenarioDelete = useCallback(
 		(scenarioId: string) => {
 			if (selectedScenarioId === scenarioId) {
@@ -862,6 +975,7 @@ export default function StudioShell({
 					selectedPersonId={selectedPersonId}
 					selectedScenarioId={selectedScenarioId}
 					snapshot={snapshot}
+					sourceImageTransfer={sourceImageTransfer}
 				/>
 			}
 			contextWidth="wide"
@@ -907,6 +1021,17 @@ export default function StudioShell({
 				}}
 				scenario={pendingDeleteScenario}
 			/>
+			<SendToWorkflowDialog
+				asset={sourceImageDialogAsset}
+				onOpenChange={(open) => {
+					if (!open) {
+						setSourceImageDialogAsset(null);
+					}
+				}}
+				onSelectScenario={handleSendAssetToScenario}
+				open={sourceImageDialogAsset !== null}
+				snapshot={snapshot}
+			/>
 			<div className="flex h-full min-h-0 flex-col gap-2">
 				<PreviewSurface
 					asset={selectedMediaAsset}
@@ -934,6 +1059,7 @@ export default function StudioShell({
 									saveShot(asset).catch(() => undefined);
 								}
 					}
+					onSendToWorkflow={setSourceImageDialogAsset}
 					totalAssets={selectedScenarioAssets.length}
 				/>
 				<MediaStrip

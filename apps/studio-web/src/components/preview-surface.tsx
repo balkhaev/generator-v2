@@ -19,6 +19,7 @@ import {
 	Loader2,
 	Maximize2,
 	MonitorPlay,
+	Send,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -196,6 +197,7 @@ function PreviewToolbar({
 	isSavingShot,
 	onCopyUrl,
 	onSaveShot,
+	onSendToWorkflow,
 	onToggleFullscreen,
 }: {
 	asset: StudioMediaAsset;
@@ -204,10 +206,26 @@ function PreviewToolbar({
 	isSavingShot?: boolean;
 	onCopyUrl: () => void;
 	onSaveShot?: (asset: StudioMediaAsset) => void;
+	onSendToWorkflow?: (asset: StudioMediaAsset) => void;
 	onToggleFullscreen: () => void;
 }) {
+	const canSendToWorkflow =
+		asset.mediaKind === "output" &&
+		asset.mediaType === "image" &&
+		asset.placeholder !== true &&
+		Boolean(onSendToWorkflow);
+
 	return (
 		<div className="absolute top-2 right-2 flex items-center gap-1 rounded-lg bg-background/70 px-1 py-1 backdrop-blur-md">
+			{canSendToWorkflow ? (
+				<IconButton
+					hint="Send to workflow"
+					label="Send image to workflow as source"
+					onClick={() => onSendToWorkflow?.(asset)}
+				>
+					<Send className="size-3.5" />
+				</IconButton>
+			) : null}
 			{onSaveShot &&
 			asset.mediaKind === "output" &&
 			asset.placeholder !== true ? (
@@ -358,6 +376,7 @@ export default function PreviewSurface({
 	onNext,
 	onPrevious,
 	onSaveShot,
+	onSendToWorkflow,
 	totalAssets,
 }: {
 	asset: StudioMediaAsset | null;
@@ -368,6 +387,7 @@ export default function PreviewSurface({
 	onNext?: () => void;
 	onPrevious?: () => void;
 	onSaveShot?: (asset: StudioMediaAsset) => void;
+	onSendToWorkflow?: (asset: StudioMediaAsset) => void;
 	totalAssets: number;
 }) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
@@ -488,6 +508,7 @@ export default function PreviewSurface({
 						isSavingShot={isSavingShot}
 						onCopyUrl={handleCopyUrl}
 						onSaveShot={onSaveShot}
+						onSendToWorkflow={onSendToWorkflow}
 						onToggleFullscreen={handleToggleFullscreen}
 					/>
 

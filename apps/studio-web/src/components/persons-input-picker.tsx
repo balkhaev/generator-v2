@@ -66,18 +66,12 @@ function isPersonDatasetGeneration(generation: PersonGenerationRecord) {
 }
 
 /**
- * Адаптивный grid с тайлами фиксированной шириной — на узком aside даёт
- * 3-4 колонки, на широком сайдбаре или мобильном пикере раскладывается
- * соответственно. Без этого `grid-cols-4` + `aspect-[9/16]` на широком
- * контейнере раздувает превью до 200+px и они визуально «наезжают» друг
- * на друга при `max-h-*` overflow.
- *
- * `items-start` обязателен: иначе `align-items: stretch` растягивает ячейки по
- * высоте строки и ломает расчёт `aspect-ratio` у портретных тайлов (визуально
- * как «слот 16:9» с наложением 9:16 контента).
+ * Portrait tiles have a fixed column width. If columns grow with `1fr`, the
+ * narrow sidebar can produce very tall rows and the next section visually
+ * collides with 9:16 previews.
  */
 export const THUMB_GRID_CLASSES =
-	"grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1.5 items-start";
+	"grid grid-cols-[repeat(auto-fill,minmax(72px,72px))] justify-start gap-1.5 items-start";
 
 interface IdentityTile {
 	id: string;
@@ -129,7 +123,7 @@ function IdentityTiles({
 									<button
 										aria-label={tile.label}
 										className={cn(
-											"relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
+											"relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"
@@ -575,7 +569,7 @@ export default function PersonsInputPicker({
 		if (recentReferences.length === 0) {
 			return (
 				<p className="rounded-lg bg-muted/10 px-3 py-3 text-center text-[11px] text-muted-foreground dark:bg-muted/5">
-					No recent inputs yet.
+					No recent image generations yet.
 				</p>
 			);
 		}
@@ -595,7 +589,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={reference.label}
 										className={cn(
-											"group relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
+											"group relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-70 hover:opacity-100"
@@ -659,7 +653,7 @@ export default function PersonsInputPicker({
 					return (
 						<button
 							className={cn(
-								"group relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
+								"group relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
 								isActive
 									? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 									: "opacity-80 hover:opacity-100"
@@ -771,7 +765,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={generation.title}
 										className={cn(
-											"relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
+											"relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"
@@ -880,7 +874,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={shot.scenarioName}
 										className={cn(
-											"group relative aspect-[9/16] w-full min-w-0 overflow-hidden rounded-lg transition",
+											"group relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"

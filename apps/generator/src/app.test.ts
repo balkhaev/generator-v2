@@ -3,6 +3,7 @@ import { GENERATOR_INTERNAL_TOKEN_HEADER } from "@generator/http/shared";
 
 import { createApp } from "@/app";
 import type { ExecutionEntity, ExecutionRepository } from "@/domain/executions";
+import { NonRetryableInferenceError } from "@/providers/inference";
 import type { StorageAdapter } from "@/providers/storage";
 
 function createTestStorageAdapter(): StorageAdapter {
@@ -486,6 +487,84 @@ describe("generator api", () => {
 		expect(execution.status).toBe("succeeded");
 		expect(execution.artifacts[0]?.url).toBe(
 			"https://cdn.example.com/flux-dev.png"
+		);
+	});
+
+	it("fails non-retryable submit errors without waiting for queue retries", async () => {
+		const repository = createMemoryExecutionRepository();
+		let submitCalls = 0;
+		const inferenceClient = {
+			cancel() {
+				return Promise.resolve();
+			},
+			getStatus() {
+				throw new Error("not used");
+			},
+			submit() {
+				submitCalls += 1;
+				throw new NonRetryableInferenceError(
+					"Civitai workflows.preflight: Civitai has no available provider for this LTX 2.3 step video."
+				);
+			},
+		};
+		const backgroundService = new (
+			await import("@/domain/executions")
+		).ExecutionService(
+			repository,
+			{
+				enqueueSubmit() {
+					return Promise.resolve();
+				},
+				enqueueSync() {
+					return Promise.resolve();
+				},
+			},
+			inferenceClient,
+			createTestStorageAdapter()
+		);
+		const app = createApp({
+			executionQueue: {
+				async enqueueSubmit({ executionId }) {
+					await backgroundService.processExecutionSubmitJob({ executionId });
+				},
+				enqueueSync() {
+					return Promise.resolve();
+				},
+			},
+			executionRepository: repository,
+			inferenceClient,
+			storageAdapter: createTestStorageAdapter(),
+		});
+
+		const createResponse = await app.request(
+			"http://localhost/api/executions",
+			{
+				body: JSON.stringify({
+					prompt: "test prompt",
+					workflowKey: "civitai-ltx-2-3-synth-text-to-video",
+				}),
+				headers: {
+					"content-type": "application/json",
+				},
+				method: "POST",
+			}
+		);
+		expect(createResponse.status).toBe(201);
+		const { execution: createdExecution } = (await createResponse.json()) as {
+			execution: { id: string };
+		};
+
+		const getResponse = await app.request(
+			`http://localhost/api/executions/${createdExecution.id}`
+		);
+		const { execution } = (await getResponse.json()) as {
+			execution: { errorSummary: string | null; status: string };
+		};
+
+		expect(submitCalls).toBe(1);
+		expect(execution.status).toBe("failed");
+		expect(execution.errorSummary).toBe(
+			"Civitai workflows.preflight: Civitai has no available provider for this LTX 2.3 step video."
 		);
 	});
 

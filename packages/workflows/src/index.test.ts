@@ -121,6 +121,20 @@ describe("workflow registry", () => {
 			resolution: "720p",
 			steps: 30,
 		});
+		const durationField = t2v?.parameterFields.find(
+			(field) => field.key === "duration"
+		) as { enumValues?: readonly string[] } | undefined;
+		expect(durationField?.enumValues).toEqual([
+			"3",
+			"6",
+			"8",
+			"10",
+			"12",
+			"14",
+			"16",
+			"18",
+			"20",
+		]);
 
 		expect(i2v).toBeDefined();
 		expect(i2v?.baseModel).toBe("ltx-2-3");
@@ -694,7 +708,7 @@ describe("workflow registry", () => {
 			t2v?.buildProviderInput({
 				params: {
 					aspectRatio: "9:16",
-					duration: 20,
+					duration: 18,
 					generateAudio: "true",
 					guidanceScale: 4,
 					loraAir: "urn:air:ltxv23:lora:civitai:2487612@2800000",
@@ -717,7 +731,7 @@ describe("workflow registry", () => {
 				model: "22b-dev",
 				guidanceScale: 4,
 				steps: 32,
-				duration: 20,
+				duration: 18,
 				generateAudio: true,
 				loras: {
 					"urn:air:ltxv23:lora:civitai:2487612@2800000": 0.8,
@@ -770,6 +784,16 @@ describe("workflow registry", () => {
 		).toMatchObject({
 			input: {
 				duration: 3,
+			},
+		});
+		expect(
+			workflow?.buildProviderInput({
+				params: { duration: 16 },
+				prompt: "test",
+			})
+		).toMatchObject({
+			input: {
+				duration: 16,
 			},
 		});
 	});

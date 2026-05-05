@@ -17,7 +17,9 @@ import type {
 	InferenceClient,
 	InferenceJob,
 	InferenceStreamHandle,
+	InferenceSubmission,
 } from "@/providers/inference";
+import { isNonRetryableInferenceError } from "@/providers/inference";
 import type { StorageAdapter } from "@/providers/storage";
 import type { GeneratorExecutionQueue } from "@/queue/executions";
 import { BadRequestError } from "@/routes/utils";
@@ -371,6 +373,30 @@ export class ExecutionService {
 				ok: false,
 			};
 		}
+	}
+
+	private async failExecutionFromNonRetryableError(
+		execution: ExecutionEntity,
+		error: unknown
+	): Promise<boolean> {
+		if (!isNonRetryableInferenceError(error)) {
+			return false;
+		}
+
+		const errorSummary = error.message;
+		const updated = await this.repository.updateExecution(execution.id, {
+			errorSummary,
+			status: "failed",
+		});
+		this.logger.info("generator.execution.non-retryable-failed", {
+			error: errorSummary,
+			executionId: execution.id,
+			workflowKey: execution.workflowKey,
+		});
+		if (updated) {
+			await this.dispatchExecutionCallback(updated);
+		}
+		return true;
 	}
 
 	listWorkflows() {
@@ -734,9 +760,17 @@ export class ExecutionService {
 			return;
 		}
 
-		const submission = await this.inferenceClient.submit(
-			this.buildSubmissionPayload(execution, workflow)
-		);
+		let submission: InferenceSubmission;
+		try {
+			submission = await this.inferenceClient.submit(
+				this.buildSubmissionPayload(execution, workflow)
+			);
+		} catch (error) {
+			if (await this.failExecutionFromNonRetryableError(execution, error)) {
+				return;
+			}
+			throw error;
+		}
 
 		if (submission.status === "succeeded" || submission.status === "failed") {
 			const job = await this.inferenceClient.getStatus(
@@ -939,9 +973,17 @@ export class ExecutionService {
 				execution.providerJobId,
 				execution.providerEndpointId ?? undefined
 			);
-			const resubmission = await this.inferenceClient.submit(
-				this.buildSubmissionPayload(execution, workflow)
-			);
+			let resubmission: InferenceSubmission;
+			try {
+				resubmission = await this.inferenceClient.submit(
+					this.buildSubmissionPayload(execution, workflow)
+				);
+			} catch (error) {
+				if (await this.failExecutionFromNonRetryableError(execution, error)) {
+					return;
+				}
+				throw error;
+			}
 			const resubmittedExecution = await this.repository.updateExecution(
 				execution.id,
 				{

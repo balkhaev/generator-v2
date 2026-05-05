@@ -354,16 +354,21 @@ function SegmentedParameterField({
 	if (!(parameter?.enumValues && parameter.enumValues.length > 0)) {
 		return null;
 	}
+	const optionCount = parameter.enumValues.length;
+	const resolvedColumns =
+		columns ?? (optionCount > 6 ? 3 : Math.max(2, optionCount));
 	const selectedValue = parameter.enumValues.includes(value)
 		? value
 		: parameter.defaultValue || parameter.enumValues[0] || "";
 	return (
 		<SegmentedControl
-			columns={columns}
+			columns={resolvedColumns}
 			label={parameter.label}
 			onChange={(next) => onParamChange(parameter.key, next)}
 			options={parameter.enumValues.map((option) => ({
-				label: labels?.[option] ?? option,
+				label:
+					labels?.[option] ??
+					(parameter.unit ? `${option}${parameter.unit}` : option),
 				value: option,
 			}))}
 			value={selectedValue}
@@ -770,7 +775,6 @@ export default function CivitaiLtx23Setup({
 
 			<div className="grid gap-3 sm:grid-cols-2">
 				<SegmentedParameterField
-					labels={{ "3": "3s", "20": "20s" }}
 					onParamChange={onParamChange}
 					parameter={duration}
 					value={getParamValue(form, duration)}

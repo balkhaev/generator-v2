@@ -4,6 +4,7 @@ import type {
 	InferenceStatus,
 	InferenceSubmission,
 } from "./inference";
+import { NonRetryableInferenceError } from "./inference";
 
 const CIVITAI_ENDPOINT_ID_PREFIX = "civitai:";
 const DEFAULT_CIVITAI_API_BASE_URL = "https://orchestration-new.civitai.com";
@@ -557,7 +558,15 @@ export function createCivitaiClient(options: {
 			> | null;
 			if (!response.ok) {
 				const message = extractErrorMessage(body ?? {}, response.status);
-				throw new Error(`${label}: ${message}`);
+				const errorMessage = `${label}: ${message}`;
+				if (
+					label === "Civitai workflows.preflight" &&
+					response.status >= 400 &&
+					response.status < 500
+				) {
+					throw new NonRetryableInferenceError(errorMessage);
+				}
+				throw new Error(errorMessage);
 			}
 			return (body ?? {}) as T & Record<string, unknown>;
 		} finally {
@@ -611,7 +620,9 @@ export function createCivitaiClient(options: {
 				);
 				const unsupportedSummary = extractUnsupportedWorkflowSummary(preflight);
 				if (unsupportedSummary) {
-					throw new Error(`Civitai workflows.preflight: ${unsupportedSummary}`);
+					throw new NonRetryableInferenceError(
+						`Civitai workflows.preflight: ${unsupportedSummary}`
+					);
 				}
 				const body = await request<CivitaiWorkflow>(
 					buildUrl(apiBaseUrl, "/v2/consumer/workflows", {

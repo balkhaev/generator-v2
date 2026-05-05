@@ -1,5 +1,21 @@
 export type InferenceStatus = "queued" | "running" | "succeeded" | "failed";
 
+export class NonRetryableInferenceError extends Error {
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "NonRetryableInferenceError";
+	}
+}
+
+export function isNonRetryableInferenceError(
+	error: unknown
+): error is NonRetryableInferenceError {
+	return (
+		error instanceof NonRetryableInferenceError ||
+		(error instanceof Error && error.name === "NonRetryableInferenceError")
+	);
+}
+
 export interface InferenceSubmission {
 	endpointId: string;
 	jobId: string;

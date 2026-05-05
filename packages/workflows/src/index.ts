@@ -245,22 +245,38 @@ const civitaiLtx23ResolutionSchema = z.enum(["720p", "1080p"]).default("720p");
 const civitaiLtx23AspectRatioSchema = z
 	.enum(["16:9", "3:2", "1:1", "2:3", "9:16"])
 	.default("16:9");
-const CIVITAI_LTX23_ALLOWED_DURATIONS = [3, 20] as const;
+const CIVITAI_LTX23_ALLOWED_DURATIONS = [
+	3, 6, 8, 10, 12, 14, 16, 18, 20,
+] as const;
+const CIVITAI_LTX23_DURATION_OPTIONS = CIVITAI_LTX23_ALLOWED_DURATIONS.map(
+	(duration) => String(duration)
+);
 const CIVITAI_LTX23_DEFAULT_DURATION = 3;
+
+function isCivitaiLtx23Duration(
+	value: number
+): value is (typeof CIVITAI_LTX23_ALLOWED_DURATIONS)[number] {
+	return CIVITAI_LTX23_ALLOWED_DURATIONS.some((duration) => duration === value);
+}
 
 function normalizeCivitaiLtx23Duration(value: unknown) {
 	if (value === undefined || value === null || value === "") {
 		return CIVITAI_LTX23_DEFAULT_DURATION;
 	}
 	const parsed = Number(value);
-	return CIVITAI_LTX23_ALLOWED_DURATIONS.some((duration) => duration === parsed)
+	return isCivitaiLtx23Duration(parsed)
 		? parsed
 		: CIVITAI_LTX23_DEFAULT_DURATION;
 }
 
 const civitaiLtx23DurationSchema = z.preprocess(
 	normalizeCivitaiLtx23Duration,
-	z.union([z.literal(3), z.literal(20)])
+	z
+		.number()
+		.int()
+		.refine(isCivitaiLtx23Duration, {
+			message: `Duration must be one of ${CIVITAI_LTX23_DURATION_OPTIONS.join(", ")}`,
+		})
 );
 
 const civitaiLtx23SynthParamsSchema = z.object({
@@ -1367,10 +1383,11 @@ export const workflowRegistry = {
 				type: "text",
 			},
 			{
-				description: "Civitai LTX 2.3 duration bucket.",
-				enumValues: ["3", "20"],
+				description: "Civitai LTX 2.3 duration bucket in seconds.",
+				enumValues: CIVITAI_LTX23_DURATION_OPTIONS,
 				key: "duration",
 				label: "Duration",
+				unit: "s",
 				type: "text",
 			},
 			{
@@ -1509,10 +1526,11 @@ export const workflowRegistry = {
 				type: "text",
 			},
 			{
-				description: "Civitai LTX 2.3 duration bucket.",
-				enumValues: ["3", "20"],
+				description: "Civitai LTX 2.3 duration bucket in seconds.",
+				enumValues: CIVITAI_LTX23_DURATION_OPTIONS,
 				key: "duration",
 				label: "Duration",
+				unit: "s",
 				type: "text",
 			},
 			{

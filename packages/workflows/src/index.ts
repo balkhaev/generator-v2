@@ -64,6 +64,10 @@ const optionalUrlParamSchema = z.preprocess(
 const FOOOCUS_BASE_MODEL_NAME = "juggernautXL_version6Rundiffusion.safetensors";
 const FOOOCUS_REFINER_MODEL_NAME = "sd_xl_refiner_1.0_0.9vae.safetensors";
 const FOOOCUS_DISABLED_MODEL_NAME = "None";
+const LUSTIFY_OLT_MODEL_NAME = "lustifySDXLNSFW_oltFIXEDTEXTURES.safetensors";
+const LUSTIFY_OLT_MODEL_URL = "https://civitai.com/api/download/models/1569593";
+const LUSTIFY_OLT_MODEL_SHA256 =
+	"d7e7e35b0f60c42ad427ce81e30569a3881143ecf2f9cb50021a52947f69d22f";
 const REPLICATE_FOOOCUS_API_VERSION =
 	"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c";
 const FOOOCUS_ASPECT_RATIOS = {
@@ -155,6 +159,12 @@ const runpodFooocusSdxlParamsSchema = z.object({
 	loraWeight: z.number().min(0).max(2).default(1),
 	extraLoraUrl: optionalUrlParamSchema,
 	extraLoraWeight: z.number().min(0).max(2).default(0.5),
+});
+
+const runpodLustifyOltSdxlParamsSchema = runpodFooocusSdxlParamsSchema.extend({
+	baseModelName: z.string().min(1).default(LUSTIFY_OLT_MODEL_NAME),
+	enableRefiner: booleanParamSchema(false),
+	guidanceScale: z.number().min(0).max(20).default(3.5),
 });
 
 const replicateFooocusSdxlParamsSchema = z.object({
@@ -408,6 +418,58 @@ function buildRunpodFooocusLoraUrls(
 	return loras.map((lora) => `${lora.url},${lora.weight}`).join(";");
 }
 
+type RunpodFooocusSdxlParams = z.infer<typeof runpodFooocusSdxlParamsSchema>;
+
+function buildRunpodFooocusSdxlInput({
+	checkpointSource,
+	parsed,
+	prompt,
+}: {
+	checkpointSource?: { sha256: string; url: string };
+	parsed: RunpodFooocusSdxlParams;
+	prompt: string;
+}): Record<string, unknown> {
+	const loras = buildRunpodFooocusLoras(parsed);
+	return {
+		__runpodEndpoint: "fooocus-sdxl",
+		api_name: "txt2img",
+		prompt,
+		// Fooocus-API-LORA accepts these native field names. The RunPod
+		// worker still gets image_size/num_images aliases for simpler output
+		// adapters, but should call Fooocus with the native names below.
+		base_model_name: parsed.baseModelName,
+		...(checkpointSource
+			? {
+					base_model_sha256: checkpointSource.sha256,
+					base_model_url: checkpointSource.url,
+				}
+			: {}),
+		advanced_params: {
+			overwrite_step: parsed.numInferenceSteps,
+		},
+		aspect_ratios_selection: FOOOCUS_ASPECT_RATIOS[parsed.imageSize],
+		image_size: parsed.imageSize,
+		image_number: parsed.numImages,
+		num_inference_steps: parsed.numInferenceSteps,
+		guidance_scale: parsed.guidanceScale,
+		num_images: parsed.numImages,
+		negative_prompt: parsed.negativePrompt,
+		output_format: parsed.outputFormat,
+		enable_refiner: parsed.enableRefiner,
+		enable_safety_checker: false,
+		require_base64: true,
+		refiner_model_name: parsed.enableRefiner
+			? FOOOCUS_REFINER_MODEL_NAME
+			: FOOOCUS_DISABLED_MODEL_NAME,
+		refiner_switch: 0.5,
+		loras,
+		loras_custom_urls: buildRunpodFooocusLoraUrls(loras),
+		...(parsed.seed === undefined
+			? {}
+			: { image_seed: parsed.seed, seed: parsed.seed }),
+	};
+}
+
 function extractModelNameFromUrl(url: string): string | undefined {
 	try {
 		const pathname = new URL(url).pathname;
@@ -536,6 +598,7 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-fast-sdxl": 10 * SECOND,
 	"fal-fast-fooocus-sdxl": 10 * SECOND,
 	"runpod-fooocus-sdxl": 90 * SECOND,
+	"runpod-lustify-olt-sdxl": 90 * SECOND,
 	"replicate-fooocus-sdxl": 15 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
@@ -912,39 +975,125 @@ export const workflowRegistry = {
 		],
 		buildProviderInput: ({ params, prompt }) => {
 			const parsed = runpodFooocusSdxlParamsSchema.parse(params);
-			const loras = buildRunpodFooocusLoras(parsed);
-			return {
-				__runpodEndpoint: "fooocus-sdxl",
-				api_name: "txt2img",
-				prompt,
-				// Fooocus-API-LORA accepts these native field names. The RunPod
-				// worker still gets image_size/num_images aliases for simpler output
-				// adapters, but should call Fooocus with the native names below.
-				base_model_name: parsed.baseModelName,
-				advanced_params: {
-					overwrite_step: parsed.numInferenceSteps,
+			return buildRunpodFooocusSdxlInput({ parsed, prompt });
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"runpod-lustify-olt-sdxl": {
+		baseModel: "sdxl",
+		key: "runpod-lustify-olt-sdxl",
+		name: "Lustify OLT SDXL (RunPod)",
+		description:
+			"Lustify SDXL OLT (FIXED TEXTURES) checkpoint from Civitai model 573152 version 1569593 on the custom RunPod Fooocus endpoint. Supports SDXL LoRA URLs.",
+		requiresInputImage: false,
+		parameterSchema: runpodLustifyOltSdxlParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Output image size preset controlling aspect ratio and resolution.",
+				key: "imageSize",
+				label: "Image size",
+				type: "text",
+			},
+			{
+				description: "Number of denoising steps.",
+				key: "numInferenceSteps",
+				label: "Steps",
+				max: 60,
+				min: 1,
+				step: 1,
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "Guidance scale",
+				max: 20,
+				min: 0,
+				step: 0.1,
+				type: "number",
+			},
+			{
+				description: "Number of images to generate per request.",
+				key: "numImages",
+				label: "Number of images",
+				max: 8,
+				min: 1,
+				step: 1,
+				type: "number",
+			},
+			{
+				description: "Output image format.",
+				enumValues: ["jpeg", "png"],
+				key: "outputFormat",
+				label: "Output format",
+				type: "text",
+			},
+			{
+				description: "Negative prompt to discourage unwanted content.",
+				key: "negativePrompt",
+				label: "Negative prompt",
+				optional: true,
+				type: "text",
+			},
+			{
+				description:
+					"Optional public URL pointing to trained SDXL LoRA weights.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the primary LoRA effect.",
+				key: "loraWeight",
+				label: "LoRA weight",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description:
+					"Optional second public URL pointing to SDXL LoRA weights.",
+				key: "extraLoraUrl",
+				kind: "lora-url",
+				label: "Extra LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the extra LoRA effect.",
+				key: "extraLoraWeight",
+				label: "Extra LoRA weight",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description: "Run Fooocus refiner after the base pass.",
+				enumValues: ["true", "false"],
+				key: "enableRefiner",
+				label: "Refiner",
+				type: "text",
+			},
+			{
+				description: "Optional deterministic seed for repeatable outputs.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = runpodLustifyOltSdxlParamsSchema.parse(params);
+			return buildRunpodFooocusSdxlInput({
+				checkpointSource: {
+					sha256: LUSTIFY_OLT_MODEL_SHA256,
+					url: LUSTIFY_OLT_MODEL_URL,
 				},
-				aspect_ratios_selection: FOOOCUS_ASPECT_RATIOS[parsed.imageSize],
-				image_size: parsed.imageSize,
-				image_number: parsed.numImages,
-				num_inference_steps: parsed.numInferenceSteps,
-				guidance_scale: parsed.guidanceScale,
-				num_images: parsed.numImages,
-				negative_prompt: parsed.negativePrompt,
-				output_format: parsed.outputFormat,
-				enable_refiner: parsed.enableRefiner,
-				enable_safety_checker: false,
-				require_base64: true,
-				refiner_model_name: parsed.enableRefiner
-					? FOOOCUS_REFINER_MODEL_NAME
-					: FOOOCUS_DISABLED_MODEL_NAME,
-				refiner_switch: 0.5,
-				loras,
-				loras_custom_urls: buildRunpodFooocusLoraUrls(loras),
-				...(parsed.seed === undefined
-					? {}
-					: { image_seed: parsed.seed, seed: parsed.seed }),
-			};
+				parsed,
+				prompt,
+			});
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},

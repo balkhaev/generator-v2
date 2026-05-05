@@ -313,6 +313,58 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the runpod-lustify-olt-sdxl payload with checkpoint metadata", () => {
+		const workflow = getWorkflowDefinition("runpod-lustify-olt-sdxl");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					extraLoraUrl: "https://storage.example.com/style.safetensors",
+					extraLoraWeight: 0.25,
+					guidanceScale: 4,
+					imageSize: "portrait_4_3",
+					loraUrl: "https://storage.example.com/subject.safetensors",
+					loraWeight: 0.85,
+					negativePrompt: "blur, watermark",
+					numInferenceSteps: 30,
+					outputFormat: "png",
+				},
+				prompt: "studio portrait of my_character, cinematic lighting",
+			})
+		).toMatchObject({
+			__runpodEndpoint: "fooocus-sdxl",
+			advanced_params: {
+				overwrite_step: 30,
+			},
+			api_name: "txt2img",
+			aspect_ratios_selection: "896*1152",
+			base_model_name: "lustifySDXLNSFW_oltFIXEDTEXTURES.safetensors",
+			base_model_sha256:
+				"d7e7e35b0f60c42ad427ce81e30569a3881143ecf2f9cb50021a52947f69d22f",
+			base_model_url: "https://civitai.com/api/download/models/1569593",
+			enable_refiner: false,
+			enable_safety_checker: false,
+			guidance_scale: 4,
+			image_size: "portrait_4_3",
+			loras: [
+				{
+					model_name: "subject.safetensors",
+					url: "https://storage.example.com/subject.safetensors",
+					weight: 0.85,
+				},
+				{
+					model_name: "style.safetensors",
+					url: "https://storage.example.com/style.safetensors",
+					weight: 0.25,
+				},
+			],
+			negative_prompt: "blur, watermark",
+			output_format: "png",
+			refiner_model_name: "None",
+			require_base64: true,
+		});
+	});
+
 	it("builds the replicate-fooocus-sdxl payload with optional LoRAs", () => {
 		const workflow = getWorkflowDefinition("replicate-fooocus-sdxl");
 

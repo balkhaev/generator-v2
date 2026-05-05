@@ -89,6 +89,24 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("resolves runpod-lustify-olt-sdxl with correct defaults", () => {
+		const workflow = getWorkflowDefinition("runpod-lustify-olt-sdxl");
+		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("sdxl");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			baseModelName: "lustifySDXLNSFW_oltFIXEDTEXTURES.safetensors",
+			enableRefiner: false,
+			extraLoraWeight: 0.5,
+			guidanceScale: 3.5,
+			imageSize: "square_hd",
+			loraWeight: 1,
+			negativePrompt: "",
+			numImages: 1,
+			numInferenceSteps: 30,
+			outputFormat: "jpeg",
+		});
+	});
+
 	it("resolves replicate-fooocus-sdxl with correct defaults", () => {
 		const workflow = getWorkflowDefinition("replicate-fooocus-sdxl");
 		expect(workflow).toBeDefined();
@@ -320,6 +338,7 @@ describe("workflow registry", () => {
 		const keys = [
 			"fal-fast-sdxl",
 			"runpod-fooocus-sdxl",
+			"runpod-lustify-olt-sdxl",
 			"replicate-fooocus-sdxl",
 			"fal-flux-dev",
 			"fal-zimage-turbo",
@@ -546,6 +565,48 @@ describe("workflow registry", () => {
 			output_format: "png",
 			refiner_model_name: "None",
 			seed: 42,
+		});
+	});
+
+	it("builds runpod-lustify-olt-sdxl payloads with checkpoint metadata", () => {
+		const workflow = getWorkflowDefinition("runpod-lustify-olt-sdxl");
+		const buildInput = (extra: Record<string, unknown> = {}) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "test",
+			}) as Record<string, unknown>;
+
+		expect(buildInput()).toMatchObject({
+			__runpodEndpoint: "fooocus-sdxl",
+			api_name: "txt2img",
+			base_model_name: "lustifySDXLNSFW_oltFIXEDTEXTURES.safetensors",
+			base_model_sha256:
+				"d7e7e35b0f60c42ad427ce81e30569a3881143ecf2f9cb50021a52947f69d22f",
+			base_model_url: "https://civitai.com/api/download/models/1569593",
+			enable_refiner: false,
+			guidance_scale: 3.5,
+			refiner_model_name: "None",
+		});
+
+		expect(
+			buildInput({
+				enableRefiner: "true",
+				guidanceScale: 4,
+				loraUrl: "https://example.com/person.safetensors",
+				loraWeight: 0.85,
+			})
+		).toMatchObject({
+			base_model_name: "lustifySDXLNSFW_oltFIXEDTEXTURES.safetensors",
+			enable_refiner: true,
+			guidance_scale: 4,
+			loras: [
+				{
+					model_name: "person.safetensors",
+					url: "https://example.com/person.safetensors",
+					weight: 0.85,
+				},
+			],
+			refiner_model_name: "sd_xl_refiner_1.0_0.9vae.safetensors",
 		});
 	});
 

@@ -28,6 +28,8 @@ shape:
   "prompt": "studio portrait of ohwx_person",
   "negative_prompt": "blur, watermark",
   "base_model_name": "juggernautXL_version6Rundiffusion.safetensors",
+  "base_model_url": "https://civitai.com/api/download/models/1569593",
+  "base_model_sha256": "d7e7e35b0f60c42ad427ce81e30569a3881143ecf2f9cb50021a52947f69d22f",
   "advanced_params": {
     "overwrite_step": 30
   },
@@ -57,8 +59,13 @@ shape:
 
 `base_model_name` defaults in the app to
 `juggernautXL_version6Rundiffusion.safetensors`, matching Fooocus-API-LORA's
-documented v6 default. `loras` may be empty. `loras_custom_urls` mirrors the
-Replicate/Cog contract from Fooocus-API-LORA: `url,weight;url2,weight`.
+documented v6 default. Workflows for custom checkpoints may also include
+`base_model_url` and `base_model_sha256`; the worker should download the file
+into `repositories/Fooocus/models/checkpoints` when `base_model_name` is absent
+on the volume, using `CIVITAI_API_KEY`/`CIVITAI_API_TOKEN` as a bearer token for
+Civitai URLs when available, then verify the SHA256 if provided. `loras` may be
+empty. `loras_custom_urls` mirrors the Replicate/Cog contract from
+Fooocus-API-LORA: `url,weight;url2,weight`.
 
 For each LoRA, the worker should:
 

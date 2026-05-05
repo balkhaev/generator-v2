@@ -503,7 +503,7 @@ describe("generator api", () => {
 			submit() {
 				submitCalls += 1;
 				throw new NonRetryableInferenceError(
-					"Civitai workflows.preflight: Civitai has no available provider for this LTX 2.3 step video."
+					"Civitai workflows.preflight: Selected Civitai LoRA has no available Civitai inference for LTX 2.3."
 				);
 			},
 		};
@@ -564,7 +564,7 @@ describe("generator api", () => {
 		expect(submitCalls).toBe(1);
 		expect(execution.status).toBe("failed");
 		expect(execution.errorSummary).toBe(
-			"Civitai workflows.preflight: Civitai has no available provider for this LTX 2.3 step video."
+			"Civitai workflows.preflight: Selected Civitai LoRA has no available Civitai inference for LTX 2.3."
 		);
 	});
 

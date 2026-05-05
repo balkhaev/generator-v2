@@ -8,6 +8,10 @@ import {
 	GENERATOR_INTERNAL_TOKEN_HEADER,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
+import {
+	type S3StorageConfig,
+	tryResolveS3StorageConfig,
+} from "@generator/storage";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -21,6 +25,9 @@ import type { InferenceClient } from "@/providers/inference";
 import { createInferenceRouter } from "@/providers/inference-router";
 import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
+import { createRunpodPodInferenceClient } from "@/providers/runpod-pod";
+
+const TRAILING_FILENAME_PATTERN = /[^/]*$/u;
 
 function createStubInferenceClient(): InferenceClient {
 	const fail = (): never => {
@@ -33,7 +40,32 @@ function createStubInferenceClient(): InferenceClient {
 	};
 }
 
-import { tryResolveS3StorageConfig } from "@generator/storage";
+function splitCsv(value: string | undefined): string[] {
+	return (value ?? "")
+		.split(",")
+		.map((item) => item.trim())
+		.filter((item) => item.length > 0);
+}
+
+function readPositiveIntegerEnv(
+	value: string | undefined,
+	defaultValue: number
+): number {
+	const parsed = Number(value);
+	return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+function deriveSiblingUrl(baseUrl: string, siblingFilename: string): string {
+	try {
+		const url = new URL(baseUrl);
+		const segments = url.pathname.split("/");
+		segments[segments.length - 1] = siblingFilename;
+		url.pathname = segments.join("/");
+		return url.toString();
+	} catch {
+		return baseUrl.replace(TRAILING_FILENAME_PATTERN, siblingFilename);
+	}
+}
 
 import {
 	createProviderArtifactDownloadOptions,
@@ -66,6 +98,57 @@ const isPublicApiPath = createPublicPathMatcher({
 	exact: ["/api/health", "/api/ready"],
 });
 
+function createConfiguredRunpodPodClient(input: {
+	civitaiApiKey?: string;
+	runpodApiKey?: string;
+	s3Config: S3StorageConfig | null;
+}) {
+	const bootstrapUrl = process.env.RUNPOD_LTX23_POD_BOOTSTRAP_URL;
+	if (!(input.runpodApiKey && bootstrapUrl && input.s3Config)) {
+		return undefined;
+	}
+	return createRunpodPodInferenceClient({
+		apiKey: input.runpodApiKey,
+		civitaiApiKey: input.civitaiApiKey,
+		hfToken:
+			process.env.HF_TOKEN?.trim() || process.env.HUGGINGFACE_TOKEN?.trim(),
+		restApiBaseUrl: process.env.RUNPOD_REST_API_BASE_URL,
+		s3Config: input.s3Config,
+		workflows: {
+			"ltx-2-3-synth-video": {
+				bootstrapUrl,
+				cloudType:
+					process.env.RUNPOD_LTX23_POD_CLOUD_TYPE === "COMMUNITY"
+						? "COMMUNITY"
+						: "SECURE",
+				containerDiskInGb: readPositiveIntegerEnv(
+					process.env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
+					80
+				),
+				gpuTypeIds: splitCsv(
+					process.env.RUNPOD_LTX23_POD_GPU_TYPE_IDS ??
+						"NVIDIA RTX A6000,NVIDIA A40,NVIDIA H100 80GB HBM3"
+				),
+				imageName:
+					process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
+					"runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu",
+				namePrefix: "ltx23-synth",
+				networkVolumeId: process.env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
+				podRunnerUrl: deriveSiblingUrl(bootstrapUrl, "pod_runner.py"),
+				templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID,
+				timeoutMs: readPositiveIntegerEnv(
+					process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,
+					60 * 60 * 1000
+				),
+				volumeInGb: readPositiveIntegerEnv(
+					process.env.RUNPOD_LTX23_POD_VOLUME_GB,
+					160
+				),
+			},
+		},
+	});
+}
+
 export function createApp(options: AppOptions) {
 	// Читаем переменные напрямую из process.env: тесты мутируют их в рантайме,
 	// а централизованный `env` из @generator/env/server валидируется при импорте
@@ -82,10 +165,11 @@ export function createApp(options: AppOptions) {
 	const runpodApiKey = process.env.RUNPOD_API_KEY;
 	const runpodApiBaseUrl = process.env.RUNPOD_API_BASE_URL;
 	const runpodFooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID;
+	const resolvedS3Config = tryResolveS3StorageConfig();
 	const storageAdapter =
 		options.storageAdapter ??
 		(() => {
-			const config = tryResolveS3StorageConfig();
+			const config = resolvedS3Config;
 			if (!config) {
 				throw new Error(
 					"S3 storage is required for the generator service. Set S3_BUCKET, S3_ENDPOINT, " +
@@ -124,15 +208,25 @@ export function createApp(options: AppOptions) {
 					},
 				})
 			: undefined;
+	const runpodPodClient = createConfiguredRunpodPodClient({
+		civitaiApiKey,
+		runpodApiKey,
+		s3Config: resolvedS3Config,
+	});
 
 	const inferenceClient =
 		options.inferenceClient ??
-		(civitaiClient || falClient || replicateClient || runpodClient
+		(civitaiClient ||
+		falClient ||
+		replicateClient ||
+		runpodClient ||
+		runpodPodClient
 			? createInferenceRouter({
 					civitai: civitaiClient,
 					fal: falClient,
 					replicate: replicateClient,
 					runpod: runpodClient,
+					runpodPod: runpodPodClient,
 				})
 			: createStubInferenceClient());
 	const redisUrl =

@@ -215,6 +215,37 @@ const serverSchema = {
 	RUNPOD_API_BASE_URL: z.url().default("https://api.runpod.ai/v2"),
 	// Inference-only Fooocus SDXL endpoint used by generator-worker.
 	RUNPOD_FOOOCUS_ENDPOINT_ID: z.string().min(1).optional(),
+	// Inference-only disposable Pod for LTX 2.3 + Synth LoRA video generation.
+	RUNPOD_LTX23_POD_BOOTSTRAP_URL: z
+		.url()
+		.optional()
+		.describe(
+			"Public URL of tools/runpod-ltx23-inference/pod-bootstrap.sh executed inside a disposable RunPod Pod."
+		),
+	RUNPOD_LTX23_POD_IMAGE_NAME: z
+		.string()
+		.min(1)
+		.default("runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu"),
+	RUNPOD_LTX23_POD_TEMPLATE_ID: z.string().min(1).optional(),
+	RUNPOD_LTX23_POD_GPU_TYPE_IDS: z
+		.string()
+		.min(1)
+		.default("NVIDIA RTX A6000,NVIDIA A40,NVIDIA H100 80GB HBM3"),
+	RUNPOD_LTX23_POD_CONTAINER_DISK_GB: z.coerce
+		.number()
+		.int()
+		.positive()
+		.default(80),
+	RUNPOD_LTX23_POD_VOLUME_GB: z.coerce.number().int().positive().default(160),
+	RUNPOD_LTX23_POD_CLOUD_TYPE: z
+		.enum(["SECURE", "COMMUNITY"])
+		.default("SECURE"),
+	RUNPOD_LTX23_POD_TIMEOUT_MS: z.coerce
+		.number()
+		.int()
+		.positive()
+		.default(60 * 60 * 1000),
+	RUNPOD_LTX23_POD_NETWORK_VOLUME_ID: z.string().min(1).optional(),
 
 	// Shared (применимо к обоим режимам).
 	RUNPOD_AI_TOOLKIT_TIMEOUT_MS: z.coerce

@@ -89,6 +89,26 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("resolves runpod-ltx-2-3-synth-text-to-video with correct defaults", () => {
+		const workflow = getWorkflowDefinition(
+			"runpod-ltx-2-3-synth-text-to-video"
+		);
+		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("ltx-2-3");
+		expect(workflow?.requiresInputImage).toBe(false);
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			cfgScale: 1,
+			distilledLoraScale: 0.6,
+			durationSeconds: 10,
+			fps: 24,
+			height: 1280,
+			loraScale: 1,
+			loraUrl: "https://civitai.red/api/download/models/2820451",
+			steps: 8,
+			width: 896,
+		});
+	});
+
 	it("resolves civitai-lustify-olt-sdxl with correct defaults", () => {
 		const workflow = getWorkflowDefinition("civitai-lustify-olt-sdxl");
 		expect(workflow).toBeDefined();
@@ -418,6 +438,7 @@ describe("workflow registry", () => {
 		const keys = [
 			"fal-fast-sdxl",
 			"runpod-fooocus-sdxl",
+			"runpod-ltx-2-3-synth-text-to-video",
 			"replicate-fooocus-sdxl",
 			"fal-flux-dev",
 			"fal-zimage-turbo",
@@ -646,6 +667,60 @@ describe("workflow registry", () => {
 			output_format: "png",
 			refiner_model_name: "None",
 			seed: 42,
+		});
+	});
+
+	it("builds runpod-ltx-2-3 synth LoRA pod payloads", () => {
+		const workflow = getWorkflowDefinition(
+			"runpod-ltx-2-3-synth-text-to-video"
+		);
+		const buildInput = (extra: Record<string, unknown> = {}) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "A woman is doing gymnastics outdoors.",
+			}) as Record<string, unknown>;
+
+		expect(buildInput()).toMatchObject({
+			__runpodPod: "ltx-2-3-synth-video",
+			cfgScale: 1,
+			distilledLoraName:
+				"ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+			distilledLoraScale: 0.6,
+			fps: 24,
+			height: 1280,
+			loraName: "ltxv/ltx2/SynthPussy_01_rank32.safetensors",
+			loraScale: 1,
+			loraUrl: "https://civitai.red/api/download/models/2820451",
+			negativePrompt: expect.stringContaining("watermark"),
+			numFrames: 241,
+			prompt: "A woman is doing gymnastics outdoors.",
+			steps: 8,
+			width: 896,
+		});
+
+		expect(
+			buildInput({
+				durationSeconds: 15,
+				fps: 24,
+				height: 960,
+				loraScale: 0.85,
+				seed: 900,
+				width: 640,
+			})
+		).toMatchObject({
+			height: 960,
+			loraScale: 0.85,
+			numFrames: 361,
+			seed: 900,
+			width: 640,
+		});
+
+		expect(
+			buildInput({
+				numFrames: 121,
+			})
+		).toMatchObject({
+			numFrames: 121,
 		});
 	});
 

@@ -395,7 +395,7 @@ function CompatibilityPill({
 		return (
 			<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
 				<AlertCircle className="size-2.5" />
-				Generation off
+				No inference
 			</span>
 		);
 	}
@@ -554,7 +554,7 @@ function CivitaiLoraSelector({
 			return;
 		}
 		if (!canUsePreview) {
-			toast.error("This LoRA is not available for LTXV 2.3 Civitai inference.");
+			toast.error("This Civitai LoRA has no inference for LTXV 2.3.");
 			return;
 		}
 		applyLoraMetadata(previewMetadata, onParamChange);

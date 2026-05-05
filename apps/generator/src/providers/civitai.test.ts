@@ -252,7 +252,45 @@ describe("civitai provider", () => {
 				},
 			})
 		).rejects.toThrow(
-			"Civitai workflows.preflight: Civitai has no available provider for this LTX 2.3 step video. The selected LoRA/model combination is not currently supported by Civitai inference."
+			'Civitai workflows.preflight: Selected Civitai LoRA (model 2509189 / version 2820451) has no available Civitai inference for LTX 2.3 in workflow step "video". Civitai does not currently support this LoRA/version with the selected LTX 2.3 model; choose another compatible LoRA version or another provider.'
+		);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
+	});
+
+	it("explains LoRA inference absence when Civitai rejects preflight", async () => {
+		const fetchImpl = mock(() =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						detail: "No available provider supports this job.",
+					}),
+					{
+						headers: { "content-type": "application/json" },
+						status: 400,
+					}
+				)
+			)
+		);
+		const client = createCivitaiClient({
+			apiKey: "civitai_test_key",
+			fetchImpl,
+		});
+
+		await expect(
+			client.submit({
+				__civitaiEndpoint: "ltx2.3:synth-lora:createVideo",
+				$type: "videoGen",
+				input: {
+					engine: "ltx2.3",
+					loras: {
+						"urn:air:ltxv23:lora:civitai:2509189@2820451": 1,
+					},
+					operation: "createVideo",
+					prompt: "test",
+				},
+			})
+		).rejects.toThrow(
+			"Civitai workflows.preflight: Selected Civitai LoRA (model 2509189 / version 2820451) has no available Civitai inference for LTX 2.3. Civitai does not currently support this LoRA/version with the selected LTX 2.3 model; choose another compatible LoRA version or another provider."
 		);
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
 	});

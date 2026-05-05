@@ -6,9 +6,20 @@ import type {
 } from "./inference";
 import { isReplicateProviderEndpointId } from "./replicate";
 import { isRunpodProviderEndpointId } from "./runpod";
+import { isRunpodPodProviderEndpointId } from "./runpod-pod";
 
 function isCivitaiPayload(payload: Record<string, unknown>): boolean {
 	return "__civitaiEndpoint" in payload || "__civitaiModel" in payload;
+}
+
+function requireClient(
+	client: InferenceClient | undefined,
+	message: string
+): InferenceClient {
+	if (client) {
+		return client;
+	}
+	throw new Error(message);
 }
 
 export function createInferenceRouter(clients: {
@@ -16,25 +27,32 @@ export function createInferenceRouter(clients: {
 	fal?: InferenceClient;
 	replicate?: InferenceClient;
 	runpod?: InferenceClient;
+	runpodPod?: InferenceClient;
 }): InferenceClient {
 	function routeByPayload(payload: Record<string, unknown>): InferenceClient {
 		if (isCivitaiPayload(payload)) {
-			if (clients.civitai) {
-				return clients.civitai;
-			}
-			throw new Error("Civitai inference client is not configured");
+			return requireClient(
+				clients.civitai,
+				"Civitai inference client is not configured"
+			);
 		}
 		if ("__runpodEndpoint" in payload) {
-			if (clients.runpod) {
-				return clients.runpod;
-			}
-			throw new Error("RunPod inference client is not configured");
+			return requireClient(
+				clients.runpod,
+				"RunPod inference client is not configured"
+			);
+		}
+		if ("__runpodPod" in payload) {
+			return requireClient(
+				clients.runpodPod,
+				"RunPod Pod inference client is not configured"
+			);
 		}
 		if ("__replicateVersion" in payload) {
-			if (clients.replicate) {
-				return clients.replicate;
-			}
-			throw new Error("Replicate inference client is not configured");
+			return requireClient(
+				clients.replicate,
+				"Replicate inference client is not configured"
+			);
 		}
 		if ("__falModel" in payload && clients.fal) {
 			return clients.fal;
@@ -47,22 +65,28 @@ export function createInferenceRouter(clients: {
 
 	function routeByEndpoint(endpointId?: string): InferenceClient {
 		if (isCivitaiProviderEndpointId(endpointId)) {
-			if (clients.civitai) {
-				return clients.civitai;
-			}
-			throw new Error("Civitai inference client is not configured");
+			return requireClient(
+				clients.civitai,
+				"Civitai inference client is not configured"
+			);
 		}
 		if (isRunpodProviderEndpointId(endpointId)) {
-			if (clients.runpod) {
-				return clients.runpod;
-			}
-			throw new Error("RunPod inference client is not configured");
+			return requireClient(
+				clients.runpod,
+				"RunPod inference client is not configured"
+			);
+		}
+		if (isRunpodPodProviderEndpointId(endpointId)) {
+			return requireClient(
+				clients.runpodPod,
+				"RunPod Pod inference client is not configured"
+			);
 		}
 		if (isReplicateProviderEndpointId(endpointId)) {
-			if (clients.replicate) {
-				return clients.replicate;
-			}
-			throw new Error("Replicate inference client is not configured");
+			return requireClient(
+				clients.replicate,
+				"Replicate inference client is not configured"
+			);
 		}
 		if (clients.fal) {
 			return clients.fal;

@@ -74,6 +74,21 @@ const CIVITAI_LTX23_DEFAULT_LORA_SOURCE_URL =
 const CIVITAI_LTX23_SYNTH_LORA_URN =
 	"urn:air:ltxv23:lora:civitai:2509189@2820451";
 const CIVITAI_LTX23_SYNTH_ENDPOINT_PREFIX = "ltx2.3:synth-lora";
+const CIVITAI_LTX23_SYNTH_LORA_DOWNLOAD_URL =
+	"https://civitai.red/api/download/models/2820451";
+const RUNPOD_LTX23_SYNTH_POD_KEY = "ltx-2-3-synth-video";
+const RUNPOD_LTX23_WORKFLOW_URL =
+	"https://raw.githubusercontent.com/Lightricks/ComfyUI-LTXVideo/master/example_workflows/2.3/LTX-2.3_T2V_I2V_Single_Stage_Distilled_Full.json";
+const RUNPOD_LTX23_CHECKPOINT_NAME = "ltx-2.3-22b-dev.safetensors";
+const RUNPOD_LTX23_CHECKPOINT_URL =
+	"https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-dev.safetensors";
+const RUNPOD_LTX23_TEXT_ENCODER_NAME = "gemma_3_12B_it_fp4_mixed.safetensors";
+const RUNPOD_LTX23_TEXT_ENCODER_URL =
+	"https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors";
+const RUNPOD_LTX23_DISTILLED_LORA_NAME =
+	"ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors";
+const RUNPOD_LTX23_DISTILLED_LORA_URL =
+	"https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384-1.1.safetensors";
 const REPLICATE_FOOOCUS_API_VERSION =
 	"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c";
 const REPLICATE_WAN_22_I2V_FAST_VERSION =
@@ -169,6 +184,57 @@ const runpodFooocusSdxlParamsSchema = z.object({
 	loraWeight: z.number().min(0).max(2).default(1),
 	extraLoraUrl: optionalUrlParamSchema,
 	extraLoraWeight: z.number().min(0).max(2).default(0.5),
+});
+
+const ltx23DimensionSchema = z
+	.number()
+	.int()
+	.min(512)
+	.max(1536)
+	.refine((value) => value % 32 === 0, {
+		message: "LTX 2.3 width/height must be divisible by 32",
+	});
+
+const ltx23FrameCountSchema = z
+	.number()
+	.int()
+	.min(17)
+	.max(361)
+	.refine((value) => (value - 1) % 8 === 0, {
+		message: "LTX 2.3 frame count must be 8n + 1",
+	});
+
+const runpodLtx23SynthParamsSchema = z.object({
+	width: ltx23DimensionSchema.default(896),
+	height: ltx23DimensionSchema.default(1280),
+	durationSeconds: z.number().min(1).max(16).default(10),
+	numFrames: ltx23FrameCountSchema.optional(),
+	fps: z.number().int().min(8).max(60).default(24),
+	steps: z.number().int().min(1).max(40).default(8),
+	cfgScale: z.number().min(0).max(20).default(1),
+	negativePrompt: z
+		.string()
+		.default(
+			"news broadcast, 3d animation, computer graphics, pc game, console game, video game, cartoon, childish, watermark, logo, text, on screen text, subtitles, titles, signature, slowmo, static, ugly"
+		),
+	seed: z.number().int().nonnegative().optional(),
+	loraUrl: z.url().default(CIVITAI_LTX23_SYNTH_LORA_DOWNLOAD_URL),
+	loraName: z
+		.string()
+		.min(1)
+		.default("ltxv/ltx2/SynthPussy_01_rank32.safetensors"),
+	loraScale: z.number().min(0).max(2).default(1),
+	distilledLoraUrl: z.url().default(RUNPOD_LTX23_DISTILLED_LORA_URL),
+	distilledLoraName: z
+		.string()
+		.min(1)
+		.default(RUNPOD_LTX23_DISTILLED_LORA_NAME),
+	distilledLoraScale: z.number().min(0).max(2).default(0.6),
+	workflowUrl: z.url().default(RUNPOD_LTX23_WORKFLOW_URL),
+	checkpointName: z.string().min(1).default(RUNPOD_LTX23_CHECKPOINT_NAME),
+	checkpointUrl: z.url().default(RUNPOD_LTX23_CHECKPOINT_URL),
+	textEncoderName: z.string().min(1).default(RUNPOD_LTX23_TEXT_ENCODER_NAME),
+	textEncoderUrl: z.url().default(RUNPOD_LTX23_TEXT_ENCODER_URL),
 });
 
 const replicateFooocusSdxlParamsSchema = z.object({
@@ -671,6 +737,7 @@ function buildRunpodFooocusLoraUrls(
 }
 
 type RunpodFooocusSdxlParams = z.infer<typeof runpodFooocusSdxlParamsSchema>;
+type RunpodLtx23SynthParams = z.infer<typeof runpodLtx23SynthParamsSchema>;
 
 function buildRunpodFooocusSdxlInput({
 	parsed,
@@ -711,6 +778,51 @@ function buildRunpodFooocusSdxlInput({
 		...(parsed.seed === undefined
 			? {}
 			: { image_seed: parsed.seed, seed: parsed.seed }),
+	};
+}
+
+function normalizeLtx23FrameCount(
+	durationSeconds: number,
+	fps: number
+): number {
+	const rawFrames = Math.round(durationSeconds * fps);
+	const normalized = Math.round((rawFrames - 1) / 8) * 8 + 1;
+	return Math.min(361, Math.max(17, normalized));
+}
+
+function buildRunpodLtx23SynthInput({
+	parsed,
+	prompt,
+}: {
+	parsed: RunpodLtx23SynthParams;
+	prompt: string;
+}): Record<string, unknown> {
+	const numFrames =
+		parsed.numFrames ??
+		normalizeLtx23FrameCount(parsed.durationSeconds, parsed.fps);
+	return {
+		__runpodPod: RUNPOD_LTX23_SYNTH_POD_KEY,
+		prompt,
+		negativePrompt: parsed.negativePrompt,
+		width: parsed.width,
+		height: parsed.height,
+		durationSeconds: parsed.durationSeconds,
+		numFrames,
+		fps: parsed.fps,
+		steps: parsed.steps,
+		cfgScale: parsed.cfgScale,
+		loraUrl: parsed.loraUrl,
+		loraName: parsed.loraName,
+		loraScale: parsed.loraScale,
+		distilledLoraUrl: parsed.distilledLoraUrl,
+		distilledLoraName: parsed.distilledLoraName,
+		distilledLoraScale: parsed.distilledLoraScale,
+		workflowUrl: parsed.workflowUrl,
+		checkpointName: parsed.checkpointName,
+		checkpointUrl: parsed.checkpointUrl,
+		textEncoderName: parsed.textEncoderName,
+		textEncoderUrl: parsed.textEncoderUrl,
+		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 	};
 }
 
@@ -845,6 +957,7 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"civitai-ltx-2-3-synth-text-to-video": 2 * MINUTE,
 	"civitai-ltx-2-3-synth-image-to-video": 2 * MINUTE,
 	"runpod-fooocus-sdxl": 90 * SECOND,
+	"runpod-ltx-2-3-synth-text-to-video": 35 * MINUTE,
 	"replicate-fooocus-sdxl": 15 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
@@ -1224,6 +1337,130 @@ export const workflowRegistry = {
 		buildProviderInput: ({ params, prompt }) => {
 			const parsed = runpodFooocusSdxlParamsSchema.parse(params);
 			return buildRunpodFooocusSdxlInput({ parsed, prompt });
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"runpod-ltx-2-3-synth-text-to-video": {
+		baseModel: "ltx-2-3",
+		key: "runpod-ltx-2-3-synth-text-to-video",
+		name: "LTX 2.3 Synth LoRA (RunPod Pod)",
+		description:
+			"LTX 2.3 text-to-video generation in a disposable RunPod GPU Pod. Boots ComfyUI, loads the Synth Civitai LoRA plus the Lightricks distilled LoRA, and uploads the MP4 artifact to S3.",
+		requiresInputImage: false,
+		parameterSchema: runpodLtx23SynthParamsSchema,
+		parameterFields: [
+			{
+				description: "Output video width in pixels. Must be divisible by 32.",
+				key: "width",
+				label: "Width",
+				max: 1536,
+				min: 512,
+				step: 32,
+				type: "number",
+			},
+			{
+				description: "Output video height in pixels. Must be divisible by 32.",
+				key: "height",
+				label: "Height",
+				max: 1536,
+				min: 512,
+				step: 32,
+				type: "number",
+			},
+			{
+				description:
+					"Target duration in seconds. Converted to an LTX-valid 8n+1 frame count.",
+				key: "durationSeconds",
+				label: "Duration",
+				max: 16,
+				min: 1,
+				step: 0.5,
+				unit: "s",
+				type: "number",
+			},
+			{
+				description:
+					"Explicit frame count override. Must be 8n+1, for example 121, 241, or 361.",
+				key: "numFrames",
+				label: "Frames",
+				max: 361,
+				min: 17,
+				optional: true,
+				step: 8,
+				unit: "frames",
+				type: "number",
+			},
+			{
+				description: "Output frames per second.",
+				key: "fps",
+				label: "FPS",
+				max: 60,
+				min: 8,
+				step: 1,
+				type: "number",
+			},
+			{
+				description: "Number of denoising steps.",
+				key: "steps",
+				label: "Steps",
+				max: 40,
+				min: 1,
+				step: 1,
+				unit: "steps",
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "cfgScale",
+				label: "CFG scale",
+				max: 20,
+				min: 0,
+				step: 0.1,
+				type: "number",
+			},
+			{
+				description: "Negative prompt to discourage unwanted content.",
+				key: "negativePrompt",
+				label: "Negative prompt",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Public URL to the Synth LTX 2.3 LoRA safetensors file.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "Synth LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the Synth LoRA.",
+				key: "loraScale",
+				label: "Synth LoRA scale",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description: "Strength of the Lightricks distilled LoRA.",
+				key: "distilledLoraScale",
+				label: "Distilled LoRA scale",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
+				optional: true,
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = runpodLtx23SynthParamsSchema.parse(params);
+			return buildRunpodLtx23SynthInput({ parsed, prompt });
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},

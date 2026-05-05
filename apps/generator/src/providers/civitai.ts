@@ -12,6 +12,10 @@ const CIVITAI_LTX_WORKFLOW_ENDPOINT_PREFIX = "ltx2.3:";
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_VALIDATION_MESSAGES = 6;
 const TRAILING_SLASH = /\/$/;
+const NO_AVAILABLE_PROVIDER_PATTERN =
+	/no available provider|no provider|not currently supported by civitai inference/i;
+const CIVITAI_LORA_AIR_PATTERN =
+	/^urn:air:[^:]+:lora:civitai:(?<modelId>\d+)@(?<versionId>\d+)$/i;
 
 const failedEventTypes = new Set([
 	"ClaimExpired",
@@ -210,6 +214,19 @@ function readStringField(
 	return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+	try {
+		const parsed = JSON.parse(value);
+		return isRecord(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
 function buildCivitaiRequestBody(payload: Record<string, unknown>): {
 	endpointKey: string;
 	requestBody: Record<string, unknown>;
@@ -246,6 +263,62 @@ function isCivitaiWorkflowEndpointId(endpointId: string): boolean {
 	);
 }
 
+function collectLoraRefsFromStep(step: Record<string, unknown>): string[] {
+	const input = step.input;
+	if (!isRecord(input)) {
+		return [];
+	}
+	const loras = input.loras;
+	if (!isRecord(loras)) {
+		return [];
+	}
+	return Object.keys(loras).filter((ref) => ref.length > 0);
+}
+
+function collectCivitaiLoraRefs(
+	requestBody: Record<string, unknown>
+): string[] {
+	const refs = new Set<string>();
+	for (const ref of collectLoraRefsFromStep(requestBody)) {
+		refs.add(ref);
+	}
+	const steps = requestBody.steps;
+	if (Array.isArray(steps)) {
+		for (const step of steps) {
+			if (!isRecord(step)) {
+				continue;
+			}
+			for (const ref of collectLoraRefsFromStep(step)) {
+				refs.add(ref);
+			}
+		}
+	}
+	return Array.from(refs);
+}
+
+function formatCivitaiLoraRef(ref: string): string {
+	const match = CIVITAI_LORA_AIR_PATTERN.exec(ref);
+	const { modelId, versionId } = match?.groups ?? {};
+	if (modelId && versionId) {
+		return `model ${modelId} / version ${versionId}`;
+	}
+	return ref;
+}
+
+function formatNoLoraInferenceSummary(
+	requestBody: Record<string, unknown>,
+	stepName?: string | null
+): string {
+	const loraRefs =
+		collectCivitaiLoraRefs(requestBody).map(formatCivitaiLoraRef);
+	const isPlural = loraRefs.length > 1;
+	const subject = isPlural ? "Selected Civitai LoRAs" : "Selected Civitai LoRA";
+	const verb = isPlural ? "have" : "has";
+	const loraSuffix = loraRefs.length > 0 ? ` (${loraRefs.join(", ")})` : "";
+	const stepSuffix = stepName ? ` in workflow step "${stepName}"` : "";
+	return `${subject}${loraSuffix} ${verb} no available Civitai inference for LTX 2.3${stepSuffix}. Civitai does not currently support this LoRA/version with the selected LTX 2.3 model; choose another compatible LoRA version or another provider.`;
+}
+
 function buildCivitaiWorkflowRequestBody(
 	step: Record<string, unknown>,
 	endpointKey: string
@@ -279,7 +352,8 @@ function hasProviderSupport(job: CivitaiWorkflowStepJob): boolean {
 }
 
 function extractUnsupportedWorkflowSummary(
-	workflow: CivitaiWorkflow
+	workflow: CivitaiWorkflow,
+	requestBody: Record<string, unknown>
 ): string | null {
 	const unsupportedStep = (workflow.steps ?? []).find((step) => {
 		const jobs = step.jobs ?? [];
@@ -292,8 +366,7 @@ function extractUnsupportedWorkflowSummary(
 	if (!unsupportedStep) {
 		return null;
 	}
-	const stepName = unsupportedStep.name ? ` step ${unsupportedStep.name}` : "";
-	return `Civitai has no available provider for this LTX 2.3${stepName}. The selected LoRA/model combination is not currently supported by Civitai inference.`;
+	return formatNoLoraInferenceSummary(requestBody, unsupportedStep.name);
 }
 
 function getEventType(job: CivitaiJobStatus): string | null {
@@ -558,7 +631,15 @@ export function createCivitaiClient(options: {
 			> | null;
 			if (!response.ok) {
 				const message = extractErrorMessage(body ?? {}, response.status);
-				const errorMessage = `${label}: ${message}`;
+				const requestBody =
+					typeof init?.body === "string" ? parseJsonRecord(init.body) : null;
+				const visibleMessage =
+					label === "Civitai workflows.preflight" &&
+					NO_AVAILABLE_PROVIDER_PATTERN.test(message) &&
+					requestBody
+						? formatNoLoraInferenceSummary(requestBody)
+						: message;
+				const errorMessage = `${label}: ${visibleMessage}`;
 				if (
 					label === "Civitai workflows.preflight" &&
 					response.status >= 400 &&
@@ -618,7 +699,10 @@ export function createCivitaiClient(options: {
 					},
 					"Civitai workflows.preflight"
 				);
-				const unsupportedSummary = extractUnsupportedWorkflowSummary(preflight);
+				const unsupportedSummary = extractUnsupportedWorkflowSummary(
+					preflight,
+					workflowRequestBody
+				);
 				if (unsupportedSummary) {
 					throw new NonRetryableInferenceError(
 						`Civitai workflows.preflight: ${unsupportedSummary}`

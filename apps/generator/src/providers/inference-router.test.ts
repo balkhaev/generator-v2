@@ -93,6 +93,35 @@ describe("inference router", () => {
 		);
 	});
 
+	it("routes RunPod Pod-marked payloads and endpoint ids to RunPod Pod", async () => {
+		const fal = createMockClient("fal");
+		const runpodPod = createMockClient("runpod-pod");
+		const router = createInferenceRouter({ fal, runpodPod });
+
+		await expect(
+			router.submit({
+				__runpodPod: "ltx-2-3-synth-video",
+				prompt: "test",
+			})
+		).resolves.toMatchObject({
+			endpointId: "runpod-pod-endpoint",
+		});
+		expect(runpodPod.submit).toHaveBeenCalledTimes(1);
+		expect(fal.submit).not.toHaveBeenCalled();
+
+		await router.getStatus("pod-123:request-456", "runpod-pod:ltx-2-3");
+		expect(runpodPod.getStatus).toHaveBeenCalledWith(
+			"pod-123:request-456",
+			"runpod-pod:ltx-2-3"
+		);
+
+		await router.cancel("pod-123:request-456", "runpod-pod:ltx-2-3");
+		expect(runpodPod.cancel).toHaveBeenCalledWith(
+			"pod-123:request-456",
+			"runpod-pod:ltx-2-3"
+		);
+	});
+
 	it("keeps fal routing for fal payloads and unprefixed endpoint ids", async () => {
 		const fal = createMockClient("fal");
 		const runpod = createMockClient("runpod");
@@ -153,6 +182,17 @@ describe("inference router", () => {
 				prompt: "test",
 			})
 		).toThrow("RunPod inference client is not configured");
+	});
+
+	it("fails fast when a RunPod Pod workflow is submitted without a RunPod Pod client", () => {
+		const router = createInferenceRouter({ fal: createMockClient("fal") });
+
+		expect(() =>
+			router.submit({
+				__runpodPod: "ltx-2-3-synth-video",
+				prompt: "test",
+			})
+		).toThrow("RunPod Pod inference client is not configured");
 	});
 
 	it("fails fast when a Civitai workflow is submitted without a Civitai client", () => {

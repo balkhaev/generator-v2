@@ -1,6 +1,10 @@
 "use client";
 
 import type { LoraRegistryEntry } from "@generator/contracts/loras";
+import type {
+	StudioPromptEnhanceMode,
+	StudioPromptSource,
+} from "@generator/contracts/studio";
 import { enhanceStudioPrompt } from "@generator/studio-client/client";
 import {
 	createScenarioFormState,
@@ -23,6 +27,7 @@ import {
 	useEffect,
 	useId,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { toast } from "sonner";
@@ -141,7 +146,7 @@ function ScenarioEnhancePromptButton({
 	referenceImageUrl,
 	textSourceOnly,
 }: {
-	onEnhanced: (enhanced: string) => void;
+	onEnhanced: (promptSource: StudioPromptSource) => void;
 	prompt: string;
 	referenceImageUrl: string | null;
 	/** Text-to-image / text-to-video: enhance prompt as plain text only (ignore optional image URLs in params). */
@@ -149,12 +154,20 @@ function ScenarioEnhancePromptButton({
 }) {
 	const visionImageUrl = textSourceOnly ? null : referenceImageUrl;
 	const useVisionEnhance = Boolean(visionImageUrl);
+	const promptSourceRef = useRef<{
+		mode: StudioPromptEnhanceMode;
+		originalPrompt: string;
+	} | null>(null);
 	return (
 		<EnhancePromptButton
 			enhance={async (value) => {
 				const result = await enhanceStudioPrompt(value, {
 					imageUrl: visionImageUrl,
 				});
+				promptSourceRef.current = {
+					mode: result.mode,
+					originalPrompt: value,
+				};
 				if (result.notice) {
 					toast.warning(result.notice);
 				}
@@ -162,7 +175,12 @@ function ScenarioEnhancePromptButton({
 			}}
 			label={useVisionEnhance ? "Enhance for image" : "Enhance"}
 			onEnhanced={(enhanced) => {
-				onEnhanced(enhanced);
+				const source = promptSourceRef.current;
+				onEnhanced({
+					enhancedPrompt: enhanced,
+					mode: source?.mode ?? (useVisionEnhance ? "vision" : "text"),
+					originalPrompt: source?.originalPrompt ?? prompt.trim(),
+				});
 				toast.success(
 					useVisionEnhance
 						? "Prompt rewritten for the reference image"
@@ -775,8 +793,12 @@ export default function ComposeForm({
 						</div>
 						<div className="flex items-center gap-2">
 							<ScenarioEnhancePromptButton
-								onEnhanced={(enhanced) =>
-									onFormChange({ ...form, prompt: enhanced })
+								onEnhanced={(promptSource) =>
+									onFormChange({
+										...form,
+										prompt: promptSource.enhancedPrompt,
+										promptSource,
+									})
 								}
 								prompt={form.prompt}
 								referenceImageUrl={referenceImageUrl}
@@ -799,7 +821,11 @@ export default function ComposeForm({
 						)}
 						id={promptId}
 						onChange={(event) =>
-							onFormChange({ ...form, prompt: event.target.value })
+							onFormChange({
+								...form,
+								prompt: event.target.value,
+								promptSource: null,
+							})
 						}
 						placeholder={selectedWorkflow.promptHint}
 						value={form.prompt}

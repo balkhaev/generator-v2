@@ -13,6 +13,7 @@ import type {
 	StudioScenarioRecord as ServerScenarioRecord,
 	StudioShotRecord as ServerShotRecord,
 	StudioInputAssetRecord,
+	StudioPromptSource,
 	StudioShotArtifactKind,
 } from "@generator/contracts/studio";
 
@@ -118,6 +119,7 @@ export interface ScenarioFormState {
 	name: string;
 	params: Record<string, string>;
 	prompt: string;
+	promptSource?: StudioPromptSource | null;
 	workflowKey: string;
 }
 
@@ -231,6 +233,7 @@ function normalizeScenarioRecord(record: ServerScenarioRecord): ScenarioRecord {
 			])
 		),
 		prompt: record.prompt,
+		promptSource: record.promptSource ?? null,
 		updatedAt: record.updatedAt ?? record.createdAt ?? new Date().toISOString(),
 		workflowKey: record.workflowKey,
 	};
@@ -322,6 +325,7 @@ export function createScenarioFormState(
 			])
 		),
 		prompt: "",
+		promptSource: null,
 		workflowKey: workflow.key,
 	};
 }
@@ -345,7 +349,28 @@ export function buildScenarioFormStateFromRecord(
 		name: scenario.name,
 		params: baseParams,
 		prompt: scenario.prompt,
+		promptSource: scenario.promptSource ?? null,
 		workflowKey: workflow.key,
+	};
+}
+
+function promptSourceForPrompt(
+	promptSource: StudioPromptSource | null | undefined,
+	prompt: string
+): StudioPromptSource | null {
+	const originalPrompt = promptSource?.originalPrompt.trim();
+	const enhancedPrompt = promptSource?.enhancedPrompt.trim();
+	if (!(originalPrompt && enhancedPrompt)) {
+		return null;
+	}
+	if (enhancedPrompt !== prompt.trim()) {
+		return null;
+	}
+	const mode = promptSource?.mode;
+	return {
+		enhancedPrompt,
+		...(mode ? { mode } : {}),
+		originalPrompt,
 	};
 }
 
@@ -387,6 +412,7 @@ export function buildCreateScenarioInput(
 			ScenarioParamValue
 		>,
 		prompt: form.prompt,
+		promptSource: promptSourceForPrompt(form.promptSource, form.prompt),
 		workflowKey: form.workflowKey,
 	};
 }

@@ -14,14 +14,24 @@ export interface StudioScenarioRecord {
 	name: string;
 	params?: Record<string, ScenarioParamValue>;
 	prompt: string;
+	promptSource?: StudioPromptSource | null;
 	updatedAt?: string;
 	workflowKey: string;
+}
+
+export type StudioPromptEnhanceMode = "text" | "vision";
+
+export interface StudioPromptSource {
+	enhancedPrompt: string;
+	mode?: StudioPromptEnhanceMode;
+	originalPrompt: string;
 }
 
 export interface CreateStudioScenarioInput {
 	name: string;
 	params?: Record<string, ScenarioParamValue>;
 	prompt: string;
+	promptSource?: StudioPromptSource | null;
 	workflowKey: string;
 }
 
@@ -84,6 +94,8 @@ export interface CreateStudioRunInput {
 	 * scenario.prompt как обычно.
 	 */
 	promptOverride?: string;
+	/** Исходный prompt пользователя до Enhance, если текущий prompt был переписан. */
+	promptSource?: StudioPromptSource | null;
 	scenarioId: string;
 }
 

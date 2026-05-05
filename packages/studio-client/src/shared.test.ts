@@ -43,4 +43,42 @@ describe("studio shared scenario inputs", () => {
 			}).params
 		).toEqual({ duration: 6 });
 	});
+
+	it("keeps prompt source only while it matches the enhanced prompt", () => {
+		const workflow: WorkflowDefinition = {
+			active: true,
+			key: "fal-zimage-turbo",
+			name: "Z-Image Turbo",
+			parameters: [],
+			promptHint: "Describe image",
+			requiresInputImage: false,
+			summary: "Text-to-image generation.",
+		};
+
+		const promptSource = {
+			enhancedPrompt: "cinematic portrait, soft window light",
+			mode: "text" as const,
+			originalPrompt: "portrait",
+		};
+
+		expect(
+			buildCreateScenarioInput(workflow, {
+				name: "Enhanced",
+				params: {},
+				prompt: promptSource.enhancedPrompt,
+				promptSource,
+				workflowKey: workflow.key,
+			}).promptSource
+		).toEqual(promptSource);
+
+		expect(
+			buildCreateScenarioInput(workflow, {
+				name: "Edited",
+				params: {},
+				prompt: "manual edit",
+				promptSource,
+				workflowKey: workflow.key,
+			}).promptSource
+		).toBeNull();
+	});
 });

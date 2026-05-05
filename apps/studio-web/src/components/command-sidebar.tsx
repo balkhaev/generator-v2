@@ -5,6 +5,10 @@ import type {
 	PersonGenerationRecord,
 	PersonRecord,
 } from "@generator/contracts/persons";
+import type {
+	StudioPromptEnhanceMode,
+	StudioPromptSource,
+} from "@generator/contracts/studio";
 import { env } from "@generator/env/web";
 import { requestJson } from "@generator/http/client";
 import { normalizeBaseUrl } from "@generator/http/shared";
@@ -43,7 +47,7 @@ import {
 import type { Route } from "next";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getLoraSlots } from "@/components/compose/workflow-matrix";
 import { buildFinalPromptPreview } from "@/components/final-prompt-preview";
@@ -209,6 +213,9 @@ function buildLaunchInput({
 	const promptOverride = draft.promptOverride?.trim();
 	if (promptOverride && promptOverride !== scenario.prompt) {
 		launchInput.promptOverride = promptOverride;
+		if (draft.promptSource?.enhancedPrompt.trim() === promptOverride) {
+			launchInput.promptSource = draft.promptSource;
+		}
 	}
 	return launchInput;
 }
@@ -553,6 +560,10 @@ function PromptOverrideEditor({
 	const useVisionEnhance = Boolean(
 		requiresInputImage && draft?.inputImageUrl?.trim()
 	);
+	const promptSourceRef = useRef<{
+		mode: StudioPromptEnhanceMode;
+		originalPrompt: string;
+	} | null>(null);
 	const finalPrompt = useMemo(() => {
 		if (!workflow) {
 			return promptValue;
@@ -568,10 +579,15 @@ function PromptOverrideEditor({
 		? finalPrompt
 		: "Prompt is empty.";
 
-	function setPrompt(next: string) {
+	function setPrompt(next: string, promptSource?: StudioPromptSource | null) {
+		const promptOverride = next === scenario.prompt ? undefined : next;
 		onDraftChange({
 			...(draft ?? createRunDraft(scenario.id)),
-			promptOverride: next === scenario.prompt ? undefined : next,
+			promptOverride,
+			promptSource:
+				promptOverride && promptSource?.enhancedPrompt.trim() === promptOverride
+					? promptSource
+					: undefined,
 			scenarioId: scenario.id,
 		});
 	}
@@ -580,6 +596,7 @@ function PromptOverrideEditor({
 		onDraftChange({
 			...(draft ?? createRunDraft(scenario.id)),
 			promptOverride: undefined,
+			promptSource: undefined,
 			scenarioId: scenario.id,
 		});
 	}
@@ -630,6 +647,10 @@ function PromptOverrideEditor({
 									? (draft?.inputImageUrl ?? null)
 									: null,
 							});
+							promptSourceRef.current = {
+								mode: result.mode,
+								originalPrompt: value,
+							};
 							if (result.notice) {
 								toast.warning(result.notice);
 							} else if (result.mode === "vision") {
@@ -640,7 +661,14 @@ function PromptOverrideEditor({
 							return result.enhanced;
 						}}
 						label={useVisionEnhance ? "Enhance for image" : "Enhance"}
-						onEnhanced={(enhanced) => setPrompt(enhanced)}
+						onEnhanced={(enhanced) => {
+							const source = promptSourceRef.current;
+							setPrompt(enhanced, {
+								enhancedPrompt: enhanced,
+								mode: source?.mode ?? (useVisionEnhance ? "vision" : "text"),
+								originalPrompt: source?.originalPrompt ?? promptValue.trim(),
+							});
+						}}
 						onError={(message) => toast.error(message)}
 						prompt={promptValue}
 						tooltip={
@@ -1299,6 +1327,7 @@ export default function CommandSidebar({
 					...createRunDraft(scenario.id),
 					inputImageUrl: result.data.inputImageUrl,
 					promptOverride: undefined,
+					promptSource: undefined,
 				},
 			}));
 			toast.success("Run queued.");

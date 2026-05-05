@@ -1,6 +1,7 @@
 "use client";
 
 import type { PersonRecord } from "@generator/contracts/persons";
+import type { StudioPromptSource } from "@generator/contracts/studio";
 import { env } from "@generator/env/web";
 import {
 	type AdminSnapshot,
@@ -164,6 +165,31 @@ function buildScenarioCards(
 			workflowKey: scenario.workflowKey,
 		};
 	});
+}
+
+function readPromptSource(value: unknown): StudioPromptSource | null {
+	if (!(typeof value === "object" && value !== null)) {
+		return null;
+	}
+	const source = value as Partial<Record<keyof StudioPromptSource, unknown>>;
+	const originalPrompt =
+		typeof source.originalPrompt === "string"
+			? source.originalPrompt.trim()
+			: "";
+	const enhancedPrompt =
+		typeof source.enhancedPrompt === "string"
+			? source.enhancedPrompt.trim()
+			: "";
+	if (!(originalPrompt && enhancedPrompt)) {
+		return null;
+	}
+	return {
+		enhancedPrompt,
+		...(source.mode === "text" || source.mode === "vision"
+			? { mode: source.mode }
+			: {}),
+		originalPrompt,
+	};
 }
 
 function pickHeadlineLiveRun(params: {
@@ -681,9 +707,13 @@ export default function StudioShell({
 			}
 
 			const scenarioPrompt = scenariosById.get(asset.scenarioId)?.prompt.trim();
+			const scenarioPromptSource = readPromptSource(
+				scenariosById.get(asset.scenarioId)?.promptSource
+			);
 			const fallback = scenarioPrompt
 				? {
 						prompt: scenarioPrompt,
+						sourcePrompt: scenarioPromptSource?.originalPrompt ?? null,
 						sourceLabel: "Current scenario prompt",
 					}
 				: null;
@@ -691,9 +721,13 @@ export default function StudioShell({
 			try {
 				const bundle = await getStudioRunDebugBundle(asset.runId);
 				const executionPrompt = bundle.execution?.prompt?.trim();
+				const executionPromptSource = readPromptSource(
+					bundle.execution?.callback?.context?.promptSource
+				);
 				if (executionPrompt) {
 					return {
 						prompt: executionPrompt,
+						sourcePrompt: executionPromptSource?.originalPrompt ?? null,
 						sourceLabel: "Generator execution prompt",
 					};
 				}

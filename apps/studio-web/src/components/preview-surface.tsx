@@ -97,6 +97,7 @@ export interface StudioMediaAsset {
 export interface StudioMediaPromptDetails {
 	prompt: string;
 	sourceLabel?: string | null;
+	sourcePrompt?: string | null;
 }
 
 interface PromptDialogState {
@@ -105,6 +106,7 @@ interface PromptDialogState {
 	isLoading: boolean;
 	prompt: string | null;
 	sourceLabel: string | null;
+	sourcePrompt: string | null;
 }
 
 function deriveDownloadName(asset: StudioMediaAsset) {
@@ -354,6 +356,7 @@ function PreviewPromptDialog({
 	state: PromptDialogState | null;
 }) {
 	const prompt = state?.prompt?.trim() ?? "";
+	const sourcePrompt = state?.sourcePrompt?.trim() ?? "";
 	let body: ReactNode;
 	if (state?.isLoading) {
 		body = (
@@ -369,10 +372,16 @@ function PreviewPromptDialog({
 			</p>
 		);
 	} else {
-		body = (
-			<pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-foreground/10 bg-muted/20 p-3 text-sm leading-relaxed">
-				{prompt}
-			</pre>
+		body = sourcePrompt ? (
+			<div className="grid gap-3">
+				<PromptTextBlock
+					title="User prompt before Enhance"
+					value={sourcePrompt}
+				/>
+				<PromptTextBlock title="Generation prompt" value={prompt} />
+			</div>
+		) : (
+			<PromptTextBlock value={prompt} />
 		);
 	}
 
@@ -408,6 +417,21 @@ function PreviewPromptDialog({
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+function PromptTextBlock({ title, value }: { title?: string; value: string }) {
+	return (
+		<div className="grid gap-1.5">
+			{title ? (
+				<p className="font-medium text-[11px] text-muted-foreground uppercase">
+					{title}
+				</p>
+			) : null}
+			<pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-foreground/10 bg-muted/20 p-3 text-sm leading-relaxed">
+				{value}
+			</pre>
+		</div>
 	);
 }
 
@@ -601,6 +625,7 @@ export default function PreviewSurface({
 			error: null,
 			isLoading: true,
 			prompt: null,
+			sourcePrompt: null,
 			sourceLabel: null,
 		});
 
@@ -617,6 +642,7 @@ export default function PreviewSurface({
 						error: "Prompt is unavailable for this media.",
 						isLoading: false,
 						prompt: null,
+						sourcePrompt: null,
 						sourceLabel: null,
 					};
 				}
@@ -625,6 +651,7 @@ export default function PreviewSurface({
 					error: null,
 					isLoading: false,
 					prompt,
+					sourcePrompt: details?.sourcePrompt ?? null,
 					sourceLabel: details?.sourceLabel ?? null,
 				};
 			});
@@ -638,6 +665,7 @@ export default function PreviewSurface({
 							error: message,
 							isLoading: false,
 							prompt: null,
+							sourcePrompt: null,
 							sourceLabel: null,
 						}
 					: current

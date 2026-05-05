@@ -8,6 +8,7 @@ import type {
 import type { PersonRecord } from "@generator/contracts/persons";
 import {
 	buildPromptWithTriggerWords,
+	type StudioPromptSource,
 	type StudioRunDebugBundle,
 	type StudioRunRecord,
 	type StudioScenarioRecord,
@@ -29,10 +30,19 @@ const studioScenarioParamsSchema = z
 	.record(z.string(), z.unknown())
 	.default({});
 
+const studioPromptSourceSchema = z
+	.object({
+		enhancedPrompt: z.string().trim().min(1),
+		mode: z.enum(["text", "vision"]).optional(),
+		originalPrompt: z.string().trim().min(1),
+	})
+	.nullish();
+
 export const createStudioScenarioInputSchema = z.object({
 	name: z.string().trim().min(1, "Scenario name is required"),
 	params: studioScenarioParamsSchema,
 	prompt: z.string().trim().min(1, "Prompt is required"),
+	promptSource: studioPromptSourceSchema,
 	workflowKey: z.string().trim().min(1, "Workflow key is required"),
 });
 
@@ -49,6 +59,7 @@ export const createStudioRunInputSchema = z.object({
 	inputPersonId: z.string().trim().min(1).optional().nullable(),
 	loraPersonId: z.string().trim().min(1).optional().nullable(),
 	promptOverride: z.string().trim().min(1).max(4000).optional(),
+	promptSource: studioPromptSourceSchema,
 	scenarioId: z.string().trim().min(1, "Scenario id is required"),
 });
 
@@ -69,6 +80,8 @@ const STATUS_ORDER: Record<StudioRunStatus, number> = {
 	succeeded: 2,
 	failed: 2,
 };
+
+const PROMPT_SOURCE_PARAM_KEY = "__studioPromptSource";
 
 function isStatusProgression(
 	currentStatus: StudioRunStatus,
@@ -241,21 +254,130 @@ function toScenarioParamValue(value: unknown): ScenarioParamValue {
 	return JSON.stringify(value);
 }
 
+function normalizePromptSource(value: unknown): StudioPromptSource | null {
+	const result = studioPromptSourceSchema.safeParse(value);
+	if (!(result.success && result.data)) {
+		return null;
+	}
+	const originalPrompt = result.data.originalPrompt.trim();
+	const enhancedPrompt = result.data.enhancedPrompt.trim();
+	if (!(originalPrompt && enhancedPrompt)) {
+		return null;
+	}
+	return {
+		enhancedPrompt,
+		...(result.data.mode ? { mode: result.data.mode } : {}),
+		originalPrompt,
+	};
+}
+
+function promptSourceForPrompt(
+	value: unknown,
+	prompt: string
+): StudioPromptSource | null {
+	const source = normalizePromptSource(value);
+	if (!source) {
+		return null;
+	}
+	return source.enhancedPrompt === prompt.trim() ? source : null;
+}
+
+function stripStoredPromptSource(
+	params: Record<string, unknown>
+): Record<string, unknown> {
+	const { [PROMPT_SOURCE_PARAM_KEY]: _promptSource, ...rest } = params;
+	return rest;
+}
+
+function readStoredPromptSource(
+	params: Record<string, unknown>
+): StudioPromptSource | null {
+	return normalizePromptSource(params[PROMPT_SOURCE_PARAM_KEY]);
+}
+
+function withStoredPromptSource(
+	params: Record<string, unknown>,
+	promptSource: unknown,
+	prompt: string
+): Record<string, unknown> {
+	const cleanParams = stripStoredPromptSource(params);
+	const source = promptSourceForPrompt(promptSource, prompt);
+	return source
+		? { ...cleanParams, [PROMPT_SOURCE_PARAM_KEY]: source }
+		: cleanParams;
+}
+
+function promptSourceForScenarioUpdate(params: {
+	current: StudioScenarioEntity;
+	nextPrompt: string;
+	parsed: z.infer<typeof updateStudioScenarioInputSchema>;
+}): StudioPromptSource | null {
+	if (params.parsed.promptSource !== undefined) {
+		return promptSourceForPrompt(params.parsed.promptSource, params.nextPrompt);
+	}
+	if (params.parsed.prompt !== undefined) {
+		return null;
+	}
+	return promptSourceForPrompt(
+		readStoredPromptSource(params.current.params),
+		params.nextPrompt
+	);
+}
+
+function promptSourceForRun(input: {
+	basePrompt: string;
+	parsed: z.infer<typeof createStudioRunInputSchema>;
+	scenario: StudioScenarioEntity;
+}): StudioPromptSource | null {
+	if (input.parsed.promptOverride) {
+		return promptSourceForPrompt(input.parsed.promptSource, input.basePrompt);
+	}
+	return promptSourceForPrompt(
+		readStoredPromptSource(input.scenario.params),
+		input.basePrompt
+	);
+}
+
+function buildExecutionCallback(input: {
+	callbackConfig?: { token: string; url?: string };
+	promptSource: StudioPromptSource | null;
+	runId: string;
+}): CreateGeneratorExecutionInput["callback"] {
+	if (!(input.callbackConfig || input.promptSource)) {
+		return undefined;
+	}
+	return {
+		context: {
+			runId: input.runId,
+			...(input.promptSource ? { promptSource: input.promptSource } : {}),
+		},
+		...(input.callbackConfig?.token
+			? { token: input.callbackConfig.token }
+			: {}),
+		...(input.callbackConfig?.url ? { url: input.callbackConfig.url } : {}),
+	};
+}
+
 function toStudioScenarioRecord(
 	entity: StudioScenarioEntity
 ): StudioScenarioRecord {
+	const cleanParams = stripStoredPromptSource(entity.params);
 	return {
 		createdAt: entity.createdAt.toISOString(),
 		generatorScenarioId: entity.generatorScenarioId,
 		id: entity.id,
 		name: entity.name,
 		params: Object.fromEntries(
-			Object.entries(entity.params).map(([key, value]) => [
+			Object.entries(cleanParams).map(([key, value]) => [
 				key,
 				toScenarioParamValue(value),
 			])
 		),
 		prompt: entity.prompt,
+		promptSource: promptSourceForPrompt(
+			readStoredPromptSource(entity.params),
+			entity.prompt
+		),
 		updatedAt: entity.updatedAt.toISOString(),
 		workflowKey: entity.workflowKey,
 	};
@@ -682,7 +804,11 @@ export class StudioService {
 			generatorScenarioId: null,
 			id: crypto.randomUUID(),
 			name: parsed.name,
-			params: parsed.params,
+			params: withStoredPromptSource(
+				parsed.params,
+				parsed.promptSource,
+				parsed.prompt
+			),
 			prompt: parsed.prompt,
 			workflowKey: parsed.workflowKey,
 		});
@@ -699,10 +825,20 @@ export class StudioService {
 			return null;
 		}
 
+		const nextPrompt = parsed.prompt ?? current.prompt;
+		const nextPromptSource = promptSourceForScenarioUpdate({
+			current,
+			nextPrompt,
+			parsed,
+		});
 		const updated = await this.repository.updateScenario(scenarioId, {
 			name: parsed.name ?? current.name,
-			params: parsed.params ?? current.params,
-			prompt: parsed.prompt ?? current.prompt,
+			params: withStoredPromptSource(
+				parsed.params ?? current.params,
+				nextPromptSource,
+				nextPrompt
+			),
+			prompt: nextPrompt,
 			workflowKey: parsed.workflowKey ?? current.workflowKey,
 		});
 
@@ -769,7 +905,7 @@ export class StudioService {
 		cookieHeader: string
 	): Promise<Record<string, unknown>> {
 		const mergedExecutionParams: Record<string, unknown> = {
-			...(scenario.params as Record<string, unknown>),
+			...stripStoredPromptSource(scenario.params as Record<string, unknown>),
 		};
 		if (!parsed.loraPersonId) {
 			return mergedExecutionParams;
@@ -841,6 +977,11 @@ export class StudioService {
 		});
 
 		const basePrompt = parsed.promptOverride ?? scenario.prompt;
+		const basePromptSource = promptSourceForRun({
+			basePrompt,
+			parsed,
+			scenario,
+		});
 		const finalPrompt = await this.injectLoraTriggerWords({
 			params: mergedExecutionParams,
 			prompt: basePrompt,
@@ -852,17 +993,11 @@ export class StudioService {
 		try {
 			execution = await this.executionClient.createExecution(
 				{
-					callback: this.callbackConfig
-						? {
-								context: {
-									runId: createdRun.id,
-								},
-								token: this.callbackConfig.token,
-								...(this.callbackConfig.url
-									? { url: this.callbackConfig.url }
-									: {}),
-							}
-						: undefined,
+					callback: buildExecutionCallback({
+						callbackConfig: this.callbackConfig,
+						promptSource: basePromptSource,
+						runId: createdRun.id,
+					}),
 					...(parsed.inputImageUrl
 						? { inputImageUrl: parsed.inputImageUrl }
 						: {}),

@@ -734,6 +734,79 @@ describe("studio backend", () => {
 		expect(promptsSeen[0]).toBe("mystic, neon city, a quiet street at night");
 	});
 
+	it("keeps enhanced prompt source on scenario and run execution context", async () => {
+		const repository = createMemoryRepository();
+		const contextsSeen: unknown[] = [];
+		const { app } = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub({
+				createExecution(input) {
+					contextsSeen.push(input.callback?.context ?? null);
+					return Promise.resolve({
+						artifacts: [],
+						callback: input.callback ?? null,
+						errorSummary: null,
+						id: "execution-prompt-source",
+						inputImageUrl: input.inputImageUrl ?? "",
+						prompt: input.prompt,
+						providerEndpointId: null,
+						providerJobId: null,
+						status: "queued",
+						workflowKey: input.workflowKey,
+					});
+				},
+			}),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			repository,
+			s3Config: fakeS3Config,
+		});
+
+		const promptSource = {
+			enhancedPrompt: "cinematic portrait, soft window light",
+			mode: "text" as const,
+			originalPrompt: "portrait",
+		};
+		const createResponse = await app.request("http://localhost/api/scenarios", {
+			body: JSON.stringify({
+				name: "Enhanced prompt",
+				params: {},
+				prompt: promptSource.enhancedPrompt,
+				promptSource,
+				workflowKey: "fal-zimage-turbo",
+			}),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		expect(createResponse.status).toBe(201);
+		const createPayload = (await createResponse.json()) as {
+			scenario: {
+				id: string;
+				params: Record<string, unknown>;
+				promptSource: unknown;
+			};
+		};
+		expect(createPayload.scenario.promptSource).toEqual(promptSource);
+		expect(createPayload.scenario.params.__studioPromptSource).toBeUndefined();
+
+		const runResponse = await app.request("http://localhost/api/runs", {
+			body: JSON.stringify({ scenarioId: createPayload.scenario.id }),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		expect(runResponse.status).toBe(201);
+		expect(contextsSeen).toHaveLength(1);
+		expect(contextsSeen[0]).toMatchObject({ promptSource });
+	});
+
 	it("returns a studio-native aggregate snapshot", async () => {
 		const repository = createMemoryRepository();
 		await repository.createScenario({

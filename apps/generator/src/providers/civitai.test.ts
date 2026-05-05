@@ -83,35 +83,71 @@ describe("civitai provider", () => {
 	});
 
 	it("submits generic video jobs without injecting a top-level model", async () => {
+		const expectedBody = {
+			allowMatureContent: true,
+			currencies: [],
+			metadata: {
+				endpointKey: "ltx2.3:synth-lora:createVideo",
+				source: "generator",
+			},
+			steps: [
+				{
+					$type: "videoGen",
+					input: {
+						engine: "ltx2.3",
+						operation: "createVideo",
+						prompt: "test",
+						loras: {
+							"urn:air:ltxv23:lora:civitai:2509189@2820451": 1,
+						},
+					},
+					name: "video",
+					priority: "normal",
+					retries: 1,
+				},
+			],
+		};
+		let requestIndex = 0;
 		const fetchImpl = mock((url: string, init?: RequestInit) => {
+			requestIndex += 1;
+			expect(init?.method).toBe("POST");
+			expect(JSON.parse(String(init?.body))).toEqual(expectedBody);
+			if (requestIndex === 1) {
+				expect(url).toBe(
+					"https://orchestration-new.civitai.com/v2/consumer/workflows?hideMatureContent=false&wait=0&whatif=true"
+				);
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							id: "workflow-estimate",
+							status: "scheduled",
+							steps: [
+								{
+									jobs: [
+										{
+											id: "job-estimate",
+											queuePosition: {
+												precedingJobs: 2,
+												support: "available",
+											},
+											status: "scheduled",
+										},
+									],
+									name: "video",
+									status: "scheduled",
+								},
+							],
+						}),
+						{
+							headers: { "content-type": "application/json" },
+							status: 200,
+						}
+					)
+				);
+			}
 			expect(url).toBe(
 				"https://orchestration-new.civitai.com/v2/consumer/workflows?hideMatureContent=false&wait=0"
 			);
-			expect(init?.method).toBe("POST");
-			expect(JSON.parse(String(init?.body))).toEqual({
-				allowMatureContent: true,
-				currencies: [],
-				metadata: {
-					endpointKey: "ltx2.3:synth-lora:createVideo",
-					source: "generator",
-				},
-				steps: [
-					{
-						$type: "videoGen",
-						input: {
-							engine: "ltx2.3",
-							operation: "createVideo",
-							prompt: "test",
-							loras: {
-								"urn:air:ltxv23:lora:civitai:2509189@2820451": 1,
-							},
-						},
-						name: "video",
-						priority: "normal",
-						retries: 1,
-					},
-				],
-			});
 			return Promise.resolve(
 				new Response(
 					JSON.stringify({
@@ -164,6 +200,61 @@ describe("civitai provider", () => {
 			queuePosition: 2,
 			status: "queued",
 		});
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
+	});
+
+	it("fails fast when workflow preflight has no supporting provider", async () => {
+		const fetchImpl = mock((url: string) => {
+			expect(url).toBe(
+				"https://orchestration-new.civitai.com/v2/consumer/workflows?hideMatureContent=false&wait=0&whatif=true"
+			);
+			return Promise.resolve(
+				new Response(
+					JSON.stringify({
+						id: "workflow-estimate",
+						status: "unassigned",
+						steps: [
+							{
+								jobs: [
+									{
+										id: "job-estimate",
+										status: "unassigned",
+									},
+								],
+								name: "video",
+								status: "unassigned",
+							},
+						],
+					}),
+					{
+						headers: { "content-type": "application/json" },
+						status: 200,
+					}
+				)
+			);
+		});
+		const client = createCivitaiClient({
+			apiKey: "civitai_test_key",
+			fetchImpl,
+		});
+
+		await expect(
+			client.submit({
+				__civitaiEndpoint: "ltx2.3:synth-lora:createVideo",
+				$type: "videoGen",
+				input: {
+					engine: "ltx2.3",
+					operation: "createVideo",
+					prompt: "test",
+					loras: {
+						"urn:air:ltxv23:lora:civitai:2509189@2820451": 1,
+					},
+				},
+			})
+		).rejects.toThrow(
+			"Civitai workflows.preflight: Civitai has no available provider for this LTX 2.3 step video. The selected LoRA/model combination is not currently supported by Civitai inference."
+		);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
 	});
 
 	it("returns completed blob URLs from token status", async () => {
@@ -285,6 +376,73 @@ describe("civitai provider", () => {
 			progressPct: 100,
 			status: "succeeded",
 		});
+	});
+
+	it("surfaces detailed failed workflow job reasons", async () => {
+		let requestIndex = 0;
+		const fetchImpl = mock((url: string) => {
+			requestIndex += 1;
+			if (requestIndex === 1) {
+				expect(url).toBe(
+					"https://orchestration-new.civitai.com/v2/consumer/workflows/workflow-123?hideMatureContent=false&wait=false"
+				);
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							id: "workflow-123",
+							status: "failed",
+							steps: [
+								{
+									jobs: [
+										{
+											id: "provider-job-1",
+											status: "failed",
+										},
+									],
+									name: "video",
+									status: "failed",
+								},
+							],
+						}),
+						{
+							headers: { "content-type": "application/json" },
+							status: 200,
+						}
+					)
+				);
+			}
+			expect(url).toBe(
+				"https://orchestration-new.civitai.com/v1/consumer/jobs/provider-job-1?detailed=true"
+			);
+			return Promise.resolve(
+				new Response(
+					JSON.stringify({
+						jobId: "provider-job-1",
+						lastEvent: {
+							context: { reason: "No provider supports this job" },
+							type: "Failed",
+						},
+					}),
+					{
+						headers: { "content-type": "application/json" },
+						status: 200,
+					}
+				)
+			);
+		});
+		const client = createCivitaiClient({
+			apiKey: "civitai_test_key",
+			fetchImpl,
+		});
+
+		const job = await client.getStatus(
+			"workflow-123",
+			"civitai:ltx2.3:synth-lora:createVideo"
+		);
+
+		expect(job.status).toBe("failed");
+		expect(job.errorSummary).toBe("No provider supports this job");
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
 	});
 
 	it("surfaces failed job events", async () => {
@@ -413,7 +571,7 @@ describe("civitai provider", () => {
 				},
 			})
 		).rejects.toThrow(
-			"Civitai workflows.create: One or more validation errors occurred. input.duration: The value 5 is not valid for Duration."
+			"Civitai workflows.preflight: One or more validation errors occurred. input.duration: The value 5 is not valid for Duration."
 		);
 	});
 

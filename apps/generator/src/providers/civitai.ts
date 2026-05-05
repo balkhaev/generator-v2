@@ -33,6 +33,7 @@ interface CivitaiJobEvent {
 
 interface CivitaiQueuePosition {
 	precedingJobs?: number;
+	support?: string | null;
 }
 
 interface CivitaiProviderJobStatus {
@@ -54,6 +55,8 @@ interface CivitaiJobStatusCollection {
 
 interface CivitaiWorkflowStepJob {
 	estimatedProgressRate?: number | null;
+	id?: string | null;
+	jobId?: string | null;
 	queuePosition?: CivitaiQueuePosition | null;
 	status?: string | null;
 }
@@ -70,6 +73,11 @@ interface CivitaiWorkflow {
 	id?: string | null;
 	status?: string | null;
 	steps?: CivitaiWorkflowStep[] | null;
+}
+
+interface CivitaiDetailedJobStatus {
+	jobId?: string | null;
+	lastEvent?: CivitaiJobEvent;
 }
 
 export function formatCivitaiProviderEndpointId(model: string): string {
@@ -259,6 +267,34 @@ function buildCivitaiWorkflowRequestBody(
 	};
 }
 
+function hasProviderSupport(job: CivitaiWorkflowStepJob): boolean {
+	const support = job.queuePosition?.support;
+	return (
+		support === "available" ||
+		job.status === "scheduled" ||
+		job.status === "processing" ||
+		job.status === "succeeded"
+	);
+}
+
+function extractUnsupportedWorkflowSummary(
+	workflow: CivitaiWorkflow
+): string | null {
+	const unsupportedStep = (workflow.steps ?? []).find((step) => {
+		const jobs = step.jobs ?? [];
+		return (
+			jobs.length > 0 &&
+			jobs.every((job) => !hasProviderSupport(job)) &&
+			jobs.every((job) => job.status === "unassigned" || !job.status)
+		);
+	});
+	if (!unsupportedStep) {
+		return null;
+	}
+	const stepName = unsupportedStep.name ? ` step ${unsupportedStep.name}` : "";
+	return `Civitai has no available provider for this LTX 2.3${stepName}. The selected LoRA/model combination is not currently supported by Civitai inference.`;
+}
+
 function getEventType(job: CivitaiJobStatus): string | null {
 	const type = job.lastEvent?.type;
 	return typeof type === "string" && type.length > 0 ? type : null;
@@ -340,6 +376,25 @@ function extractFailureSummary(job: CivitaiJobStatus): string {
 	return eventType ? `Civitai job ${eventType}` : "Civitai job failed";
 }
 
+function getDetailedJobEventType(job: CivitaiDetailedJobStatus): string | null {
+	const type = job.lastEvent?.type;
+	return typeof type === "string" && type.length > 0 ? type : null;
+}
+
+function extractDetailedJobFailureSummary(
+	job: CivitaiDetailedJobStatus
+): string | null {
+	const context = job.lastEvent?.context;
+	for (const key of ["error", "message", "reason"] as const) {
+		const message = messageFromValue(context?.[key]);
+		if (message) {
+			return message;
+		}
+	}
+	const eventType = getDetailedJobEventType(job);
+	return eventType ? `Civitai job ${eventType}` : null;
+}
+
 function normalizeWorkflowStatus(
 	status: string | null | undefined
 ): InferenceStatus {
@@ -356,8 +411,15 @@ function normalizeWorkflowStatus(
 }
 
 function extractWorkflowFailureSummary(
-	workflow: CivitaiWorkflow
+	workflow: CivitaiWorkflow,
+	jobDetails: CivitaiDetailedJobStatus[] = []
 ): string | null {
+	for (const job of jobDetails) {
+		const summary = extractDetailedJobFailureSummary(job);
+		if (summary) {
+			return summary;
+		}
+	}
 	const failedStep = (workflow.steps ?? []).find((step) => {
 		return step.status ? failedWorkflowStatuses.has(step.status) : false;
 	});
@@ -370,7 +432,8 @@ function extractWorkflowFailureSummary(
 function normalizeWorkflow(
 	body: CivitaiWorkflow & Record<string, unknown>,
 	endpointId: string,
-	jobId: string
+	jobId: string,
+	jobDetails: CivitaiDetailedJobStatus[] = []
 ): InferenceJob {
 	const status = normalizeWorkflowStatus(body.status);
 	const progress = status === "succeeded" ? 100 : extractWorkflowProgress(body);
@@ -382,7 +445,9 @@ function normalizeWorkflow(
 	return {
 		endpointId,
 		errorSummary:
-			status === "failed" ? extractWorkflowFailureSummary(body) : null,
+			status === "failed"
+				? extractWorkflowFailureSummary(body, jobDetails)
+				: null,
 		jobId,
 		lastLogLine,
 		output: status === "succeeded" ? body : null,
@@ -390,6 +455,17 @@ function normalizeWorkflow(
 		queuePosition: extractWorkflowQueuePosition(body),
 		status,
 	};
+}
+
+function collectWorkflowJobIds(workflow: CivitaiWorkflow): string[] {
+	return [
+		...new Set(
+			(workflow.steps ?? [])
+				.flatMap((step) => step.jobs ?? [])
+				.map((job) => job.id ?? job.jobId)
+				.filter((jobId): jobId is string => Boolean(jobId))
+		),
+	];
 }
 
 function normalizeJobCollection(
@@ -489,20 +565,61 @@ export function createCivitaiClient(options: {
 		}
 	};
 
+	const collectDetailedWorkflowJobStatuses = async (
+		workflow: CivitaiWorkflow
+	): Promise<CivitaiDetailedJobStatus[]> => {
+		const details: CivitaiDetailedJobStatus[] = [];
+		for (const detailJobId of collectWorkflowJobIds(workflow)) {
+			try {
+				const detail = await request<CivitaiDetailedJobStatus>(
+					buildUrl(
+						apiBaseUrl,
+						`/v1/consumer/jobs/${encodeURIComponent(detailJobId)}`,
+						{ detailed: "true" }
+					),
+					undefined,
+					"Civitai jobs.get"
+				);
+				details.push(detail);
+			} catch {
+				// Workflow status is still authoritative if a detail lookup fails.
+			}
+		}
+		return details;
+	};
+
 	return {
 		async submit(payload): Promise<InferenceSubmission> {
 			const { endpointKey, requestBody } = buildCivitaiRequestBody(payload);
 			const endpointId = formatCivitaiProviderEndpointId(endpointKey);
 			if (isCivitaiWorkflowEndpointKey(endpointKey)) {
+				const workflowRequestBody = buildCivitaiWorkflowRequestBody(
+					requestBody,
+					endpointKey
+				);
+				const preflight = await request<CivitaiWorkflow>(
+					buildUrl(apiBaseUrl, "/v2/consumer/workflows", {
+						hideMatureContent: "false",
+						wait: "0",
+						whatif: "true",
+					}),
+					{
+						body: JSON.stringify(workflowRequestBody),
+						method: "POST",
+					},
+					"Civitai workflows.preflight"
+				);
+				const unsupportedSummary = extractUnsupportedWorkflowSummary(preflight);
+				if (unsupportedSummary) {
+					throw new Error(`Civitai workflows.preflight: ${unsupportedSummary}`);
+				}
 				const body = await request<CivitaiWorkflow>(
 					buildUrl(apiBaseUrl, "/v2/consumer/workflows", {
 						hideMatureContent: "false",
 						wait: "0",
 					}),
 					{
-						body: JSON.stringify(
-							buildCivitaiWorkflowRequestBody(requestBody, endpointKey)
-						),
+						body: JSON.stringify(workflowRequestBody),
 						method: "POST",
 					},
 					"Civitai workflows.create"
@@ -565,7 +682,11 @@ export function createCivitaiClient(options: {
 					undefined,
 					"Civitai workflows.get"
 				);
-				return normalizeWorkflow(body, endpointId, jobId);
+				const jobDetails =
+					normalizeWorkflowStatus(body.status) === "failed"
+						? await collectDetailedWorkflowJobStatuses(body)
+						: [];
+				return normalizeWorkflow(body, endpointId, jobId, jobDetails);
 			}
 			parseCivitaiProviderEndpointId(endpointId);
 			const body = await request<CivitaiJobStatusCollection>(

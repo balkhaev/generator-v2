@@ -1,7 +1,9 @@
 import { createDb } from "@generator/db";
 import { and, desc, eq, inArray } from "@generator/db/operators";
 import { generatorExecution } from "@generator/db/schema/generator";
+import { lora } from "@generator/db/schema/loras";
 import { person, personGeneration } from "@generator/db/schema/persons";
+import { studioRun, studioScenario } from "@generator/db/schema/studio";
 import {
 	collectServiceHealth,
 	fetchServiceSnapshot,
@@ -56,6 +58,9 @@ const DEFAULT_LOCK_LIMIT = 100;
 const MAX_LOCK_LIMIT = 500;
 const DEFAULT_LORA_DEBUG_GENERATION_LIMIT = 5;
 const MAX_LORA_DEBUG_GENERATION_LIMIT = 20;
+const DEFAULT_STUDIO_EXECUTION_DEBUG_LIMIT = 10;
+const MAX_STUDIO_EXECUTION_DEBUG_LIMIT = 25;
+const FAL_LORA_SIZE_LIMIT_BYTES = 1_000_000_000;
 
 const toolDefinitions = [
 	{
@@ -507,6 +512,37 @@ const toolDefinitions = [
 			type: "object",
 		},
 		name: "studio_run_mark_failed",
+	},
+	{
+		description:
+			"Read-only bundle for debugging Studio runs and generator executions, including scenario params, execution provider LoRA payload, and registry size checks.",
+		inputSchema: {
+			properties: {
+				executionId: {
+					description: "Generator execution id.",
+					type: "string",
+				},
+				limit: {
+					description:
+						"How many recent scenario runs to include when scenarioId is provided. Defaults to 10, max 25.",
+					type: "number",
+				},
+				providerJobId: {
+					description: "Provider job id returned by fal/replicate/etc.",
+					type: "string",
+				},
+				runId: {
+					description: "Studio run id.",
+					type: "string",
+				},
+				scenarioId: {
+					description: "Studio scenario id.",
+					type: "string",
+				},
+			},
+			type: "object",
+		},
+		name: "studio_execution_debug",
 	},
 ] as const;
 
@@ -1008,6 +1044,9 @@ type McpDatabase = ReturnType<typeof createDb>;
 type PersonRow = typeof person.$inferSelect;
 type PersonGenerationRow = typeof personGeneration.$inferSelect;
 type GeneratorExecutionRow = typeof generatorExecution.$inferSelect;
+type LoraRow = typeof lora.$inferSelect;
+type StudioRunRow = typeof studioRun.$inferSelect;
+type StudioScenarioRow = typeof studioScenario.$inferSelect;
 type GenerationDebugMetadata = ReturnType<typeof pickGenerationMetadata>;
 
 let mcpDatabase: McpDatabase | null = null;
@@ -1043,6 +1082,170 @@ function readRecordBoolean(
 
 function toIsoString(value: Date | null) {
 	return value ? value.toISOString() : null;
+}
+
+function truncateText(value: string, maxLength = 500) {
+	return value.length <= maxLength
+		? value
+		: `${value.slice(0, maxLength - 1)}…`;
+}
+
+const loraParamKeys = [
+	"loraUrl",
+	"extraLoraUrl",
+	"loraUrlHigh",
+	"loraUrlLow",
+] as const;
+
+const loraWeightParamKeys = [
+	"loraWeight",
+	"extraLoraWeight",
+	"loraScale",
+	"loraScaleHigh",
+	"loraScaleLow",
+] as const;
+
+function pickLoraParams(params: Record<string, unknown> | null) {
+	const picked: Record<string, unknown> = {};
+	for (const key of [...loraParamKeys, ...loraWeightParamKeys]) {
+		const value = params?.[key];
+		if (value !== undefined) {
+			picked[key] = value;
+		}
+	}
+	return picked;
+}
+
+function collectLoraParamEntries(
+	source: "execution.params" | "scenario.params",
+	params: Record<string, unknown> | null
+) {
+	const entries: Array<{
+		key: string;
+		source: "execution.params" | "scenario.params";
+		url: string;
+	}> = [];
+	for (const key of loraParamKeys) {
+		const value = readRecordString(params, key);
+		if (value) {
+			entries.push({ key, source, url: value });
+		}
+	}
+	return entries;
+}
+
+function collectProviderPayloadLoraEntries(
+	providerPayload: ReturnType<typeof buildProviderPayloadDebug>
+) {
+	const payload = asRecord(providerPayload.payload);
+	const loras = payload?.loras;
+	if (!Array.isArray(loras)) {
+		return [];
+	}
+
+	return loras
+		.map((entry, index) => {
+			const record = asRecord(entry);
+			const url =
+				readRecordString(record, "path") ?? readRecordString(record, "url");
+			if (!url) {
+				return null;
+			}
+			return {
+				index,
+				scale:
+					readRecordNumber(record, "scale") ??
+					readRecordNumber(record, "weight"),
+				source: "providerPayload.loras" as const,
+				transformer: readRecordString(record, "transformer"),
+				url,
+			};
+		})
+		.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+}
+
+function summarizeStudioScenario(row: StudioScenarioRow | null) {
+	if (!row) {
+		return null;
+	}
+	const params = asRecord(row.params);
+	return {
+		createdAt: toIsoString(row.createdAt),
+		generatorScenarioId: row.generatorScenarioId,
+		id: row.id,
+		loraParams: pickLoraParams(params),
+		name: row.name,
+		params,
+		promptLength: row.prompt.length,
+		promptPreview: truncateText(row.prompt),
+		updatedAt: toIsoString(row.updatedAt),
+		workflowKey: row.workflowKey,
+	};
+}
+
+function summarizeStudioRun(row: StudioRunRow) {
+	return {
+		completedAt: toIsoString(row.completedAt),
+		createdAt: toIsoString(row.createdAt),
+		errorSummary: row.errorSummary,
+		generatorRunId: row.generatorRunId,
+		id: row.id,
+		inputImageUrl: row.inputImageUrl,
+		inputPersonGenerationId: row.inputPersonGenerationId,
+		inputPersonId: row.inputPersonId,
+		loraPersonId: row.loraPersonId,
+		progressPct: row.progressPct,
+		providerEndpointId: row.providerEndpointId,
+		providerJobId: row.providerJobId,
+		scenarioId: row.scenarioId,
+		status: row.status,
+		updatedAt: toIsoString(row.updatedAt),
+		workflowKey: row.workflowKey,
+	};
+}
+
+function summarizeStudioExecution(row: GeneratorExecutionRow) {
+	const params = asRecord(row.params);
+	const providerPayload = buildProviderPayloadDebug(row);
+	return {
+		artifacts: row.artifacts,
+		createdAt: toIsoString(row.createdAt),
+		errorSummary: row.errorSummary,
+		id: row.id,
+		inputImageUrl: row.inputImageUrl,
+		loraParams: pickLoraParams(params),
+		params,
+		progressPct: row.progressPct,
+		promptLength: row.prompt.length,
+		promptPreview: truncateText(row.prompt),
+		providerEndpointId: row.providerEndpointId,
+		providerJobId: row.providerJobId,
+		providerPayload,
+		queuePosition: row.queuePosition,
+		status: row.status,
+		updatedAt: toIsoString(row.updatedAt),
+		workflowKey: row.workflowKey,
+	};
+}
+
+function summarizeLoraRegistryRow(row: LoraRow) {
+	return {
+		baseModel: row.baseModel,
+		defaultWeight: row.defaultWeight,
+		exceedsFalOneGbLimit: row.sizeBytes >= FAL_LORA_SIZE_LIMIT_BYTES,
+		id: row.id,
+		name: row.name,
+		pairGroupId: row.pairGroupId,
+		s3Key: row.s3Key,
+		s3Url: row.s3Url,
+		sizeBytes: row.sizeBytes,
+		sizeLimitBytes: FAL_LORA_SIZE_LIMIT_BYTES,
+		slug: row.slug,
+		sourceUrl: row.sourceUrl,
+		status: row.status,
+		triggerWords: row.triggerWords,
+		variant: row.variant,
+	};
 }
 
 function pickGenerationMetadata(metadata: Record<string, unknown>) {
@@ -1824,6 +2027,312 @@ async function handleGeneratorExecutionToolCall(
 	);
 }
 
+function addRowsById<T extends { id: string }>(
+	target: Map<string, T>,
+	rows: T[]
+) {
+	for (const row of rows) {
+		target.set(row.id, row);
+	}
+}
+
+function readCallbackRunId(execution: GeneratorExecutionRow) {
+	const callback = asRecord(execution.callback);
+	const context = asRecord(callback?.context);
+	return readRecordString(context, "runId");
+}
+
+async function listStudioDebugRuns(input: {
+	database: McpDatabase;
+	executionIds: Set<string>;
+	limit: number;
+	providerJobId?: string;
+	runId?: string;
+	scenarioId?: string;
+}) {
+	const runRowsById = new Map<string, StudioRunRow>();
+	if (input.runId) {
+		addRowsById(
+			runRowsById,
+			await input.database
+				.select()
+				.from(studioRun)
+				.where(eq(studioRun.id, input.runId))
+				.limit(1)
+		);
+	}
+	if (input.providerJobId) {
+		addRowsById(
+			runRowsById,
+			await input.database
+				.select()
+				.from(studioRun)
+				.where(eq(studioRun.providerJobId, input.providerJobId))
+				.limit(5)
+		);
+	}
+	for (const executionId of input.executionIds) {
+		addRowsById(
+			runRowsById,
+			await input.database
+				.select()
+				.from(studioRun)
+				.where(eq(studioRun.generatorRunId, executionId))
+				.limit(5)
+		);
+	}
+	if (input.scenarioId) {
+		addRowsById(
+			runRowsById,
+			await input.database
+				.select()
+				.from(studioRun)
+				.where(eq(studioRun.scenarioId, input.scenarioId))
+				.orderBy(desc(studioRun.createdAt))
+				.limit(input.limit)
+		);
+	}
+	return [...runRowsById.values()].sort(
+		(left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+	);
+}
+
+async function listStudioDebugExecutions(input: {
+	database: McpDatabase;
+	executionId?: string;
+	providerJobId?: string;
+	runRows: StudioRunRow[];
+}) {
+	const executionRowsById = new Map<string, GeneratorExecutionRow>();
+	if (input.executionId) {
+		addRowsById(
+			executionRowsById,
+			await input.database
+				.select()
+				.from(generatorExecution)
+				.where(eq(generatorExecution.id, input.executionId))
+				.limit(1)
+		);
+	}
+	if (input.providerJobId) {
+		addRowsById(
+			executionRowsById,
+			await input.database
+				.select()
+				.from(generatorExecution)
+				.where(eq(generatorExecution.providerJobId, input.providerJobId))
+				.limit(5)
+		);
+	}
+
+	const runExecutionIds = input.runRows
+		.map((run) => run.generatorRunId)
+		.filter((executionId): executionId is string => Boolean(executionId));
+	if (runExecutionIds.length > 0) {
+		addRowsById(
+			executionRowsById,
+			await input.database
+				.select()
+				.from(generatorExecution)
+				.where(inArray(generatorExecution.id, runExecutionIds))
+		);
+	}
+
+	return [...executionRowsById.values()].sort(
+		(left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+	);
+}
+
+async function findStudioScenarioForDebug(input: {
+	database: McpDatabase;
+	runRows: StudioRunRow[];
+	scenarioId?: string;
+}) {
+	const scenarioId = input.scenarioId ?? input.runRows[0]?.scenarioId;
+	if (!scenarioId) {
+		return null;
+	}
+	const [row] = await input.database
+		.select()
+		.from(studioScenario)
+		.where(eq(studioScenario.id, scenarioId))
+		.limit(1);
+	return row ?? null;
+}
+
+async function listLoraRegistryRowsForDebug(input: {
+	database: McpDatabase;
+	urls: string[];
+}) {
+	const urls = [...new Set(input.urls.filter((url) => url.length > 0))];
+	if (urls.length === 0) {
+		return [];
+	}
+	return await input.database
+		.select()
+		.from(lora)
+		.where(inArray(lora.s3Url, urls));
+}
+
+function buildStudioLoraDebug(input: {
+	executionRows: GeneratorExecutionRow[];
+	loraRows: LoraRow[];
+	scenarioRow: StudioScenarioRow | null;
+}) {
+	const urlEntries: Array<
+		| ReturnType<typeof collectLoraParamEntries>[number]
+		| ReturnType<typeof collectProviderPayloadLoraEntries>[number]
+	> = [];
+	if (input.scenarioRow) {
+		urlEntries.push(
+			...collectLoraParamEntries(
+				"scenario.params",
+				asRecord(input.scenarioRow.params)
+			)
+		);
+	}
+	for (const execution of input.executionRows) {
+		const providerPayload = buildProviderPayloadDebug(execution);
+		urlEntries.push(
+			...collectLoraParamEntries(
+				"execution.params",
+				asRecord(execution.params)
+			),
+			...collectProviderPayloadLoraEntries(providerPayload)
+		);
+	}
+
+	const loraByUrl = new Map(input.loraRows.map((row) => [row.s3Url, row]));
+	const registryMatches = input.loraRows.map(summarizeLoraRegistryRow);
+	const overLimit = registryMatches.filter((row) => row.exceedsFalOneGbLimit);
+	const missingRegistryUrls = [...new Set(urlEntries.map((entry) => entry.url))]
+		.filter((url) => !loraByUrl.has(url))
+		.sort();
+
+	return {
+		falLoraSizeLimitBytes: FAL_LORA_SIZE_LIMIT_BYTES,
+		findings: {
+			missingRegistryUrls,
+			overLimit,
+		},
+		registryMatches,
+		urlEntries,
+	};
+}
+
+async function handleStudioExecutionDebugToolCall(
+	_name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const executionId = parseOptionalString(argumentsPayload.executionId);
+	const providerJobId = parseOptionalString(argumentsPayload.providerJobId);
+	const runId = parseOptionalString(argumentsPayload.runId);
+	const scenarioId = parseOptionalString(argumentsPayload.scenarioId);
+	if (!(executionId || providerJobId || runId || scenarioId)) {
+		return createErrorResponse(
+			id,
+			"scenarioId, runId, executionId, or providerJobId is required"
+		);
+	}
+
+	const limit = clampInteger(
+		parseOptionalNumber(argumentsPayload.limit),
+		DEFAULT_STUDIO_EXECUTION_DEBUG_LIMIT,
+		MAX_STUDIO_EXECUTION_DEBUG_LIMIT
+	);
+	const database = getMcpDatabase();
+	const requestedExecutionIds = new Set<string>();
+	if (executionId) {
+		requestedExecutionIds.add(executionId);
+	}
+
+	let runRows = await listStudioDebugRuns({
+		database,
+		executionIds: requestedExecutionIds,
+		limit,
+		providerJobId,
+		runId,
+		scenarioId,
+	});
+	let executionRows = await listStudioDebugExecutions({
+		database,
+		executionId,
+		providerJobId,
+		runRows,
+	});
+
+	const callbackRunIds = executionRows
+		.map(readCallbackRunId)
+		.filter((callbackRunId): callbackRunId is string => Boolean(callbackRunId));
+	for (const callbackRunId of callbackRunIds) {
+		const extraRows = await listStudioDebugRuns({
+			database,
+			executionIds: new Set(),
+			limit,
+			runId: callbackRunId,
+		});
+		runRows = [
+			...new Map(
+				[...runRows, ...extraRows].map((run) => [run.id, run])
+			).values(),
+		];
+	}
+
+	executionRows = await listStudioDebugExecutions({
+		database,
+		executionId,
+		providerJobId,
+		runRows,
+	});
+
+	const scenarioRow = await findStudioScenarioForDebug({
+		database,
+		runRows,
+		scenarioId,
+	});
+	const loraUrlEntries = [
+		...(scenarioRow
+			? collectLoraParamEntries("scenario.params", asRecord(scenarioRow.params))
+			: []),
+		...executionRows.flatMap((execution) => {
+			const providerPayload = buildProviderPayloadDebug(execution);
+			return [
+				...collectLoraParamEntries(
+					"execution.params",
+					asRecord(execution.params)
+				),
+				...collectProviderPayloadLoraEntries(providerPayload),
+			];
+		}),
+	];
+	const loraRows = await listLoraRegistryRowsForDebug({
+		database,
+		urls: loraUrlEntries.map((entry) => entry.url),
+	});
+
+	return createOkResponse(
+		id,
+		createToolResult({
+			executions: executionRows.map(summarizeStudioExecution),
+			limit,
+			loraDebug: buildStudioLoraDebug({
+				executionRows,
+				loraRows,
+				scenarioRow,
+			}),
+			requested: {
+				executionId: executionId ?? null,
+				providerJobId: providerJobId ?? null,
+				runId: runId ?? null,
+				scenarioId: scenarioId ?? null,
+			},
+			runs: runRows.map(summarizeStudioRun),
+			scenario: summarizeStudioScenario(scenarioRow),
+		})
+	);
+}
+
 async function handleStudioRunMarkFailedToolCall(
 	_name: string,
 	argumentsPayload: Record<string, unknown>,
@@ -1872,6 +2381,7 @@ const toolHandlers: Record<string, ToolHandler> = {
 	generator_execution_sync: handleGeneratorExecutionToolCall,
 	lora_get: handleLoraToolCall,
 	lora_list: handleLoraToolCall,
+	studio_execution_debug: handleStudioExecutionDebugToolCall,
 	studio_run_mark_failed: handleStudioRunMarkFailedToolCall,
 	test_user_get: handleTestUserToolCall,
 	test_user_upsert: handleTestUserToolCall,

@@ -1,10 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import type {
 	AdminUser,
+	AdminWorkflowDetailResponse,
+	AdminWorkflowListResponse,
 	CreateAdminUserInput,
 	ListAdminUsersQuery,
 	UpdateAdminUserInput,
 } from "@generator/contracts/admin";
+import type {
+	DomainName,
+	RuntimeConfigSnapshot,
+} from "@generator/runtime-config/domains";
+import type { RuntimeConfigStore } from "@generator/runtime-config/store";
 
 import { createApp } from "@/app";
 import { UsersService } from "@/domain/users";
@@ -23,6 +30,38 @@ function createEmptyDashboardSnapshot() {
 		},
 		scenarios: [],
 		snapshotAt: new Date().toISOString(),
+	};
+}
+
+function createWorkflowRuntimeConfigStore(
+	initialInactiveWorkflowKeys: string[]
+): RuntimeConfigStore {
+	const settings = {
+		inactiveWorkflowKeys: initialInactiveWorkflowKeys,
+	};
+	return {
+		deleteCredential() {
+			return Promise.resolve();
+		},
+		getSnapshot(domain) {
+			return Promise.resolve({
+				credentials: {},
+				domain: domain as DomainName,
+				settings,
+			} satisfies RuntimeConfigSnapshot);
+		},
+		listCredentials() {
+			return Promise.resolve([]);
+		},
+		setCredential() {
+			return Promise.resolve();
+		},
+		setSetting(_domain, key, value) {
+			if (key === "inactiveWorkflowKeys" && Array.isArray(value)) {
+				settings.inactiveWorkflowKeys = value as string[];
+			}
+			return Promise.resolve();
+		},
 	};
 }
 
@@ -204,6 +243,64 @@ describe("admin gateway", () => {
 		expect(body.config.configured).toBe(false);
 		expect(body.config.missing).toContain("S3_BUCKET");
 		expect(body.categories.length).toBeGreaterThan(0);
+	});
+
+	it("exposes workflow visibility and persists active toggles", async () => {
+		const invalidated: DomainName[] = [];
+		const app = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3001"],
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			loadDashboardSnapshot() {
+				return Promise.resolve(createEmptyDashboardSnapshot());
+			},
+			loadSetupStatus() {
+				return Promise.resolve({ setupRequired: false });
+			},
+			runtimeConfig: {
+				deps: {
+					publishInvalidation(domain) {
+						invalidated.push(domain);
+						return Promise.resolve();
+					},
+					store: createWorkflowRuntimeConfigStore(["fal-zimage-turbo"]),
+				},
+			},
+			studioBaseUrl: "http://studio.internal",
+		});
+
+		const listResponse = await app.request(
+			"http://localhost/api/admin/workflows"
+		);
+		expect(listResponse.status).toBe(200);
+		const list = (await listResponse.json()) as AdminWorkflowListResponse;
+		const hiddenWorkflow = list.workflows.find(
+			(workflow) => workflow.key === "fal-zimage-turbo"
+		);
+		expect(hiddenWorkflow?.active).toBe(false);
+		expect(list.inactiveWorkflowKeys).toEqual(["fal-zimage-turbo"]);
+
+		const patchResponse = await app.request(
+			"http://localhost/api/admin/workflows/fal-zimage-turbo",
+			{
+				body: JSON.stringify({ active: true }),
+				headers: { "content-type": "application/json" },
+				method: "PATCH",
+			}
+		);
+		expect(patchResponse.status).toBe(200);
+		const patched = (await patchResponse.json()) as AdminWorkflowDetailResponse;
+		expect(patched.workflow.active).toBe(true);
+		expect(patched.inactiveWorkflowKeys).toEqual([]);
+		expect(invalidated).toEqual(["studio-workflows"]);
 	});
 
 	it("exposes users CRUD for authenticated requests", async () => {

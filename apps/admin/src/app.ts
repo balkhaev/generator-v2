@@ -50,6 +50,7 @@ import {
 	type TrainingProviderAvailabilityResolver,
 } from "@/routes/training-provider";
 import { createAdminUserRoutes } from "@/routes/users";
+import { createWorkflowAdminRoutes } from "@/routes/workflows";
 
 interface AppVariables extends AuthVariables {
 	debugCorrelationId: string;
@@ -319,6 +320,11 @@ export function createApp(options: AppOptions) {
 	if (options.usersService) {
 		app.route("/api/admin/users", createAdminUserRoutes(options.usersService));
 	}
+
+	app.route(
+		"/api/admin/workflows",
+		createWorkflowAdminRoutes(options.runtimeConfig?.deps)
+	);
 
 	registerTrainingAndSettingsRoutes(app, options);
 

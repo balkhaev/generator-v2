@@ -45,6 +45,7 @@ export interface WorkflowParameter {
 }
 
 export interface WorkflowDefinition {
+	active: boolean;
 	baseModel?: WorkflowBaseModel;
 	key: string;
 	name: string;
@@ -193,6 +194,7 @@ function normalizeWorkflowDefinition(
 	workflow: ServerWorkflowSummary
 ): WorkflowDefinition {
 	return {
+		active: workflow.active ?? true,
 		baseModel: workflow.baseModel,
 		key: workflow.key,
 		name: workflow.name,

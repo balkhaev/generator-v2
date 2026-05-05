@@ -35,6 +35,7 @@ export interface WorkflowField {
 }
 
 export interface WorkflowSummary {
+	active?: boolean;
 	baseModel?: WorkflowBaseModel;
 	defaults: Record<string, unknown>;
 	description: string;

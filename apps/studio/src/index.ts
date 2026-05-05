@@ -14,8 +14,10 @@ import {
 } from "@generator/env/server";
 import { createKafkaEventConsumer, eventTopics } from "@generator/events";
 import { createGeneratorExecutionClient } from "@generator/generator-client-server";
+import { createRuntimeConfigClient } from "@generator/runtime-config/client";
+import type { StudioWorkflowSettings } from "@generator/runtime-config/domains";
 import { resolveS3StorageConfig } from "@generator/storage";
-import { createApp } from "@/app";
+import { createApp, type WorkflowSettingsReader } from "@/app";
 import { createDrizzleStudioRepository } from "@/repositories/studio";
 
 const PORT = Number(process.env.PORT ?? 3006);
@@ -23,6 +25,27 @@ const PORT = Number(process.env.PORT ?? 3006);
 const generatorBaseUrl = getGeneratorApiUrl();
 const repository = createDrizzleStudioRepository();
 const loraReadRepository = createLoraReadRepository();
+
+function createWorkflowSettingsReader(): WorkflowSettingsReader | undefined {
+	const adminUrl = env.ADMIN_API_URL?.trim();
+	const token = env.RUNTIME_CONFIG_INTERNAL_TOKEN?.trim();
+	if (!(adminUrl && token)) {
+		return undefined;
+	}
+	const client = createRuntimeConfigClient({
+		adminApiUrl: adminUrl,
+		internalToken: token,
+		logger: console,
+		redisUrl: env.REDIS_URL,
+	});
+	return {
+		async listInactiveWorkflowKeys() {
+			const snapshot = await client.get("studio-workflows");
+			const settings = snapshot.settings as StudioWorkflowSettings;
+			return settings.inactiveWorkflowKeys;
+		},
+	};
+}
 
 const { app, service } = createApp({
 	adminApiBaseUrl: env.ADMIN_API_URL,
@@ -43,6 +66,7 @@ const { app, service } = createApp({
 	personsApiBaseUrl: env.PERSONS_API_URL,
 	repository,
 	s3Config: resolveS3StorageConfig(process.env),
+	workflowSettingsReader: createWorkflowSettingsReader(),
 });
 
 ensureDevUser();

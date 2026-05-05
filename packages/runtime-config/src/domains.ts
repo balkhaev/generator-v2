@@ -34,6 +34,13 @@ export const trainingSettingsSchema = z.object({
 });
 export type TrainingSettings = z.infer<typeof trainingSettingsSchema>;
 
+export const studioWorkflowSettingsSchema = z.object({
+	inactiveWorkflowKeys: z.array(z.string().min(1)).default([]),
+});
+export type StudioWorkflowSettings = z.infer<
+	typeof studioWorkflowSettingsSchema
+>;
+
 export interface DomainSpec<T> {
 	name: string;
 	/** Maps a provider name to the credential keys it requires. */
@@ -85,9 +92,16 @@ export const trainingDomain: DomainSpec<TrainingSettings> = {
 	},
 };
 
+export const studioWorkflowsDomain: DomainSpec<StudioWorkflowSettings> = {
+	name: "studio-workflows",
+	schema: studioWorkflowSettingsSchema,
+	providerCredentials: {},
+};
+
 export const domains = {
 	"prompt-enhance-studio": promptEnhanceStudioDomain,
 	"prompt-enhance-persons": promptEnhancePersonsDomain,
+	"studio-workflows": studioWorkflowsDomain,
 	training: trainingDomain,
 } as const;
 

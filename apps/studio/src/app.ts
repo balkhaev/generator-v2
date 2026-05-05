@@ -68,9 +68,15 @@ interface AppOptions {
 	resolvePromptEnhanceClient?: () => Promise<PromptEnhanceClient | undefined>;
 	s3Client?: S3ClientLike;
 	s3Config: S3StorageConfig;
+	workflowSettingsReader?: WorkflowSettingsReader;
+}
+
+export interface WorkflowSettingsReader {
+	listInactiveWorkflowKeys(): Promise<string[]>;
 }
 
 interface WorkflowDefinition {
+	active: boolean;
 	baseModel?: string;
 	key: string;
 	name: string;
@@ -152,6 +158,7 @@ function normalizeWorkflowDefinition(
 	workflow: ServerWorkflowSummary
 ): WorkflowDefinition {
 	return {
+		active: workflow.active ?? true,
 		baseModel: workflow.baseModel,
 		key: workflow.key,
 		name: workflow.name,
@@ -175,13 +182,57 @@ function normalizeWorkflowDefinition(
 	};
 }
 
+async function listWorkflowSummaries(options: {
+	includeInactive: boolean;
+	logger?: Pick<Console, "warn">;
+	workflowSettingsReader?: WorkflowSettingsReader;
+}): Promise<ServerWorkflowSummary[]> {
+	let inactiveWorkflowKeys: string[] = [];
+	if (options.workflowSettingsReader) {
+		try {
+			inactiveWorkflowKeys =
+				await options.workflowSettingsReader.listInactiveWorkflowKeys();
+		} catch (error) {
+			options.logger?.warn?.("studio.workflows.visibility_read_failed", {
+				message: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+	const inactive = new Set(inactiveWorkflowKeys);
+	const workflows = listWorkflows().map((workflow) => ({
+		...(workflow as ServerWorkflowSummary),
+		active: !inactive.has(workflow.key),
+	}));
+	return options.includeInactive
+		? workflows
+		: workflows.filter((workflow) => workflow.active);
+}
+
+async function listStudioWorkflowDefinitions(options: {
+	includeInactive: boolean;
+	logger?: Pick<Console, "warn">;
+	workflowSettingsReader?: WorkflowSettingsReader;
+}): Promise<WorkflowDefinition[]> {
+	const workflows = await listWorkflowSummaries(options);
+	return workflows.map(normalizeWorkflowDefinition);
+}
+
 async function createStudioSnapshot(
-	service: StudioService
+	service: StudioService,
+	options: {
+		logger?: Pick<Console, "warn">;
+		workflowSettingsReader?: WorkflowSettingsReader;
+	}
 ): Promise<StudioSnapshotResponse> {
-	const [scenarios, runs, shots] = await Promise.all([
+	const [scenarios, runs, shots, workflows] = await Promise.all([
 		service.listScenarios(),
 		service.listRunsWire(),
 		service.listShots().catch(() => [] as StudioShotRecord[]),
+		listStudioWorkflowDefinitions({
+			includeInactive: true,
+			logger: options.logger,
+			workflowSettingsReader: options.workflowSettingsReader,
+		}),
 	]);
 	const scenarioNames = new Map(
 		scenarios.map((scenario) => [scenario.id, scenario.name])
@@ -195,9 +246,7 @@ async function createStudioSnapshot(
 			scenarioName: scenarioNames.get(shot.scenarioId) ?? "Unknown scenario",
 		})),
 		source: "server",
-		workflows: listWorkflows().map((workflow) =>
-			normalizeWorkflowDefinition(workflow as ServerWorkflowSummary)
-		),
+		workflows,
 	};
 }
 
@@ -291,11 +340,20 @@ export function createApp(options: AppOptions): {
 		}
 	});
 	app.get("/api/studio-snapshot", async (c) =>
-		c.json(await createStudioSnapshot(service))
+		c.json(
+			await createStudioSnapshot(service, {
+				logger: options.loggerImpl,
+				workflowSettingsReader: options.workflowSettingsReader,
+			})
+		)
 	);
-	app.get("/api/workflows", (c) =>
+	app.get("/api/workflows", async (c) =>
 		c.json({
-			workflows: listWorkflows(),
+			workflows: await listWorkflowSummaries({
+				includeInactive: false,
+				logger: options.loggerImpl,
+				workflowSettingsReader: options.workflowSettingsReader,
+			}),
 		})
 	);
 	for (const route of ["/api/executions", "/api/executions/*"]) {

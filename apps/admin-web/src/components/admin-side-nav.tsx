@@ -10,6 +10,7 @@ import {
 	Boxes,
 	GraduationCap,
 	HardDrive,
+	ListTree,
 	type LucideIcon,
 	Settings,
 	Sparkles,
@@ -40,6 +41,12 @@ const ITEMS: AdminSideNavItem[] = [
 		icon: Workflow,
 		label: "Runs",
 		description: "Execution stream",
+	},
+	{
+		href: "/workflows" as Route,
+		icon: ListTree,
+		label: "Workflows",
+		description: "Catalog visibility",
 	},
 	{
 		href: "/scenarios" as Route,

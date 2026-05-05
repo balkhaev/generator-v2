@@ -1,4 +1,4 @@
-import type { RunStatus } from "./generator";
+import type { RunStatus, WorkflowSummary } from "./generator";
 import type { PersonLoraTrainingMeta } from "./persons";
 
 export interface DashboardRecentRun {
@@ -58,6 +58,25 @@ export interface AdminDashboardSnapshot {
 
 export interface AdminSetupStatus {
 	setupRequired: boolean;
+}
+
+export interface AdminWorkflowSummary extends WorkflowSummary {
+	active: boolean;
+	expectedDurationMs: number | null;
+}
+
+export interface AdminWorkflowListResponse {
+	inactiveWorkflowKeys: string[];
+	workflows: AdminWorkflowSummary[];
+}
+
+export interface AdminWorkflowDetailResponse {
+	inactiveWorkflowKeys: string[];
+	workflow: AdminWorkflowSummary;
+}
+
+export interface UpdateAdminWorkflowInput {
+	active: boolean;
 }
 
 export interface AdminUser {

@@ -792,6 +792,51 @@ describe("studio backend", () => {
 		);
 	});
 
+	it("hides inactive workflows from the workflow list but keeps them in the snapshot", async () => {
+		const { app } = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub(),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			repository: createMemoryRepository(),
+			s3Config: fakeS3Config,
+			workflowSettingsReader: {
+				listInactiveWorkflowKeys() {
+					return Promise.resolve(["fal-zimage-turbo"]);
+				},
+			},
+		});
+
+		const listResponse = await app.request("http://localhost/api/workflows");
+		expect(listResponse.status).toBe(200);
+		const list = (await listResponse.json()) as {
+			workflows: Array<{ active?: boolean; key: string }>;
+		};
+		expect(
+			list.workflows.some((workflow) => workflow.key === "fal-zimage-turbo")
+		).toBe(false);
+
+		const snapshotResponse = await app.request(
+			"http://localhost/api/studio-snapshot"
+		);
+		expect(snapshotResponse.status).toBe(200);
+		const snapshot = (await snapshotResponse.json()) as {
+			workflows: Array<{ active: boolean; key: string }>;
+		};
+		const hiddenWorkflow = snapshot.workflows.find(
+			(workflow) => workflow.key === "fal-zimage-turbo"
+		);
+		expect(hiddenWorkflow?.active).toBe(false);
+	});
+
 	it("returns run debug bundle for GET /api/runs/:runId/debug", async () => {
 		const repository = createMemoryRepository();
 		await repository.createScenario({

@@ -138,6 +138,10 @@ export default function ComposeDialog({
 }: ComposeDialogProps) {
 	const formId = useId();
 	const workflows = snapshot.workflows;
+	const activeWorkflows = useMemo(
+		() => workflows.filter((workflow) => workflow.active),
+		[workflows]
+	);
 	const isEditing = Boolean(editingScenario);
 	const initialWorkflow = useMemo(() => {
 		if (editingScenario) {
@@ -148,8 +152,19 @@ export default function ComposeDialog({
 				return matched;
 			}
 		}
-		return workflows[0] ?? null;
-	}, [editingScenario, workflows]);
+		return activeWorkflows[0] ?? null;
+	}, [activeWorkflows, editingScenario, workflows]);
+	const selectableWorkflows = useMemo(() => {
+		if (!(editingScenario && initialWorkflow && !initialWorkflow.active)) {
+			return activeWorkflows;
+		}
+		return [
+			initialWorkflow,
+			...activeWorkflows.filter(
+				(workflow) => workflow.key !== initialWorkflow.key
+			),
+		];
+	}, [activeWorkflows, editingScenario, initialWorkflow]);
 
 	// Активный workflow для подписи в футере. Подкомпонент сообщает его через
 	// колбэк, чтобы внешняя обвязка диалога не зависела от внутренней формы.
@@ -245,7 +260,7 @@ export default function ComposeDialog({
 		]
 	);
 
-	const hasWorkflows = workflows.length > 0;
+	const hasWorkflows = selectableWorkflows.length > 0;
 	const SubmitIcon = isEditing ? Save : Plus;
 	// key форсирует пересоздание тела при смене edit/create или сценария.
 	// Без этого пришлось бы синхронизировать форму через useEffect и иметь
@@ -281,7 +296,7 @@ export default function ComposeDialog({
 						}}
 						onValidityChange={handleValidityChange}
 						onWorkflowChange={handleWorkflowChange}
-						workflows={workflows}
+						workflows={selectableWorkflows}
 					/>
 				) : (
 					<DialogBody className="max-h-none">

@@ -29,7 +29,6 @@ import {
 	useState,
 } from "react";
 
-import IconButton from "@/components/icon-button";
 import type { ScenarioCardData } from "@/components/scenario-card-data";
 
 const scenarioStatusDot = {
@@ -281,7 +280,7 @@ const SwitcherTrigger = forwardRef<HTMLButtonElement, SwitcherTriggerProps>(
 		ref
 	) {
 		const triggerClass = cn(
-			"group flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-muted/15",
+			"group flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-muted/15",
 			className
 		);
 
@@ -427,7 +426,7 @@ export default function SubjectSwitcher({
 	}
 
 	return (
-		<div className="flex min-w-0 items-center gap-1">
+		<div className="flex w-full min-w-0 items-center">
 			<Popover onOpenChange={handleOpenChange} open={open}>
 				<PopoverTrigger
 					render={
@@ -497,7 +496,7 @@ export default function SubjectSwitcher({
 						/>
 					</div>
 
-					<div className="min-h-0 flex-1 overflow-y-auto">
+					<div className="max-h-[500px] min-h-0 flex-1 overflow-y-auto">
 						{tab === "scenario" ? (
 							<ScenarioList
 								filteredScenarios={filteredScenarios}
@@ -548,21 +547,12 @@ export default function SubjectSwitcher({
 							size="sm"
 							variant="outline"
 						>
-							<Plus className="size-3.5" />
+							<Plus data-icon="inline-start" />
 							New scenario
 						</Button>
 					) : null}
 				</PopoverContent>
 			</Popover>
-			{onCreateScenario ? (
-				<IconButton
-					hint="Compose new scenario"
-					label="New scenario"
-					onClick={onCreateScenario}
-				>
-					<Plus className="size-3.5" />
-				</IconButton>
-			) : null}
 		</div>
 	);
 }

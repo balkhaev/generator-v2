@@ -225,8 +225,8 @@ const serverSchema = {
 	RUNPOD_LTX23_POD_IMAGE_NAME: z
 		.string()
 		.min(1)
-		.default("runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu"),
-	RUNPOD_LTX23_POD_TEMPLATE_ID: z.string().min(1).optional(),
+		.default("ls250824/run-comfyui-ltx:28042026"),
+	RUNPOD_LTX23_POD_TEMPLATE_ID: z.string().min(1).default("p4f6rm9tb4"),
 	RUNPOD_LTX23_POD_GPU_TYPE_IDS: z
 		.string()
 		.min(1)
@@ -235,8 +235,8 @@ const serverSchema = {
 		.number()
 		.int()
 		.positive()
-		.default(80),
-	RUNPOD_LTX23_POD_VOLUME_GB: z.coerce.number().int().positive().default(160),
+		.default(15),
+	RUNPOD_LTX23_POD_VOLUME_GB: z.coerce.number().int().positive().default(90),
 	RUNPOD_LTX23_POD_CLOUD_TYPE: z
 		.enum(["SECURE", "COMMUNITY"])
 		.default("SECURE"),

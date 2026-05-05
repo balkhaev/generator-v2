@@ -24,6 +24,13 @@ Optional:
 - `CIVITAI_API_KEY` for Civitai LoRA downloads.
 - `RUNPOD_LTX23_POD_GPU_TYPE_IDS` to tune GPU selection.
 
+## RunPod Template
+
+Use public Pod template `p4f6rm9tb4`: `LTX 2.3 t2v i2v vi2v vt2v inference
+with ComfyUI`. It uses image `ls250824/run-comfyui-ltx:28042026`, exposes
+ComfyUI on port `8188`, and is sized with a 15 GB container disk plus 90 GB
+volume. The generator defaults point at this template.
+
 ## Flow
 
 The generator creates a RunPod Pod with pre-signed S3 PUT URLs in env. The Pod

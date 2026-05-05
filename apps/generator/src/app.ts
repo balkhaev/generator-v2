@@ -123,7 +123,7 @@ function createConfiguredRunpodPodClient(input: {
 						: "SECURE",
 				containerDiskInGb: readPositiveIntegerEnv(
 					process.env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
-					80
+					15
 				),
 				gpuTypeIds: splitCsv(
 					process.env.RUNPOD_LTX23_POD_GPU_TYPE_IDS ??
@@ -131,18 +131,18 @@ function createConfiguredRunpodPodClient(input: {
 				),
 				imageName:
 					process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
-					"runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu",
+					"ls250824/run-comfyui-ltx:28042026",
 				namePrefix: "ltx23-synth",
 				networkVolumeId: process.env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
 				podRunnerUrl: deriveSiblingUrl(bootstrapUrl, "pod_runner.py"),
-				templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID,
+				templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID ?? "p4f6rm9tb4",
 				timeoutMs: readPositiveIntegerEnv(
 					process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,
 					60 * 60 * 1000
 				),
 				volumeInGb: readPositiveIntegerEnv(
 					process.env.RUNPOD_LTX23_POD_VOLUME_GB,
-					160
+					90
 				),
 			},
 		},

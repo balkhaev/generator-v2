@@ -64,10 +64,8 @@ const optionalUrlParamSchema = z.preprocess(
 const FOOOCUS_BASE_MODEL_NAME = "juggernautXL_version6Rundiffusion.safetensors";
 const FOOOCUS_REFINER_MODEL_NAME = "sd_xl_refiner_1.0_0.9vae.safetensors";
 const FOOOCUS_DISABLED_MODEL_NAME = "None";
-const LUSTIFY_OLT_MODEL_NAME = "lustifySDXLNSFW_oltFIXEDTEXTURES.safetensors";
-const LUSTIFY_OLT_MODEL_URL = "https://civitai.com/api/download/models/1569593";
-const LUSTIFY_OLT_MODEL_SHA256 =
-	"d7e7e35b0f60c42ad427ce81e30569a3881143ecf2f9cb50021a52947f69d22f";
+const CIVITAI_LUSTIFY_OLT_MODEL_URN =
+	"urn:air:sdxl:checkpoint:civitai:573152@1569593";
 const REPLICATE_FOOOCUS_API_VERSION =
 	"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c";
 const FOOOCUS_ASPECT_RATIOS = {
@@ -161,12 +159,6 @@ const runpodFooocusSdxlParamsSchema = z.object({
 	extraLoraWeight: z.number().min(0).max(2).default(0.5),
 });
 
-const runpodLustifyOltSdxlParamsSchema = runpodFooocusSdxlParamsSchema.extend({
-	baseModelName: z.string().min(1).default(LUSTIFY_OLT_MODEL_NAME),
-	enableRefiner: booleanParamSchema(false),
-	guidanceScale: z.number().min(0).max(20).default(3.5),
-});
-
 const replicateFooocusSdxlParamsSchema = z.object({
 	imageSize: z
 		.enum([
@@ -195,6 +187,46 @@ const replicateFooocusSdxlParamsSchema = z.object({
 	extraLoraWeight: z.number().min(0).max(2).default(0.5),
 	sharpness: z.number().min(0).max(30).default(2),
 	refinerSwitch: z.number().min(0.1).max(1).default(0.5),
+});
+
+const civitaiSchedulerSchema = z
+	.enum([
+		"EulerA",
+		"Euler",
+		"LMS",
+		"Heun",
+		"DPM2",
+		"DPM2A",
+		"DPM2SA",
+		"DPM2M",
+		"DPMSDE",
+		"DPMFast",
+		"DPMAdaptive",
+		"LMSKarras",
+		"DPM2Karras",
+		"DPM2AKarras",
+		"DPM2SAKarras",
+		"DPM2MKarras",
+		"DPMSDEKarras",
+		"DDIM",
+		"PLMS",
+		"UniPC",
+		"LCM",
+		"DDPM",
+		"DEIS",
+	])
+	.default("DPM2MKarras");
+
+const civitaiLustifyOltSdxlParamsSchema = z.object({
+	width: z.number().int().min(512).max(1536).default(832),
+	height: z.number().int().min(512).max(1536).default(1216),
+	steps: z.number().int().min(1).max(60).default(30),
+	cfgScale: z.number().min(0).max(20).default(3.5),
+	scheduler: civitaiSchedulerSchema,
+	numImages: z.number().int().min(1).max(4).default(1),
+	negativePrompt: z.string().default(""),
+	clipSkip: z.number().int().min(1).max(12).default(2),
+	seed: z.number().int().nonnegative().optional(),
 });
 
 // Flux Dev always targets the `/flux-lora` endpoint — LoRA is optional and we
@@ -421,11 +453,9 @@ function buildRunpodFooocusLoraUrls(
 type RunpodFooocusSdxlParams = z.infer<typeof runpodFooocusSdxlParamsSchema>;
 
 function buildRunpodFooocusSdxlInput({
-	checkpointSource,
 	parsed,
 	prompt,
 }: {
-	checkpointSource?: { sha256: string; url: string };
 	parsed: RunpodFooocusSdxlParams;
 	prompt: string;
 }): Record<string, unknown> {
@@ -438,12 +468,6 @@ function buildRunpodFooocusSdxlInput({
 		// worker still gets image_size/num_images aliases for simpler output
 		// adapters, but should call Fooocus with the native names below.
 		base_model_name: parsed.baseModelName,
-		...(checkpointSource
-			? {
-					base_model_sha256: checkpointSource.sha256,
-					base_model_url: checkpointSource.url,
-				}
-			: {}),
 		advanced_params: {
 			overwrite_step: parsed.numInferenceSteps,
 		},
@@ -597,8 +621,8 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-flux2-turbo": 12 * SECOND,
 	"fal-fast-sdxl": 10 * SECOND,
 	"fal-fast-fooocus-sdxl": 10 * SECOND,
+	"civitai-lustify-olt-sdxl": 2 * MINUTE,
 	"runpod-fooocus-sdxl": 90 * SECOND,
-	"runpod-lustify-olt-sdxl": 90 * SECOND,
 	"replicate-fooocus-sdxl": 15 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
@@ -979,102 +1003,106 @@ export const workflowRegistry = {
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},
-	"runpod-lustify-olt-sdxl": {
+	"civitai-lustify-olt-sdxl": {
 		baseModel: "sdxl",
-		key: "runpod-lustify-olt-sdxl",
-		name: "Lustify OLT SDXL (RunPod)",
+		key: "civitai-lustify-olt-sdxl",
+		name: "Lustify OLT SDXL (Civitai)",
 		description:
-			"Lustify SDXL OLT (FIXED TEXTURES) checkpoint from Civitai model 573152 version 1569593 on the custom RunPod Fooocus endpoint. Supports SDXL LoRA URLs.",
+			"Lustify SDXL OLT (FIXED TEXTURES) text-to-image generation through Civitai's native inference API using model 573152 version 1569593.",
 		requiresInputImage: false,
-		parameterSchema: runpodLustifyOltSdxlParamsSchema,
+		parameterSchema: civitaiLustifyOltSdxlParamsSchema,
 		parameterFields: [
 			{
-				description:
-					"Output image size preset controlling aspect ratio and resolution.",
-				key: "imageSize",
-				label: "Image size",
-				type: "text",
+				description: "Output image width in pixels.",
+				key: "width",
+				label: "Width",
+				max: 1536,
+				min: 512,
+				step: 64,
+				type: "number",
+			},
+			{
+				description: "Output image height in pixels.",
+				key: "height",
+				label: "Height",
+				max: 1536,
+				min: 512,
+				step: 64,
+				type: "number",
 			},
 			{
 				description: "Number of denoising steps.",
-				key: "numInferenceSteps",
+				key: "steps",
 				label: "Steps",
 				max: 60,
 				min: 1,
 				step: 1,
+				unit: "steps",
 				type: "number",
 			},
 			{
 				description: "Classifier-free guidance scale.",
-				key: "guidanceScale",
-				label: "Guidance scale",
+				key: "cfgScale",
+				label: "CFG scale",
 				max: 20,
 				min: 0,
 				step: 0.1,
 				type: "number",
 			},
 			{
+				description: "Sampler scheduler used by Civitai.",
+				enumValues: [
+					"EulerA",
+					"Euler",
+					"LMS",
+					"Heun",
+					"DPM2",
+					"DPM2A",
+					"DPM2SA",
+					"DPM2M",
+					"DPMSDE",
+					"DPMFast",
+					"DPMAdaptive",
+					"LMSKarras",
+					"DPM2Karras",
+					"DPM2AKarras",
+					"DPM2SAKarras",
+					"DPM2MKarras",
+					"DPMSDEKarras",
+					"DDIM",
+					"PLMS",
+					"UniPC",
+					"LCM",
+					"DDPM",
+					"DEIS",
+				],
+				key: "scheduler",
+				label: "Scheduler",
+				type: "text",
+			},
+			{
 				description: "Number of images to generate per request.",
 				key: "numImages",
 				label: "Number of images",
-				max: 8,
+				max: 4,
 				min: 1,
 				step: 1,
 				type: "number",
 			},
 			{
-				description: "Output image format.",
-				enumValues: ["jpeg", "png"],
-				key: "outputFormat",
-				label: "Output format",
-				type: "text",
+				description: "CLIP skip value for SDXL generation.",
+				key: "clipSkip",
+				label: "CLIP skip",
+				max: 12,
+				min: 1,
+				step: 1,
+				type: "number",
 			},
 			{
 				description: "Negative prompt to discourage unwanted content.",
 				key: "negativePrompt",
 				label: "Negative prompt",
 				optional: true,
-				type: "text",
-			},
-			{
-				description:
-					"Optional public URL pointing to trained SDXL LoRA weights.",
-				key: "loraUrl",
-				kind: "lora-url",
-				label: "LoRA URL",
-				type: "text",
-			},
-			{
-				description: "Strength of the primary LoRA effect.",
-				key: "loraWeight",
-				label: "LoRA weight",
-				max: 2,
-				min: 0,
-				step: 0.05,
-				type: "number",
-			},
-			{
-				description:
-					"Optional second public URL pointing to SDXL LoRA weights.",
-				key: "extraLoraUrl",
-				kind: "lora-url",
-				label: "Extra LoRA URL",
-				type: "text",
-			},
-			{
-				description: "Strength of the extra LoRA effect.",
-				key: "extraLoraWeight",
-				label: "Extra LoRA weight",
-				max: 2,
-				min: 0,
-				step: 0.05,
-				type: "number",
-			},
-			{
-				description: "Run Fooocus refiner after the base pass.",
-				enumValues: ["true", "false"],
-				key: "enableRefiner",
-				label: "Refiner",
 				type: "text",
 			},
 			{
@@ -1085,15 +1113,25 @@ export const workflowRegistry = {
 			},
 		],
 		buildProviderInput: ({ params, prompt }) => {
-			const parsed = runpodLustifyOltSdxlParamsSchema.parse(params);
-			return buildRunpodFooocusSdxlInput({
-				checkpointSource: {
-					sha256: LUSTIFY_OLT_MODEL_SHA256,
-					url: LUSTIFY_OLT_MODEL_URL,
+			const parsed = civitaiLustifyOltSdxlParamsSchema.parse(params);
+			return {
+				__civitaiModel: CIVITAI_LUSTIFY_OLT_MODEL_URN,
+				$type: "textToImage",
+				baseModel: "SDXL",
+				model: CIVITAI_LUSTIFY_OLT_MODEL_URN,
+				params: {
+					cfgScale: parsed.cfgScale,
+					clipSkip: parsed.clipSkip,
+					height: parsed.height,
+					negativePrompt: parsed.negativePrompt,
+					prompt,
+					scheduler: parsed.scheduler,
+					steps: parsed.steps,
+					width: parsed.width,
+					...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 				},
-				parsed,
-				prompt,
-			});
+				quantity: parsed.numImages,
+			};
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},

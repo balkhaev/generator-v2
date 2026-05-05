@@ -15,6 +15,7 @@ import {
 	type ExecutionRepository,
 	ExecutionService,
 } from "@/domain/executions";
+import { createCivitaiClient } from "@/providers/civitai";
 import { createFalClient } from "@/providers/fal";
 import type { InferenceClient } from "@/providers/inference";
 import { createInferenceRouter } from "@/providers/inference-router";
@@ -71,6 +72,10 @@ export function createApp(options: AppOptions) {
 	// и кэшируется при первом доступе. Централизация сохраняется на уровне
 	// входных точек (index.ts/worker.ts); здесь нужен доступ без валидации.
 	const internalToken = process.env.GENERATOR_INTERNAL_TOKEN?.trim();
+	const civitaiApiKey =
+		process.env.CIVITAI_API_KEY?.trim() ||
+		process.env.CIVITAI_API_TOKEN?.trim();
+	const civitaiApiBaseUrl = process.env.CIVITAI_API_BASE_URL;
 	const falKey = process.env.FAL_KEY;
 	const replicateApiToken = process.env.REPLICATE_API_TOKEN;
 	const replicateApiBaseUrl = process.env.REPLICATE_API_BASE_URL;
@@ -96,6 +101,12 @@ export function createApp(options: AppOptions) {
 			});
 		})();
 
+	const civitaiClient = civitaiApiKey
+		? createCivitaiClient({
+				apiBaseUrl: civitaiApiBaseUrl,
+				apiKey: civitaiApiKey,
+			})
+		: undefined;
 	const falClient = falKey ? createFalClient({ apiKey: falKey }) : undefined;
 	const replicateClient = replicateApiToken
 		? createReplicateClient({
@@ -116,8 +127,9 @@ export function createApp(options: AppOptions) {
 
 	const inferenceClient =
 		options.inferenceClient ??
-		(falClient || replicateClient || runpodClient
+		(civitaiClient || falClient || replicateClient || runpodClient
 			? createInferenceRouter({
+					civitai: civitaiClient,
 					fal: falClient,
 					replicate: replicateClient,
 					runpod: runpodClient,

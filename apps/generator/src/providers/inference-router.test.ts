@@ -22,6 +22,41 @@ function createMockClient(label: string): InferenceClient {
 }
 
 describe("inference router", () => {
+	it("routes Civitai-marked payloads and endpoint ids to Civitai", async () => {
+		const civitai = createMockClient("civitai");
+		const fal = createMockClient("fal");
+		const router = createInferenceRouter({ civitai, fal });
+
+		await expect(
+			router.submit({
+				__civitaiModel: "urn:air:sdxl:checkpoint:civitai:573152@1569593",
+				prompt: "test",
+			})
+		).resolves.toMatchObject({
+			endpointId: "civitai-endpoint",
+		});
+		expect(civitai.submit).toHaveBeenCalledTimes(1);
+		expect(fal.submit).not.toHaveBeenCalled();
+
+		await router.getStatus(
+			"civitai-token-1",
+			"civitai:urn:air:sdxl:checkpoint:civitai:573152@1569593"
+		);
+		expect(civitai.getStatus).toHaveBeenCalledWith(
+			"civitai-token-1",
+			"civitai:urn:air:sdxl:checkpoint:civitai:573152@1569593"
+		);
+
+		await router.cancel(
+			"civitai-token-1",
+			"civitai:urn:air:sdxl:checkpoint:civitai:573152@1569593"
+		);
+		expect(civitai.cancel).toHaveBeenCalledWith(
+			"civitai-token-1",
+			"civitai:urn:air:sdxl:checkpoint:civitai:573152@1569593"
+		);
+	});
+
 	it("routes RunPod-marked payloads and endpoint ids to RunPod", async () => {
 		const fal = createMockClient("fal");
 		const runpod = createMockClient("runpod");
@@ -111,6 +146,17 @@ describe("inference router", () => {
 				prompt: "test",
 			})
 		).toThrow("RunPod inference client is not configured");
+	});
+
+	it("fails fast when a Civitai workflow is submitted without a Civitai client", () => {
+		const router = createInferenceRouter({ fal: createMockClient("fal") });
+
+		expect(() =>
+			router.submit({
+				__civitaiModel: "urn:air:sdxl:checkpoint:civitai:573152@1569593",
+				prompt: "test",
+			})
+		).toThrow("Civitai inference client is not configured");
 	});
 
 	it("fails fast when a Replicate workflow is submitted without a Replicate client", () => {

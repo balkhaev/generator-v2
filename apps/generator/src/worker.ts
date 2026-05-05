@@ -3,6 +3,7 @@ import { createKafkaEventPublisher } from "@generator/events";
 import { resolveS3StorageConfig } from "@generator/storage";
 
 import { ExecutionService } from "@/domain/executions";
+import { createCivitaiClient } from "@/providers/civitai";
 import { createFalClient } from "@/providers/fal";
 import { createInferenceRouter } from "@/providers/inference-router";
 import { createReplicateClient } from "@/providers/replicate";
@@ -18,6 +19,7 @@ import {
 import { createDrizzleExecutionRepository } from "@/repositories/executions";
 
 const redisUrl = env.REDIS_URL;
+const civitaiApiKey = env.CIVITAI_API_KEY;
 const falKey = env.FAL_KEY;
 const replicateApiToken = env.REPLICATE_API_TOKEN;
 const runpodApiKey = env.RUNPOD_API_KEY;
@@ -28,7 +30,12 @@ const eventPublisher = kafkaConfig
 	: null;
 
 if (
-	!(falKey || replicateApiToken || (runpodApiKey && runpodFooocusEndpointId))
+	!(
+		civitaiApiKey ||
+		falKey ||
+		replicateApiToken ||
+		(runpodApiKey && runpodFooocusEndpointId)
+	)
 ) {
 	throw new Error(
 		"At least one inference provider is required for the generator worker"
@@ -43,6 +50,12 @@ const storageAdapter = createStorageAdapter({
 });
 
 const inferenceClient = createInferenceRouter({
+	civitai: civitaiApiKey
+		? createCivitaiClient({
+				apiBaseUrl: env.CIVITAI_API_BASE_URL,
+				apiKey: civitaiApiKey,
+			})
+		: undefined,
 	fal: falKey ? createFalClient({ apiKey: falKey }) : undefined,
 	replicate: replicateApiToken
 		? createReplicateClient({

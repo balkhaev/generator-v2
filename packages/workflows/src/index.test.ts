@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { getWorkflowDefinition, listWorkflows } from "./index";
 
-const workflowKeyProviderPrefixPattern = /^(fal|replicate|runpod)-/;
+const workflowKeyProviderPrefixPattern = /^(civitai|fal|replicate|runpod)-/;
 
 describe("workflow registry", () => {
 	it("exposes only provider-prefixed workflows", () => {
@@ -89,21 +89,19 @@ describe("workflow registry", () => {
 		});
 	});
 
-	it("resolves runpod-lustify-olt-sdxl with correct defaults", () => {
-		const workflow = getWorkflowDefinition("runpod-lustify-olt-sdxl");
+	it("resolves civitai-lustify-olt-sdxl with correct defaults", () => {
+		const workflow = getWorkflowDefinition("civitai-lustify-olt-sdxl");
 		expect(workflow).toBeDefined();
 		expect(workflow?.baseModel).toBe("sdxl");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
-			baseModelName: "lustifySDXLNSFW_oltFIXEDTEXTURES.safetensors",
-			enableRefiner: false,
-			extraLoraWeight: 0.5,
-			guidanceScale: 3.5,
-			imageSize: "square_hd",
-			loraWeight: 1,
+			cfgScale: 3.5,
+			clipSkip: 2,
+			height: 1216,
 			negativePrompt: "",
 			numImages: 1,
-			numInferenceSteps: 30,
-			outputFormat: "jpeg",
+			scheduler: "DPM2MKarras",
+			steps: 30,
+			width: 832,
 		});
 	});
 
@@ -338,7 +336,6 @@ describe("workflow registry", () => {
 		const keys = [
 			"fal-fast-sdxl",
 			"runpod-fooocus-sdxl",
-			"runpod-lustify-olt-sdxl",
 			"replicate-fooocus-sdxl",
 			"fal-flux-dev",
 			"fal-zimage-turbo",
@@ -568,8 +565,8 @@ describe("workflow registry", () => {
 		});
 	});
 
-	it("builds runpod-lustify-olt-sdxl payloads with checkpoint metadata", () => {
-		const workflow = getWorkflowDefinition("runpod-lustify-olt-sdxl");
+	it("builds civitai-lustify-olt-sdxl payloads", () => {
+		const workflow = getWorkflowDefinition("civitai-lustify-olt-sdxl");
 		const buildInput = (extra: Record<string, unknown> = {}) =>
 			workflow?.buildProviderInput({
 				params: extra,
@@ -577,36 +574,45 @@ describe("workflow registry", () => {
 			}) as Record<string, unknown>;
 
 		expect(buildInput()).toMatchObject({
-			__runpodEndpoint: "fooocus-sdxl",
-			api_name: "txt2img",
-			base_model_name: "lustifySDXLNSFW_oltFIXEDTEXTURES.safetensors",
-			base_model_sha256:
-				"d7e7e35b0f60c42ad427ce81e30569a3881143ecf2f9cb50021a52947f69d22f",
-			base_model_url: "https://civitai.com/api/download/models/1569593",
-			enable_refiner: false,
-			guidance_scale: 3.5,
-			refiner_model_name: "None",
+			__civitaiModel: "urn:air:sdxl:checkpoint:civitai:573152@1569593",
+			$type: "textToImage",
+			baseModel: "SDXL",
+			model: "urn:air:sdxl:checkpoint:civitai:573152@1569593",
+			params: {
+				cfgScale: 3.5,
+				clipSkip: 2,
+				height: 1216,
+				negativePrompt: "",
+				prompt: "test",
+				scheduler: "DPM2MKarras",
+				steps: 30,
+				width: 832,
+			},
+			quantity: 1,
 		});
 
 		expect(
 			buildInput({
-				enableRefiner: "true",
-				guidanceScale: 4,
-				loraUrl: "https://example.com/person.safetensors",
-				loraWeight: 0.85,
+				cfgScale: 4,
+				height: 1152,
+				negativePrompt: "blur",
+				numImages: 2,
+				scheduler: "EulerA",
+				seed: 42,
+				steps: 28,
+				width: 896,
 			})
 		).toMatchObject({
-			base_model_name: "lustifySDXLNSFW_oltFIXEDTEXTURES.safetensors",
-			enable_refiner: true,
-			guidance_scale: 4,
-			loras: [
-				{
-					model_name: "person.safetensors",
-					url: "https://example.com/person.safetensors",
-					weight: 0.85,
-				},
-			],
-			refiner_model_name: "sd_xl_refiner_1.0_0.9vae.safetensors",
+			params: {
+				cfgScale: 4,
+				height: 1152,
+				negativePrompt: "blur",
+				scheduler: "EulerA",
+				seed: 42,
+				steps: 28,
+				width: 896,
+			},
+			quantity: 2,
 		});
 	});
 

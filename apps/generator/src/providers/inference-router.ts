@@ -1,3 +1,4 @@
+import { isCivitaiProviderEndpointId } from "./civitai";
 import type {
 	InferenceClient,
 	InferenceJob,
@@ -7,11 +8,18 @@ import { isReplicateProviderEndpointId } from "./replicate";
 import { isRunpodProviderEndpointId } from "./runpod";
 
 export function createInferenceRouter(clients: {
+	civitai?: InferenceClient;
 	fal?: InferenceClient;
 	replicate?: InferenceClient;
 	runpod?: InferenceClient;
 }): InferenceClient {
 	function routeByPayload(payload: Record<string, unknown>): InferenceClient {
+		if ("__civitaiModel" in payload) {
+			if (clients.civitai) {
+				return clients.civitai;
+			}
+			throw new Error("Civitai inference client is not configured");
+		}
 		if ("__runpodEndpoint" in payload) {
 			if (clients.runpod) {
 				return clients.runpod;
@@ -34,6 +42,12 @@ export function createInferenceRouter(clients: {
 	}
 
 	function routeByEndpoint(endpointId?: string): InferenceClient {
+		if (isCivitaiProviderEndpointId(endpointId)) {
+			if (clients.civitai) {
+				return clients.civitai;
+			}
+			throw new Error("Civitai inference client is not configured");
+		}
 		if (isRunpodProviderEndpointId(endpointId)) {
 			if (clients.runpod) {
 				return clients.runpod;

@@ -1,5 +1,15 @@
 "use client";
 
+import { Button } from "@generator/ui/components/button";
+import {
+	Dialog,
+	DialogBody,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@generator/ui/components/dialog";
 import { RunProgressIndicator } from "@generator/ui/components/run-progress-indicator";
 import {
 	Tooltip,
@@ -19,6 +29,7 @@ import {
 	Loader2,
 	Maximize2,
 	MonitorPlay,
+	ScrollText,
 	Send,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -74,12 +85,26 @@ export interface StudioMediaAsset {
 	 */
 	posterUrl?: string | null;
 	progressPct?: number | null;
+	prompt?: string | null;
 	/** Позиция в очереди провайдера для overlay-индикатора прогресса. */
 	queuePosition?: number | null;
 	runId: string;
 	scenarioId: string;
 	status: "queued" | "running" | "succeeded" | "failed";
 	url: string;
+}
+
+export interface StudioMediaPromptDetails {
+	prompt: string;
+	sourceLabel?: string | null;
+}
+
+interface PromptDialogState {
+	assetId: string;
+	error: string | null;
+	isLoading: boolean;
+	prompt: string | null;
+	sourceLabel: string | null;
 }
 
 function deriveDownloadName(asset: StudioMediaAsset) {
@@ -193,22 +218,27 @@ function PreviewProgressOverlay({ asset }: { asset: StudioMediaAsset }) {
 function PreviewToolbar({
 	asset,
 	isFullscreen,
+	isPromptLoading,
 	isSavedShot,
 	isSavingShot,
 	onCopyUrl,
 	onSaveShot,
 	onSendToWorkflow,
+	onShowPrompt,
 	onToggleFullscreen,
 }: {
 	asset: StudioMediaAsset;
 	isFullscreen: boolean;
+	isPromptLoading?: boolean;
 	isSavedShot?: boolean;
 	isSavingShot?: boolean;
 	onCopyUrl: () => void;
 	onSaveShot?: (asset: StudioMediaAsset) => void;
 	onSendToWorkflow?: (asset: StudioMediaAsset) => void;
+	onShowPrompt?: (asset: StudioMediaAsset) => void;
 	onToggleFullscreen: () => void;
 }) {
+	const canShowPrompt = asset.mediaKind === "output" && Boolean(onShowPrompt);
 	const canSendToWorkflow =
 		asset.mediaKind === "output" &&
 		asset.mediaType === "image" &&
@@ -217,6 +247,22 @@ function PreviewToolbar({
 
 	return (
 		<div className="absolute top-2 right-2 flex items-center gap-1 rounded-lg bg-background/70 px-1 py-1 backdrop-blur-md">
+			{canShowPrompt ? (
+				<Button
+					aria-label="Show generation prompt"
+					disabled={isPromptLoading}
+					onClick={() => onShowPrompt?.(asset)}
+					size="sm"
+					variant="ghost"
+				>
+					{isPromptLoading ? (
+						<Loader2 className="animate-spin" data-icon="inline-start" />
+					) : (
+						<ScrollText data-icon="inline-start" />
+					)}
+					Prompt
+				</Button>
+			) : null}
 			{canSendToWorkflow ? (
 				<IconButton
 					hint="Send to workflow"
@@ -293,6 +339,75 @@ function PreviewToolbar({
 				<Maximize2 className="size-3.5" />
 			</IconButton>
 		</div>
+	);
+}
+
+function PreviewPromptDialog({
+	asset,
+	onCopyPrompt,
+	onOpenChange,
+	state,
+}: {
+	asset: StudioMediaAsset | null;
+	onCopyPrompt: () => void;
+	onOpenChange: (open: boolean) => void;
+	state: PromptDialogState | null;
+}) {
+	const prompt = state?.prompt?.trim() ?? "";
+	let body: ReactNode;
+	if (state?.isLoading) {
+		body = (
+			<p className="inline-flex items-center gap-2 text-muted-foreground text-sm">
+				<Loader2 className="size-4 animate-spin" />
+				Loading prompt...
+			</p>
+		);
+	} else if (state?.error) {
+		body = (
+			<p className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-amber-800 text-sm dark:text-amber-200">
+				{state.error}
+			</p>
+		);
+	} else {
+		body = (
+			<pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-foreground/10 bg-muted/20 p-3 text-sm leading-relaxed">
+				{prompt}
+			</pre>
+		);
+	}
+
+	return (
+		<Dialog onOpenChange={onOpenChange} open={state !== null}>
+			<DialogContent className="max-w-xl">
+				<DialogHeader>
+					<DialogTitle>Generation prompt</DialogTitle>
+					<DialogDescription>
+						{asset?.label ?? "Selected media"}
+						{state?.sourceLabel ? ` · ${state.sourceLabel}` : null}
+					</DialogDescription>
+				</DialogHeader>
+				<DialogBody>{body}</DialogBody>
+				<DialogFooter>
+					<Button
+						disabled={!prompt}
+						onClick={onCopyPrompt}
+						size="sm"
+						variant="outline"
+					>
+						<Copy data-icon="inline-start" />
+						Copy prompt
+					</Button>
+					<Button
+						onClick={() => onOpenChange(false)}
+						size="sm"
+						type="button"
+						variant="ghost"
+					>
+						Close
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }
 
@@ -375,6 +490,7 @@ export default function PreviewSurface({
 	isSavingShot,
 	onNext,
 	onPrevious,
+	onLoadPrompt,
 	onSaveShot,
 	onSendToWorkflow,
 	totalAssets,
@@ -384,6 +500,9 @@ export default function PreviewSurface({
 	emptyState?: ReactNode;
 	isSavedShot?: boolean;
 	isSavingShot?: boolean;
+	onLoadPrompt?: (
+		asset: StudioMediaAsset
+	) => Promise<StudioMediaPromptDetails | null>;
 	onNext?: () => void;
 	onPrevious?: () => void;
 	onSaveShot?: (asset: StudioMediaAsset) => void;
@@ -392,6 +511,9 @@ export default function PreviewSurface({
 }) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const [isFullscreen, setIsFullscreen] = useState(false);
+	const [promptDialog, setPromptDialog] = useState<PromptDialogState | null>(
+		null
+	);
 
 	useEffect(() => {
 		function handleFullscreenChange() {
@@ -431,6 +553,12 @@ export default function PreviewSurface({
 		};
 	}, [onNext, onPrevious]);
 
+	useEffect(() => {
+		setPromptDialog((current) =>
+			current && current.assetId !== asset?.id ? null : current
+		);
+	}, [asset?.id]);
+
 	async function handleCopyUrl() {
 		if (!asset) {
 			return;
@@ -459,6 +587,74 @@ export default function PreviewSurface({
 			}
 		} catch {
 			toast.error("Fullscreen not available.");
+		}
+	}
+
+	async function handleShowPrompt() {
+		if (!(asset && onLoadPrompt)) {
+			return;
+		}
+
+		const assetId = asset.id;
+		setPromptDialog({
+			assetId,
+			error: null,
+			isLoading: true,
+			prompt: null,
+			sourceLabel: null,
+		});
+
+		try {
+			const details = await onLoadPrompt(asset);
+			const prompt = details?.prompt.trim() ?? "";
+			setPromptDialog((current) => {
+				if (current?.assetId !== assetId) {
+					return current;
+				}
+				if (!prompt) {
+					return {
+						assetId,
+						error: "Prompt is unavailable for this media.",
+						isLoading: false,
+						prompt: null,
+						sourceLabel: null,
+					};
+				}
+				return {
+					assetId,
+					error: null,
+					isLoading: false,
+					prompt,
+					sourceLabel: details?.sourceLabel ?? null,
+				};
+			});
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "Unable to load prompt.";
+			setPromptDialog((current) =>
+				current?.assetId === assetId
+					? {
+							assetId,
+							error: message,
+							isLoading: false,
+							prompt: null,
+							sourceLabel: null,
+						}
+					: current
+			);
+		}
+	}
+
+	async function handleCopyPrompt() {
+		const prompt = promptDialog?.prompt?.trim();
+		if (!prompt) {
+			return;
+		}
+		try {
+			await copyTextToClipboard(prompt);
+			toast.success("Prompt copied.");
+		} catch {
+			toast.error("Unable to copy prompt.");
 		}
 	}
 
@@ -504,11 +700,15 @@ export default function PreviewSurface({
 					<PreviewToolbar
 						asset={asset}
 						isFullscreen={isFullscreen}
+						isPromptLoading={
+							promptDialog?.assetId === asset.id && promptDialog.isLoading
+						}
 						isSavedShot={isSavedShot}
 						isSavingShot={isSavingShot}
 						onCopyUrl={handleCopyUrl}
 						onSaveShot={onSaveShot}
 						onSendToWorkflow={onSendToWorkflow}
+						onShowPrompt={onLoadPrompt ? handleShowPrompt : undefined}
 						onToggleFullscreen={handleToggleFullscreen}
 					/>
 
@@ -523,6 +723,16 @@ export default function PreviewSurface({
 					)}
 				</>
 			)}
+			<PreviewPromptDialog
+				asset={asset}
+				onCopyPrompt={handleCopyPrompt}
+				onOpenChange={(open) => {
+					if (!open) {
+						setPromptDialog(null);
+					}
+				}}
+				state={promptDialog}
+			/>
 		</div>
 	);
 }

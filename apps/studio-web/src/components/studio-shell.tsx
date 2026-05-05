@@ -4,6 +4,7 @@ import type { PersonRecord } from "@generator/contracts/persons";
 import { env } from "@generator/env/web";
 import {
 	type AdminSnapshot,
+	getStudioRunDebugBundle,
 	getStudioSnapshot,
 	type ScenarioRecord,
 	type ScenarioRunRecord,
@@ -38,6 +39,7 @@ import { ModeToggle } from "@/components/mode-toggle";
 import PreviewSurface, {
 	getMediaType,
 	type StudioMediaAsset,
+	type StudioMediaPromptDetails,
 } from "@/components/preview-surface";
 import type {
 	ScenarioCardData,
@@ -515,6 +517,7 @@ function buildPersonMediaAssets(person: PersonRecord): StudioMediaAsset[] {
 				mediaKind: "output",
 				mediaType: getMediaType(url),
 				meta: person.name,
+				prompt: generation.prompt,
 				runId: `person:${generation.id}`,
 				scenarioId: `person:${person.id}`,
 				status: "succeeded",
@@ -653,6 +656,63 @@ export default function StudioShell({
 		}
 		return map;
 	}, [snapshot.scenarios]);
+	const scenariosById = useMemo(() => {
+		const map = new Map<string, ScenarioRecord>();
+		for (const scenario of snapshot.scenarios) {
+			map.set(scenario.id, scenario);
+		}
+		return map;
+	}, [snapshot.scenarios]);
+
+	const loadMediaPrompt = useCallback(
+		async (
+			asset: StudioMediaAsset
+		): Promise<StudioMediaPromptDetails | null> => {
+			const directPrompt = asset.prompt?.trim();
+			if (directPrompt) {
+				return {
+					prompt: directPrompt,
+					sourceLabel: "Person generation prompt",
+				};
+			}
+
+			if (asset.runId.startsWith("person:")) {
+				return null;
+			}
+
+			const scenarioPrompt = scenariosById.get(asset.scenarioId)?.prompt.trim();
+			const fallback = scenarioPrompt
+				? {
+						prompt: scenarioPrompt,
+						sourceLabel: "Current scenario prompt",
+					}
+				: null;
+
+			try {
+				const bundle = await getStudioRunDebugBundle(asset.runId);
+				const executionPrompt = bundle.execution?.prompt?.trim();
+				if (executionPrompt) {
+					return {
+						prompt: executionPrompt,
+						sourceLabel: "Generator execution prompt",
+					};
+				}
+				if (bundle.executionError) {
+					throw new Error(bundle.executionError);
+				}
+				return fallback;
+			} catch (error) {
+				if (fallback) {
+					return {
+						...fallback,
+						sourceLabel: "Current scenario prompt; run debug unavailable",
+					};
+				}
+				throw error;
+			}
+		},
+		[scenariosById]
+	);
 
 	const handleStreamSnapshot = useCallback(
 		(streamRuns: ScenarioRunRecord[]) => {
@@ -1042,6 +1102,7 @@ export default function StudioShell({
 							? savingShotAssetId === selectedMediaAsset.id
 							: false
 					}
+					onLoadPrompt={loadMediaPrompt}
 					onNext={
 						selectedMediaIndex < selectedScenarioAssets.length - 1
 							? () => navigateToMedia(selectedMediaIndex + 1)

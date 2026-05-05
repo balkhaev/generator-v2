@@ -14,37 +14,47 @@ describe("createLoraSourceResolver", () => {
 				});
 				return Promise.resolve(
 					new Response(
-						JSON.stringify({
-							id: 9,
-							name: "Mystic LoRA",
-							type: "LORA",
-							description: "<p>Model notes</p>",
-							modelVersions: [
-								{
-									id: 123,
-									name: "v1",
-									baseModel: "Flux.1 D",
-									description: "<p>Version notes</p>",
-									trainedWords: ["mystic"],
-									files: [
-										{
-											downloadUrl:
-												"https://civitai.com/api/download/models/123",
-											name: "mystic.safetensors",
-											metadata: { format: "SafeTensor" },
-											primary: true,
-											sizeKb: 2048,
+						JSON.stringify([
+							{
+								result: {
+									data: {
+										json: {
+											canGenerate: true,
+											description: "<p>Model notes</p>",
+											id: 9,
+											modelVersions: [
+												{
+													baseModel: "Flux.1 D",
+													canGenerate: true,
+													description: "<p>Version notes</p>",
+													files: [
+														{
+															downloadUrl:
+																"https://civitai.com/api/download/models/123",
+															metadata: { format: "SafeTensor" },
+															name: "mystic.safetensors",
+															primary: true,
+															sizeKb: 2048,
+														},
+													],
+													id: 123,
+													images: [
+														{
+															nsfw: false,
+															url: "https://imagecache.civitai.com/preview.jpeg",
+														},
+													],
+													name: "v1",
+													trainedWords: ["mystic"],
+												},
+											],
+											name: "Mystic LoRA",
+											type: "LORA",
 										},
-									],
-									images: [
-										{
-											nsfw: false,
-											url: "https://imagecache.civitai.com/preview.jpeg",
-										},
-									],
+									},
 								},
-							],
-						}),
+							},
+						]),
 						{ status: 200 }
 					)
 				);
@@ -56,12 +66,15 @@ describe("createLoraSourceResolver", () => {
 			sourceUrl: "https://civitai.red/models/9?modelVersionId=123",
 		});
 
-		expect(requests[0]?.url).toBe("https://civitai.red/api/v1/models/9");
+		expect(requests[0]?.url).toContain(
+			"https://civitai.red/api/trpc/model.getById?batch=1&input="
+		);
 		expect(requests[0]?.headers.get("authorization")).toBe(
 			"Bearer civitai-token"
 		);
 		expect(source.provider).toBe("civitai");
 		expect(source.baseModel).toBe("flux");
+		expect(source.canGenerate).toBe(true);
 		expect(source.name).toBe("Mystic LoRA");
 		expect(source.description).toContain("Trigger words: mystic.");
 		expect(source.downloadUrl).toBe(

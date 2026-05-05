@@ -34,6 +34,33 @@ const slugEdgeDashesPattern = /^-+|-+$/g;
 const variantSuffixPattern =
 	/[\s\-_]*[([]?(?:high|low)(?:[\s_-]*noise)?[)\]]?\s*$/iu;
 
+function formatCivitaiLtx23InferenceReason(source: ResolvedLoraSource): string {
+	const suffix =
+		source.modelId && source.sourceVersionId
+			? ` (model ${source.modelId} / version ${source.sourceVersionId})`
+			: "";
+	return `Selected Civitai LoRA${suffix} has no available Civitai inference for LTX 2.3.`;
+}
+
+function resolveCivitaiLtx23MetadataAvailability(
+	source: ResolvedLoraSource
+): LoraInferenceAvailability | null {
+	if (source.supportsGeneration === false || source.canGenerate === false) {
+		return {
+			reason: formatCivitaiLtx23InferenceReason(source),
+			status: "unavailable",
+			target: "civitai-ltx-2-3",
+		};
+	}
+	if (source.canGenerate === true) {
+		return {
+			status: "available",
+			target: "civitai-ltx-2-3",
+		};
+	}
+	return null;
+}
+
 export function slugify(value: string): string {
 	return value
 		.toLowerCase()
@@ -340,15 +367,20 @@ export class LoraRegistryService {
 		}
 		const preview = toLoraSourcePreview(source);
 		if (input.checkCivitaiLtx23Inference) {
+			const metadataAvailability =
+				resolveCivitaiLtx23MetadataAvailability(source);
 			preview.inference = {
 				...preview.inference,
-				civitaiLtx23: this.checkCivitaiLtx23Inference
-					? await this.checkCivitaiLtx23Inference(source)
-					: {
-							reason: "Civitai LTX 2.3 inference preflight is not configured.",
-							status: "unchecked",
-							target: "civitai-ltx-2-3",
-						},
+				civitaiLtx23:
+					metadataAvailability ??
+					(this.checkCivitaiLtx23Inference
+						? await this.checkCivitaiLtx23Inference(source)
+						: {
+								reason:
+									"Civitai LTX 2.3 inference preflight is not configured.",
+								status: "unchecked",
+								target: "civitai-ltx-2-3",
+							}),
 			};
 		}
 		return preview;

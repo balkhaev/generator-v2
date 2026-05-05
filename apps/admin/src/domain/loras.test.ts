@@ -538,6 +538,42 @@ describe("LoraRegistryService", () => {
 		});
 	});
 
+	it("uses Civitai canGenerate metadata before workflow preflight", async () => {
+		let checkerCalled = false;
+		service = new LoraRegistryService({
+			checkCivitaiLtx23Inference: () => {
+				checkerCalled = true;
+				throw new Error("preflight should not run");
+			},
+			repository: repo,
+			resolveSource: () =>
+				Promise.resolve({
+					baseModel: "ltx-2-3",
+					canGenerate: false,
+					downloadUrl: "https://civitai.com/api/download/123",
+					modelId: 9,
+					name: "Mystic",
+					provider: "civitai",
+					sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+					sourceVersionId: 123,
+				}),
+		});
+
+		const preview = await service.previewSource({
+			checkCivitaiLtx23Inference: true,
+			sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+		});
+
+		expect(checkerCalled).toBe(false);
+		expect(preview.canGenerate).toBe(false);
+		expect(preview.inference?.civitaiLtx23).toEqual({
+			reason:
+				"Selected Civitai LoRA (model 9 / version 123) has no available Civitai inference for LTX 2.3.",
+			status: "unavailable",
+			target: "civitai-ltx-2-3",
+		});
+	});
+
 	it("respects an explicit triggerWords override on createFromUrl", async () => {
 		const entry = expectSingle(
 			await service.createFromUrl({

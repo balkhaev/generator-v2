@@ -27,6 +27,7 @@ type HeaderRecord = Record<string, string>;
 
 export interface ResolvedLoraSource {
 	baseModel?: LoraBaseModel;
+	canGenerate?: boolean;
 	description?: string;
 	downloadHeaders?: HeaderRecord;
 	downloadUrl: string;
@@ -75,6 +76,7 @@ interface CivitaiFile {
 }
 
 interface CivitaiModel {
+	canGenerate?: boolean;
 	description?: null | string;
 	id: number;
 	modelVersions?: CivitaiModelVersion[];
@@ -86,12 +88,14 @@ interface CivitaiModel {
 
 interface CivitaiModelVersion {
 	baseModel?: string;
+	canGenerate?: boolean;
 	description?: null | string;
 	downloadUrl?: string;
 	files?: CivitaiFile[];
 	id: number;
 	images?: CivitaiImage[];
 	model?: {
+		canGenerate?: boolean;
 		name?: string;
 		nsfw?: boolean;
 		supportsGeneration?: boolean;
@@ -179,6 +183,8 @@ function parseCivitaiModelVersion(value: unknown): CivitaiModelVersion | null {
 
 	return {
 		baseModel: asString(record.baseModel),
+		canGenerate:
+			typeof record.canGenerate === "boolean" ? record.canGenerate : undefined,
 		description: asString(record.description) ?? null,
 		downloadUrl: asString(record.downloadUrl),
 		files: filesValue
@@ -189,6 +195,10 @@ function parseCivitaiModelVersion(value: unknown): CivitaiModelVersion | null {
 		model: model
 			? {
 					name: asString(model.name),
+					canGenerate:
+						typeof model.canGenerate === "boolean"
+							? model.canGenerate
+							: undefined,
 					nsfw: typeof model.nsfw === "boolean" ? model.nsfw : undefined,
 					supportsGeneration:
 						typeof model.supportsGeneration === "boolean"
@@ -231,6 +241,8 @@ function parseCivitaiModel(value: unknown): CivitaiModel {
 	return {
 		description: asString(record.description) ?? null,
 		id,
+		canGenerate:
+			typeof record.canGenerate === "boolean" ? record.canGenerate : undefined,
 		modelVersions: modelVersionsValue
 			.map(parseCivitaiModelVersion)
 			.filter((version): version is CivitaiModelVersion => Boolean(version)),
@@ -467,6 +479,31 @@ function buildCivitaiApiUrl(sourceUrl: URL, path: string): string {
 	return `${sourceUrl.origin}${path}`;
 }
 
+function buildCivitaiModelTrpcUrl(sourceUrl: URL, modelId: number): string {
+	const input = encodeURIComponent(
+		JSON.stringify({
+			0: {
+				json: {
+					browsingLevel: 1,
+					excludeTrainingData: true,
+					id: modelId,
+				},
+			},
+		})
+	);
+	return `${sourceUrl.origin}/api/trpc/model.getById?batch=1&input=${input}`;
+}
+
+function unwrapCivitaiTrpcModelResponse(value: unknown): unknown {
+	if (!Array.isArray(value)) {
+		return value;
+	}
+	const first = asRecord(value[0]);
+	const result = first ? asRecord(first.result) : null;
+	const data = result ? asRecord(result.data) : null;
+	return data?.json ?? value;
+}
+
 // Heuristic detection of high/low expert affinity from version/file naming.
 // Civitai authors usually call them e.g. "Wan 2.2 I2V High Noise" or have file
 // names like `*_HighNoise.safetensors`. We match `high noise`, standalone
@@ -517,6 +554,7 @@ function buildCivitaiVariant(
 	const baseModel = mapCivitaiBaseModel(version.baseModel);
 	return {
 		baseModel,
+		canGenerate: version.canGenerate,
 		description: buildCivitaiDescription({
 			trainedWords: version.trainedWords,
 			versionDescription: version.description,
@@ -631,12 +669,14 @@ function buildResolvedCivitaiSource(input: {
 	modelName: string;
 	nsfw?: boolean;
 	pairedFiles?: LoraSourcePreviewPairedFile[];
+	canGenerate?: boolean;
 	supportsGeneration?: boolean;
 	variant: LoraSourcePreviewVariant;
 	variants?: LoraSourcePreviewVariant[];
 }): ResolvedLoraSource {
 	return {
 		baseModel: input.variant.baseModel,
+		canGenerate: input.variant.canGenerate ?? input.canGenerate,
 		description: appendDescription(
 			input.variant.description,
 			stripHtml(input.modelDescription)
@@ -736,6 +776,125 @@ export function createLoraSourceResolver(
 		return response.json() as Promise<unknown>;
 	}
 
+	async function fetchCivitaiModel(
+		url: URL,
+		modelId: number,
+		headers: HeaderRecord
+	): Promise<CivitaiModel> {
+		try {
+			return parseCivitaiModel(
+				unwrapCivitaiTrpcModelResponse(
+					await fetchJson(buildCivitaiModelTrpcUrl(url, modelId), headers)
+				)
+			);
+		} catch {
+			return parseCivitaiModel(
+				await fetchJson(
+					buildCivitaiApiUrl(url, `/api/v1/models/${modelId}`),
+					headers
+				)
+			);
+		}
+	}
+
+	async function resolveCivitaiModelSource(input: {
+		downloadHeaders: HeaderRecord;
+		modelId: number;
+		modelVersionId?: number;
+		requestHeaders: HeaderRecord;
+		sourceInput: CreateLoraFromUrlInput;
+		url: URL;
+	}): Promise<ResolvedLoraSource> {
+		const model = await fetchCivitaiModel(
+			input.url,
+			input.modelId,
+			input.requestHeaders
+		);
+		const version = selectCivitaiVersion(model, input.modelVersionId);
+		const variants = (model.modelVersions ?? [])
+			.map(buildCivitaiVariant)
+			.filter((variant): variant is LoraSourcePreviewVariant =>
+				Boolean(variant)
+			);
+		const variant =
+			variants.find((item) => item.versionId === version.id) ??
+			buildCivitaiVariant(version);
+		if (!variant) {
+			throw new Error(`Civitai model "${model.name}" has no download URL.`);
+		}
+		const pairedFiles = findPairedFiles({
+			baseModel: variant.baseModel,
+			primary: variant,
+			versions: model.modelVersions ?? [],
+		});
+		return buildResolvedCivitaiSource({
+			canGenerate: model.canGenerate,
+			downloadHeaders: input.downloadHeaders,
+			input: input.sourceInput,
+			modelDescription: model.description,
+			modelId: model.id,
+			modelName: model.name,
+			nsfw: model.nsfw,
+			pairedFiles,
+			supportsGeneration: model.supportsGeneration,
+			variant,
+			variants,
+		});
+	}
+
+	async function resolveCivitaiVersionSource(input: {
+		downloadHeaders: HeaderRecord;
+		modelVersionId: number;
+		requestHeaders: HeaderRecord;
+		sourceInput: CreateLoraFromUrlInput;
+		url: URL;
+	}): Promise<ResolvedLoraSource> {
+		const version = parseCivitaiModelVersionResponse(
+			await fetchJson(
+				buildCivitaiApiUrl(
+					input.url,
+					`/api/v1/model-versions/${input.modelVersionId}`
+				),
+				input.requestHeaders
+			)
+		);
+		if (version.model?.type && version.model.type.toUpperCase() !== "LORA") {
+			throw new Error(
+				`Civitai model "${version.model.name ?? version.name}" is ${version.model.type}, not LoRA.`
+			);
+		}
+		const model =
+			version.modelId === undefined
+				? null
+				: await fetchCivitaiModel(
+						input.url,
+						version.modelId,
+						input.requestHeaders
+					).catch(() => null);
+		const resolvedVersion =
+			model?.modelVersions?.find((item) => item.id === version.id) ?? version;
+		const variant = buildCivitaiVariant(resolvedVersion) ?? {
+			downloadUrl: input.url.href,
+			versionId: version.id,
+			versionName: version.name,
+		};
+		return buildResolvedCivitaiSource({
+			canGenerate:
+				resolvedVersion.canGenerate ??
+				model?.canGenerate ??
+				version.model?.canGenerate,
+			downloadHeaders: input.downloadHeaders,
+			input: input.sourceInput,
+			modelId: version.modelId,
+			modelName: model?.name ?? version.model?.name ?? version.name,
+			nsfw: model?.nsfw ?? version.model?.nsfw,
+			supportsGeneration:
+				model?.supportsGeneration ?? version.model?.supportsGeneration,
+			variant,
+			variants: [variant],
+		});
+	}
+
 	async function resolveCivitai(
 		input: CreateLoraFromUrlInput,
 		url: URL
@@ -752,69 +911,23 @@ export function createLoraSourceResolver(
 		const modelId = getCivitaiModelId(url);
 
 		if (modelId) {
-			const model = parseCivitaiModel(
-				await fetchJson(
-					buildCivitaiApiUrl(url, `/api/v1/models/${modelId}`),
-					requestHeaders
-				)
-			);
-			const version = selectCivitaiVersion(model, modelVersionId);
-			const variants = (model.modelVersions ?? [])
-				.map(buildCivitaiVariant)
-				.filter((variant): variant is LoraSourcePreviewVariant =>
-					Boolean(variant)
-				);
-			const variant =
-				variants.find((item) => item.versionId === version.id) ??
-				buildCivitaiVariant(version);
-			if (!variant) {
-				throw new Error(`Civitai model "${model.name}" has no download URL.`);
-			}
-			const pairedFiles = findPairedFiles({
-				baseModel: variant.baseModel,
-				primary: variant,
-				versions: model.modelVersions ?? [],
-			});
-			return buildResolvedCivitaiSource({
+			return await resolveCivitaiModelSource({
 				downloadHeaders,
-				input,
-				modelDescription: model.description,
-				modelId: model.id,
-				modelName: model.name,
-				nsfw: model.nsfw,
-				pairedFiles,
-				supportsGeneration: model.supportsGeneration,
-				variant,
-				variants,
+				modelId,
+				modelVersionId,
+				requestHeaders,
+				sourceInput: input,
+				url,
 			});
 		}
 
 		if (modelVersionId) {
-			const version = parseCivitaiModelVersionResponse(
-				await fetchJson(
-					buildCivitaiApiUrl(url, `/api/v1/model-versions/${modelVersionId}`),
-					requestHeaders
-				)
-			);
-			if (version.model?.type && version.model.type.toUpperCase() !== "LORA") {
-				throw new Error(
-					`Civitai model "${version.model.name ?? version.name}" is ${version.model.type}, not LoRA.`
-				);
-			}
-			const variant = buildCivitaiVariant(version) ?? {
-				downloadUrl: url.href,
-				versionId: version.id,
-				versionName: version.name,
-			};
-			return buildResolvedCivitaiSource({
+			return await resolveCivitaiVersionSource({
 				downloadHeaders,
-				input,
-				modelId: version.modelId,
-				modelName: version.model?.name ?? version.name,
-				nsfw: version.model?.nsfw,
-				supportsGeneration: version.model?.supportsGeneration,
-				variant,
-				variants: [variant],
+				modelVersionId,
+				requestHeaders,
+				sourceInput: input,
+				url,
 			});
 		}
 
@@ -889,6 +1002,7 @@ export function toLoraSourcePreview(
 ): LoraSourcePreview {
 	return {
 		baseModel: source.baseModel,
+		canGenerate: source.canGenerate,
 		description: source.description,
 		downloadUrl: source.downloadUrl,
 		fileName: source.fileName,

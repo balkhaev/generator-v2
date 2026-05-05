@@ -96,6 +96,7 @@ export type LoraPreviewMediaType = "image" | "video";
 
 export interface LoraSourcePreviewVariant {
 	baseModel?: LoraBaseModel;
+	canGenerate?: boolean;
 	description?: string;
 	downloadUrl: string;
 	fileName?: string;
@@ -111,6 +112,7 @@ export interface LoraSourcePreviewVariant {
 
 export interface LoraSourcePreview {
 	baseModel?: LoraBaseModel;
+	canGenerate?: boolean;
 	description?: string;
 	downloadUrl: string;
 	fileName?: string;

@@ -66,12 +66,18 @@ function isPersonDatasetGeneration(generation: PersonGenerationRecord) {
 }
 
 /**
- * Portrait tiles have a fixed column width. If columns grow with `1fr`, the
- * narrow sidebar can produce very tall rows and the next section visually
- * collides with 9:16 previews.
+ * Thumbnail geometry is fixed at 72x128: exactly 9:16. The grid rows and
+ * scroll windows use the same math so the sidebar never cuts through a
+ * portrait row.
  */
 export const THUMB_GRID_CLASSES =
-	"grid grid-cols-[repeat(auto-fill,minmax(72px,72px))] justify-start gap-1.5 items-start";
+	"grid grid-cols-[repeat(auto-fill,72px)] auto-rows-[128px] justify-start gap-1.5 items-start";
+const THUMB_TILE_CLASSES =
+	"relative h-32 w-[72px] min-w-0 overflow-hidden rounded-lg transition";
+const THUMB_GRID_TWO_ROWS_SCROLL_CLASSES =
+	"max-h-[262px] min-w-0 overflow-y-auto py-0.5";
+const THUMB_GRID_THREE_ROWS_SCROLL_CLASSES =
+	"max-h-[396px] min-w-0 overflow-y-auto pr-1";
 
 interface IdentityTile {
 	id: string;
@@ -123,7 +129,7 @@ function IdentityTiles({
 									<button
 										aria-label={tile.label}
 										className={cn(
-											"relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
+											THUMB_TILE_CLASSES,
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"
@@ -575,10 +581,7 @@ export default function PersonsInputPicker({
 		}
 		return (
 			<div
-				className={cn(
-					THUMB_GRID_CLASSES,
-					"max-h-60 min-w-0 overflow-y-auto py-0.5"
-				)}
+				className={cn(THUMB_GRID_CLASSES, THUMB_GRID_TWO_ROWS_SCROLL_CLASSES)}
 			>
 				{recentReferences.map((reference) => {
 					const isActive = currentUrl === reference.url;
@@ -589,7 +592,8 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={reference.label}
 										className={cn(
-											"group relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
+											THUMB_TILE_CLASSES,
+											"group",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-70 hover:opacity-100"
@@ -642,10 +646,7 @@ export default function PersonsInputPicker({
 		}
 		return (
 			<div
-				className={cn(
-					THUMB_GRID_CLASSES,
-					"max-h-72 min-w-0 overflow-y-auto pr-1"
-				)}
+				className={cn(THUMB_GRID_CLASSES, THUMB_GRID_THREE_ROWS_SCROLL_CLASSES)}
 			>
 				{filteredPersons.map((person) => {
 					const isActive = selectedPersonId === person.id;
@@ -653,7 +654,8 @@ export default function PersonsInputPicker({
 					return (
 						<button
 							className={cn(
-								"group relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
+								THUMB_TILE_CLASSES,
+								"group",
 								isActive
 									? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 									: "opacity-80 hover:opacity-100"
@@ -755,7 +757,7 @@ export default function PersonsInputPicker({
 						<div
 							className={cn(
 								THUMB_GRID_CLASSES,
-								"max-h-72 min-w-0 overflow-y-auto"
+								THUMB_GRID_THREE_ROWS_SCROLL_CLASSES
 							)}
 						>
 							{readyGenerations.map((generation) => {
@@ -765,7 +767,7 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={generation.title}
 										className={cn(
-											"relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
+											THUMB_TILE_CLASSES,
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"
@@ -860,10 +862,7 @@ export default function PersonsInputPicker({
 		}
 		return (
 			<div
-				className={cn(
-					THUMB_GRID_CLASSES,
-					"max-h-60 min-w-0 overflow-y-auto py-0.5"
-				)}
+				className={cn(THUMB_GRID_CLASSES, THUMB_GRID_TWO_ROWS_SCROLL_CLASSES)}
 			>
 				{imageShots.map((shot) => {
 					const isActive = currentUrl === shot.artifactUrl;
@@ -874,7 +873,8 @@ export default function PersonsInputPicker({
 									<button
 										aria-label={shot.scenarioName}
 										className={cn(
-											"group relative aspect-[9/16] w-[72px] min-w-0 overflow-hidden rounded-lg transition",
+											THUMB_TILE_CLASSES,
+											"group",
 											isActive
 												? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
 												: "opacity-80 hover:opacity-100"

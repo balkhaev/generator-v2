@@ -68,6 +68,10 @@ const CIVITAI_LUSTIFY_OLT_MODEL_URN =
 	"urn:air:sdxl:checkpoint:civitai:573152@1569593";
 const REPLICATE_FOOOCUS_API_VERSION =
 	"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c";
+const REPLICATE_WAN_22_I2V_FAST_VERSION =
+	"4eaf2b01d3bf70d8a2e00b219efeb7cb415855ad18b7dacdc4cae664a73a6eea";
+const REPLICATE_WAN_22_T2V_FAST_VERSION =
+	"c483b1f7b892065bc58ebadb6381abf557f6b1f517d2ff0febb3fb635cf49b4d";
 const FOOOCUS_ASPECT_RATIOS = {
 	landscape_4_3: "1152*896",
 	landscape_16_9: "1344*768",
@@ -344,6 +348,32 @@ const falWan22ImageToVideoParamsSchema = falWan22TextToVideoParamsSchema.extend(
 	}
 );
 
+const replicateWan22FastBaseParamsSchema = z.object({
+	numFrames: z.number().int().min(81).max(121).default(81),
+	resolution: z.enum(["480p", "720p"]).default("480p"),
+	framesPerSecond: z.number().int().min(5).max(30).default(16),
+	goFast: booleanParamSchema(true),
+	sampleShift: z.number().min(1).max(20).default(12),
+	seed: z.number().int().nonnegative().optional(),
+	loraUrlHigh: optionalUrlParamSchema,
+	loraScaleHigh: z.number().min(0).max(2).default(1),
+	loraUrlLow: optionalUrlParamSchema,
+	loraScaleLow: z.number().min(0).max(2).default(1),
+});
+
+const replicateWan22FastTextToVideoParamsSchema =
+	replicateWan22FastBaseParamsSchema.extend({
+		aspectRatio: z.enum(["16:9", "9:16"]).default("16:9"),
+		optimizePrompt: booleanParamSchema(false),
+		interpolateOutput: booleanParamSchema(true),
+	});
+
+const replicateWan22FastImageToVideoParamsSchema =
+	replicateWan22FastBaseParamsSchema.extend({
+		endImageUrl: optionalUrlParamSchema,
+		interpolateOutput: booleanParamSchema(false),
+	});
+
 // fal-ai/wan/v2.7/image-to-video — без LoRA-слота; отдельная схема от Wan 2.2.
 const falWan27ImageToVideoParamsSchema = z.object({
 	negativePrompt: z.string().max(500).default(""),
@@ -399,6 +429,49 @@ function buildWanLoras(parsed: {
 		});
 	}
 	return loras;
+}
+
+function buildReplicateWanLoraInput(parsed: {
+	loraScaleHigh: number;
+	loraScaleLow: number;
+	loraUrlHigh?: string;
+	loraUrlLow?: string;
+}): Record<string, unknown> {
+	return {
+		...(parsed.loraUrlHigh
+			? {
+					lora_scale_transformer: parsed.loraScaleHigh,
+					lora_weights_transformer: parsed.loraUrlHigh,
+				}
+			: {}),
+		...(parsed.loraUrlLow
+			? {
+					lora_scale_transformer_2: parsed.loraScaleLow,
+					lora_weights_transformer_2: parsed.loraUrlLow,
+				}
+			: {}),
+	};
+}
+
+function buildReplicateWanFastBaseInput(parsed: {
+	framesPerSecond: number;
+	goFast: boolean;
+	interpolateOutput: boolean;
+	numFrames: number;
+	resolution: "480p" | "720p";
+	sampleShift: number;
+	seed?: number;
+}): Record<string, unknown> {
+	return {
+		disable_safety_checker: true,
+		frames_per_second: parsed.framesPerSecond,
+		go_fast: parsed.goFast,
+		interpolate_output: parsed.interpolateOutput,
+		num_frames: parsed.numFrames,
+		resolution: parsed.resolution,
+		sample_shift: parsed.sampleShift,
+		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+	};
 }
 
 function buildFooocusEmbeddings(parsed: {
@@ -629,6 +702,8 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	// queue ~10s + inference ~75-90s (5s 720p video)
 	"fal-wan-2-2-text-to-video": 90 * SECOND,
 	"fal-wan-2-2-image-to-video": 90 * SECOND,
+	"replicate-wan-2-2-fast-text-to-video": 60 * SECOND,
+	"replicate-wan-2-2-fast-image-to-video": 60 * SECOND,
 	"fal-wan-2-7-image-to-video": 90 * SECOND,
 	"fal-seedance-1-5-pro-image-to-video": 90 * SECOND,
 	// ltx-2-pro генерирует медленнее wan'а; уточнить по живым трейсам
@@ -1777,6 +1852,187 @@ export const workflowRegistry = {
 				loras: buildWanLoras(parsed),
 				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"replicate-wan-2-2-fast-text-to-video": {
+		baseModel: "wan-2-2",
+		key: "replicate-wan-2-2-fast-text-to-video",
+		name: "Wan 2.2 Fast T2V (Replicate)",
+		description:
+			"Fast text-to-video generation using wan-video/wan-2.2-t2v-fast on Replicate. Optionally accepts paired high/low LoRA URLs.",
+		requiresInputImage: false,
+		parameterSchema: replicateWan22FastTextToVideoParamsSchema,
+		parameterFields: [
+			{
+				description: "Output video aspect ratio.",
+				enumValues: ["16:9", "9:16"],
+				key: "aspectRatio",
+				label: "Aspect ratio",
+				type: "text",
+			},
+			{
+				description: "Output video resolution.",
+				enumValues: ["480p", "720p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description: "Number of generated frames.",
+				key: "numFrames",
+				label: "Frames",
+				max: 121,
+				min: 81,
+				step: 1,
+				type: "number",
+				unit: "frames",
+			},
+			{
+				description: "Source frames per second.",
+				key: "framesPerSecond",
+				label: "FPS",
+				max: 30,
+				min: 5,
+				step: 1,
+				type: "number",
+				unit: "fps",
+			},
+			{
+				description: "Interpolate generated video to 30 FPS.",
+				enumValues: ["true", "false"],
+				key: "interpolateOutput",
+				label: "Interpolate",
+				type: "text",
+			},
+			{
+				description: "Translate and optimize prompt before generation.",
+				enumValues: ["true", "false"],
+				key: "optimizePrompt",
+				label: "Optimize prompt",
+				type: "text",
+			},
+			{
+				description: "Use Replicate's fast execution path.",
+				enumValues: ["true", "false"],
+				key: "goFast",
+				label: "Go fast",
+				type: "text",
+			},
+			{
+				description: "Sample shift factor.",
+				key: "sampleShift",
+				label: "Sample shift",
+				max: 20,
+				min: 1,
+				step: 0.1,
+				type: "number",
+			},
+			...wanLoraParameterFields,
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = replicateWan22FastTextToVideoParamsSchema.parse(params);
+			return {
+				__replicateVersion: REPLICATE_WAN_22_T2V_FAST_VERSION,
+				prompt,
+				aspect_ratio: parsed.aspectRatio,
+				optimize_prompt: parsed.optimizePrompt,
+				...buildReplicateWanFastBaseInput(parsed),
+				...buildReplicateWanLoraInput(parsed),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"replicate-wan-2-2-fast-image-to-video": {
+		baseModel: "wan-2-2",
+		key: "replicate-wan-2-2-fast-image-to-video",
+		name: "Wan 2.2 Fast I2V (Replicate)",
+		description:
+			"Fast image-to-video generation using wan-video/wan-2.2-i2v-fast on Replicate. Supports optional last frame and paired high/low LoRA URLs.",
+		requiresInputImage: true,
+		parameterSchema: replicateWan22FastImageToVideoParamsSchema,
+		parameterFields: [
+			{
+				description: "Optional last image for smoother frame transitions.",
+				key: "endImageUrl",
+				label: "End image URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Output video resolution.",
+				enumValues: ["480p", "720p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description: "Number of generated frames.",
+				key: "numFrames",
+				label: "Frames",
+				max: 121,
+				min: 81,
+				step: 1,
+				type: "number",
+				unit: "frames",
+			},
+			{
+				description: "Source frames per second.",
+				key: "framesPerSecond",
+				label: "FPS",
+				max: 30,
+				min: 5,
+				step: 1,
+				type: "number",
+				unit: "fps",
+			},
+			{
+				description: "Interpolate generated video to 30 FPS.",
+				enumValues: ["true", "false"],
+				key: "interpolateOutput",
+				label: "Interpolate",
+				type: "text",
+			},
+			{
+				description: "Use Replicate's fast execution path.",
+				enumValues: ["true", "false"],
+				key: "goFast",
+				label: "Go fast",
+				type: "text",
+			},
+			{
+				description: "Sample shift factor.",
+				key: "sampleShift",
+				label: "Sample shift",
+				max: 20,
+				min: 1,
+				step: 0.1,
+				type: "number",
+			},
+			...wanLoraParameterFields,
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = replicateWan22FastImageToVideoParamsSchema.parse(params);
+			return {
+				__replicateVersion: REPLICATE_WAN_22_I2V_FAST_VERSION,
+				prompt,
+				image: inputImageUrl,
+				...(parsed.endImageUrl ? { last_image: parsed.endImageUrl } : {}),
+				...buildReplicateWanFastBaseInput(parsed),
+				...buildReplicateWanLoraInput(parsed),
 			};
 		},
 		extractArtifactUrls: collectArtifactUrls,

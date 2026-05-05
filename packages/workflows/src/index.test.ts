@@ -178,6 +178,43 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("resolves replicate-wan-2-2 fast workflows with correct defaults", () => {
+		const textToVideo = getWorkflowDefinition(
+			"replicate-wan-2-2-fast-text-to-video"
+		);
+		const imageToVideo = getWorkflowDefinition(
+			"replicate-wan-2-2-fast-image-to-video"
+		);
+
+		expect(textToVideo).toBeDefined();
+		expect(textToVideo?.baseModel).toBe("wan-2-2");
+		expect(textToVideo?.parameterSchema.parse({})).toMatchObject({
+			aspectRatio: "16:9",
+			framesPerSecond: 16,
+			goFast: true,
+			interpolateOutput: true,
+			loraScaleHigh: 1,
+			loraScaleLow: 1,
+			numFrames: 81,
+			optimizePrompt: false,
+			resolution: "480p",
+			sampleShift: 12,
+		});
+
+		expect(imageToVideo).toBeDefined();
+		expect(imageToVideo?.baseModel).toBe("wan-2-2");
+		expect(imageToVideo?.parameterSchema.parse({})).toMatchObject({
+			framesPerSecond: 16,
+			goFast: true,
+			interpolateOutput: false,
+			loraScaleHigh: 1,
+			loraScaleLow: 1,
+			numFrames: 81,
+			resolution: "480p",
+			sampleShift: 12,
+		});
+	});
+
 	it("resolves fal-wan-2-7-image-to-video with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-wan-2-7-image-to-video");
 		expect(workflow).toBeDefined();
@@ -376,11 +413,13 @@ describe("workflow registry", () => {
 		).toBe(false);
 	});
 
-	it("exposes paired high+low lora-url fields for fal-wan-2-2 workflows", () => {
+	it("exposes paired high+low lora-url fields for Wan 2.2 workflows", () => {
 		const workflows = listWorkflows();
 		for (const key of [
 			"fal-wan-2-2-text-to-video",
 			"fal-wan-2-2-image-to-video",
+			"replicate-wan-2-2-fast-text-to-video",
+			"replicate-wan-2-2-fast-image-to-video",
 		]) {
 			const workflow = workflows.find((entry) => entry.key === key);
 			expect(workflow).toBeDefined();
@@ -663,6 +702,85 @@ describe("workflow registry", () => {
 			negative_prompt: "blur",
 			performance_selection: "Quality",
 			use_default_loras: true,
+		});
+	});
+
+	it("builds replicate-wan-2-2 fast text-to-video payloads", () => {
+		const workflow = getWorkflowDefinition(
+			"replicate-wan-2-2-fast-text-to-video"
+		);
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					aspectRatio: "9:16",
+					framesPerSecond: 24,
+					goFast: "true",
+					interpolateOutput: "false",
+					loraScaleHigh: 0.8,
+					loraScaleLow: 0.6,
+					loraUrlHigh: "https://example.com/wan-high.safetensors",
+					loraUrlLow: "https://example.com/wan-low.safetensors",
+					numFrames: 121,
+					optimizePrompt: "true",
+					resolution: "720p",
+					sampleShift: 10,
+					seed: 42,
+				},
+				prompt: "a cinematic tracking shot across a rainy neon street",
+			})
+		).toMatchObject({
+			__replicateVersion:
+				"c483b1f7b892065bc58ebadb6381abf557f6b1f517d2ff0febb3fb635cf49b4d",
+			aspect_ratio: "9:16",
+			disable_safety_checker: true,
+			frames_per_second: 24,
+			go_fast: true,
+			interpolate_output: false,
+			lora_scale_transformer: 0.8,
+			lora_scale_transformer_2: 0.6,
+			lora_weights_transformer: "https://example.com/wan-high.safetensors",
+			lora_weights_transformer_2: "https://example.com/wan-low.safetensors",
+			num_frames: 121,
+			optimize_prompt: true,
+			prompt: "a cinematic tracking shot across a rainy neon street",
+			resolution: "720p",
+			sample_shift: 10,
+			seed: 42,
+		});
+	});
+
+	it("builds replicate-wan-2-2 fast image-to-video payloads", () => {
+		const workflow = getWorkflowDefinition(
+			"replicate-wan-2-2-fast-image-to-video"
+		);
+
+		expect(
+			workflow?.buildProviderInput({
+				inputImageUrl: "https://example.com/start.png",
+				params: {
+					endImageUrl: "https://example.com/end.png",
+					framesPerSecond: 16,
+					interpolateOutput: "true",
+					numFrames: 81,
+					resolution: "480p",
+					sampleShift: 12,
+				},
+				prompt: "the subject turns toward camera as the light changes",
+			})
+		).toMatchObject({
+			__replicateVersion:
+				"4eaf2b01d3bf70d8a2e00b219efeb7cb415855ad18b7dacdc4cae664a73a6eea",
+			disable_safety_checker: true,
+			frames_per_second: 16,
+			go_fast: true,
+			image: "https://example.com/start.png",
+			interpolate_output: true,
+			last_image: "https://example.com/end.png",
+			num_frames: 81,
+			prompt: "the subject turns toward camera as the light changes",
+			resolution: "480p",
+			sample_shift: 12,
 		});
 	});
 

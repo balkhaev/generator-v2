@@ -386,6 +386,82 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the replicate-wan-2-2 fast text-to-video payload", () => {
+		const workflow = getWorkflowDefinition(
+			"replicate-wan-2-2-fast-text-to-video"
+		);
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					aspectRatio: "9:16",
+					framesPerSecond: 24,
+					interpolateOutput: "false",
+					loraScaleHigh: 0.8,
+					loraScaleLow: 0.6,
+					loraUrlHigh: "https://storage.example.com/wan-high.safetensors",
+					loraUrlLow: "https://storage.example.com/wan-low.safetensors",
+					numFrames: 121,
+					optimizePrompt: "true",
+					resolution: "720p",
+					sampleShift: 10,
+				},
+				prompt: "a cinematic tracking shot across a rainy neon street",
+			})
+		).toMatchObject({
+			__replicateVersion:
+				"c483b1f7b892065bc58ebadb6381abf557f6b1f517d2ff0febb3fb635cf49b4d",
+			aspect_ratio: "9:16",
+			disable_safety_checker: true,
+			frames_per_second: 24,
+			interpolate_output: false,
+			lora_scale_transformer: 0.8,
+			lora_scale_transformer_2: 0.6,
+			lora_weights_transformer:
+				"https://storage.example.com/wan-high.safetensors",
+			lora_weights_transformer_2:
+				"https://storage.example.com/wan-low.safetensors",
+			num_frames: 121,
+			optimize_prompt: true,
+			prompt: "a cinematic tracking shot across a rainy neon street",
+			resolution: "720p",
+			sample_shift: 10,
+		});
+	});
+
+	it("builds the replicate-wan-2-2 fast image-to-video payload", () => {
+		const workflow = getWorkflowDefinition(
+			"replicate-wan-2-2-fast-image-to-video"
+		);
+
+		expect(
+			workflow?.buildProviderInput({
+				inputImageUrl: "https://storage.example.com/start.png",
+				params: {
+					endImageUrl: "https://storage.example.com/end.png",
+					framesPerSecond: 16,
+					interpolateOutput: "true",
+					numFrames: 81,
+					resolution: "480p",
+					sampleShift: 12,
+				},
+				prompt: "the subject turns toward camera as the light changes",
+			})
+		).toMatchObject({
+			__replicateVersion:
+				"4eaf2b01d3bf70d8a2e00b219efeb7cb415855ad18b7dacdc4cae664a73a6eea",
+			disable_safety_checker: true,
+			frames_per_second: 16,
+			image: "https://storage.example.com/start.png",
+			interpolate_output: true,
+			last_image: "https://storage.example.com/end.png",
+			num_frames: 81,
+			prompt: "the subject turns toward camera as the light changes",
+			resolution: "480p",
+			sample_shift: 12,
+		});
+	});
+
 	it("omits image_size for fal-flux2-dev-edit when set to auto", () => {
 		const workflow = getWorkflowDefinition("fal-flux2-dev-edit");
 

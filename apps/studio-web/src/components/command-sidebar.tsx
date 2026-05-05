@@ -52,7 +52,7 @@ import { toast } from "sonner";
 import { getLoraSlots } from "@/components/compose/workflow-matrix";
 import { buildFinalPromptPreview } from "@/components/final-prompt-preview";
 import IconButton from "@/components/icon-button";
-import Ltx23ScenariosPanel from "@/components/ltx23-scenarios-panel";
+import CivitaiLtx23Panel from "@/components/ltx23-scenarios-panel";
 import PersonLaunchSection from "@/components/person-launch-section";
 import PersonsInputPicker from "@/components/persons-input-picker";
 import { getMediaType } from "@/components/preview-surface";
@@ -1390,11 +1390,11 @@ export default function CommandSidebar({
 					</>
 				) : null}
 				{isPersonMode ? null : (
-					<Ltx23ScenariosPanel
+					<CivitaiLtx23Panel
 						getScenarioHref={getScenarioHref}
-						onCreateScenario={onCreateScenario}
 						onEditScenario={onEditScenario}
 						onPickScenario={onPickScenario}
+						onSnapshotChange={onSnapshotChange}
 						selectedScenarioId={selectedScenarioId}
 						snapshot={snapshot}
 					/>

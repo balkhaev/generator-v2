@@ -1,48 +1,107 @@
 "use client";
 
-import type {
-	AdminSnapshot,
-	ScenarioRecord,
-	ScenarioRunRecord,
+import {
+	type AdminSnapshot,
+	createStudioScenario,
+	type ScenarioRecord,
+	type ScenarioRunRecord,
 } from "@generator/studio-client/client";
-import type { WorkflowDefinition } from "@generator/studio-client/shared";
+import {
+	buildCreateScenarioInput,
+	createScenarioFormState,
+	type WorkflowDefinition,
+} from "@generator/studio-client/shared";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
+import { Input } from "@generator/ui/components/input";
+import { Label } from "@generator/ui/components/label";
 import { RunProgressIndicator } from "@generator/ui/components/run-progress-indicator";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import { cn } from "@generator/ui/lib/utils";
 import {
 	Clapperboard,
+	Dice5,
 	ImagePlus,
+	Loader2,
 	Pencil,
 	Plus,
 	Sparkles,
+	Type,
 	Video,
 } from "lucide-react";
 import type { Route } from "next";
-import { useMemo } from "react";
+import {
+	type FormEvent,
+	type ReactNode,
+	useEffect,
+	useId,
+	useMemo,
+	useState,
+} from "react";
+import { toast } from "sonner";
 
-interface Ltx23ScenariosPanelProps {
+import RangeSlider from "@/components/compose/range-slider";
+
+interface CivitaiLtx23PanelProps {
 	getScenarioHref: (scenarioId: string) => Route;
-	onCreateScenario?: (workflowKey?: string) => void;
 	onEditScenario?: (scenarioId: string) => void;
 	onPickScenario: (scenarioId: string) => void;
+	onSnapshotChange: (snapshot: AdminSnapshot) => void;
 	selectedScenarioId: string | null;
 	snapshot: AdminSnapshot;
 }
 
 type ScenarioStatus = ScenarioRunRecord["status"] | "draft";
+type CivitaiMode = "text" | "image";
 
-interface Ltx23PanelData {
-	runCountByWorkflow: Map<string, number>;
+interface CivitaiPanelData {
+	runCount: number;
 	runsByScenario: Map<string, ScenarioRunRecord[]>;
-	scenarioCountByWorkflow: Map<string, number>;
 	scenarios: ScenarioRecord[];
 	workflows: WorkflowDefinition[];
 	workflowsByKey: Map<string, WorkflowDefinition>;
 }
 
-const LTX23_BASE_MODEL = "ltx-2-3";
+interface CivitaiDraft {
+	aspectRatio: string;
+	duration: number;
+	endImageUrl: string;
+	generateAudio: boolean;
+	guidanceScale: number;
+	loraStrength: number;
+	name: string;
+	prompt: string;
+	resolution: string;
+	seed: string;
+	steps: number;
+	workflowKey: string;
+}
+
+const CIVITAI_LTX23_TEXT_WORKFLOW_KEY = "civitai-ltx-2-3-synth-text-to-video";
+const CIVITAI_LTX23_IMAGE_WORKFLOW_KEY = "civitai-ltx-2-3-synth-image-to-video";
+const CIVITAI_LTX23_WORKFLOW_KEYS = new Set([
+	CIVITAI_LTX23_TEXT_WORKFLOW_KEY,
+	CIVITAI_LTX23_IMAGE_WORKFLOW_KEY,
+]);
+
+const aspectOptions = ["16:9", "3:2", "1:1", "2:3", "9:16"] as const;
+const resolutionOptions = ["720p", "1080p"] as const;
+
+const modeMeta: Record<
+	CivitaiMode,
+	{ icon: ReactNode; label: string; workflowKey: string }
+> = {
+	image: {
+		icon: <ImagePlus className="size-3" />,
+		label: "I2V",
+		workflowKey: CIVITAI_LTX23_IMAGE_WORKFLOW_KEY,
+	},
+	text: {
+		icon: <Type className="size-3" />,
+		label: "T2V",
+		workflowKey: CIVITAI_LTX23_TEXT_WORKFLOW_KEY,
+	},
+};
 
 const statusDot: Record<ScenarioStatus, string> = {
 	draft: "bg-muted-foreground/40",
@@ -60,8 +119,8 @@ const statusTone: Record<ScenarioStatus, string> = {
 	succeeded: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
 };
 
-function isLtx23Workflow(workflow: WorkflowDefinition) {
-	return workflow.active && workflow.baseModel === LTX23_BASE_MODEL;
+function isCivitaiLtx23Workflow(workflow: WorkflowDefinition) {
+	return workflow.active && CIVITAI_LTX23_WORKFLOW_KEYS.has(workflow.key);
 }
 
 function sortByRecent(
@@ -88,6 +147,82 @@ function toParamNumber(params: ScenarioRecord["params"], key: string) {
 	const value = params?.[key];
 	const parsed = typeof value === "number" ? value : Number(value);
 	return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getDefaultParam(workflow: WorkflowDefinition, key: string) {
+	return createScenarioFormState(workflow).params[key] ?? "";
+}
+
+function getDefaultNumber(
+	workflow: WorkflowDefinition,
+	key: string,
+	fallback: number
+) {
+	const parsed = Number(getDefaultParam(workflow, key));
+	return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getDefaultBoolean(workflow: WorkflowDefinition, key: string) {
+	return getDefaultParam(workflow, key) === "true";
+}
+
+function createCivitaiDraft(workflow: WorkflowDefinition): CivitaiDraft {
+	return {
+		aspectRatio: getDefaultParam(workflow, "aspectRatio") || "16:9",
+		duration: getDefaultNumber(workflow, "duration", 5),
+		endImageUrl: getDefaultParam(workflow, "endImageUrl"),
+		generateAudio: getDefaultBoolean(workflow, "generateAudio"),
+		guidanceScale: getDefaultNumber(workflow, "guidanceScale", 3),
+		loraStrength: getDefaultNumber(workflow, "loraStrength", 1),
+		name: "",
+		prompt: "",
+		resolution: getDefaultParam(workflow, "resolution") || "720p",
+		seed: getDefaultParam(workflow, "seed"),
+		steps: getDefaultNumber(workflow, "steps", 30),
+		workflowKey: workflow.key,
+	};
+}
+
+function getModeFromWorkflowKey(workflowKey: string): CivitaiMode {
+	return workflowKey === CIVITAI_LTX23_IMAGE_WORKFLOW_KEY ? "image" : "text";
+}
+
+function buildPanelData(snapshot: AdminSnapshot): CivitaiPanelData {
+	const workflows = snapshot.workflows.filter(isCivitaiLtx23Workflow);
+	const workflowsByKey = new Map(
+		workflows.map((workflow) => [workflow.key, workflow])
+	);
+	const workflowKeys = new Set(workflowsByKey.keys());
+	const scenarios = snapshot.scenarios
+		.filter((scenario) => workflowKeys.has(scenario.workflowKey))
+		.sort(sortByRecent);
+	const scenarioIds = new Set(scenarios.map((scenario) => scenario.id));
+	const runsByScenario = new Map<string, ScenarioRunRecord[]>();
+	let runCount = 0;
+
+	for (const run of snapshot.runs) {
+		if (!scenarioIds.has(run.scenarioId)) {
+			continue;
+		}
+		const scenarioRuns = runsByScenario.get(run.scenarioId) ?? [];
+		scenarioRuns.push(run);
+		runsByScenario.set(run.scenarioId, scenarioRuns);
+		runCount += 1;
+	}
+
+	for (const scenarioRuns of runsByScenario.values()) {
+		scenarioRuns.sort((left, right) =>
+			right.createdAt.localeCompare(left.createdAt)
+		);
+	}
+
+	return {
+		runCount,
+		runsByScenario,
+		scenarios,
+		workflows,
+		workflowsByKey,
+	};
 }
 
 function formatDuration(params: ScenarioRecord["params"]) {
@@ -125,101 +260,420 @@ function getScenarioMeta(
 	].filter(Boolean);
 }
 
-function buildPanelData(snapshot: AdminSnapshot): Ltx23PanelData {
-	const workflows = snapshot.workflows.filter(isLtx23Workflow);
-	const workflowsByKey = new Map(
-		workflows.map((workflow) => [workflow.key, workflow])
-	);
-	const workflowKeys = new Set(workflowsByKey.keys());
-	const scenarios = snapshot.scenarios
-		.filter((scenario) => workflowKeys.has(scenario.workflowKey))
-		.sort(sortByRecent);
-	const scenarioIds = new Set(scenarios.map((scenario) => scenario.id));
-	const runsByScenario = new Map<string, ScenarioRunRecord[]>();
-	const scenarioCountByWorkflow = new Map<string, number>();
-	const runCountByWorkflow = new Map<string, number>();
-
-	for (const scenario of scenarios) {
-		scenarioCountByWorkflow.set(
-			scenario.workflowKey,
-			(scenarioCountByWorkflow.get(scenario.workflowKey) ?? 0) + 1
-		);
+function getDraftErrors(draft: CivitaiDraft) {
+	const errors: string[] = [];
+	if (!draft.name.trim()) {
+		errors.push("Name");
 	}
-
-	for (const run of snapshot.runs) {
-		if (!scenarioIds.has(run.scenarioId)) {
-			continue;
-		}
-		const scenarioRuns = runsByScenario.get(run.scenarioId) ?? [];
-		scenarioRuns.push(run);
-		runsByScenario.set(run.scenarioId, scenarioRuns);
-		runCountByWorkflow.set(
-			run.workflowKey,
-			(runCountByWorkflow.get(run.workflowKey) ?? 0) + 1
-		);
+	if (!draft.prompt.trim()) {
+		errors.push("Prompt");
 	}
+	return errors;
+}
 
-	for (const scenarioRuns of runsByScenario.values()) {
-		scenarioRuns.sort((left, right) =>
-			right.createdAt.localeCompare(left.createdAt)
-		);
+function draftToForm(draft: CivitaiDraft, workflow: WorkflowDefinition) {
+	const params: Record<string, string> = {
+		...createScenarioFormState(workflow).params,
+		aspectRatio: draft.aspectRatio,
+		duration: String(draft.duration),
+		generateAudio: draft.generateAudio ? "true" : "false",
+		guidanceScale: String(draft.guidanceScale),
+		loraStrength: String(draft.loraStrength),
+		resolution: draft.resolution,
+		seed: draft.seed.trim(),
+		steps: String(draft.steps),
+	};
+	if (workflow.requiresInputImage) {
+		params.endImageUrl = draft.endImageUrl.trim();
 	}
-
 	return {
-		runCountByWorkflow,
-		runsByScenario,
-		scenarioCountByWorkflow,
-		scenarios,
-		workflows,
-		workflowsByKey,
+		name: draft.name.trim(),
+		params,
+		prompt: draft.prompt.trim(),
+		promptSource: null,
+		workflowKey: workflow.key,
 	};
 }
 
-function WorkflowTile({
-	onCreateScenario,
-	runCount,
-	scenarioCount,
-	workflow,
+function SegmentedField<TValue extends string>({
+	columns = 2,
+	label,
+	onChange,
+	options,
+	value,
 }: {
-	onCreateScenario?: (workflowKey?: string) => void;
-	runCount: number;
-	scenarioCount: number;
-	workflow: WorkflowDefinition;
+	columns?: number;
+	label: string;
+	onChange: (next: TValue) => void;
+	options: readonly { icon?: ReactNode; label: string; value: TValue }[];
+	value: TValue;
 }) {
-	const Icon = workflow.requiresInputImage ? ImagePlus : Video;
-	const modeLabel = workflow.requiresInputImage ? "I2V" : "T2V";
+	return (
+		<div className="grid gap-1.5">
+			<span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
+				{label}
+			</span>
+			<div
+				className="grid gap-1"
+				style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+			>
+				{options.map((option) => {
+					const active = value === option.value;
+					return (
+						<button
+							aria-pressed={active}
+							className={cn(
+								"inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded-md px-2 text-[10px] transition",
+								active
+									? "bg-foreground text-background"
+									: "bg-foreground/[0.05] text-muted-foreground hover:bg-foreground/[0.09] hover:text-foreground"
+							)}
+							key={option.value}
+							onClick={() => onChange(option.value)}
+							type="button"
+						>
+							{option.icon}
+							<span className="truncate">{option.label}</span>
+						</button>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
+function SliderField({
+	label,
+	max,
+	min,
+	onChange,
+	step,
+	suffix,
+	value,
+}: {
+	label: string;
+	max: number;
+	min: number;
+	onChange: (next: number) => void;
+	step?: number;
+	suffix?: string;
+	value: number;
+}) {
+	const id = useId();
+	return (
+		<div className="grid gap-1.5">
+			<Label
+				className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide"
+				htmlFor={id}
+			>
+				{label}
+			</Label>
+			<RangeSlider
+				id={id}
+				max={max}
+				min={min}
+				onValueChange={onChange}
+				step={step}
+				suffix={suffix}
+				value={value}
+			/>
+		</div>
+	);
+}
+
+function CivitaiScenarioComposer({
+	onPickScenario,
+	onSnapshotChange,
+	snapshot,
+	workflows,
+	workflowsByKey,
+}: {
+	onPickScenario: (scenarioId: string) => void;
+	onSnapshotChange: (snapshot: AdminSnapshot) => void;
+	snapshot: AdminSnapshot;
+	workflows: WorkflowDefinition[];
+	workflowsByKey: Map<string, WorkflowDefinition>;
+}) {
+	const firstWorkflow = workflows[0] ?? null;
+	const endImageId = useId();
+	const nameId = useId();
+	const promptId = useId();
+	const seedId = useId();
+	const [draft, setDraft] = useState<CivitaiDraft | null>(() =>
+		firstWorkflow ? createCivitaiDraft(firstWorkflow) : null
+	);
+	const [isSaving, setIsSaving] = useState(false);
+
+	useEffect(() => {
+		if (!firstWorkflow) {
+			setDraft(null);
+			return;
+		}
+		setDraft((current) =>
+			current && workflowsByKey.has(current.workflowKey)
+				? current
+				: createCivitaiDraft(firstWorkflow)
+		);
+	}, [firstWorkflow, workflowsByKey]);
+
+	if (!draft) {
+		return null;
+	}
+
+	const selectedWorkflow =
+		workflowsByKey.get(draft.workflowKey) ?? firstWorkflow;
+	if (!selectedWorkflow) {
+		return null;
+	}
+
+	const mode = getModeFromWorkflowKey(draft.workflowKey);
+	const errors = getDraftErrors(draft);
+	const isReady = errors.length === 0;
+
+	function updateDraft(next: Partial<CivitaiDraft>) {
+		setDraft((current) => (current ? { ...current, ...next } : current));
+	}
+
+	function switchMode(nextMode: CivitaiMode) {
+		const nextWorkflow = workflowsByKey.get(modeMeta[nextMode].workflowKey);
+		if (!nextWorkflow) {
+			return;
+		}
+		setDraft((current) => {
+			const nextDraft = createCivitaiDraft(nextWorkflow);
+			if (!current) {
+				return nextDraft;
+			}
+			return {
+				...nextDraft,
+				aspectRatio: current.aspectRatio,
+				duration: current.duration,
+				generateAudio: current.generateAudio,
+				guidanceScale: current.guidanceScale,
+				loraStrength: current.loraStrength,
+				name: current.name,
+				prompt: current.prompt,
+				resolution: current.resolution,
+				seed: current.seed,
+				steps: current.steps,
+			};
+		});
+	}
+
+	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		if (!(draft && isReady) || isSaving) {
+			return;
+		}
+		setIsSaving(true);
+		try {
+			const payload = buildCreateScenarioInput(
+				selectedWorkflow,
+				draftToForm(draft, selectedWorkflow)
+			);
+			const result = await createStudioScenario(payload);
+			onSnapshotChange({
+				...snapshot,
+				scenarios: [result.data, ...snapshot.scenarios],
+			});
+			onPickScenario(result.data.id);
+			toast.success("Civitai scenario saved.");
+			setDraft(createCivitaiDraft(selectedWorkflow));
+		} catch (error) {
+			toast.error(
+				error instanceof Error
+					? error.message
+					: "Unable to save Civitai scenario."
+			);
+		} finally {
+			setIsSaving(false);
+		}
+	}
 
 	return (
-		<div className="grid min-w-0 gap-2 rounded-lg bg-foreground/[0.03] p-2 ring-1 ring-foreground/6">
-			<div className="flex min-w-0 items-start gap-2">
-				<span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400">
-					<Icon className="size-3.5" strokeWidth={1.8} />
+		<form
+			className="grid min-w-0 gap-3 rounded-lg bg-foreground/[0.03] p-2.5 ring-1 ring-foreground/6"
+			onSubmit={handleSubmit}
+		>
+			<div className="flex min-w-0 items-center justify-between gap-2">
+				<div className="flex min-w-0 items-center gap-1.5">
+					<Video className="size-3 text-muted-foreground" />
+					<SectionLabel>Civitai setup</SectionLabel>
+				</div>
+				<span className="truncate rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+					{selectedWorkflow.key}
 				</span>
-				<div className="grid min-w-0 flex-1 gap-0.5">
-					<p className="truncate font-medium text-[11px] leading-tight">
-						{workflow.name}
-					</p>
-					<div className="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
-						<span className="rounded-full bg-foreground/[0.05] px-1.5 py-0.5">
-							{modeLabel}
-						</span>
-						<span className="truncate">{scenarioCount} scenarios</span>
-						<span>{runCount} runs</span>
+			</div>
+
+			<SegmentedField
+				label="Source"
+				onChange={switchMode}
+				options={(["text", "image"] as const)
+					.map((value) => ({
+						...modeMeta[value],
+						value,
+					}))
+					.filter((option) => workflowsByKey.has(option.workflowKey))}
+				value={mode}
+			/>
+
+			<div className="grid gap-2">
+				<div className="grid gap-1.5">
+					<Label
+						className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide"
+						htmlFor={nameId}
+					>
+						Name
+					</Label>
+					<Input
+						className="h-8 text-xs"
+						id={nameId}
+						onChange={(event) => updateDraft({ name: event.target.value })}
+						placeholder="Civitai synth clip"
+						value={draft.name}
+					/>
+				</div>
+				<div className="grid gap-1.5">
+					<Label
+						className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide"
+						htmlFor={promptId}
+					>
+						Prompt
+					</Label>
+					<textarea
+						className="min-h-20 w-full resize-y rounded-lg border border-input bg-background/45 px-2 py-1.5 text-[11px] leading-snug outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
+						id={promptId}
+						onChange={(event) => updateDraft({ prompt: event.target.value })}
+						placeholder="Cinematic movement, subject action, camera, lighting"
+						value={draft.prompt}
+					/>
+				</div>
+				{mode === "image" ? (
+					<div className="grid gap-1.5">
+						<Label
+							className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide"
+							htmlFor={endImageId}
+						>
+							Last frame URL
+						</Label>
+						<Input
+							className="h-8 text-xs"
+							id={endImageId}
+							onChange={(event) =>
+								updateDraft({ endImageUrl: event.target.value })
+							}
+							placeholder="Optional"
+							value={draft.endImageUrl}
+						/>
 					</div>
+				) : null}
+			</div>
+
+			<div className="grid gap-2">
+				<SegmentedField
+					label="Resolution"
+					onChange={(resolution) => updateDraft({ resolution })}
+					options={resolutionOptions.map((value) => ({ label: value, value }))}
+					value={draft.resolution}
+				/>
+				<SegmentedField
+					columns={5}
+					label="Aspect"
+					onChange={(aspectRatio) => updateDraft({ aspectRatio })}
+					options={aspectOptions.map((value) => ({ label: value, value }))}
+					value={draft.aspectRatio}
+				/>
+				<SliderField
+					label="Duration"
+					max={20}
+					min={3}
+					onChange={(duration) => updateDraft({ duration })}
+					suffix="s"
+					value={draft.duration}
+				/>
+				<SegmentedField
+					label="Audio"
+					onChange={(value) => updateDraft({ generateAudio: value === "true" })}
+					options={[
+						{ label: "Off", value: "false" },
+						{ label: "On", value: "true" },
+					]}
+					value={draft.generateAudio ? "true" : "false"}
+				/>
+			</div>
+
+			<div className="grid gap-2">
+				<SliderField
+					label="Steps"
+					max={50}
+					min={10}
+					onChange={(steps) => updateDraft({ steps })}
+					suffix="steps"
+					value={draft.steps}
+				/>
+				<SliderField
+					label="CFG"
+					max={10}
+					min={1}
+					onChange={(guidanceScale) => updateDraft({ guidanceScale })}
+					step={0.5}
+					value={draft.guidanceScale}
+				/>
+				<SliderField
+					label="Synth LoRA"
+					max={2}
+					min={0}
+					onChange={(loraStrength) => updateDraft({ loraStrength })}
+					step={0.05}
+					value={draft.loraStrength}
+				/>
+			</div>
+
+			<div className="grid gap-1.5">
+				<Label
+					className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide"
+					htmlFor={seedId}
+				>
+					Seed
+				</Label>
+				<div className="flex items-center gap-1.5">
+					<Input
+						className="h-8 flex-1 text-[11px] tabular-nums"
+						id={seedId}
+						inputMode="numeric"
+						onChange={(event) => updateDraft({ seed: event.target.value })}
+						placeholder="Random"
+						type="text"
+						value={draft.seed}
+					/>
+					<button
+						aria-label="Generate random seed"
+						className="inline-flex h-8 items-center gap-1 rounded-lg border border-input bg-background/45 px-2 text-[10px] text-muted-foreground transition hover:bg-foreground/[0.05] hover:text-foreground"
+						onClick={() =>
+							updateDraft({ seed: String(Math.floor(Math.random() * 2 ** 31)) })
+						}
+						type="button"
+					>
+						<Dice5 className="size-3" />
+						Random
+					</button>
 				</div>
 			</div>
-			{onCreateScenario ? (
-				<Button
-					className="h-7 justify-center px-2 text-[10px]"
-					onClick={() => onCreateScenario(workflow.key)}
-					size="sm"
-					variant="outline"
-				>
-					<Plus className="size-3" />
-					Scenario
+
+			<div className="flex min-w-0 items-center justify-between gap-2 border-foreground/6 border-t pt-2">
+				<p className="truncate text-[10px] text-muted-foreground">
+					{errors.length > 0 ? `${errors.join(" · ")} required` : "Ready"}
+				</p>
+				<Button disabled={!isReady || isSaving} size="sm" type="submit">
+					{isSaving ? (
+						<Loader2 className="size-3.5 animate-spin" />
+					) : (
+						<Plus className="size-3.5" />
+					)}
+					Save
 				</Button>
-			) : null}
-		</div>
+			</div>
+		</form>
 	);
 }
 
@@ -263,7 +717,7 @@ function ScenarioRow({
 	return (
 		<div
 			className={cn(
-				"group/ltx-row grid min-w-0 gap-1 rounded-lg transition",
+				"group/civit-row grid min-w-0 gap-1 rounded-lg transition",
 				isSelected
 					? "bg-foreground text-background"
 					: "bg-foreground/[0.03] hover:bg-foreground/[0.06]"
@@ -378,14 +832,14 @@ function ScenarioRow({
 	);
 }
 
-export default function Ltx23ScenariosPanel({
+export default function CivitaiLtx23Panel({
 	getScenarioHref,
-	onCreateScenario,
 	onEditScenario,
 	onPickScenario,
+	onSnapshotChange,
 	selectedScenarioId,
 	snapshot,
-}: Ltx23ScenariosPanelProps) {
+}: CivitaiLtx23PanelProps) {
 	const data = useMemo(() => buildPanelData(snapshot), [snapshot]);
 
 	if (data.workflows.length === 0) {
@@ -397,42 +851,33 @@ export default function Ltx23ScenariosPanel({
 			<div className="flex min-w-0 items-center justify-between gap-2">
 				<div className="flex min-w-0 items-center gap-1.5">
 					<Clapperboard className="size-3.5 text-muted-foreground" />
-					<SectionLabel>LTX 2.3</SectionLabel>
+					<SectionLabel>Civitai LTX 2.3</SectionLabel>
 				</div>
 				<span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-400">
 					<Sparkles className="size-2.5" />
-					Civitai
+					Synth LoRA
 				</span>
 			</div>
 
-			<div className="grid min-w-0 gap-1.5">
-				{data.workflows.map((workflow) => (
-					<WorkflowTile
-						key={workflow.key}
-						onCreateScenario={onCreateScenario}
-						runCount={data.runCountByWorkflow.get(workflow.key) ?? 0}
-						scenarioCount={data.scenarioCountByWorkflow.get(workflow.key) ?? 0}
-						workflow={workflow}
-					/>
-				))}
+			<CivitaiScenarioComposer
+				onPickScenario={onPickScenario}
+				onSnapshotChange={onSnapshotChange}
+				snapshot={snapshot}
+				workflows={data.workflows}
+				workflowsByKey={data.workflowsByKey}
+			/>
+
+			<div className="flex items-center justify-between gap-2">
+				<SectionLabel>Scenarios</SectionLabel>
+				<span className="rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+					{data.scenarios.length} · {data.runCount} runs
+				</span>
 			</div>
 
 			{data.scenarios.length === 0 ? (
 				<EmptyState
-					action={
-						onCreateScenario ? (
-							<Button
-								onClick={() => onCreateScenario(data.workflows[0]?.key)}
-								size="sm"
-								variant="outline"
-							>
-								<Plus className="size-3.5" />
-								Scenario
-							</Button>
-						) : null
-					}
-					hint="Create a Civitai LTX 2.3 scenario."
-					message="No LTX 2.3 scenarios."
+					hint="Save a Civitai setup above."
+					message="No Civitai scenarios."
 				/>
 			) : (
 				<div className="grid min-w-0 gap-1.5">

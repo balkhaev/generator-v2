@@ -3,7 +3,7 @@ import type { LoraInferenceAvailability } from "@generator/contracts/loras";
 const DEFAULT_CIVITAI_API_BASE_URL = "https://orchestration-new.civitai.com";
 const TRAILING_SLASH = /\/$/;
 const NO_AVAILABLE_PROVIDER_PATTERN =
-	/no available provider|no provider|not currently supported/i;
+	/no available provider|no provider|service provider|not currently supported/i;
 
 type FetchLike = (
 	input: string | URL | Request,

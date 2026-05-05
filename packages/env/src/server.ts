@@ -197,6 +197,8 @@ const serverSchema = {
 	// Serverless-only.
 	RUNPOD_AI_TOOLKIT_ENDPOINT_ID: z.string().min(1).optional(),
 	RUNPOD_API_BASE_URL: z.url().default("https://api.runpod.ai/v2"),
+	// Inference-only Fooocus SDXL endpoint used by generator-worker.
+	RUNPOD_FOOOCUS_ENDPOINT_ID: z.string().min(1).optional(),
 
 	// Shared (применимо к обоим режимам).
 	RUNPOD_AI_TOOLKIT_TIMEOUT_MS: z.coerce

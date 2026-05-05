@@ -5,6 +5,7 @@ import { resolveS3StorageConfig } from "@generator/storage";
 import { ExecutionService } from "@/domain/executions";
 import { createFalClient } from "@/providers/fal";
 import { createInferenceRouter } from "@/providers/inference-router";
+import { createRunpodClient } from "@/providers/runpod";
 import { createStorageAdapter } from "@/providers/storage";
 import {
 	createGeneratorExecutionQueueClient,
@@ -14,13 +15,17 @@ import { createDrizzleExecutionRepository } from "@/repositories/executions";
 
 const redisUrl = env.REDIS_URL;
 const falKey = env.FAL_KEY;
+const runpodApiKey = env.RUNPOD_API_KEY;
+const runpodFooocusEndpointId = env.RUNPOD_FOOOCUS_ENDPOINT_ID;
 const kafkaConfig = getKafkaEventBusConfig("generator-worker");
 const eventPublisher = kafkaConfig
 	? createKafkaEventPublisher(kafkaConfig, { source: "generator-worker" })
 	: null;
 
-if (!falKey) {
-	throw new Error("FAL_KEY is required for the generator worker");
+if (!(falKey || (runpodApiKey && runpodFooocusEndpointId))) {
+	throw new Error(
+		"At least one inference provider is required for the generator worker"
+	);
 }
 
 const s3Config = resolveS3StorageConfig();
@@ -30,7 +35,17 @@ const storageAdapter = createStorageAdapter({
 });
 
 const inferenceClient = createInferenceRouter({
-	fal: createFalClient({ apiKey: falKey }),
+	fal: falKey ? createFalClient({ apiKey: falKey }) : undefined,
+	runpod:
+		runpodApiKey && runpodFooocusEndpointId
+			? createRunpodClient({
+					apiBaseUrl: env.RUNPOD_API_BASE_URL,
+					apiKey: runpodApiKey,
+					endpoints: {
+						"fooocus-sdxl": runpodFooocusEndpointId,
+					},
+				})
+			: undefined,
 });
 
 const service = new ExecutionService(

@@ -18,6 +18,7 @@ import {
 import { createFalClient } from "@/providers/fal";
 import type { InferenceClient } from "@/providers/inference";
 import { createInferenceRouter } from "@/providers/inference-router";
+import { createRunpodClient } from "@/providers/runpod";
 
 function createStubInferenceClient(): InferenceClient {
 	const fail = (): never => {
@@ -78,14 +79,28 @@ export function createApp(options: AppOptions) {
 			return createStorageAdapter({ config, logger: options.loggerImpl });
 		})();
 	const falKey = process.env.FAL_KEY;
+	const runpodApiKey = process.env.RUNPOD_API_KEY;
+	const runpodApiBaseUrl = process.env.RUNPOD_API_BASE_URL;
+	const runpodFooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID;
 
 	const falClient = falKey ? createFalClient({ apiKey: falKey }) : undefined;
+	const runpodClient =
+		runpodApiKey && runpodFooocusEndpointId
+			? createRunpodClient({
+					apiBaseUrl: runpodApiBaseUrl,
+					apiKey: runpodApiKey,
+					endpoints: {
+						"fooocus-sdxl": runpodFooocusEndpointId,
+					},
+				})
+			: undefined;
 
 	const inferenceClient =
 		options.inferenceClient ??
-		(falClient
+		(falClient || runpodClient
 			? createInferenceRouter({
 					fal: falClient,
+					runpod: runpodClient,
 				})
 			: createStubInferenceClient());
 	const redisUrl =

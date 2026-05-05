@@ -61,6 +61,18 @@ const optionalUrlParamSchema = z.preprocess(
 	z.string().url().optional()
 );
 
+const FOOOCUS_BASE_MODEL_NAME = "juggernautXL_version6Rundiffusion.safetensors";
+const FOOOCUS_REFINER_MODEL_NAME = "sd_xl_refiner_1.0_0.9vae.safetensors";
+const FOOOCUS_DISABLED_MODEL_NAME = "None";
+const FOOOCUS_ASPECT_RATIOS = {
+	landscape_4_3: "1152*896",
+	landscape_16_9: "1344*768",
+	portrait_4_3: "896*1152",
+	portrait_16_9: "768*1344",
+	square: "1024*1024",
+	square_hd: "1024*1024",
+} as const;
+
 const booleanParamSchema = (defaultValue: boolean) =>
 	z.preprocess((value) => {
 		if (value === "true") {
@@ -111,11 +123,36 @@ const falFastFooocusSdxlParamsSchema = z.object({
 	numImages: z.number().int().min(1).max(8).default(1),
 	negativePrompt: z.string().default(""),
 	outputFormat: z.enum(["jpeg", "png"]).default("jpeg"),
-	enablePromptExpansion: z.boolean().default(true),
+	enablePromptExpansion: z.boolean().default(false),
+	enableRefiner: booleanParamSchema(true),
+	seed: z.number().int().nonnegative().optional(),
+	embeddingUrl: optionalUrlParamSchema,
+	embeddingTokens: z.string().default(""),
+});
+
+const runpodFooocusSdxlParamsSchema = z.object({
+	imageSize: z
+		.enum([
+			"square_hd",
+			"square",
+			"landscape_4_3",
+			"landscape_16_9",
+			"portrait_4_3",
+			"portrait_16_9",
+		])
+		.default("square_hd"),
+	numInferenceSteps: z.number().int().min(1).max(60).default(30),
+	guidanceScale: z.number().min(0).max(20).default(4),
+	numImages: z.number().int().min(1).max(8).default(1),
+	negativePrompt: z.string().default(""),
+	outputFormat: z.enum(["jpeg", "png"]).default("jpeg"),
+	baseModelName: z.string().min(1).default(FOOOCUS_BASE_MODEL_NAME),
 	enableRefiner: booleanParamSchema(true),
 	seed: z.number().int().nonnegative().optional(),
 	loraUrl: optionalUrlParamSchema,
-	embeddingTokens: z.string().default(""),
+	loraWeight: z.number().min(0).max(2).default(1),
+	extraLoraUrl: optionalUrlParamSchema,
+	extraLoraWeight: z.number().min(0).max(2).default(0.5),
 });
 
 // Flux Dev always targets the `/flux-lora` endpoint — LoRA is optional and we
@@ -292,9 +329,9 @@ function buildWanLoras(parsed: {
 
 function buildFooocusEmbeddings(parsed: {
 	embeddingTokens: string;
-	loraUrl?: string;
+	embeddingUrl?: string;
 }): Array<{ path: string; tokens?: string[] }> {
-	if (!parsed.loraUrl) {
+	if (!parsed.embeddingUrl) {
 		return [];
 	}
 	const tokens = parsed.embeddingTokens
@@ -303,10 +340,60 @@ function buildFooocusEmbeddings(parsed: {
 		.filter((token) => token.length > 0);
 	return [
 		{
-			path: parsed.loraUrl,
+			path: parsed.embeddingUrl,
 			...(tokens.length > 0 ? { tokens } : {}),
 		},
 	];
+}
+
+function buildRunpodFooocusLoras(parsed: {
+	extraLoraUrl?: string;
+	extraLoraWeight: number;
+	loraUrl?: string;
+	loraWeight: number;
+}): Array<{ model_name: string; url: string; weight: number }> {
+	const loras: Array<{ model_name: string; url: string; weight: number }> = [];
+	const buildEntry = (url: string, weight: number) => {
+		const modelName = extractModelNameFromUrl(url) ?? buildStableLoraName(url);
+		return {
+			model_name: modelName,
+			url,
+			weight,
+		};
+	};
+	if (parsed.loraUrl) {
+		loras.push(buildEntry(parsed.loraUrl, parsed.loraWeight));
+	}
+	if (parsed.extraLoraUrl) {
+		loras.push(buildEntry(parsed.extraLoraUrl, parsed.extraLoraWeight));
+	}
+	return loras;
+}
+
+function buildRunpodFooocusLoraUrls(
+	loras: Array<{ url: string; weight: number }>
+): string {
+	return loras.map((lora) => `${lora.url},${lora.weight}`).join(";");
+}
+
+function extractModelNameFromUrl(url: string): string | undefined {
+	try {
+		const pathname = new URL(url).pathname;
+		const fileName = decodeURIComponent(pathname.split("/").pop() ?? "");
+		return fileName.toLowerCase().endsWith(".safetensors")
+			? fileName
+			: undefined;
+	} catch {
+		return;
+	}
+}
+
+function buildStableLoraName(url: string): string {
+	let hash = 0;
+	for (const char of url) {
+		hash = (hash * 31 + char.charCodeAt(0)) % 4_294_967_291;
+	}
+	return `${Math.trunc(hash).toString(36).padStart(8, "0")}.safetensors`;
 }
 
 const wanLoraParameterFields: readonly WorkflowField[] = [
@@ -370,7 +457,7 @@ const falLtx23TextToVideoParamsSchema = z.object({
 	videoCfgScale: z.number().min(1).max(20).default(3),
 	generateAudio: z.boolean().default(true),
 	useMultiscale: z.boolean().default(true),
-	enablePromptExpansion: z.boolean().default(true),
+	enablePromptExpansion: z.boolean().default(false),
 	// fal's input moderation is very strict on portraits / person LoRAs; default off
 	// so studio runs match our other fal workflows (Flux/Wan). Callers can opt in.
 	enableSafetyChecker: z.boolean().default(false),
@@ -416,6 +503,7 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-flux2-turbo": 12 * SECOND,
 	"fal-fast-sdxl": 10 * SECOND,
 	"fal-fast-fooocus-sdxl": 10 * SECOND,
+	"runpod-fooocus-sdxl": 90 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
 	// queue ~10s + inference ~75-90s (5s 720p video)
@@ -567,7 +655,7 @@ export const workflowRegistry = {
 				num_images: parsed.numImages,
 				negative_prompt: parsed.negativePrompt,
 				format: parsed.outputFormat,
-				expand_prompt: parsed.enablePromptExpansion,
+				expand_prompt: false,
 				enable_safety_checker: parsed.enableSafetyChecker,
 				loras: parsed.loraUrl
 					? [{ path: parsed.loraUrl, scale: parsed.loraScale }]
@@ -636,10 +724,9 @@ export const workflowRegistry = {
 			},
 			{
 				description:
-					"Optional public URL pointing to SDXL LoRA or Fooocus embedding weights.",
-				key: "loraUrl",
-				kind: "lora-url",
-				label: "LoRA URL",
+					"Optional public URL pointing to Fooocus embedding weights.",
+				key: "embeddingUrl",
+				label: "Embedding URL",
 				optional: true,
 				type: "text",
 			},
@@ -676,7 +763,7 @@ export const workflowRegistry = {
 				num_images: parsed.numImages,
 				negative_prompt: parsed.negativePrompt,
 				format: parsed.outputFormat,
-				expand_prompt: parsed.enablePromptExpansion,
+				expand_prompt: false,
 				enable_refiner: parsed.enableRefiner,
 				enable_safety_checker: false,
 				embeddings: buildFooocusEmbeddings(parsed),
@@ -684,6 +771,149 @@ export const workflowRegistry = {
 			};
 		},
 		extractArtifactUrls: collectFalImageUrls,
+	},
+	"runpod-fooocus-sdxl": {
+		baseModel: "sdxl",
+		key: "runpod-fooocus-sdxl",
+		name: "Fooocus SDXL (RunPod)",
+		description:
+			"Fooocus SDXL text-to-image generation on a custom RunPod Serverless endpoint. Supports SDXL LoRA URLs.",
+		requiresInputImage: false,
+		parameterSchema: runpodFooocusSdxlParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Output image size preset controlling aspect ratio and resolution.",
+				key: "imageSize",
+				label: "Image size",
+				type: "text",
+			},
+			{
+				description: "Number of denoising steps.",
+				key: "numInferenceSteps",
+				label: "Steps",
+				max: 60,
+				min: 1,
+				step: 1,
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "Guidance scale",
+				max: 20,
+				min: 0,
+				step: 0.1,
+				type: "number",
+			},
+			{
+				description: "Number of images to generate per request.",
+				key: "numImages",
+				label: "Number of images",
+				max: 8,
+				min: 1,
+				step: 1,
+				type: "number",
+			},
+			{
+				description: "Output image format.",
+				enumValues: ["jpeg", "png"],
+				key: "outputFormat",
+				label: "Output format",
+				type: "text",
+			},
+			{
+				description: "Negative prompt to discourage unwanted content.",
+				key: "negativePrompt",
+				label: "Negative prompt",
+				optional: true,
+				type: "text",
+			},
+			{
+				description:
+					"Optional public URL pointing to trained SDXL LoRA weights.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the primary LoRA effect.",
+				key: "loraWeight",
+				label: "LoRA weight",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description:
+					"Optional second public URL pointing to SDXL LoRA weights.",
+				key: "extraLoraUrl",
+				kind: "lora-url",
+				label: "Extra LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the extra LoRA effect.",
+				key: "extraLoraWeight",
+				label: "Extra LoRA weight",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description: "Run Fooocus refiner after the base pass.",
+				enumValues: ["true", "false"],
+				key: "enableRefiner",
+				label: "Refiner",
+				type: "text",
+			},
+			{
+				description: "Optional deterministic seed for repeatable outputs.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = runpodFooocusSdxlParamsSchema.parse(params);
+			const loras = buildRunpodFooocusLoras(parsed);
+			return {
+				__runpodEndpoint: "fooocus-sdxl",
+				api_name: "txt2img",
+				prompt,
+				// Fooocus-API-LORA accepts these native field names. The RunPod
+				// worker still gets image_size/num_images aliases for simpler output
+				// adapters, but should call Fooocus with the native names below.
+				base_model_name: parsed.baseModelName,
+				advanced_params: {
+					overwrite_step: parsed.numInferenceSteps,
+				},
+				aspect_ratios_selection: FOOOCUS_ASPECT_RATIOS[parsed.imageSize],
+				image_size: parsed.imageSize,
+				image_number: parsed.numImages,
+				num_inference_steps: parsed.numInferenceSteps,
+				guidance_scale: parsed.guidanceScale,
+				num_images: parsed.numImages,
+				negative_prompt: parsed.negativePrompt,
+				output_format: parsed.outputFormat,
+				enable_refiner: parsed.enableRefiner,
+				enable_safety_checker: false,
+				require_base64: true,
+				refiner_model_name: parsed.enableRefiner
+					? FOOOCUS_REFINER_MODEL_NAME
+					: FOOOCUS_DISABLED_MODEL_NAME,
+				refiner_switch: 0.5,
+				loras,
+				loras_custom_urls: buildRunpodFooocusLoraUrls(loras),
+				...(parsed.seed === undefined
+					? {}
+					: { image_seed: parsed.seed, seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
 	},
 	"fal-flux-dev": {
 		baseModel: "flux",
@@ -978,7 +1208,7 @@ export const workflowRegistry = {
 				guidance_scale: parsed.guidanceScale,
 				num_images: parsed.numImages,
 				enable_safety_checker: parsed.enableSafetyChecker,
-				enable_prompt_expansion: parsed.enablePromptExpansion,
+				enable_prompt_expansion: false,
 				output_format: parsed.outputFormat,
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 			};
@@ -1066,7 +1296,7 @@ export const workflowRegistry = {
 				num_inference_steps: parsed.numInferenceSteps,
 				enable_safety_checker: parsed.enableSafetyChecker,
 				enable_output_safety_checker: parsed.enableOutputSafetyChecker,
-				enable_prompt_expansion: parsed.enablePromptExpansion,
+				enable_prompt_expansion: false,
 				acceleration: parsed.acceleration,
 				guidance_scale: parsed.guidanceScale,
 				guidance_scale_2: parsed.guidanceScale2,
@@ -1172,7 +1402,7 @@ export const workflowRegistry = {
 				num_inference_steps: parsed.numInferenceSteps,
 				enable_safety_checker: parsed.enableSafetyChecker,
 				enable_output_safety_checker: parsed.enableOutputSafetyChecker,
-				enable_prompt_expansion: parsed.enablePromptExpansion,
+				enable_prompt_expansion: false,
 				acceleration: parsed.acceleration,
 				guidance_scale: parsed.guidanceScale,
 				guidance_scale_2: parsed.guidanceScale2,
@@ -1253,7 +1483,7 @@ export const workflowRegistry = {
 				negative_prompt: parsed.negativePrompt,
 				resolution: parsed.resolution,
 				duration: parsed.duration,
-				enable_prompt_expansion: parsed.enablePromptExpansion,
+				enable_prompt_expansion: false,
 				enable_safety_checker: parsed.enableSafetyChecker,
 				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),
 				...(parsed.audioUrl ? { audio_url: parsed.audioUrl } : {}),
@@ -1417,7 +1647,7 @@ export const workflowRegistry = {
 				video_cfg_scale: parsed.videoCfgScale,
 				generate_audio: parsed.generateAudio,
 				use_multiscale: parsed.useMultiscale,
-				enable_prompt_expansion: parsed.enablePromptExpansion,
+				enable_prompt_expansion: false,
 				enable_safety_checker: parsed.enableSafetyChecker,
 				loras: [{ path: loraPath, scale: parsed.loraScale }],
 				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
@@ -1527,7 +1757,7 @@ export const workflowRegistry = {
 				video_cfg_scale: parsed.videoCfgScale,
 				generate_audio: parsed.generateAudio,
 				use_multiscale: parsed.useMultiscale,
-				enable_prompt_expansion: parsed.enablePromptExpansion,
+				enable_prompt_expansion: false,
 				enable_safety_checker: parsed.enableSafetyChecker,
 				loras: [{ path: loraPath, scale: parsed.loraScale }],
 				...(parsed.endImageUrl ? { end_image_url: parsed.endImageUrl } : {}),

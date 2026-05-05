@@ -2,10 +2,10 @@ import { describe, expect, it } from "bun:test";
 
 import { getWorkflowDefinition, listWorkflows } from "./index";
 
-const workflowKeyProviderPrefixPattern = /^fal-/;
+const workflowKeyProviderPrefixPattern = /^(fal|runpod)-/;
 
-describe("fal workflow registry", () => {
-	it("exposes only fal-prefixed workflows", () => {
+describe("workflow registry", () => {
+	it("exposes only provider-prefixed workflows", () => {
 		const workflows = listWorkflows();
 		expect(workflows.length).toBeGreaterThan(0);
 		for (const workflow of workflows) {
@@ -60,13 +60,31 @@ describe("fal workflow registry", () => {
 		expect(workflow?.baseModel).toBe("sdxl");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
 			embeddingTokens: "",
-			enablePromptExpansion: true,
+			enablePromptExpansion: false,
 			enableRefiner: true,
 			guidanceScale: 2,
 			imageSize: "square_hd",
 			negativePrompt: "",
 			numImages: 1,
 			numInferenceSteps: 8,
+			outputFormat: "jpeg",
+		});
+	});
+
+	it("resolves runpod-fooocus-sdxl with correct defaults", () => {
+		const workflow = getWorkflowDefinition("runpod-fooocus-sdxl");
+		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("sdxl");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			baseModelName: "juggernautXL_version6Rundiffusion.safetensors",
+			enableRefiner: true,
+			extraLoraWeight: 0.5,
+			guidanceScale: 4,
+			imageSize: "square_hd",
+			loraWeight: 1,
+			negativePrompt: "",
+			numImages: 1,
+			numInferenceSteps: 30,
 			outputFormat: "jpeg",
 		});
 	});
@@ -158,6 +176,7 @@ describe("fal workflow registry", () => {
 		expect(workflow).toBeDefined();
 		expect(workflow?.baseModel).toBe("ltx-2-3");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			enablePromptExpansion: false,
 			enableSafetyChecker: false,
 			fps: 24,
 			loraScale: 1,
@@ -173,6 +192,7 @@ describe("fal workflow registry", () => {
 		expect(workflow).toBeDefined();
 		expect(workflow?.baseModel).toBe("ltx-2-3");
 		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			enablePromptExpansion: false,
 			enableSafetyChecker: false,
 			fps: 24,
 			loraScale: 1,
@@ -280,6 +300,7 @@ describe("fal workflow registry", () => {
 		const workflows = listWorkflows();
 		const keys = [
 			"fal-fast-sdxl",
+			"runpod-fooocus-sdxl",
 			"fal-flux-dev",
 			"fal-zimage-turbo",
 			"fal-zimage-turbo-image-to-image",
@@ -294,17 +315,17 @@ describe("fal workflow registry", () => {
 		}
 	});
 
-	it("exposes optional LoRA URL field for fal-fast-fooocus-sdxl", () => {
+	it("exposes optional embedding URL field for fal-fast-fooocus-sdxl", () => {
 		const workflows = listWorkflows();
 		const workflow = workflows.find(
 			(entry) => entry.key === "fal-fast-fooocus-sdxl"
 		);
-		const loraField = workflow?.parameterFields.find(
-			(field) => field.key === "loraUrl"
+		const embeddingField = workflow?.parameterFields.find(
+			(field) => field.key === "embeddingUrl"
 		);
-		expect(loraField?.kind).toBe("lora-url");
-		expect(loraField?.optional).toBe(true);
-		expect(loraField?.label).toBe("LoRA URL");
+		expect(embeddingField?.kind).toBeUndefined();
+		expect(embeddingField?.optional).toBe(true);
+		expect(embeddingField?.label).toBe("Embedding URL");
 
 		const refinerField = workflow?.parameterFields.find(
 			(field) => field.key === "enableRefiner"
@@ -411,7 +432,7 @@ describe("fal workflow registry", () => {
 			embeddings: [],
 			enable_refiner: true,
 			enable_safety_checker: false,
-			expand_prompt: true,
+			expand_prompt: false,
 			format: "jpeg",
 			guidance_scale: 2,
 			image_size: "square_hd",
@@ -424,8 +445,8 @@ describe("fal workflow registry", () => {
 		expect(
 			buildInput({
 				embeddingTokens: "style_token, detail_token",
+				embeddingUrl: "https://example.com/fooocus-embedding.safetensors",
 				enableRefiner: "false",
-				loraUrl: "https://example.com/fooocus-embedding.safetensors",
 				outputFormat: "png",
 			})
 		).toMatchObject({
@@ -438,6 +459,73 @@ describe("fal workflow registry", () => {
 			],
 			enable_refiner: false,
 			format: "png",
+		});
+	});
+
+	it("builds runpod-fooocus-sdxl payloads with optional LoRAs", () => {
+		const workflow = getWorkflowDefinition("runpod-fooocus-sdxl");
+		const buildInput = (extra: Record<string, unknown> = {}) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "test",
+			}) as Record<string, unknown>;
+
+		expect(buildInput()).toMatchObject({
+			__runpodEndpoint: "fooocus-sdxl",
+			advanced_params: {
+				overwrite_step: 30,
+			},
+			api_name: "txt2img",
+			aspect_ratios_selection: "1024*1024",
+			base_model_name: "juggernautXL_version6Rundiffusion.safetensors",
+			enable_refiner: true,
+			enable_safety_checker: false,
+			guidance_scale: 4,
+			image_number: 1,
+			image_size: "square_hd",
+			loras: [],
+			loras_custom_urls: "",
+			negative_prompt: "",
+			num_images: 1,
+			num_inference_steps: 30,
+			output_format: "jpeg",
+			prompt: "test",
+			refiner_model_name: "sd_xl_refiner_1.0_0.9vae.safetensors",
+			refiner_switch: 0.5,
+			require_base64: true,
+		});
+
+		expect(
+			buildInput({
+				enableRefiner: "false",
+				extraLoraUrl: "https://example.com/extra-sdxl.safetensors",
+				extraLoraWeight: 0.25,
+				loraUrl: "https://example.com/sdxl.safetensors",
+				loraWeight: 0.8,
+				outputFormat: "png",
+				seed: 42,
+			})
+		).toMatchObject({
+			__runpodEndpoint: "fooocus-sdxl",
+			enable_refiner: false,
+			image_seed: 42,
+			loras: [
+				{
+					model_name: "sdxl.safetensors",
+					url: "https://example.com/sdxl.safetensors",
+					weight: 0.8,
+				},
+				{
+					model_name: "extra-sdxl.safetensors",
+					url: "https://example.com/extra-sdxl.safetensors",
+					weight: 0.25,
+				},
+			],
+			loras_custom_urls:
+				"https://example.com/sdxl.safetensors,0.8;https://example.com/extra-sdxl.safetensors,0.25",
+			output_format: "png",
+			refiner_model_name: "None",
+			seed: 42,
 		});
 	});
 

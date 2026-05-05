@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { getWorkflowDefinition, listWorkflows } from "@generator/workflows";
 
-const workflowKeyProviderPrefixPattern = /^fal-/;
+const workflowKeyProviderPrefixPattern = /^(fal|runpod)-/;
 
 describe("workflow registry", () => {
-	it("lists only fal-prefixed workflows", () => {
+	it("lists only provider-prefixed workflows", () => {
 		const workflows = listWorkflows();
 		expect(workflows.length).toBeGreaterThan(0);
 		for (const workflow of workflows) {
@@ -223,10 +223,10 @@ describe("workflow registry", () => {
 			workflow?.buildProviderInput({
 				params: {
 					embeddingTokens: "fooocus_style, subject_token",
+					embeddingUrl: "https://storage.example.com/fooocus.safetensors",
 					enableRefiner: "false",
 					guidanceScale: 2.5,
 					imageSize: "portrait_4_3",
-					loraUrl: "https://storage.example.com/fooocus.safetensors",
 					negativePrompt: "blur, watermark",
 					numImages: 2,
 					numInferenceSteps: 12,
@@ -244,7 +244,7 @@ describe("workflow registry", () => {
 			],
 			enable_refiner: false,
 			enable_safety_checker: false,
-			expand_prompt: true,
+			expand_prompt: false,
 			format: "png",
 			guidance_scale: 2.5,
 			image_size: "portrait_4_3",
@@ -252,6 +252,64 @@ describe("workflow registry", () => {
 			num_images: 2,
 			num_inference_steps: 12,
 			prompt: "studio portrait of my_character, cinematic lighting",
+		});
+	});
+
+	it("builds the runpod-fooocus-sdxl payload with optional LoRAs", () => {
+		const workflow = getWorkflowDefinition("runpod-fooocus-sdxl");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					enableRefiner: "false",
+					extraLoraUrl: "https://storage.example.com/style.safetensors",
+					extraLoraWeight: 0.3,
+					guidanceScale: 4.5,
+					imageSize: "portrait_4_3",
+					loraUrl: "https://storage.example.com/subject.safetensors",
+					loraWeight: 0.9,
+					negativePrompt: "blur, watermark",
+					numImages: 2,
+					numInferenceSteps: 32,
+					outputFormat: "png",
+				},
+				prompt: "studio portrait of my_character, cinematic lighting",
+			})
+		).toMatchObject({
+			__runpodEndpoint: "fooocus-sdxl",
+			advanced_params: {
+				overwrite_step: 32,
+			},
+			api_name: "txt2img",
+			aspect_ratios_selection: "896*1152",
+			base_model_name: "juggernautXL_version6Rundiffusion.safetensors",
+			enable_refiner: false,
+			enable_safety_checker: false,
+			guidance_scale: 4.5,
+			image_number: 2,
+			image_size: "portrait_4_3",
+			loras: [
+				{
+					model_name: "subject.safetensors",
+					url: "https://storage.example.com/subject.safetensors",
+					weight: 0.9,
+				},
+				{
+					model_name: "style.safetensors",
+					url: "https://storage.example.com/style.safetensors",
+					weight: 0.3,
+				},
+			],
+			loras_custom_urls:
+				"https://storage.example.com/subject.safetensors,0.9;https://storage.example.com/style.safetensors,0.3",
+			negative_prompt: "blur, watermark",
+			num_images: 2,
+			num_inference_steps: 32,
+			output_format: "png",
+			prompt: "studio portrait of my_character, cinematic lighting",
+			refiner_model_name: "None",
+			refiner_switch: 0.5,
+			require_base64: true,
 		});
 	});
 
@@ -473,6 +531,7 @@ describe("workflow registry", () => {
 			})
 		).toMatchObject({
 			__falModel: "fal-ai/ltx-2.3-22b/text-to-video/lora",
+			enable_prompt_expansion: false,
 			enable_safety_checker: false,
 			fps: 24,
 			generate_audio: true,
@@ -504,6 +563,7 @@ describe("workflow registry", () => {
 
 		expect(payload).toMatchObject({
 			__falModel: "fal-ai/ltx-2.3-22b/image-to-video/lora",
+			enable_prompt_expansion: false,
 			enable_safety_checker: false,
 			fps: 24,
 			generate_audio: true,

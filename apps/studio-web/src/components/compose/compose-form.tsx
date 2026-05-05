@@ -103,11 +103,10 @@ export function createComposeScenarioFormState(
 	return { ...form, params };
 }
 
-// Reference image for prompt enhance: scenario-level workflows expose
-// `image-url` parameters (e.g. `endImageUrl`) that point to a frame the
-// generator will use as input. When the user clicks Enhance we want the
-// vision-capable model to see that frame so it can describe the action
-// from the correct starting state.
+// Reference image for prompt enhance (image-to-* workflows only): optional
+// `image-url` params (e.g. `endImageUrl`). Text-to-image / text-to-video
+// scenarios never send these to the enhance API — see `textSourceOnly` on
+// `ScenarioEnhancePromptButton`.
 function useReferenceImageUrl(
 	workflow: WorkflowDefinition | null,
 	form: ScenarioFormState
@@ -137,28 +136,32 @@ function ScenarioEnhancePromptButton({
 	onEnhanced,
 	prompt,
 	referenceImageUrl,
+	textSourceOnly,
 }: {
 	onEnhanced: (enhanced: string) => void;
 	prompt: string;
 	referenceImageUrl: string | null;
+	/** Text-to-image / text-to-video: enhance prompt as plain text only (ignore optional image URLs in params). */
+	textSourceOnly: boolean;
 }) {
-	const hasImage = Boolean(referenceImageUrl);
+	const visionImageUrl = textSourceOnly ? null : referenceImageUrl;
+	const useVisionEnhance = Boolean(visionImageUrl);
 	return (
 		<EnhancePromptButton
 			enhance={async (value) => {
 				const result = await enhanceStudioPrompt(value, {
-					imageUrl: referenceImageUrl,
+					imageUrl: visionImageUrl,
 				});
 				if (result.notice) {
 					toast.warning(result.notice);
 				}
 				return result.enhanced;
 			}}
-			label={hasImage ? "Enhance for image" : "Enhance"}
+			label={useVisionEnhance ? "Enhance for image" : "Enhance"}
 			onEnhanced={(enhanced) => {
 				onEnhanced(enhanced);
 				toast.success(
-					hasImage
+					useVisionEnhance
 						? "Prompt rewritten for the reference image"
 						: "Prompt enhanced"
 				);
@@ -166,7 +169,7 @@ function ScenarioEnhancePromptButton({
 			onError={(message) => toast.error(message)}
 			prompt={prompt}
 			tooltip={
-				hasImage
+				useVisionEnhance
 					? "Rewrite this prompt as an action grounded in the reference image (vision)"
 					: "Rewrite this prompt with the configured AI provider"
 			}
@@ -747,6 +750,7 @@ export default function ComposeForm({
 								}
 								prompt={form.prompt}
 								referenceImageUrl={referenceImageUrl}
+								textSourceOnly={!selectedWorkflow.requiresInputImage}
 							/>
 							<span
 								className={cn(

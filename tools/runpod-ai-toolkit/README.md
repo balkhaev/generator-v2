@@ -113,7 +113,7 @@ S3-креды нужны handler-у, чтобы залить финальный 
 | `flux-dev` | `black-forest-labs/FLUX.1-dev` | `fal-ai/flux-lora` |
 | `flux-schnell` | `black-forest-labs/FLUX.1-schnell` | требуется отдельный schnell-lora workflow |
 | `flux2-dev` | `black-forest-labs/FLUX.2-dev` | пока нет; подключить через FLUX 2 LoRA-инференс |
-| `sdxl` | `stabilityai/stable-diffusion-xl-base-1.0` | пока нет в registry |
+| `sdxl` | `stabilityai/stable-diffusion-xl-base-1.0` | `runpod-fooocus-sdxl` (custom RunPod Fooocus endpoint) |
 | `qwen-image` | `Qwen/Qwen-Image` | пока нет в registry |
 
 > Для совместимости с инференсом тренируй `base_model=z-image-turbo`. Workflow

@@ -425,17 +425,21 @@ function RunCard({
 function PromptOverrideEditor({
 	draft,
 	onDraftChange,
+	requiresInputImage,
 	scenario,
 }: {
 	draft: RunDraft | null;
 	onDraftChange: (next: RunDraft) => void;
+	requiresInputImage: boolean;
 	scenario: ScenarioRecord;
 }) {
 	const overrideValue = draft?.promptOverride;
 	const promptValue = overrideValue ?? scenario.prompt;
 	const hasOverride =
 		typeof overrideValue === "string" && overrideValue !== scenario.prompt;
-	const hasInputImage = Boolean(draft?.inputImageUrl?.trim());
+	const useVisionEnhance = Boolean(
+		requiresInputImage && draft?.inputImageUrl?.trim()
+	);
 
 	function setPrompt(next: string) {
 		onDraftChange({
@@ -482,7 +486,9 @@ function PromptOverrideEditor({
 						className="h-6 px-2 text-[10px]"
 						enhance={async (value) => {
 							const result = await enhanceStudioPrompt(value, {
-								imageUrl: draft?.inputImageUrl ?? null,
+								imageUrl: useVisionEnhance
+									? (draft?.inputImageUrl ?? null)
+									: null,
 							});
 							if (result.notice) {
 								toast.warning(result.notice);
@@ -493,12 +499,12 @@ function PromptOverrideEditor({
 							}
 							return result.enhanced;
 						}}
-						label={hasInputImage ? "Enhance for image" : "Enhance"}
+						label={useVisionEnhance ? "Enhance for image" : "Enhance"}
 						onEnhanced={(enhanced) => setPrompt(enhanced)}
 						onError={(message) => toast.error(message)}
 						prompt={promptValue}
 						tooltip={
-							hasInputImage
+							useVisionEnhance
 								? "Rewrite this prompt using the input image (vision)"
 								: "Rewrite this prompt with the configured AI provider"
 						}
@@ -593,6 +599,7 @@ function LaunchSection({
 			<PromptOverrideEditor
 				draft={draft}
 				onDraftChange={onDraftChange}
+				requiresInputImage={requiresInputImage}
 				scenario={scenario}
 			/>
 

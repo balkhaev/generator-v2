@@ -3,11 +3,19 @@ import type {
 	InferenceJob,
 	InferenceSubmission,
 } from "./inference";
+import { isRunpodProviderEndpointId } from "./runpod";
 
 export function createInferenceRouter(clients: {
 	fal?: InferenceClient;
+	runpod?: InferenceClient;
 }): InferenceClient {
 	function routeByPayload(payload: Record<string, unknown>): InferenceClient {
+		if ("__runpodEndpoint" in payload) {
+			if (clients.runpod) {
+				return clients.runpod;
+			}
+			throw new Error("RunPod inference client is not configured");
+		}
 		if ("__falModel" in payload && clients.fal) {
 			return clients.fal;
 		}
@@ -17,7 +25,13 @@ export function createInferenceRouter(clients: {
 		throw new Error("No inference client configured for this payload");
 	}
 
-	function routeByEndpoint(): InferenceClient {
+	function routeByEndpoint(endpointId?: string): InferenceClient {
+		if (isRunpodProviderEndpointId(endpointId)) {
+			if (clients.runpod) {
+				return clients.runpod;
+			}
+			throw new Error("RunPod inference client is not configured");
+		}
 		if (clients.fal) {
 			return clients.fal;
 		}
@@ -30,11 +44,11 @@ export function createInferenceRouter(clients: {
 		},
 
 		getStatus(jobId, endpointId): Promise<InferenceJob> {
-			return routeByEndpoint().getStatus(jobId, endpointId);
+			return routeByEndpoint(endpointId).getStatus(jobId, endpointId);
 		},
 
 		cancel(jobId, endpointId): Promise<void> {
-			return routeByEndpoint().cancel(jobId, endpointId);
+			return routeByEndpoint(endpointId).cancel(jobId, endpointId);
 		},
 	};
 }

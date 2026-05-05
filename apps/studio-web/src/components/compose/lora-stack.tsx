@@ -105,6 +105,17 @@ function getSlotIndexForVariant(
 	);
 }
 
+function isNoiseSlot(slot: ResolvedSlot): boolean {
+	return (
+		slot.definition.urlKey.endsWith("High") ||
+		slot.definition.urlKey.endsWith("Low")
+	);
+}
+
+function canApplyToBothNoiseSlots(entry: LoraRegistryEntry): boolean {
+	return entry.variant === "both" || entry.variant === null;
+}
+
 const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
 
 function isCivitaiUrl(value: string): boolean {
@@ -513,6 +524,7 @@ function CustomUrlSlot({
 
 interface PickerPopoverProps {
 	adminHref: string;
+	allowRepeatedBothNoiseLoras?: boolean;
 	availableLoras: LoraRegistryEntry[];
 	excludedUrls: Set<string>;
 	onClose: () => void;
@@ -722,6 +734,7 @@ function CivitaiImportPanel({
 
 function PickerPopover({
 	adminHref,
+	allowRepeatedBothNoiseLoras = false,
 	availableLoras,
 	excludedUrls,
 	onClose,
@@ -758,7 +771,9 @@ function PickerPopover({
 	const filtered = useMemo(() => {
 		const normalized = query.trim().toLowerCase();
 		const visible = availableLoras.filter((entry) => {
-			if (excludedUrls.has(entry.s3Url)) {
+			const canRepeatEntry =
+				allowRepeatedBothNoiseLoras && canApplyToBothNoiseSlots(entry);
+			if (excludedUrls.has(entry.s3Url) && !canRepeatEntry) {
 				return false;
 			}
 			// Show entries marked for this transformer plus `both`/null which
@@ -782,7 +797,13 @@ function PickerPopover({
 				entry.slug.toLowerCase().includes(normalized) ||
 				entry.description.toLowerCase().includes(normalized)
 		);
-	}, [availableLoras, excludedUrls, query, restrictVariant]);
+	}, [
+		allowRepeatedBothNoiseLoras,
+		availableLoras,
+		excludedUrls,
+		query,
+		restrictVariant,
+	]);
 
 	return (
 		<div
@@ -969,6 +990,7 @@ function LoraFilledSlotContents({
 
 function LoraEmptySlotPickerRow({
 	adminHref,
+	allowRepeatedBothNoiseLoras,
 	availableLoras,
 	excludedUrls,
 	isMultiSlot,
@@ -982,6 +1004,7 @@ function LoraEmptySlotPickerRow({
 	workflowBaseModel,
 }: {
 	adminHref: string;
+	allowRepeatedBothNoiseLoras?: boolean;
 	availableLoras: LoraRegistryEntry[];
 	excludedUrls: Set<string>;
 	isMultiSlot: boolean;
@@ -1014,6 +1037,7 @@ function LoraEmptySlotPickerRow({
 			{isOpen ? (
 				<PickerPopover
 					adminHref={adminHref}
+					allowRepeatedBothNoiseLoras={allowRepeatedBothNoiseLoras}
 					availableLoras={availableLoras}
 					excludedUrls={excludedUrls}
 					onClose={() => setOpenSlotKey(null)}
@@ -1098,11 +1122,31 @@ export default function LoraStack({
 		}
 	}
 
+	function fillBothNoiseSlots(entry: LoraRegistryEntry) {
+		for (const [slotIndex, slot] of resolved.entries()) {
+			if (!isNoiseSlot(slot)) {
+				continue;
+			}
+			fillSlot(slotIndex, entry.s3Url, entry.defaultWeight);
+		}
+	}
+
 	function handlePickEntryForSlot(
 		entry: LoraRegistryEntry,
 		slotIndex: number,
 		peerEntries?: LoraRegistryEntry[]
 	) {
+		const slot = resolved[slotIndex];
+		if (
+			isMultiSlot &&
+			slot &&
+			isNoiseSlot(slot) &&
+			canApplyToBothNoiseSlots(entry)
+		) {
+			fillBothNoiseSlots(entry);
+			setOpenSlotKey(null);
+			return;
+		}
 		fillSlot(slotIndex, entry.s3Url, entry.defaultWeight);
 		autoFillPaired(entry, slotIndex, peerEntries);
 		setOpenSlotKey(null);
@@ -1140,16 +1184,18 @@ export default function LoraStack({
 				/>
 			);
 		}
+		const slotVariant = getSlotVariant(slot);
 		return (
 			<LoraEmptySlotPickerRow
 				adminHref={adminHref}
+				allowRepeatedBothNoiseLoras={Boolean(slotVariant)}
 				availableLoras={availableLoras}
 				excludedUrls={excludedUrls}
 				isMultiSlot={isMultiSlot}
 				onLorasImported={onLorasImported}
 				onPickEntry={handlePickEntryForSlot}
 				openSlotKey={openSlotKey}
-				restrictVariant={getSlotVariant(slot)}
+				restrictVariant={slotVariant}
 				setOpenSlotKey={setOpenSlotKey}
 				slot={slot}
 				slotIndex={slotIndex}

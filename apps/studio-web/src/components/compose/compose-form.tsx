@@ -55,6 +55,8 @@ import {
 
 const PROMPT_LIMIT = 1500;
 
+type ComposeTab = "scenario" | "settings";
+
 const promptCleanupPattern = /[^\p{L}\p{N}\s]/gu;
 const promptSplitPattern = /\s+/u;
 const loraUrlSuffixPattern = /Url$/i;
@@ -626,6 +628,239 @@ function DefaultParameterSections({
 	);
 }
 
+function ComposeTabs({
+	onChange,
+	settingsLabel,
+	value,
+}: {
+	onChange: (next: ComposeTab) => void;
+	settingsLabel: string;
+	value: ComposeTab;
+}) {
+	const tabs: { id: ComposeTab; label: string }[] = [
+		{ id: "scenario", label: "Scenario" },
+		{ id: "settings", label: settingsLabel },
+	];
+	return (
+		<div
+			aria-label="Scenario editor sections"
+			className="grid grid-cols-2 gap-1 rounded-lg bg-foreground/[0.04] p-1"
+			role="tablist"
+		>
+			{tabs.map((tab) => {
+				const active = value === tab.id;
+				return (
+					<button
+						aria-selected={active}
+						className={cn(
+							"h-8 rounded-md px-3 font-medium text-[11px] transition",
+							active
+								? "bg-background text-foreground shadow-sm"
+								: "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+						)}
+						key={tab.id}
+						onClick={() => onChange(tab.id)}
+						role="tab"
+						type="button"
+					>
+						{tab.label}
+					</button>
+				);
+			})}
+		</div>
+	);
+}
+
+interface ScenarioSectionProps {
+	finalPromptPreview: string;
+	form: ScenarioFormState;
+	isOverLimit: boolean;
+	onFormChange: Dispatch<SetStateAction<ScenarioFormState | null>>;
+	promptLength: number;
+	referenceImageUrl: string | null;
+	selectedWorkflow: WorkflowDefinition;
+	suggestedName: string;
+}
+
+function ScenarioSection({
+	finalPromptPreview,
+	form,
+	isOverLimit,
+	onFormChange,
+	promptLength,
+	referenceImageUrl,
+	selectedWorkflow,
+	suggestedName,
+}: ScenarioSectionProps) {
+	const nameId = useId();
+	const promptId = useId();
+	return (
+		<section className="grid gap-2">
+			<SectionLabel>Scenario</SectionLabel>
+			<div className="grid gap-1.5">
+				<div className="flex items-baseline justify-between gap-2">
+					<Label className="font-medium text-[11px]" htmlFor={nameId}>
+						Name
+					</Label>
+					{suggestedName && suggestedName !== form.name ? (
+						<button
+							className="inline-flex items-center gap-1 text-[10px] text-muted-foreground underline transition hover:text-foreground"
+							onClick={() => onFormChange({ ...form, name: suggestedName })}
+							type="button"
+						>
+							<Wand2 className="size-3" />
+							Use "{suggestedName}"
+						</button>
+					) : null}
+				</div>
+				<Input
+					id={nameId}
+					onChange={(event) =>
+						onFormChange({ ...form, name: event.target.value })
+					}
+					placeholder="Cinematic close-up"
+					value={form.name}
+				/>
+			</div>
+
+			<div className="grid gap-1.5">
+				<div className="flex items-baseline justify-between gap-2">
+					<div className="flex items-center gap-1.5">
+						<Label className="font-medium text-[11px]" htmlFor={promptId}>
+							Prompt
+						</Label>
+						<InfoTooltip
+							align="start"
+							contentClassName="max-w-[min(34rem,calc(100vw-2rem))] flex-col items-start gap-1.5"
+							label="Show final prompt"
+							side="top"
+						>
+							<span className="font-medium">Final prompt</span>
+							<span className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-4">
+								{finalPromptPreview}
+							</span>
+						</InfoTooltip>
+					</div>
+					<div className="flex items-center gap-2">
+						<ScenarioEnhancePromptButton
+							onEnhanced={(promptSource) =>
+								onFormChange({
+									...form,
+									prompt: promptSource.enhancedPrompt,
+									promptSource,
+								})
+							}
+							prompt={form.prompt}
+							referenceImageUrl={referenceImageUrl}
+							textSourceOnly={!selectedWorkflow.requiresInputImage}
+						/>
+						<span
+							className={cn(
+								"text-[10px] tabular-nums",
+								getCharCounterTone(promptLength, isOverLimit)
+							)}
+						>
+							{promptLength}/{PROMPT_LIMIT}
+						</span>
+					</div>
+				</div>
+				<textarea
+					className={cn(
+						"min-h-28 w-full resize-y rounded-lg border bg-background/45 px-2.5 py-2 text-xs leading-5 outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50",
+						isOverLimit ? "border-rose-500/60" : "border-input"
+					)}
+					id={promptId}
+					onChange={(event) =>
+						onFormChange({
+							...form,
+							prompt: event.target.value,
+							promptSource: null,
+						})
+					}
+					placeholder={selectedWorkflow.promptHint}
+					value={form.prompt}
+				/>
+			</div>
+		</section>
+	);
+}
+
+interface SettingsSectionProps extends WorkflowSetupSectionProps {
+	adminLorasHref: string;
+	availableLoras: LoraRegistryEntry[];
+	isImageToVideo: boolean;
+	loraSlots: LoraSlotDefinition[];
+	lorasError: string | null;
+	onLorasImported?: (entries: LoraRegistryEntry[]) => void;
+	partitioned: PartitionedParameters;
+	showLoraSection: boolean;
+}
+
+function SettingsSection({
+	adminLorasHref,
+	availableApproaches,
+	availableLoras,
+	availableModalities,
+	filteredWorkflows,
+	form,
+	isCivitaiLtx23,
+	isImageToVideo,
+	loraSlots,
+	lorasError,
+	onApproachChange,
+	onLorasImported,
+	onModalityChange,
+	onParamChange,
+	onWorkflowChange,
+	partitioned,
+	selectedClassification,
+	selectedWorkflow,
+	showLoraSection,
+	workflows,
+}: SettingsSectionProps) {
+	return (
+		<>
+			<WorkflowSetupSection
+				availableApproaches={availableApproaches}
+				availableModalities={availableModalities}
+				filteredWorkflows={filteredWorkflows}
+				form={form}
+				isCivitaiLtx23={isCivitaiLtx23}
+				onApproachChange={onApproachChange}
+				onModalityChange={onModalityChange}
+				onParamChange={onParamChange}
+				onWorkflowChange={onWorkflowChange}
+				selectedClassification={selectedClassification}
+				selectedWorkflow={selectedWorkflow}
+				workflows={workflows}
+			/>
+
+			{showLoraSection ? (
+				<LoraSection
+					adminLorasHref={adminLorasHref}
+					availableLoras={availableLoras}
+					form={form}
+					isOptional={!selectedClassification.requiresLora}
+					loraSlots={loraSlots}
+					lorasError={lorasError}
+					onLorasImported={onLorasImported}
+					onParamChange={onParamChange}
+					selectedWorkflow={selectedWorkflow}
+				/>
+			) : null}
+
+			{isCivitaiLtx23 ? null : (
+				<DefaultParameterSections
+					form={form}
+					isImageToVideo={isImageToVideo}
+					onParamChange={onParamChange}
+					partitioned={partitioned}
+				/>
+			)}
+		</>
+	);
+}
+
 interface ComposeFormProps {
 	adminLorasHref: string;
 	availableLoras: LoraRegistryEntry[];
@@ -655,8 +890,8 @@ export default function ComposeForm({
 	onValidityChange,
 	workflows,
 }: ComposeFormProps) {
-	const nameId = useId();
-	const promptId = useId();
+	const [activeTab, setActiveTab] = useState<ComposeTab>("scenario");
+	const didAutoOpenSettingsRef = useRef(false);
 
 	const selectedWorkflow =
 		workflows.find((workflow) => workflow.key === form.workflowKey) ?? null;
@@ -748,6 +983,13 @@ export default function ComposeForm({
 	useEffect(() => {
 		onValidityChange?.({ errors, isReady });
 	}, [errors, isReady, onValidityChange]);
+
+	useEffect(() => {
+		if (isCivitaiLtx23 && !didAutoOpenSettingsRef.current) {
+			didAutoOpenSettingsRef.current = true;
+			setActiveTab("settings");
+		}
+	}, [isCivitaiLtx23]);
 
 	function applyWorkflow(nextWorkflow: WorkflowDefinition | null) {
 		if (!nextWorkflow || nextWorkflow.key === form.workflowKey) {
@@ -843,129 +1085,45 @@ export default function ComposeForm({
 
 	return (
 		<form className="grid min-w-0 gap-5" id={formId} onSubmit={handleSubmit}>
-			<WorkflowSetupSection
-				availableApproaches={availableApproaches}
-				availableModalities={availableModalities}
-				filteredWorkflows={filteredWorkflows}
-				form={form}
-				isCivitaiLtx23={isCivitaiLtx23}
-				onApproachChange={handleApproachChange}
-				onModalityChange={handleModalityChange}
-				onParamChange={handleParamChange}
-				onWorkflowChange={handleWorkflowChange}
-				selectedClassification={selectedClassification}
-				selectedWorkflow={selectedWorkflow}
-				workflows={workflows}
+			<ComposeTabs
+				onChange={setActiveTab}
+				settingsLabel={isCivitaiLtx23 ? "Civitai" : "Settings"}
+				value={activeTab}
 			/>
 
-			{showLoraSection && selectedClassification ? (
-				<LoraSection
-					adminLorasHref={adminLorasHref}
-					availableLoras={availableLoras}
+			{activeTab === "scenario" ? (
+				<ScenarioSection
+					finalPromptPreview={finalPromptPreview}
 					form={form}
-					isOptional={!selectedClassification.requiresLora}
+					isOverLimit={isOverLimit}
+					onFormChange={onFormChange}
+					promptLength={promptLength}
+					referenceImageUrl={referenceImageUrl}
+					selectedWorkflow={selectedWorkflow}
+					suggestedName={suggestedName}
+				/>
+			) : (
+				<SettingsSection
+					adminLorasHref={adminLorasHref}
+					availableApproaches={availableApproaches}
+					availableLoras={availableLoras}
+					availableModalities={availableModalities}
+					filteredWorkflows={filteredWorkflows}
+					form={form}
+					isCivitaiLtx23={isCivitaiLtx23}
+					isImageToVideo={isImageToVideo}
 					loraSlots={loraSlots}
 					lorasError={lorasError}
+					onApproachChange={handleApproachChange}
 					onLorasImported={onLorasImported}
+					onModalityChange={handleModalityChange}
 					onParamChange={handleParamChange}
-					selectedWorkflow={selectedWorkflow}
-				/>
-			) : null}
-
-			<section className="grid gap-2">
-				<SectionLabel>Scenario</SectionLabel>
-				<div className="grid gap-1.5">
-					<div className="flex items-baseline justify-between gap-2">
-						<Label className="font-medium text-[11px]" htmlFor={nameId}>
-							Name
-						</Label>
-						{suggestedName && suggestedName !== form.name ? (
-							<button
-								className="inline-flex items-center gap-1 text-[10px] text-muted-foreground underline transition hover:text-foreground"
-								onClick={() => onFormChange({ ...form, name: suggestedName })}
-								type="button"
-							>
-								<Wand2 className="size-3" />
-								Use "{suggestedName}"
-							</button>
-						) : null}
-					</div>
-					<Input
-						id={nameId}
-						onChange={(event) =>
-							onFormChange({ ...form, name: event.target.value })
-						}
-						placeholder="Cinematic close-up"
-						value={form.name}
-					/>
-				</div>
-
-				<div className="grid gap-1.5">
-					<div className="flex items-baseline justify-between gap-2">
-						<div className="flex items-center gap-1.5">
-							<Label className="font-medium text-[11px]" htmlFor={promptId}>
-								Prompt
-							</Label>
-							<InfoTooltip
-								align="start"
-								contentClassName="max-w-[min(34rem,calc(100vw-2rem))] flex-col items-start gap-1.5"
-								label="Show final prompt"
-								side="top"
-							>
-								<span className="font-medium">Final prompt</span>
-								<span className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-4">
-									{finalPromptPreview}
-								</span>
-							</InfoTooltip>
-						</div>
-						<div className="flex items-center gap-2">
-							<ScenarioEnhancePromptButton
-								onEnhanced={(promptSource) =>
-									onFormChange({
-										...form,
-										prompt: promptSource.enhancedPrompt,
-										promptSource,
-									})
-								}
-								prompt={form.prompt}
-								referenceImageUrl={referenceImageUrl}
-								textSourceOnly={!selectedWorkflow.requiresInputImage}
-							/>
-							<span
-								className={cn(
-									"text-[10px] tabular-nums",
-									getCharCounterTone(promptLength, isOverLimit)
-								)}
-							>
-								{promptLength}/{PROMPT_LIMIT}
-							</span>
-						</div>
-					</div>
-					<textarea
-						className={cn(
-							"min-h-28 w-full resize-y rounded-lg border bg-background/45 px-2.5 py-2 text-xs leading-5 outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50",
-							isOverLimit ? "border-rose-500/60" : "border-input"
-						)}
-						id={promptId}
-						onChange={(event) =>
-							onFormChange({
-								...form,
-								prompt: event.target.value,
-								promptSource: null,
-							})
-						}
-						placeholder={selectedWorkflow.promptHint}
-						value={form.prompt}
-					/>
-				</div>
-			</section>
-
-			{isCivitaiLtx23 ? null : (
-				<DefaultParameterSections
-					form={form}
-					isImageToVideo={isImageToVideo}
-					onParamChange={handleParamChange}
+					onWorkflowChange={handleWorkflowChange}
 					partitioned={partitioned}
+					selectedClassification={selectedClassification}
+					selectedWorkflow={selectedWorkflow}
+					showLoraSection={showLoraSection}
+					workflows={workflows}
 				/>
 			)}
 

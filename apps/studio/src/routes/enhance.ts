@@ -21,6 +21,7 @@ function shouldFallbackVisionToText(error: unknown): boolean {
 		msg.includes("policy violation") ||
 		msg.includes("moderation") ||
 		msg.includes("safety system") ||
+		msg.includes("returned analysis instead of a rewritten prompt") ||
 		// Reasoning models or non-vision-capable text models often answer a
 		// vision request with HTTP 200 + empty content. Falling back to text
 		// is strictly better than a 502 — the user still gets an enhanced
@@ -58,7 +59,7 @@ async function runEnhancement(
 			enhanced,
 			mode: "text",
 			notice:
-				"The provider declined to use the reference image. Prompt was enhanced without vision — the action may not be tied to the input frame.",
+				"Vision prompt enhance failed or was declined by the provider. Prompt was enhanced without vision — it may not be tied to the input frame.",
 		};
 	}
 }

@@ -1,4 +1,5 @@
 import type { PromptEnhanceClient } from "@/clients/prompt-enhance-client";
+import { cleanPromptOutput } from "@/clients/prompt-enhance-output";
 import {
 	STUDIO_TEXT_ENHANCE_SYSTEM_PROMPT,
 	STUDIO_TEXT_ENHANCE_USER_TEMPLATE,
@@ -47,17 +48,6 @@ interface StudioOpenRouterClientOptions {
 	/** e.g. https://your-app.example — optional OpenRouter header. */
 	httpReferer?: string | null;
 	model?: string;
-}
-
-const surroundingQuotePattern = /^["'`]+|["'`]+$/g;
-const codeFencePattern = /^[\s`]*```(?:[a-z]+)?|```[\s`]*$/giu;
-
-function cleanPromptOutput(value: string) {
-	return value
-		.replace(codeFencePattern, "")
-		.trim()
-		.replace(surroundingQuotePattern, "")
-		.trim();
 }
 
 /**
@@ -136,7 +126,7 @@ export function createStudioOpenRouterClient(
 					// finish_reason="length"). Non-reasoning models simply
 					// ignore this field.
 					reasoning: { enabled: false },
-					temperature: 0.85,
+					temperature: 0.35,
 				}),
 				headers,
 				method: "POST",

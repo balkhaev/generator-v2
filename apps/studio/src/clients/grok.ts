@@ -1,4 +1,5 @@
 import type { PromptEnhanceClient } from "@/clients/prompt-enhance-client";
+import { cleanPromptOutput } from "@/clients/prompt-enhance-output";
 import {
 	STUDIO_TEXT_ENHANCE_SYSTEM_PROMPT,
 	STUDIO_TEXT_ENHANCE_USER_TEMPLATE,
@@ -30,17 +31,6 @@ interface StudioGrokClientOptions {
 	model?: string;
 }
 
-const surroundingQuotePattern = /^["'`]+|["'`]+$/g;
-const codeFencePattern = /^[\s`]*```(?:[a-z]+)?|```[\s`]*$/giu;
-
-function cleanPromptOutput(value: string) {
-	return value
-		.replace(codeFencePattern, "")
-		.trim()
-		.replace(surroundingQuotePattern, "")
-		.trim();
-}
-
 export function createStudioGrokClient(
 	options: StudioGrokClientOptions
 ): StudioGrokClient {
@@ -70,7 +60,7 @@ export function createStudioGrokClient(
 					max_tokens: GROK_MAX_TOKENS,
 					messages,
 					model,
-					temperature: 0.85,
+					temperature: 0.35,
 				}),
 				headers: {
 					authorization: `Bearer ${apiKey}`,

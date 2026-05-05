@@ -66,6 +66,9 @@ const FOOOCUS_REFINER_MODEL_NAME = "sd_xl_refiner_1.0_0.9vae.safetensors";
 const FOOOCUS_DISABLED_MODEL_NAME = "None";
 const CIVITAI_LUSTIFY_OLT_MODEL_URN =
 	"urn:air:sdxl:checkpoint:civitai:573152@1569593";
+const CIVITAI_LTX23_SYNTH_LORA_URN =
+	"urn:air:ltxv23:lora:civitai:2509189@2820451";
+const CIVITAI_LTX23_SYNTH_ENDPOINT_PREFIX = "ltx2.3:synth-lora";
 const REPLICATE_FOOOCUS_API_VERSION =
 	"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c";
 const REPLICATE_WAN_22_I2V_FAST_VERSION =
@@ -232,6 +235,96 @@ const civitaiLustifyOltSdxlParamsSchema = z.object({
 	clipSkip: z.number().int().min(1).max(12).default(2),
 	seed: z.number().int().nonnegative().optional(),
 });
+
+const civitaiLtx23ResolutionSchema = z.enum(["720p", "1080p"]).default("720p");
+const civitaiLtx23AspectRatioSchema = z
+	.enum(["16:9", "3:2", "1:1", "2:3", "9:16"])
+	.default("16:9");
+
+const civitaiLtx23SynthParamsSchema = z.object({
+	resolution: civitaiLtx23ResolutionSchema,
+	aspectRatio: civitaiLtx23AspectRatioSchema,
+	duration: z.number().int().min(3).max(20).default(5),
+	steps: z.number().int().min(10).max(50).default(30),
+	guidanceScale: z.number().min(1).max(10).default(3),
+	generateAudio: booleanParamSchema(false),
+	seed: z.number().int().nonnegative().optional(),
+	loraStrength: z.number().min(0).max(2).default(1),
+});
+
+const civitaiLtx23SynthImageToVideoParamsSchema =
+	civitaiLtx23SynthParamsSchema.extend({
+		endImageUrl: optionalUrlParamSchema,
+	});
+
+const CIVITAI_LTX23_DIMENSIONS = {
+	"720p": {
+		"16:9": { width: 1280, height: 720 },
+		"3:2": { width: 1176, height: 784 },
+		"1:1": { width: 960, height: 960 },
+		"2:3": { width: 784, height: 1176 },
+		"9:16": { width: 720, height: 1280 },
+	},
+	"1080p": {
+		"16:9": { width: 1920, height: 1080 },
+		"3:2": { width: 1764, height: 1176 },
+		"1:1": { width: 1440, height: 1440 },
+		"2:3": { width: 1176, height: 1764 },
+		"9:16": { width: 1080, height: 1920 },
+	},
+} as const;
+
+type CivitaiLtx23AspectRatio = z.infer<typeof civitaiLtx23AspectRatioSchema>;
+type CivitaiLtx23Resolution = z.infer<typeof civitaiLtx23ResolutionSchema>;
+type CivitaiLtx23SynthParams = z.infer<typeof civitaiLtx23SynthParamsSchema>;
+
+function getCivitaiLtx23Dimensions(
+	resolution: CivitaiLtx23Resolution,
+	aspectRatio: CivitaiLtx23AspectRatio
+) {
+	return CIVITAI_LTX23_DIMENSIONS[resolution][aspectRatio];
+}
+
+function buildCivitaiLtx23SynthInput({
+	firstFrame,
+	lastFrame,
+	operation,
+	parsed,
+	prompt,
+}: {
+	firstFrame?: string;
+	lastFrame?: string;
+	operation: "createVideo" | "firstLastFrameToVideo";
+	parsed: CivitaiLtx23SynthParams;
+	prompt: string;
+}): Record<string, unknown> {
+	const dimensions = getCivitaiLtx23Dimensions(
+		parsed.resolution,
+		parsed.aspectRatio
+	);
+	return {
+		__civitaiEndpoint: `${CIVITAI_LTX23_SYNTH_ENDPOINT_PREFIX}:${operation}`,
+		$type: "videoGen",
+		input: {
+			engine: "ltx2.3",
+			operation,
+			prompt,
+			width: dimensions.width,
+			height: dimensions.height,
+			model: "22b-dev",
+			guidanceScale: parsed.guidanceScale,
+			steps: parsed.steps,
+			duration: parsed.duration,
+			generateAudio: parsed.generateAudio,
+			loras: {
+				[CIVITAI_LTX23_SYNTH_LORA_URN]: parsed.loraStrength,
+			},
+			...(firstFrame ? { firstFrame } : {}),
+			...(lastFrame ? { lastFrame } : {}),
+			...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+		},
+	};
+}
 
 // Flux Dev always targets the `/flux-lora` endpoint — LoRA is optional and we
 // send `loras: []` when no URL is provided. The LoRA endpoint is a strict
@@ -695,6 +788,8 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-fast-sdxl": 10 * SECOND,
 	"fal-fast-fooocus-sdxl": 10 * SECOND,
 	"civitai-lustify-olt-sdxl": 2 * MINUTE,
+	"civitai-ltx-2-3-synth-text-to-video": 2 * MINUTE,
+	"civitai-ltx-2-3-synth-image-to-video": 2 * MINUTE,
 	"runpod-fooocus-sdxl": 90 * SECOND,
 	"replicate-fooocus-sdxl": 15 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
@@ -1207,6 +1302,189 @@ export const workflowRegistry = {
 				},
 				quantity: parsed.numImages,
 			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"civitai-ltx-2-3-synth-text-to-video": {
+		baseModel: "ltx-2-3",
+		key: "civitai-ltx-2-3-synth-text-to-video",
+		name: "LTX 2.3 Synth LoRA (Civitai)",
+		description:
+			"LTX 2.3 text-to-video generation through Civitai's native videoGen API with Civitai LoRA model 2509189 version 2820451 loaded directly by AIR.",
+		requiresInputImage: false,
+		parameterSchema: civitaiLtx23SynthParamsSchema,
+		parameterFields: [
+			{
+				description: "Output resolution bucket used by Civitai LTX 2.3.",
+				enumValues: ["720p", "1080p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description: "Output aspect ratio.",
+				enumValues: ["16:9", "3:2", "1:1", "2:3", "9:16"],
+				key: "aspectRatio",
+				label: "Aspect ratio",
+				type: "text",
+			},
+			{
+				description:
+					"Video duration in seconds. At 1080p, keep this at 15s or lower.",
+				key: "duration",
+				label: "Duration",
+				max: 20,
+				min: 3,
+				step: 1,
+				unit: "seconds",
+				type: "number",
+			},
+			{
+				description: "Number of denoising steps for the LTX 2.3 dev model.",
+				key: "steps",
+				label: "Steps",
+				max: 50,
+				min: 10,
+				step: 1,
+				unit: "steps",
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "CFG scale",
+				max: 10,
+				min: 1,
+				step: 0.5,
+				type: "number",
+			},
+			{
+				description: "Strength of the fixed Civitai LoRA.",
+				key: "loraStrength",
+				label: "LoRA strength",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description: "Generate synchronized audio with the video.",
+				enumValues: ["true", "false"],
+				key: "generateAudio",
+				label: "Audio",
+				type: "text",
+			},
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = civitaiLtx23SynthParamsSchema.parse(params);
+			return buildCivitaiLtx23SynthInput({
+				operation: "createVideo",
+				parsed,
+				prompt,
+			});
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"civitai-ltx-2-3-synth-image-to-video": {
+		baseModel: "ltx-2-3",
+		key: "civitai-ltx-2-3-synth-image-to-video",
+		name: "LTX 2.3 Synth LoRA I2V (Civitai)",
+		description:
+			"LTX 2.3 first/last-frame image-to-video generation through Civitai's native videoGen API with Civitai LoRA model 2509189 version 2820451 loaded directly by AIR.",
+		requiresInputImage: true,
+		parameterSchema: civitaiLtx23SynthImageToVideoParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Optional ending frame URL for generating a transition video.",
+				key: "endImageUrl",
+				kind: "image-url",
+				label: "End image URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Output resolution bucket used by Civitai LTX 2.3.",
+				enumValues: ["720p", "1080p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description: "Output aspect ratio.",
+				enumValues: ["16:9", "3:2", "1:1", "2:3", "9:16"],
+				key: "aspectRatio",
+				label: "Aspect ratio",
+				type: "text",
+			},
+			{
+				description:
+					"Video duration in seconds. At 1080p, keep this at 15s or lower.",
+				key: "duration",
+				label: "Duration",
+				max: 20,
+				min: 3,
+				step: 1,
+				unit: "seconds",
+				type: "number",
+			},
+			{
+				description: "Number of denoising steps for the LTX 2.3 dev model.",
+				key: "steps",
+				label: "Steps",
+				max: 50,
+				min: 10,
+				step: 1,
+				unit: "steps",
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "CFG scale",
+				max: 10,
+				min: 1,
+				step: 0.5,
+				type: "number",
+			},
+			{
+				description: "Strength of the fixed Civitai LoRA.",
+				key: "loraStrength",
+				label: "LoRA strength",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description: "Generate synchronized audio with the video.",
+				enumValues: ["true", "false"],
+				key: "generateAudio",
+				label: "Audio",
+				type: "text",
+			},
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = civitaiLtx23SynthImageToVideoParamsSchema.parse(params);
+			return buildCivitaiLtx23SynthInput({
+				firstFrame: inputImageUrl,
+				lastFrame: parsed.endImageUrl,
+				operation: "firstLastFrameToVideo",
+				parsed,
+				prompt,
+			});
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},

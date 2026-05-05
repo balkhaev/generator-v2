@@ -82,6 +82,57 @@ describe("civitai provider", () => {
 		});
 	});
 
+	it("submits generic video jobs without injecting a top-level model", async () => {
+		const fetchImpl = mock((url: string, init?: RequestInit) => {
+			expect(url).toBe(
+				"https://orchestration.civitai.com/v1/consumer/jobs?detailed=false&wait=false"
+			);
+			expect(init?.method).toBe("POST");
+			expect(JSON.parse(String(init?.body))).toEqual({
+				$type: "videoGen",
+				input: {
+					engine: "ltx2.3",
+					operation: "createVideo",
+					prompt: "test",
+					loras: {
+						"urn:air:ltxv23:lora:civitai:2509189@2820451": 1,
+					},
+				},
+			});
+			return Promise.resolve(
+				new Response(
+					JSON.stringify({
+						jobs: [{ jobId: "job-1", scheduled: true }],
+						token: "token-123",
+					}),
+					{
+						headers: { "content-type": "application/json" },
+						status: 200,
+					}
+				)
+			);
+		});
+		const client = createCivitaiClient({
+			apiKey: "civitai_test_key",
+			fetchImpl,
+		});
+
+		const submission = await client.submit({
+			__civitaiEndpoint: "ltx2.3:synth-lora:createVideo",
+			$type: "videoGen",
+			input: {
+				engine: "ltx2.3",
+				operation: "createVideo",
+				prompt: "test",
+				loras: {
+					"urn:air:ltxv23:lora:civitai:2509189@2820451": 1,
+				},
+			},
+		});
+
+		expect(submission.endpointId).toBe("civitai:ltx2.3:synth-lora:createVideo");
+	});
+
 	it("returns completed blob URLs from token status", async () => {
 		const fetchImpl = mock((url: string) => {
 			expect(url).toBe(
@@ -199,7 +250,7 @@ describe("civitai provider", () => {
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
 	});
 
-	it("throws when __civitaiModel is missing from payload", async () => {
+	it("throws when Civitai routing metadata is missing from payload", async () => {
 		const client = createCivitaiClient({
 			apiKey: "civitai_test_key",
 			fetchImpl: mock(() => {
@@ -208,7 +259,7 @@ describe("civitai provider", () => {
 		});
 
 		await expect(client.submit({ prompt: "test" })).rejects.toThrow(
-			"Civitai provider requires __civitaiModel in payload"
+			"Civitai provider requires __civitaiModel or __civitaiEndpoint in payload"
 		);
 	});
 

@@ -55,6 +55,13 @@ describe("inference router", () => {
 			"civitai-token-1",
 			"civitai:urn:air:sdxl:checkpoint:civitai:573152@1569593"
 		);
+
+		await router.submit({
+			__civitaiEndpoint: "ltx2.3:synth-lora:createVideo",
+			$type: "videoGen",
+			input: { prompt: "test" },
+		});
+		expect(civitai.submit).toHaveBeenCalledTimes(2);
 	});
 
 	it("routes RunPod-marked payloads and endpoint ids to RunPod", async () => {
@@ -154,6 +161,12 @@ describe("inference router", () => {
 		expect(() =>
 			router.submit({
 				__civitaiModel: "urn:air:sdxl:checkpoint:civitai:573152@1569593",
+				prompt: "test",
+			})
+		).toThrow("Civitai inference client is not configured");
+		expect(() =>
+			router.submit({
+				__civitaiEndpoint: "ltx2.3:synth-lora:createVideo",
 				prompt: "test",
 			})
 		).toThrow("Civitai inference client is not configured");

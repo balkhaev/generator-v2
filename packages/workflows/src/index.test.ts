@@ -105,6 +105,37 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("resolves civitai-ltx-2-3 synth workflows with correct defaults", () => {
+		const t2v = getWorkflowDefinition("civitai-ltx-2-3-synth-text-to-video");
+		const i2v = getWorkflowDefinition("civitai-ltx-2-3-synth-image-to-video");
+
+		expect(t2v).toBeDefined();
+		expect(t2v?.baseModel).toBe("ltx-2-3");
+		expect(t2v?.requiresInputImage).toBe(false);
+		expect(t2v?.parameterSchema.parse({})).toMatchObject({
+			aspectRatio: "16:9",
+			duration: 5,
+			generateAudio: false,
+			guidanceScale: 3,
+			loraStrength: 1,
+			resolution: "720p",
+			steps: 30,
+		});
+
+		expect(i2v).toBeDefined();
+		expect(i2v?.baseModel).toBe("ltx-2-3");
+		expect(i2v?.requiresInputImage).toBe(true);
+		expect(i2v?.parameterSchema.parse({})).toMatchObject({
+			aspectRatio: "16:9",
+			duration: 5,
+			generateAudio: false,
+			guidanceScale: 3,
+			loraStrength: 1,
+			resolution: "720p",
+			steps: 30,
+		});
+	});
+
 	it("resolves replicate-fooocus-sdxl with correct defaults", () => {
 		const workflow = getWorkflowDefinition("replicate-fooocus-sdxl");
 		expect(workflow).toBeDefined();
@@ -652,6 +683,76 @@ describe("workflow registry", () => {
 				width: 896,
 			},
 			quantity: 2,
+		});
+	});
+
+	it("builds Civitai LTX-2.3 synth LoRA video payloads", () => {
+		const t2v = getWorkflowDefinition("civitai-ltx-2-3-synth-text-to-video");
+		const i2v = getWorkflowDefinition("civitai-ltx-2-3-synth-image-to-video");
+
+		expect(
+			t2v?.buildProviderInput({
+				params: {
+					aspectRatio: "9:16",
+					duration: 6,
+					generateAudio: "true",
+					guidanceScale: 4,
+					loraStrength: 0.8,
+					resolution: "720p",
+					seed: 42,
+					steps: 32,
+				},
+				prompt: "test",
+			})
+		).toEqual({
+			__civitaiEndpoint: "ltx2.3:synth-lora:createVideo",
+			$type: "videoGen",
+			input: {
+				engine: "ltx2.3",
+				operation: "createVideo",
+				prompt: "test",
+				width: 720,
+				height: 1280,
+				model: "22b-dev",
+				guidanceScale: 4,
+				steps: 32,
+				duration: 6,
+				generateAudio: true,
+				loras: {
+					"urn:air:ltxv23:lora:civitai:2509189@2820451": 0.8,
+				},
+				seed: 42,
+			},
+		});
+
+		expect(
+			i2v?.buildProviderInput({
+				inputImageUrl: "https://storage.example.com/first.png",
+				params: {
+					endImageUrl: "https://storage.example.com/last.png",
+				},
+				prompt: "animate the scene",
+			})
+		).toEqual({
+			__civitaiEndpoint: "ltx2.3:synth-lora:firstLastFrameToVideo",
+			$type: "videoGen",
+			input: {
+				engine: "ltx2.3",
+				operation: "firstLastFrameToVideo",
+				prompt: "animate the scene",
+				width: 1280,
+				height: 720,
+				model: "22b-dev",
+				guidanceScale: 3,
+				steps: 30,
+				duration: 5,
+				generateAudio: false,
+				loras: {
+					"urn:air:ltxv23:lora:civitai:2509189@2820451": 1,
+				},
+				firstFrame: "https://storage.example.com/first.png",
+				lastFrame: "https://storage.example.com/last.png",
+			},
 		});
 	});
 

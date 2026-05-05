@@ -34,6 +34,7 @@ import ComposeForm, { createComposeScenarioFormState } from "./compose-form";
 
 interface ComposeDialogProps {
 	editingScenario?: ScenarioRecord | null;
+	initialWorkflowKey?: string | null;
 	onOpenChange: (open: boolean) => void;
 	onScenarioCreated?: (snapshot: AdminSnapshot) => void;
 	onScenarioUpdated?: (snapshot: AdminSnapshot, scenarioId: string) => void;
@@ -130,6 +131,7 @@ function ComposeDialogBody({
 
 export default function ComposeDialog({
 	editingScenario,
+	initialWorkflowKey,
 	onOpenChange,
 	onScenarioCreated,
 	onScenarioUpdated,
@@ -152,8 +154,16 @@ export default function ComposeDialog({
 				return matched;
 			}
 		}
+		if (initialWorkflowKey) {
+			const matched = activeWorkflows.find(
+				(workflow) => workflow.key === initialWorkflowKey
+			);
+			if (matched) {
+				return matched;
+			}
+		}
 		return activeWorkflows[0] ?? null;
-	}, [activeWorkflows, editingScenario, workflows]);
+	}, [activeWorkflows, editingScenario, initialWorkflowKey, workflows]);
 	const selectableWorkflows = useMemo(() => {
 		if (!(editingScenario && initialWorkflow && !initialWorkflow.active)) {
 			return activeWorkflows;

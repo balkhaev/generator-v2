@@ -52,6 +52,7 @@ import { toast } from "sonner";
 import { getLoraSlots } from "@/components/compose/workflow-matrix";
 import { buildFinalPromptPreview } from "@/components/final-prompt-preview";
 import IconButton from "@/components/icon-button";
+import Ltx23ScenariosPanel from "@/components/ltx23-scenarios-panel";
 import PersonLaunchSection from "@/components/person-launch-section";
 import PersonsInputPicker from "@/components/persons-input-picker";
 import { getMediaType } from "@/components/preview-surface";
@@ -63,7 +64,7 @@ interface CommandSidebarProps {
 	className?: string;
 	getPersonHref: (personId: string) => Route;
 	getScenarioHref: (scenarioId: string) => Route;
-	onCreateScenario?: () => void;
+	onCreateScenario?: (workflowKey?: string) => void;
 	onDeleteScenario?: (scenarioId: string) => void | Promise<void>;
 	onEditScenario?: (scenarioId: string) => void;
 	onPersonRefreshed: (person: PersonRecord) => void;
@@ -1361,7 +1362,9 @@ export default function CommandSidebar({
 						<SubjectSwitcher
 							getPersonHref={getPersonHref}
 							getScenarioHref={getScenarioHref}
-							onCreateScenario={onCreateScenario}
+							onCreateScenario={
+								onCreateScenario ? () => onCreateScenario() : undefined
+							}
 							onDeleteScenario={onDeleteScenario}
 							onEditScenario={onEditScenario}
 							onPickPerson={onPickPerson}
@@ -1386,6 +1389,16 @@ export default function CommandSidebar({
 						<PersonActivitySection person={selectedPerson} />
 					</>
 				) : null}
+				{isPersonMode ? null : (
+					<Ltx23ScenariosPanel
+						getScenarioHref={getScenarioHref}
+						onCreateScenario={onCreateScenario}
+						onEditScenario={onEditScenario}
+						onPickScenario={onPickScenario}
+						selectedScenarioId={selectedScenarioId}
+						snapshot={snapshot}
+					/>
+				)}
 				{!isPersonMode && selectedScenario ? (
 					<>
 						<LaunchSection
@@ -1427,7 +1440,7 @@ export default function CommandSidebar({
 						<EmptyState
 							action={
 								onCreateScenario ? (
-									<Button onClick={onCreateScenario} size="sm">
+									<Button onClick={() => onCreateScenario()} size="sm">
 										<Plus className="size-3.5" />
 										Compose scenario
 									</Button>

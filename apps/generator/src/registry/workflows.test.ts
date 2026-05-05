@@ -348,6 +348,44 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the Civitai LTX-2.3 synth LoRA video payload", () => {
+		const workflow = getWorkflowDefinition(
+			"civitai-ltx-2-3-synth-text-to-video"
+		);
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					aspectRatio: "3:2",
+					duration: 7,
+					guidanceScale: 4,
+					loraStrength: 0.8,
+					resolution: "1080p",
+					steps: 32,
+				},
+				prompt: "slow camera push through the scene",
+			})
+		).toMatchObject({
+			__civitaiEndpoint: "ltx2.3:synth-lora:createVideo",
+			$type: "videoGen",
+			input: {
+				engine: "ltx2.3",
+				operation: "createVideo",
+				prompt: "slow camera push through the scene",
+				width: 1764,
+				height: 1176,
+				model: "22b-dev",
+				guidanceScale: 4,
+				steps: 32,
+				duration: 7,
+				generateAudio: false,
+				loras: {
+					"urn:air:ltxv23:lora:civitai:2509189@2820451": 0.8,
+				},
+			},
+		});
+	});
+
 	it("builds the replicate-fooocus-sdxl payload with optional LoRAs", () => {
 		const workflow = getWorkflowDefinition("replicate-fooocus-sdxl");
 

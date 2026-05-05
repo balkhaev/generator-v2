@@ -564,6 +564,9 @@ export default function StudioShell({
 }) {
 	const [snapshot, setSnapshot] = useState<AdminSnapshot>(initialSnapshot);
 	const [isComposeOpen, setIsComposeOpen] = useState(false);
+	const [composeInitialWorkflowKey, setComposeInitialWorkflowKey] = useState<
+		string | null
+	>(null);
 	const [editingScenarioId, setEditingScenarioId] = useState<string | null>(
 		null
 	);
@@ -859,13 +862,15 @@ export default function StudioShell({
 	const personsUrl = env.NEXT_PUBLIC_PERSONS_URL ?? "http://localhost:3004";
 	const adminUrl = env.NEXT_PUBLIC_ADMIN_URL ?? "http://localhost:3001";
 
-	function handleCreateScenario() {
+	function handleCreateScenario(workflowKey?: string) {
 		setEditingScenarioId(null);
+		setComposeInitialWorkflowKey(workflowKey ?? null);
 		setIsComposeOpen(true);
 	}
 
 	function handleEditScenario(scenarioId: string) {
 		setEditingScenarioId(scenarioId);
+		setComposeInitialWorkflowKey(null);
 		setIsComposeOpen(true);
 	}
 
@@ -873,6 +878,7 @@ export default function StudioShell({
 		setIsComposeOpen(nextOpen);
 		if (!nextOpen) {
 			setEditingScenarioId(null);
+			setComposeInitialWorkflowKey(null);
 		}
 	}
 
@@ -1101,6 +1107,7 @@ export default function StudioShell({
 		>
 			<ComposeDialog
 				editingScenario={editingScenario}
+				initialWorkflowKey={composeInitialWorkflowKey}
 				onOpenChange={handleComposeOpenChange}
 				onScenarioCreated={handleScenarioCreated}
 				onScenarioUpdated={handleScenarioUpdated}

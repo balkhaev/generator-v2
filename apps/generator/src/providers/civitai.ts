@@ -136,19 +136,28 @@ function readStringField(
 }
 
 function buildCivitaiRequestBody(payload: Record<string, unknown>): {
-	model: string;
+	endpointKey: string;
 	requestBody: Record<string, unknown>;
 } {
-	const { __civitaiModel, ...requestBody } = payload;
-	if (typeof __civitaiModel !== "string" || __civitaiModel.length === 0) {
-		throw new Error("Civitai provider requires __civitaiModel in payload");
+	const { __civitaiEndpoint, __civitaiModel, ...requestBody } = payload;
+	const endpointKey =
+		typeof __civitaiEndpoint === "string" && __civitaiEndpoint.length > 0
+			? __civitaiEndpoint
+			: __civitaiModel;
+	if (typeof endpointKey !== "string" || endpointKey.length === 0) {
+		throw new Error(
+			"Civitai provider requires __civitaiModel or __civitaiEndpoint in payload"
+		);
 	}
 	return {
-		model: __civitaiModel,
-		requestBody: {
-			model: __civitaiModel,
-			...requestBody,
-		},
+		endpointKey,
+		requestBody:
+			typeof __civitaiModel === "string" && __civitaiModel.length > 0
+				? {
+						model: __civitaiModel,
+						...requestBody,
+					}
+				: requestBody,
 	};
 }
 
@@ -290,8 +299,8 @@ export function createCivitaiClient(options: {
 
 	return {
 		async submit(payload): Promise<InferenceSubmission> {
-			const { model, requestBody } = buildCivitaiRequestBody(payload);
-			const endpointId = formatCivitaiProviderEndpointId(model);
+			const { endpointKey, requestBody } = buildCivitaiRequestBody(payload);
+			const endpointId = formatCivitaiProviderEndpointId(endpointKey);
 			const body = await request<CivitaiJobStatusCollection>(
 				buildUrl(apiBaseUrl, "/v1/consumer/jobs", {
 					detailed: "false",

@@ -7,6 +7,10 @@ import type {
 import { isReplicateProviderEndpointId } from "./replicate";
 import { isRunpodProviderEndpointId } from "./runpod";
 
+function isCivitaiPayload(payload: Record<string, unknown>): boolean {
+	return "__civitaiEndpoint" in payload || "__civitaiModel" in payload;
+}
+
 export function createInferenceRouter(clients: {
 	civitai?: InferenceClient;
 	fal?: InferenceClient;
@@ -14,7 +18,7 @@ export function createInferenceRouter(clients: {
 	runpod?: InferenceClient;
 }): InferenceClient {
 	function routeByPayload(payload: Record<string, unknown>): InferenceClient {
-		if ("__civitaiModel" in payload) {
+		if (isCivitaiPayload(payload)) {
 			if (clients.civitai) {
 				return clients.civitai;
 			}

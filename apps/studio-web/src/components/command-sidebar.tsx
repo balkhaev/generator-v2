@@ -1392,9 +1392,9 @@ export default function CommandSidebar({
 				{isPersonMode ? null : (
 					<CivitaiLtx23Panel
 						getScenarioHref={getScenarioHref}
+						onCreateScenario={onCreateScenario}
 						onEditScenario={onEditScenario}
 						onPickScenario={onPickScenario}
-						onSnapshotChange={onSnapshotChange}
 						selectedScenarioId={selectedScenarioId}
 						snapshot={snapshot}
 					/>

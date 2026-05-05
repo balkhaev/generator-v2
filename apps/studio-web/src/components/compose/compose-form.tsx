@@ -34,6 +34,10 @@ import { toast } from "sonner";
 
 import { buildFinalPromptPreview } from "@/components/final-prompt-preview";
 
+import CivitaiLtx23Setup, {
+	createCivitaiLtx23FormState,
+	isCivitaiLtx23Workflow,
+} from "./civitai-ltx23-form";
 import LoraStack from "./lora-stack";
 import ParameterField from "./parameter-field";
 import WorkflowGrid from "./workflow-grid";
@@ -100,6 +104,9 @@ function getPortraitOutputDefault(
 export function createComposeScenarioFormState(
 	workflow: WorkflowDefinition
 ): ScenarioFormState {
+	if (isCivitaiLtx23Workflow(workflow)) {
+		return createCivitaiLtx23FormState(workflow);
+	}
 	const form = createScenarioFormState(workflow);
 	const params = { ...form.params };
 	for (const parameter of workflow.parameters) {
@@ -507,6 +514,118 @@ function FooterBar({
 	);
 }
 
+interface WorkflowSetupSectionProps {
+	availableApproaches: Approach[];
+	availableModalities: Modality[];
+	filteredWorkflows: WorkflowDefinition[];
+	form: ScenarioFormState;
+	isCivitaiLtx23: boolean;
+	onApproachChange: (approach: Approach) => void;
+	onModalityChange: (modality: Modality) => void;
+	onParamChange: (key: string, value: string) => void;
+	onWorkflowChange: (workflowKey: string) => void;
+	selectedClassification: NonNullable<ReturnType<typeof classifyWorkflow>>;
+	selectedWorkflow: WorkflowDefinition;
+	workflows: WorkflowDefinition[];
+}
+
+function WorkflowSetupSection({
+	availableApproaches,
+	availableModalities,
+	filteredWorkflows,
+	form,
+	isCivitaiLtx23,
+	onApproachChange,
+	onModalityChange,
+	onParamChange,
+	onWorkflowChange,
+	selectedClassification,
+	selectedWorkflow,
+	workflows,
+}: WorkflowSetupSectionProps) {
+	if (isCivitaiLtx23) {
+		return (
+			<CivitaiLtx23Setup
+				form={form}
+				onParamChange={onParamChange}
+				onWorkflowChange={onWorkflowChange}
+				selectedWorkflow={selectedWorkflow}
+				workflows={workflows}
+			/>
+		);
+	}
+
+	return (
+		<section className="grid gap-2">
+			<SectionLabel>Workflow</SectionLabel>
+			<WorkflowGrid
+				approach={selectedClassification.approach}
+				availableApproaches={availableApproaches}
+				availableModalities={availableModalities}
+				filteredWorkflows={filteredWorkflows}
+				modality={selectedClassification.modality}
+				onApproachChange={onApproachChange}
+				onModalityChange={onModalityChange}
+				onWorkflowChange={onWorkflowChange}
+				selectedWorkflowKey={selectedWorkflow.key}
+			/>
+		</section>
+	);
+}
+
+interface DefaultParameterSectionsProps {
+	form: ScenarioFormState;
+	isImageToVideo: boolean;
+	onParamChange: (key: string, value: string) => void;
+	partitioned: PartitionedParameters;
+}
+
+function DefaultParameterSections({
+	form,
+	isImageToVideo,
+	onParamChange,
+	partitioned,
+}: DefaultParameterSectionsProps) {
+	return (
+		<>
+			{partitioned.output.length > 0 ? (
+				<section className="grid gap-2">
+					<SectionLabel>Output</SectionLabel>
+					{isImageToVideo ? (
+						<p className="rounded-lg bg-foreground/[0.03] px-3 py-2 text-[11px] text-muted-foreground">
+							Output keeps the source image proportions automatically.
+						</p>
+					) : null}
+					<ParametersGroup
+						form={form}
+						onParamChange={onParamChange}
+						parameters={partitioned.output}
+					/>
+				</section>
+			) : null}
+
+			{partitioned.sampling.length > 0 ? (
+				<section className="grid gap-2">
+					<SectionLabel>Sampling</SectionLabel>
+					<ParametersGroup
+						form={form}
+						onParamChange={onParamChange}
+						parameters={partitioned.sampling}
+					/>
+				</section>
+			) : null}
+
+			{partitioned.advanced.length > 0 ? (
+				<AdvancedSection
+					form={form}
+					onParamChange={onParamChange}
+					parameters={partitioned.advanced}
+				/>
+			) : null}
+		</>
+	);
+}
+
 interface ComposeFormProps {
 	adminLorasHref: string;
 	availableLoras: LoraRegistryEntry[];
@@ -541,6 +660,9 @@ export default function ComposeForm({
 
 	const selectedWorkflow =
 		workflows.find((workflow) => workflow.key === form.workflowKey) ?? null;
+	const isCivitaiLtx23 = selectedWorkflow
+		? isCivitaiLtx23Workflow(selectedWorkflow)
+		: false;
 	const selectedClassification = selectedWorkflow
 		? classifyWorkflow(selectedWorkflow)
 		: null;
@@ -570,7 +692,7 @@ export default function ComposeForm({
 
 	const loraSlots = selectedWorkflow ? getLoraSlots(selectedWorkflow) : [];
 	const showLoraSection = Boolean(
-		selectedClassification?.hasLora && loraSlots.length > 0
+		!isCivitaiLtx23 && selectedClassification?.hasLora && loraSlots.length > 0
 	);
 
 	const isImageToVideo = Boolean(
@@ -631,11 +753,16 @@ export default function ComposeForm({
 		if (!nextWorkflow || nextWorkflow.key === form.workflowKey) {
 			return;
 		}
+		if (isCivitaiLtx23Workflow(nextWorkflow)) {
+			onFormChange(createCivitaiLtx23FormState(nextWorkflow, form));
+			return;
+		}
 		const next = createComposeScenarioFormState(nextWorkflow);
 		onFormChange({
 			...next,
 			name: form.name,
 			prompt: form.prompt,
+			promptSource: form.promptSource ?? null,
 		});
 	}
 
@@ -716,20 +843,20 @@ export default function ComposeForm({
 
 	return (
 		<form className="grid min-w-0 gap-5" id={formId} onSubmit={handleSubmit}>
-			<section className="grid gap-2">
-				<SectionLabel>Workflow</SectionLabel>
-				<WorkflowGrid
-					approach={selectedClassification.approach}
-					availableApproaches={availableApproaches}
-					availableModalities={availableModalities}
-					filteredWorkflows={filteredWorkflows}
-					modality={selectedClassification.modality}
-					onApproachChange={handleApproachChange}
-					onModalityChange={handleModalityChange}
-					onWorkflowChange={handleWorkflowChange}
-					selectedWorkflowKey={selectedWorkflow.key}
-				/>
-			</section>
+			<WorkflowSetupSection
+				availableApproaches={availableApproaches}
+				availableModalities={availableModalities}
+				filteredWorkflows={filteredWorkflows}
+				form={form}
+				isCivitaiLtx23={isCivitaiLtx23}
+				onApproachChange={handleApproachChange}
+				onModalityChange={handleModalityChange}
+				onParamChange={handleParamChange}
+				onWorkflowChange={handleWorkflowChange}
+				selectedClassification={selectedClassification}
+				selectedWorkflow={selectedWorkflow}
+				workflows={workflows}
+			/>
 
 			{showLoraSection && selectedClassification ? (
 				<LoraSection
@@ -833,40 +960,14 @@ export default function ComposeForm({
 				</div>
 			</section>
 
-			{partitioned.output.length > 0 ? (
-				<section className="grid gap-2">
-					<SectionLabel>Output</SectionLabel>
-					{isImageToVideo ? (
-						<p className="rounded-lg bg-foreground/[0.03] px-3 py-2 text-[11px] text-muted-foreground">
-							Output keeps the source image proportions automatically.
-						</p>
-					) : null}
-					<ParametersGroup
-						form={form}
-						onParamChange={handleParamChange}
-						parameters={partitioned.output}
-					/>
-				</section>
-			) : null}
-
-			{partitioned.sampling.length > 0 ? (
-				<section className="grid gap-2">
-					<SectionLabel>Sampling</SectionLabel>
-					<ParametersGroup
-						form={form}
-						onParamChange={handleParamChange}
-						parameters={partitioned.sampling}
-					/>
-				</section>
-			) : null}
-
-			{partitioned.advanced.length > 0 ? (
-				<AdvancedSection
+			{isCivitaiLtx23 ? null : (
+				<DefaultParameterSections
 					form={form}
+					isImageToVideo={isImageToVideo}
 					onParamChange={handleParamChange}
-					parameters={partitioned.advanced}
+					partitioned={partitioned}
 				/>
-			) : null}
+			)}
 
 			{hideFooter ? null : (
 				<FooterBar

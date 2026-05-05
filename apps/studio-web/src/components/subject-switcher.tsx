@@ -152,6 +152,9 @@ function ScenarioListItem({
 	onPick: (scenarioId: string) => void;
 	scenario: ScenarioCardData;
 }) {
+	const hasActions = Boolean(onEdit || onDelete);
+	const actionPaddingClass = onEdit && onDelete ? "pr-14" : "pr-8";
+
 	return (
 		<li className="group/scenario relative">
 			<a
@@ -160,7 +163,8 @@ function ScenarioListItem({
 					"flex items-start gap-2 rounded-lg px-2 py-1.5 text-left transition",
 					isActive
 						? "bg-foreground text-background"
-						: "hover:bg-muted/20 dark:hover:bg-muted/10"
+						: "hover:bg-muted/20 dark:hover:bg-muted/10",
+					hasActions && actionPaddingClass
 				)}
 				href={getScenarioHref(scenario.id)}
 				onClick={(event) => {
@@ -222,16 +226,13 @@ function ScenarioListItem({
 					</div>
 				</div>
 			</a>
-			{onEdit || onDelete ? (
-				<div className="absolute top-1 right-1 hidden items-center gap-0.5 group-focus-within/scenario:flex group-hover/scenario:flex">
+			{hasActions ? (
+				<div className="absolute top-1 right-1 z-10 flex items-center gap-0.5 rounded-md bg-background/90 p-0.5 shadow-sm ring-1 ring-border/60 backdrop-blur">
 					{onEdit ? (
 						<button
 							aria-label={`Edit ${scenario.name}`}
 							className={cn(
-								"inline-flex size-6 items-center justify-center rounded-md transition",
-								isActive
-									? "text-background/80 hover:bg-background/10"
-									: "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+								"inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
 							)}
 							onClick={(event) => {
 								event.preventDefault();
@@ -248,10 +249,7 @@ function ScenarioListItem({
 						<button
 							aria-label={`Delete ${scenario.name}`}
 							className={cn(
-								"inline-flex size-6 items-center justify-center rounded-md transition",
-								isActive
-									? "text-background/80 hover:bg-rose-500/20"
-									: "text-muted-foreground hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400"
+								"inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-rose-500/15 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50 dark:hover:text-rose-400"
 							)}
 							onClick={(event) => {
 								event.preventDefault();

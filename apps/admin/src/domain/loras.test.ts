@@ -505,6 +505,39 @@ describe("LoraRegistryService", () => {
 		expect(entry.triggerWords).toEqual(["mystic", "neon"]);
 	});
 
+	it("includes Civitai LTX 2.3 inference preflight in previews when requested", async () => {
+		service = new LoraRegistryService({
+			checkCivitaiLtx23Inference: (source) =>
+				Promise.resolve({
+					reason: `No inference for ${source.modelId}/${source.sourceVersionId}`,
+					status: "unavailable",
+					target: "civitai-ltx-2-3",
+				}),
+			repository: repo,
+			resolveSource: () =>
+				Promise.resolve({
+					baseModel: "ltx-2-3",
+					downloadUrl: "https://civitai.com/api/download/123",
+					modelId: 9,
+					name: "Mystic",
+					provider: "civitai",
+					sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+					sourceVersionId: 123,
+				}),
+		});
+
+		const preview = await service.previewSource({
+			checkCivitaiLtx23Inference: true,
+			sourceUrl: "https://civitai.com/models/9?modelVersionId=123",
+		});
+
+		expect(preview.inference?.civitaiLtx23).toEqual({
+			reason: "No inference for 9/123",
+			status: "unavailable",
+			target: "civitai-ltx-2-3",
+		});
+	});
+
 	it("respects an explicit triggerWords override on createFromUrl", async () => {
 		const entry = expectSingle(
 			await service.createFromUrl({

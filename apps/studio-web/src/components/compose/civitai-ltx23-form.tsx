@@ -75,6 +75,8 @@ type CivitaiMode = "text" | "image";
 interface CivitaiLoraMetadata {
 	air: string;
 	baseModel: string;
+	inferenceReason: string | null;
+	inferenceStatus: "available" | "unavailable" | "unchecked" | null;
 	modelId: number;
 	name: string;
 	sourceUrl: string;
@@ -226,6 +228,9 @@ function buildMetadataFromPreview(input: {
 	return {
 		air: buildCivitaiLtx23Air(modelId, sourceVersionId),
 		baseModel,
+		inferenceReason:
+			input.preview.inference?.civitaiLtx23?.reason?.trim() || null,
+		inferenceStatus: input.preview.inference?.civitaiLtx23?.status ?? null,
 		modelId,
 		name: input.preview.name ?? "Civitai LoRA",
 		sourceUrl: input.sourceUrl,
@@ -249,6 +254,8 @@ function getActiveMetadata(form: ScenarioFormState): CivitaiLoraMetadata {
 		baseModel:
 			getParamText(form, "loraBaseModel") ||
 			CIVITAI_LTX23_DEFAULT_LORA.baseModel,
+		inferenceReason: null,
+		inferenceStatus: null,
 		modelId,
 		name: getParamText(form, "loraName") || CIVITAI_LTX23_DEFAULT_LORA.name,
 		sourceUrl:
@@ -378,9 +385,11 @@ function SegmentedParameterField({
 
 function CompatibilityPill({
 	compatible,
+	inferenceStatus,
 	supportsGeneration,
 }: {
 	compatible: boolean;
+	inferenceStatus: CivitaiLoraMetadata["inferenceStatus"];
 	supportsGeneration: boolean | null;
 }) {
 	if (!compatible) {
@@ -396,6 +405,22 @@ function CompatibilityPill({
 			<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
 				<AlertCircle className="size-2.5" />
 				No inference
+			</span>
+		);
+	}
+	if (inferenceStatus === "unavailable") {
+		return (
+			<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+				<AlertCircle className="size-2.5" />
+				No inference
+			</span>
+		);
+	}
+	if (inferenceStatus === "unchecked") {
+		return (
+			<span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+				<AlertCircle className="size-2.5" />
+				Check failed
 			</span>
 		);
 	}
@@ -423,9 +448,17 @@ function CivitaiLoraCard({ metadata }: { metadata: CivitaiLoraMetadata }) {
 				</div>
 				<CompatibilityPill
 					compatible={compatible}
+					inferenceStatus={metadata.inferenceStatus}
 					supportsGeneration={metadata.supportsGeneration}
 				/>
 			</div>
+			{(metadata.inferenceStatus === "unavailable" ||
+				metadata.inferenceStatus === "unchecked") &&
+			metadata.inferenceReason ? (
+				<p className="text-[11px] text-amber-700 dark:text-amber-300">
+					{metadata.inferenceReason}
+				</p>
+			) : null}
 			<div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
 				<span>model {metadata.modelId}</span>
 				<span>version {metadata.versionId}</span>
@@ -468,9 +501,17 @@ function CivitaiLoraPreview({ metadata }: { metadata: CivitaiLoraMetadata }) {
 				</div>
 				<CompatibilityPill
 					compatible={compatible}
+					inferenceStatus={metadata.inferenceStatus}
 					supportsGeneration={metadata.supportsGeneration}
 				/>
 			</div>
+			{(metadata.inferenceStatus === "unavailable" ||
+				metadata.inferenceStatus === "unchecked") &&
+			metadata.inferenceReason ? (
+				<p className="text-[11px] text-amber-700 dark:text-amber-300">
+					{metadata.inferenceReason}
+				</p>
+			) : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-1">
 				<CivitaiPill>
 					<code className="min-w-0 truncate">{metadata.air}</code>
@@ -500,7 +541,20 @@ function CivitaiLoraSelector({
 	form: ScenarioFormState;
 	onParamChange: (key: string, value: string) => void;
 }) {
-	const activeMetadata = getActiveMetadata(form);
+	const activeFormMetadata = getActiveMetadata(form);
+	const [activeInference, setActiveInference] = useState<{
+		air: string;
+		reason: string | null;
+		status: CivitaiLoraMetadata["inferenceStatus"];
+	} | null>(null);
+	const activeMetadata =
+		activeInference?.air === activeFormMetadata.air
+			? {
+					...activeFormMetadata,
+					inferenceReason: activeInference.reason,
+					inferenceStatus: activeInference.status,
+				}
+			: activeFormMetadata;
 	const [sourceUrl, setSourceUrl] = useState(activeMetadata.sourceUrl);
 	const [preview, setPreview] = useState<LoraSourcePreview | null>(null);
 	const [selectedVersionId, setSelectedVersionId] = useState<number | null>(
@@ -521,19 +575,25 @@ function CivitaiLoraSelector({
 	const canUsePreview = Boolean(
 		previewMetadata &&
 			previewCompatible &&
+			previewMetadata.inferenceStatus === "available" &&
 			previewMetadata.supportsGeneration !== false
 	);
 
-	async function handlePreview() {
-		if (!trimmedSourceUrl) {
+	async function handlePreview(
+		nextSourceUrl = trimmedSourceUrl,
+		versionId = selectedVersionId
+	) {
+		const sourceUrlToPreview = nextSourceUrl.trim();
+		if (!sourceUrlToPreview) {
 			toast.error("Paste a Civitai LoRA URL first.");
 			return;
 		}
 		setIsPreviewing(true);
 		try {
 			const result = await previewStudioLoraSource({
-				sourceUrl: trimmedSourceUrl,
-				sourceVersionId: selectedVersionId ?? undefined,
+				checkCivitaiLtx23Inference: true,
+				sourceUrl: sourceUrlToPreview,
+				sourceVersionId: versionId ?? undefined,
 			});
 			setPreview(result);
 			setSelectedVersionId(
@@ -554,32 +614,30 @@ function CivitaiLoraSelector({
 			return;
 		}
 		if (!canUsePreview) {
-			toast.error("This Civitai LoRA has no inference for LTXV 2.3.");
+			toast.error(
+				previewMetadata.inferenceReason ??
+					"This Civitai LoRA has no inference for LTXV 2.3."
+			);
 			return;
 		}
 		applyLoraMetadata(previewMetadata, onParamChange);
+		setActiveInference({
+			air: previewMetadata.air,
+			reason: previewMetadata.inferenceReason,
+			status: previewMetadata.inferenceStatus,
+		});
 		toast.success("Civitai LoRA selected.");
 	}
 
 	function handleResetDefault() {
-		applyLoraMetadata(
-			{
-				air: CIVITAI_LTX23_DEFAULT_LORA.air,
-				baseModel: CIVITAI_LTX23_DEFAULT_LORA.baseModel,
-				modelId: Number(CIVITAI_LTX23_DEFAULT_LORA.modelId),
-				name: CIVITAI_LTX23_DEFAULT_LORA.name,
-				sourceUrl: CIVITAI_LTX23_DEFAULT_LORA.sourceUrl,
-				supportsGeneration:
-					CIVITAI_LTX23_DEFAULT_LORA.supportsGeneration === "true",
-				triggerWords: [],
-				versionId: Number(CIVITAI_LTX23_DEFAULT_LORA.versionId),
-				versionName: "v1.0",
-			},
-			onParamChange
-		);
+		const defaultVersionId = Number(CIVITAI_LTX23_DEFAULT_LORA.versionId);
+		setActiveInference(null);
 		setSourceUrl(CIVITAI_LTX23_DEFAULT_LORA.sourceUrl);
 		setPreview(null);
-		setSelectedVersionId(Number(CIVITAI_LTX23_DEFAULT_LORA.versionId));
+		setSelectedVersionId(defaultVersionId);
+		handlePreview(CIVITAI_LTX23_DEFAULT_LORA.sourceUrl, defaultVersionId).catch(
+			() => undefined
+		);
 	}
 
 	return (
@@ -635,7 +693,14 @@ function CivitaiLoraSelector({
 				<select
 					aria-label="Civitai LoRA version"
 					className="h-8 rounded-md border border-foreground/10 bg-background px-2 text-[11px] outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
-					onChange={(event) => setSelectedVersionId(Number(event.target.value))}
+					disabled={isPreviewing}
+					onChange={(event) => {
+						const nextVersionId = Number(event.target.value);
+						setSelectedVersionId(nextVersionId);
+						handlePreview(trimmedSourceUrl, nextVersionId).catch(
+							() => undefined
+						);
+					}}
 					value={selectedVersionId ?? ""}
 				>
 					{preview.variants.map((variant) => (

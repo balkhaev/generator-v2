@@ -78,11 +78,18 @@ export interface CreateLoraFromUrlInput {
 }
 
 export interface PreviewLoraSourceInput {
+	checkCivitaiLtx23Inference?: boolean;
 	sourceFilePath?: string;
 	sourceProvider?: LoraSourceProvider;
 	sourceRevision?: string;
 	sourceUrl: string;
 	sourceVersionId?: number;
+}
+
+export interface LoraInferenceAvailability {
+	reason?: string;
+	status: "available" | "unavailable" | "unchecked";
+	target: "civitai-ltx-2-3";
 }
 
 export type LoraPreviewMediaType = "image" | "video";
@@ -107,6 +114,9 @@ export interface LoraSourcePreview {
 	description?: string;
 	downloadUrl: string;
 	fileName?: string;
+	inference?: {
+		civitaiLtx23?: LoraInferenceAvailability;
+	};
 	modelId?: number;
 	name?: string;
 	nsfw?: boolean;

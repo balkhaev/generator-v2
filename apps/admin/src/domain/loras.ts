@@ -3,6 +3,7 @@ import type {
 	CreateLoraFromUrlInput,
 	ListLorasQuery,
 	LoraBaseModel,
+	LoraInferenceAvailability,
 	LoraRegistryEntry,
 	LoraSourcePreview,
 	LoraVariant,
@@ -75,6 +76,9 @@ interface LoraServiceDeps {
 		s3Config: S3StorageConfig,
 		options?: { headers?: Record<string, string> }
 	) => Promise<{ key: string; sizeBytes: number; url: string }>;
+	checkCivitaiLtx23Inference?: (
+		source: ResolvedLoraSource
+	) => Promise<LoraInferenceAvailability>;
 	eventPublisher?: EventPublisher;
 	generateId?: () => string;
 	logger?: Pick<Console, "error" | "warn">;
@@ -89,6 +93,9 @@ export class LoraRegistryService {
 	private readonly cacheLora: NonNullable<LoraServiceDeps["cacheLora"]>;
 	private readonly generateId: () => string;
 	private readonly resolveSource: LoraSourceResolver["resolve"];
+	private readonly checkCivitaiLtx23Inference?: NonNullable<
+		LoraServiceDeps["checkCivitaiLtx23Inference"]
+	>;
 	private readonly eventPublisher?: EventPublisher;
 	private readonly logger?: Pick<Console, "error" | "warn">;
 
@@ -99,6 +106,7 @@ export class LoraRegistryService {
 		this.generateId = deps.generateId ?? (() => randomUUID());
 		this.resolveSource =
 			deps.resolveSource ?? createLoraSourceResolver().resolve;
+		this.checkCivitaiLtx23Inference = deps.checkCivitaiLtx23Inference;
 		this.eventPublisher = deps.eventPublisher;
 		this.logger = deps.logger;
 	}
@@ -330,7 +338,20 @@ export class LoraRegistryService {
 		if (source.provider !== "civitai") {
 			throw new Error("Only Civitai LoRA preview is supported.");
 		}
-		return toLoraSourcePreview(source);
+		const preview = toLoraSourcePreview(source);
+		if (input.checkCivitaiLtx23Inference) {
+			preview.inference = {
+				...preview.inference,
+				civitaiLtx23: this.checkCivitaiLtx23Inference
+					? await this.checkCivitaiLtx23Inference(source)
+					: {
+							reason: "Civitai LTX 2.3 inference preflight is not configured.",
+							status: "unchecked",
+							target: "civitai-ltx-2-3",
+						},
+			};
+		}
+		return preview;
 	}
 
 	private resolveName(

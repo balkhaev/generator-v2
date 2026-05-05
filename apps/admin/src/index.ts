@@ -23,6 +23,7 @@ import { resolveTrainingProviderAvailability } from "@/domain/training-provider-
 import { createRedisTrainingProviderSettings } from "@/domain/training-provider-settings";
 import { UsersService } from "@/domain/users";
 import { createRedisWorkerSettingsReader } from "@/domain/worker-settings-store";
+import { createCivitaiLtx23InferenceChecker } from "@/providers/civitai-ltx23-inference";
 import { createLoraSourceResolver } from "@/providers/lora-source-resolver";
 import { createPersonLoraTrainingQueueClient } from "@/queue/person-lora-training";
 import { createDrizzleLoraRepository } from "@/repositories/loras";
@@ -70,6 +71,10 @@ const eventPublisher = kafkaConfig
 	: undefined;
 
 const loraRegistryService = new LoraRegistryService({
+	checkCivitaiLtx23Inference: createCivitaiLtx23InferenceChecker({
+		apiBaseUrl: env.CIVITAI_API_BASE_URL,
+		apiKey: env.CIVITAI_API_KEY,
+	}).check,
 	eventPublisher,
 	logger: console,
 	repository: createDrizzleLoraRepository(),

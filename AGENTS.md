@@ -27,6 +27,8 @@
 
 ## Self-Debug Through MCP
 
+В проекте уже есть MCP-инфраструктура для диагностики. Любой дебаг сервисов, прода, инференса, авторизации, Kafka, деплоев и окружения начинается через MCP, а не через разовые ручные команды.
+
 Система должна сама себя дебажить через MCP. У агента два слоя инструментов:
 
 1. **Project MCP** — `apps/mcp` (HTTP `POST /mcp`, bearer `MCP_AUTH_TOKEN`, порт `3010`) + `packages/debug-tools` (stdio + bundle CLI). Тулы: health/`service_request`, generator workflows + execution submit/sync, test users (`test_user_upsert`/`test_user_get`), Kafka (cluster/topics/offsets/consumer groups/sample), `collect_debug_bundle`.
@@ -45,6 +47,7 @@ Project MCP знает «как должно быть», Coolify — «что р
 
 Правила:
 
+- MCP-first обязателен: сначала ищи и вызывай подходящий tool в Project MCP или Coolify MCP, и только если подходящего tool нет — добавляй его в MCP.
 - Никаких ручных `curl`, `psql`, `kafkacat`, `ssh`, `docker logs`, прямого деплоя через панельку Coolify — всё через MCP, чтобы каждый шаг был воспроизводим следующим агентом.
 - Если нужного тула нет — **расширяй MCP**. Project MCP правится в `apps/mcp/src/app.ts` (схема в `toolDefinitions`, хендлер, парсинг через хелперы, `createToolResult`, тест в `apps/mcp/src/app.test.ts`, `bun x ultracite fix`, `bun --cwd apps/mcp run check-types && bun test apps/mcp`). Coolify «расширяется» обёрточным tool в `apps/mcp` (домен `coolify_*`), который ходит в Coolify API и возвращает агрегированный ответ.
 - После добавления нового тула обнови `docs/debugging-toolchain.md`.

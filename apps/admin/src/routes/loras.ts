@@ -173,6 +173,10 @@ function parsePreviewBody(body: unknown): PreviewLoraSourceInput {
 		throw new Error("sourceUrl is required");
 	}
 	return {
+		checkCivitaiLtx23Inference:
+			typeof payload.checkCivitaiLtx23Inference === "boolean"
+				? payload.checkCivitaiLtx23Inference
+				: undefined,
 		sourceFilePath:
 			typeof payload.sourceFilePath === "string"
 				? payload.sourceFilePath

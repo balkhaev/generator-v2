@@ -64,4 +64,34 @@ describe("createCivitaiLtx23InferenceChecker", () => {
 			target: "civitai-ltx-2-3",
 		});
 	});
+
+	it("accepts sourceVersionId from resolved LoRA source objects", async () => {
+		let requestBody: unknown = null;
+		const checker = createCivitaiLtx23InferenceChecker({
+			apiKey: "civitai-token",
+			fetchImpl: mock((_input, init) => {
+				requestBody = JSON.parse(String(init?.body));
+				return Promise.resolve(
+					new Response(JSON.stringify({ steps: [] }), { status: 200 })
+				);
+			}),
+		});
+
+		await expect(
+			checker.check({ modelId: 2_509_189, sourceVersionId: 2_820_451 })
+		).resolves.toEqual({
+			status: "available",
+			target: "civitai-ltx-2-3",
+		});
+
+		const body = requestBody as { steps: Record<string, unknown>[] };
+		const firstStep = body.steps[0];
+		if (!firstStep) {
+			throw new Error("Expected Civitai preflight step.");
+		}
+		const input = firstStep.input as { loras: Record<string, number> };
+		expect(input.loras).toEqual({
+			"urn:air:ltxv23:lora:civitai:2509189@2820451": 1,
+		});
+	});
 });

@@ -29,6 +29,7 @@ interface CivitaiWorkflow {
 export interface CivitaiLtx23InferenceChecker {
 	check(input: {
 		modelId?: number;
+		sourceVersionId?: number;
 		versionId?: number;
 	}): Promise<LoraInferenceAvailability>;
 }
@@ -148,8 +149,9 @@ export function createCivitaiLtx23InferenceChecker(
 	).replace(TRAILING_SLASH, "");
 
 	return {
-		async check({ modelId, versionId }) {
-			if (!(modelId && versionId)) {
+		async check({ modelId, sourceVersionId, versionId }) {
+			const resolvedVersionId = versionId ?? sourceVersionId;
+			if (!(modelId && resolvedVersionId)) {
 				return {
 					reason:
 						"Civitai model id and version id are required to check LTX 2.3 inference.",
@@ -168,7 +170,9 @@ export function createCivitaiLtx23InferenceChecker(
 
 			try {
 				const response = await fetchImpl(buildUrl(apiBaseUrl), {
-					body: JSON.stringify(buildPreflightBody({ modelId, versionId })),
+					body: JSON.stringify(
+						buildPreflightBody({ modelId, versionId: resolvedVersionId })
+					),
 					headers: {
 						authorization: `Bearer ${options.apiKey}`,
 						"content-type": "application/json",
@@ -180,7 +184,7 @@ export function createCivitaiLtx23InferenceChecker(
 					const message = extractErrorMessage(body);
 					if (NO_AVAILABLE_PROVIDER_PATTERN.test(message)) {
 						return {
-							reason: buildUnavailableReason(modelId, versionId),
+							reason: buildUnavailableReason(modelId, resolvedVersionId),
 							status: "unavailable",
 							target: "civitai-ltx-2-3",
 						};
@@ -195,7 +199,7 @@ export function createCivitaiLtx23InferenceChecker(
 				}
 				if (hasUnsupportedStep(body as CivitaiWorkflow)) {
 					return {
-						reason: buildUnavailableReason(modelId, versionId),
+						reason: buildUnavailableReason(modelId, resolvedVersionId),
 						status: "unavailable",
 						target: "civitai-ltx-2-3",
 					};

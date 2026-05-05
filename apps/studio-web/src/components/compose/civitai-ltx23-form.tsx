@@ -21,9 +21,7 @@ import {
 	ImagePlus,
 	Loader2,
 	RefreshCcw,
-	Sparkles,
 	Type,
-	Video,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
@@ -287,7 +285,7 @@ function applyLoraMetadata(
 
 function CivitaiPill({ children }: { children: ReactNode }) {
 	return (
-		<span className="inline-flex min-w-0 items-center gap-1 rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+		<span className="inline-flex min-w-0 max-w-full items-center gap-1 truncate rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[10px] text-muted-foreground">
 			{children}
 		</span>
 	);
@@ -404,12 +402,14 @@ function CompatibilityPill({
 function CivitaiLoraCard({ metadata }: { metadata: CivitaiLoraMetadata }) {
 	const compatible = isLtx23Compatible(metadata.baseModel);
 	return (
-		<div className="grid gap-2 rounded-lg border border-foreground/10 bg-background p-2.5">
+		<div className="grid gap-2 rounded-lg bg-foreground/[0.035] p-2.5">
 			<div className="flex min-w-0 items-start justify-between gap-2">
 				<div className="grid min-w-0 gap-1">
 					<p className="truncate font-medium text-[12px]">{metadata.name}</p>
 					<div className="flex min-w-0 flex-wrap items-center gap-1">
-						<CivitaiPill>{metadata.air}</CivitaiPill>
+						<CivitaiPill>
+							<code className="min-w-0 truncate">{metadata.air}</code>
+						</CivitaiPill>
 						<CivitaiPill>{metadata.baseModel || "unknown base"}</CivitaiPill>
 					</div>
 				</div>
@@ -464,7 +464,9 @@ function CivitaiLoraPreview({ metadata }: { metadata: CivitaiLoraMetadata }) {
 				/>
 			</div>
 			<div className="flex min-w-0 flex-wrap items-center gap-1">
-				<CivitaiPill>{metadata.air}</CivitaiPill>
+				<CivitaiPill>
+					<code className="min-w-0 truncate">{metadata.air}</code>
+				</CivitaiPill>
 				<CivitaiPill>{metadata.baseModel || "unknown base"}</CivitaiPill>
 			</div>
 			{metadata.triggerWords.length > 0 ? (
@@ -573,7 +575,7 @@ function CivitaiLoraSelector({
 	}
 
 	return (
-		<div className="grid gap-2 rounded-lg border border-foreground/10 bg-background/70 p-3">
+		<section className="grid gap-2">
 			<div className="flex min-w-0 items-center justify-between gap-2">
 				<SectionLabel>Civitai LoRA</SectionLabel>
 				<Button
@@ -654,7 +656,7 @@ function CivitaiLoraSelector({
 					Use this Civitai LoRA
 				</Button>
 			) : null}
-		</div>
+		</section>
 	);
 }
 
@@ -714,45 +716,37 @@ export default function CivitaiLtx23Setup({
 	const resolution = findParameter(selectedWorkflow, "resolution");
 	const seed = findParameter(selectedWorkflow, "seed");
 	const steps = findParameter(selectedWorkflow, "steps");
-	const activeMetadata = getActiveMetadata(form);
 
 	return (
-		<section className="grid min-w-0 gap-3 rounded-lg bg-foreground/[0.03] p-3 ring-1 ring-foreground/6">
-			<div className="flex min-w-0 items-start justify-between gap-2">
-				<div className="grid min-w-0 gap-1">
-					<div className="flex min-w-0 items-center gap-1.5">
-						<Video className="size-3.5 text-muted-foreground" />
-						<SectionLabel>Civitai inference</SectionLabel>
-					</div>
-					<div className="flex min-w-0 flex-wrap items-center gap-1">
-						<CivitaiPill>
-							<Sparkles className="size-2.5" />
-							{activeMetadata.name}
-						</CivitaiPill>
+		<div className="grid min-w-0 gap-4">
+			<div className="grid gap-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+				<SegmentedControl
+					label="Source"
+					onChange={(nextMode) => {
+						const nextWorkflowKey = modeMeta[nextMode].workflowKey;
+						if (nextWorkflowKey !== selectedWorkflow.key) {
+							onWorkflowChange(nextWorkflowKey);
+						}
+					}}
+					options={sourceOptions}
+					value={mode}
+				/>
+				<div className="grid min-w-0 content-start gap-1.5">
+					<span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
+						Engine
+					</span>
+					<div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-lg bg-foreground/[0.035] px-2.5 py-2">
 						<CivitaiPill>LTX 2.3 · 22B dev</CivitaiPill>
+						<CivitaiPill>{mode.toUpperCase()}</CivitaiPill>
+						{selectedWorkflow.requiresInputImage ? (
+							<span className="inline-flex min-w-0 items-center gap-1 rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+								<BadgeInfo className="size-2.5 shrink-0" />
+								<span className="truncate">First frame from launch input</span>
+							</span>
+						) : null}
 					</div>
 				</div>
-				<CivitaiPill>{mode.toUpperCase()}</CivitaiPill>
 			</div>
-
-			<SegmentedControl
-				label="Source"
-				onChange={(nextMode) => {
-					const nextWorkflowKey = modeMeta[nextMode].workflowKey;
-					if (nextWorkflowKey !== selectedWorkflow.key) {
-						onWorkflowChange(nextWorkflowKey);
-					}
-				}}
-				options={sourceOptions}
-				value={mode}
-			/>
-
-			{selectedWorkflow.requiresInputImage ? (
-				<div className="flex min-w-0 items-center gap-1.5 rounded-lg bg-foreground/[0.04] px-2.5 py-2 text-[11px] text-muted-foreground">
-					<BadgeInfo className="size-3 shrink-0" />
-					<span className="min-w-0 truncate">First frame: launch input</span>
-				</div>
-			) : null}
 
 			<CivitaiLoraSelector form={form} onParamChange={onParamChange} />
 
@@ -815,6 +809,6 @@ export default function CivitaiLtx23Setup({
 					parameter={seed}
 				/>
 			</div>
-		</section>
+		</div>
 	);
 }

@@ -19,10 +19,19 @@ import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import { cn } from "@generator/ui/lib/utils";
-import { AlertCircle, ChevronDown, Loader2, Plus, Wand2 } from "lucide-react";
+import {
+	AlertCircle,
+	ChevronDown,
+	Clapperboard,
+	Cpu,
+	Loader2,
+	Plus,
+	Wand2,
+} from "lucide-react";
 import {
 	type Dispatch,
 	type FormEvent,
+	type ReactNode,
 	type SetStateAction,
 	useEffect,
 	useId,
@@ -693,6 +702,74 @@ function ComposeTabs({
 	);
 }
 
+function ProviderPanel({
+	children,
+	civitaiDisabled,
+	onProviderChange,
+	selectedClassification,
+	selectedWorkflow,
+	value,
+}: {
+	children: ReactNode;
+	civitaiDisabled: boolean;
+	onProviderChange: (next: ProviderTab) => void;
+	selectedClassification: NonNullable<ReturnType<typeof classifyWorkflow>>;
+	selectedWorkflow: WorkflowDefinition;
+	value: ProviderTab;
+}) {
+	const isCivitai = value === "civitai";
+	const sourceLabel =
+		selectedClassification.approach === "image"
+			? "Image source"
+			: "Text source";
+	const outputLabel =
+		selectedClassification.modality === "video" ? "Video" : "Image";
+	return (
+		<section className="overflow-hidden rounded-xl border border-foreground/10 bg-background/80 shadow-sm">
+			<div className="border-foreground/8 border-b bg-foreground/[0.02] p-2">
+				<ComposeTabs
+					civitaiDisabled={civitaiDisabled}
+					onChange={onProviderChange}
+					value={value}
+				/>
+			</div>
+			<div className="flex min-w-0 flex-col gap-2 border-foreground/8 border-b px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+				<div className="flex min-w-0 items-center gap-2">
+					<span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.06] text-muted-foreground">
+						{isCivitai ? (
+							<Clapperboard className="size-4" />
+						) : (
+							<Cpu className="size-4" />
+						)}
+					</span>
+					<div className="grid min-w-0 gap-0.5">
+						<p className="font-medium text-[12px]">
+							{isCivitai ? "Civitai LTX 2.3" : "Inference workflow"}
+						</p>
+						<p className="truncate text-[11px] text-muted-foreground">
+							{selectedWorkflow.name}
+						</p>
+					</div>
+				</div>
+				<div className="flex min-w-0 flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
+					<span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5">
+						{sourceLabel}
+					</span>
+					<span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5">
+						{outputLabel}
+					</span>
+					{selectedWorkflow.baseModel ? (
+						<span className="rounded-full bg-foreground/[0.06] px-1.5 py-0.5">
+							{selectedWorkflow.baseModel}
+						</span>
+					) : null}
+				</div>
+			</div>
+			<div className="grid gap-4 p-3">{children}</div>
+		</section>
+	);
+}
+
 interface ScenarioSectionProps {
 	finalPromptPreview: string;
 	form: ScenarioFormState;
@@ -717,8 +794,18 @@ function ScenarioSection({
 	const nameId = useId();
 	const promptId = useId();
 	return (
-		<section className="grid gap-2">
-			<SectionLabel>Scenario</SectionLabel>
+		<section className="grid gap-3 rounded-xl border border-foreground/10 bg-background/80 p-3 shadow-sm">
+			<div className="flex items-center justify-between gap-2">
+				<SectionLabel>Scenario</SectionLabel>
+				<span
+					className={cn(
+						"text-[10px] tabular-nums",
+						getCharCounterTone(promptLength, isOverLimit)
+					)}
+				>
+					{promptLength}/{PROMPT_LIMIT}
+				</span>
+			</div>
 			<div className="grid gap-1.5">
 				<div className="flex items-baseline justify-between gap-2">
 					<Label className="font-medium text-[11px]" htmlFor={nameId}>
@@ -776,14 +863,6 @@ function ScenarioSection({
 							referenceImageUrl={referenceImageUrl}
 							textSourceOnly={!selectedWorkflow.requiresInputImage}
 						/>
-						<span
-							className={cn(
-								"text-[10px] tabular-nums",
-								getCharCounterTone(promptLength, isOverLimit)
-							)}
-						>
-							{promptLength}/{PROMPT_LIMIT}
-						</span>
 					</div>
 				</div>
 				<textarea
@@ -1133,51 +1212,53 @@ export default function ComposeForm({
 
 	return (
 		<form className="grid min-w-0 gap-5" id={formId} onSubmit={handleSubmit}>
-			<ComposeTabs
+			<ProviderPanel
 				civitaiDisabled={civitaiWorkflows.length === 0}
-				onChange={handleProviderTabChange}
+				onProviderChange={handleProviderTabChange}
+				selectedClassification={selectedClassification}
+				selectedWorkflow={selectedWorkflow}
 				value={providerTab}
-			/>
-
-			{isCivitaiLtx23 ? (
-				<WorkflowSetupSection
-					availableApproaches={availableApproaches}
-					availableModalities={availableModalities}
-					filteredWorkflows={filteredWorkflows}
-					form={form}
-					isCivitaiLtx23={isCivitaiLtx23}
-					onApproachChange={handleApproachChange}
-					onModalityChange={handleModalityChange}
-					onParamChange={handleParamChange}
-					onWorkflowChange={handleWorkflowChange}
-					selectedClassification={selectedClassification}
-					selectedWorkflow={selectedWorkflow}
-					workflows={civitaiWorkflows}
-				/>
-			) : (
-				<SettingsSection
-					adminLorasHref={adminLorasHref}
-					availableApproaches={availableApproaches}
-					availableLoras={availableLoras}
-					availableModalities={availableModalities}
-					filteredWorkflows={filteredWorkflows}
-					form={form}
-					isCivitaiLtx23={isCivitaiLtx23}
-					isImageToVideo={isImageToVideo}
-					loraSlots={loraSlots}
-					lorasError={lorasError}
-					onApproachChange={handleApproachChange}
-					onLorasImported={onLorasImported}
-					onModalityChange={handleModalityChange}
-					onParamChange={handleParamChange}
-					onWorkflowChange={handleWorkflowChange}
-					partitioned={partitioned}
-					selectedClassification={selectedClassification}
-					selectedWorkflow={selectedWorkflow}
-					showLoraSection={showLoraSection}
-					workflows={inferenceWorkflows}
-				/>
-			)}
+			>
+				{isCivitaiLtx23 ? (
+					<WorkflowSetupSection
+						availableApproaches={availableApproaches}
+						availableModalities={availableModalities}
+						filteredWorkflows={filteredWorkflows}
+						form={form}
+						isCivitaiLtx23={isCivitaiLtx23}
+						onApproachChange={handleApproachChange}
+						onModalityChange={handleModalityChange}
+						onParamChange={handleParamChange}
+						onWorkflowChange={handleWorkflowChange}
+						selectedClassification={selectedClassification}
+						selectedWorkflow={selectedWorkflow}
+						workflows={civitaiWorkflows}
+					/>
+				) : (
+					<SettingsSection
+						adminLorasHref={adminLorasHref}
+						availableApproaches={availableApproaches}
+						availableLoras={availableLoras}
+						availableModalities={availableModalities}
+						filteredWorkflows={filteredWorkflows}
+						form={form}
+						isCivitaiLtx23={isCivitaiLtx23}
+						isImageToVideo={isImageToVideo}
+						loraSlots={loraSlots}
+						lorasError={lorasError}
+						onApproachChange={handleApproachChange}
+						onLorasImported={onLorasImported}
+						onModalityChange={handleModalityChange}
+						onParamChange={handleParamChange}
+						onWorkflowChange={handleWorkflowChange}
+						partitioned={partitioned}
+						selectedClassification={selectedClassification}
+						selectedWorkflow={selectedWorkflow}
+						showLoraSection={showLoraSection}
+						workflows={inferenceWorkflows}
+					/>
+				)}
+			</ProviderPanel>
 
 			<ScenarioSection
 				finalPromptPreview={finalPromptPreview}

@@ -10,6 +10,7 @@ import {
 } from "@generator/studio-client/shared";
 import { Button } from "@generator/ui/components/button";
 import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
+import { InfoTooltip } from "@generator/ui/components/info-tooltip";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
@@ -25,6 +26,8 @@ import {
 	useState,
 } from "react";
 import { toast } from "sonner";
+
+import { buildFinalPromptPreview } from "@/components/final-prompt-preview";
 
 import LoraStack from "./lora-stack";
 import ParameterField from "./parameter-field";
@@ -583,6 +586,20 @@ export default function ComposeForm({
 	const promptLength = form.prompt.length;
 	const isOverLimit = promptLength > PROMPT_LIMIT;
 	const isReady = errors.length === 0 && !isOverLimit;
+	const finalPrompt = useMemo(() => {
+		if (!selectedWorkflow) {
+			return form.prompt;
+		}
+		return buildFinalPromptPreview({
+			availableLoras,
+			params: form.params,
+			prompt: form.prompt,
+			workflow: selectedWorkflow,
+		});
+	}, [availableLoras, form, selectedWorkflow]);
+	const finalPromptPreview = form.prompt.trim()
+		? finalPrompt
+		: "Prompt is empty.";
 	const suggestedName = useMemo(
 		() => suggestNameFromPrompt(form.prompt),
 		[form.prompt]
@@ -740,9 +757,22 @@ export default function ComposeForm({
 
 				<div className="grid gap-1.5">
 					<div className="flex items-baseline justify-between gap-2">
-						<Label className="font-medium text-[11px]" htmlFor={promptId}>
-							Prompt
-						</Label>
+						<div className="flex items-center gap-1.5">
+							<Label className="font-medium text-[11px]" htmlFor={promptId}>
+								Prompt
+							</Label>
+							<InfoTooltip
+								align="start"
+								contentClassName="max-w-[min(34rem,calc(100vw-2rem))] flex-col items-start gap-1.5"
+								label="Show final prompt"
+								side="top"
+							>
+								<span className="font-medium">Final prompt</span>
+								<span className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-4">
+									{finalPromptPreview}
+								</span>
+							</InfoTooltip>
+						</div>
 						<div className="flex items-center gap-2">
 							<ScenarioEnhancePromptButton
 								onEnhanced={(enhanced) =>

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { GeneratorExecutionRecord } from "@generator/contracts/generator";
+import { buildPromptWithTriggerWords } from "@generator/contracts/studio";
 
 import {
-	buildPromptWithTriggerWords,
 	type StudioArtifactEntity,
 	type StudioExecutionClient,
 	type StudioRepository,

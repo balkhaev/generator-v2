@@ -6,12 +6,13 @@ import type {
 	SyncGeneratorExecutionInput,
 } from "@generator/contracts/generator";
 import type { PersonRecord } from "@generator/contracts/persons";
-import type {
-	StudioRunDebugBundle,
-	StudioRunRecord,
-	StudioScenarioRecord,
-	StudioShotArtifactKind,
-	StudioShotRecord,
+import {
+	buildPromptWithTriggerWords,
+	type StudioRunDebugBundle,
+	type StudioRunRecord,
+	type StudioScenarioRecord,
+	type StudioShotArtifactKind,
+	type StudioShotRecord,
 } from "@generator/contracts/studio";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
 import { normalizeBaseUrl } from "@generator/http/shared";
@@ -405,40 +406,6 @@ function collectLoraUrls(
 		}
 	}
 	return urls;
-}
-
-/**
- * Build the final prompt for the generator: the user prompt prefixed with any
- * trigger words from the LoRAs the user picked. Trigger words already present
- * in the prompt (case-insensitive substring match) are skipped to avoid
- * duplication when users paste them in by hand.
- */
-export function buildPromptWithTriggerWords(input: {
-	prompt: string;
-	triggerWords: readonly string[];
-}): string {
-	const promptLower = input.prompt.toLowerCase();
-	const seen = new Set<string>();
-	const additions: string[] = [];
-	for (const raw of input.triggerWords) {
-		const word = raw.trim();
-		if (!word) {
-			continue;
-		}
-		const key = word.toLowerCase();
-		if (seen.has(key)) {
-			continue;
-		}
-		seen.add(key);
-		if (promptLower.includes(key)) {
-			continue;
-		}
-		additions.push(word);
-	}
-	if (additions.length === 0) {
-		return input.prompt;
-	}
-	return `${additions.join(", ")}, ${input.prompt}`;
 }
 
 async function resolvePersonLoraUrl(params: {

@@ -1,5 +1,6 @@
 "use client";
 
+import type { LoraRegistryEntry } from "@generator/contracts/loras";
 import type {
 	PersonGenerationRecord,
 	PersonRecord,
@@ -19,6 +20,7 @@ import {
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
+import { InfoTooltip } from "@generator/ui/components/info-tooltip";
 import { RunProgressIndicator } from "@generator/ui/components/run-progress-indicator";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import {
@@ -43,12 +45,14 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { buildFinalPromptPreview } from "@/components/final-prompt-preview";
 import IconButton from "@/components/icon-button";
 import PersonLaunchSection from "@/components/person-launch-section";
 import PersonsInputPicker from "@/components/persons-input-picker";
 import { getMediaType } from "@/components/preview-surface";
 import type { ScenarioCardData } from "@/components/scenario-card-data";
 import SubjectSwitcher from "@/components/subject-switcher";
+import { useStudioLoras } from "@/components/use-studio-loras";
 
 interface CommandSidebarProps {
 	className?: string;
@@ -423,15 +427,19 @@ function RunCard({
 }
 
 function PromptOverrideEditor({
+	availableLoras,
 	draft,
 	onDraftChange,
 	requiresInputImage,
 	scenario,
+	workflow,
 }: {
+	availableLoras: LoraRegistryEntry[];
 	draft: RunDraft | null;
 	onDraftChange: (next: RunDraft) => void;
 	requiresInputImage: boolean;
 	scenario: ScenarioRecord;
+	workflow: AdminSnapshot["workflows"][number] | null;
 }) {
 	const overrideValue = draft?.promptOverride;
 	const promptValue = overrideValue ?? scenario.prompt;
@@ -440,6 +448,20 @@ function PromptOverrideEditor({
 	const useVisionEnhance = Boolean(
 		requiresInputImage && draft?.inputImageUrl?.trim()
 	);
+	const finalPrompt = useMemo(() => {
+		if (!workflow) {
+			return promptValue;
+		}
+		return buildFinalPromptPreview({
+			availableLoras,
+			params: scenario.params ?? {},
+			prompt: promptValue,
+			workflow,
+		});
+	}, [availableLoras, promptValue, scenario.params, workflow]);
+	const finalPromptPreview = promptValue.trim()
+		? finalPrompt
+		: "Prompt is empty.";
 
 	function setPrompt(next: string) {
 		onDraftChange({
@@ -468,9 +490,22 @@ function PromptOverrideEditor({
 	return (
 		<div className="grid min-w-0 gap-1">
 			<div className="flex items-center justify-between gap-2">
-				<span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-					Prompt for this run
-				</span>
+				<div className="flex items-center gap-1.5">
+					<span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+						Prompt for this run
+					</span>
+					<InfoTooltip
+						align="start"
+						contentClassName="max-w-[min(34rem,calc(100vw-2rem))] flex-col items-start gap-1.5"
+						label="Show final prompt"
+						side="top"
+					>
+						<span className="font-medium">Final prompt</span>
+						<span className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-4">
+							{finalPromptPreview}
+						</span>
+					</InfoTooltip>
+				</div>
 				<div className="flex items-center gap-1">
 					{hasOverride ? (
 						<button
@@ -538,6 +573,7 @@ function LaunchSection({
 	scenario,
 	shots,
 	storageLabel,
+	workflow,
 }: {
 	activeRunCount: number;
 	draft: RunDraft | null;
@@ -550,7 +586,12 @@ function LaunchSection({
 	scenario: ScenarioRecord;
 	shots: AdminSnapshot["shots"];
 	storageLabel: string | null;
+	workflow: AdminSnapshot["workflows"][number] | null;
 }) {
+	const { loras: availableLoras } = useStudioLoras(
+		workflow?.baseModel,
+		Boolean(workflow)
+	);
 	return (
 		<section className="grid min-w-0 gap-2 border-foreground/6 border-b px-3 py-2.5 dark:border-foreground/10">
 			<div className="flex items-center justify-between gap-2">
@@ -597,10 +638,12 @@ function LaunchSection({
 			) : null}
 
 			<PromptOverrideEditor
+				availableLoras={availableLoras}
 				draft={draft}
 				onDraftChange={onDraftChange}
 				requiresInputImage={requiresInputImage}
 				scenario={scenario}
+				workflow={workflow}
 			/>
 
 			<Button
@@ -1129,6 +1172,7 @@ export default function CommandSidebar({
 							scenario={selectedScenario}
 							shots={snapshot.shots}
 							storageLabel={storageLabel}
+							workflow={selectedScenarioWorkflow}
 						/>
 						<ScenarioActivitySection
 							copiedRunId={copiedRunId}

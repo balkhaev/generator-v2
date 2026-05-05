@@ -38,13 +38,14 @@ import {
 	Play,
 	Plus,
 	RotateCcw,
+	Sparkles,
 } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-
+import { getLoraSlots } from "@/components/compose/workflow-matrix";
 import { buildFinalPromptPreview } from "@/components/final-prompt-preview";
 import IconButton from "@/components/icon-button";
 import PersonLaunchSection from "@/components/person-launch-section";
@@ -86,9 +87,21 @@ type LinkedPersonState = {
 	runId: string;
 } | null;
 
+interface ScenarioLoraItem {
+	civitaiUrl: string | null;
+	id: string;
+	name: string;
+	slotLabel: string;
+	triggerWords: string[];
+	variant: LoraRegistryEntry["variant"];
+	weight: string | null;
+}
+
 const personsApiBaseUrl = normalizeBaseUrl(
 	env.NEXT_PUBLIC_PERSONS_API_URL ?? "http://localhost:3003"
 );
+
+const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
 
 const runStatusTone: Record<ScenarioRunRecord["status"], string> = {
 	failed: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
@@ -244,6 +257,92 @@ function getStorageLabel(
 		default:
 			return null;
 	}
+}
+
+function isCivitaiUrl(value: string): boolean {
+	try {
+		return civitaiHostPattern.test(new URL(value).hostname);
+	} catch {
+		return false;
+	}
+}
+
+function getCivitaiSourceUrl(entry: LoraRegistryEntry | null, url: string) {
+	if (
+		entry?.sourceUrl &&
+		(entry.sourceProvider === "civitai" || isCivitaiUrl(entry.sourceUrl))
+	) {
+		return entry.sourceUrl;
+	}
+	return isCivitaiUrl(url) ? url : null;
+}
+
+function getUrlDisplayName(url: string) {
+	try {
+		const parsed = new URL(url);
+		const lastSegment = parsed.pathname.split("/").filter(Boolean).at(-1);
+		return lastSegment ? decodeURIComponent(lastSegment) : parsed.hostname;
+	} catch {
+		return url;
+	}
+}
+
+function formatLoraWeight(
+	params: ScenarioRecord["params"],
+	weightKey: string | null
+) {
+	if (!weightKey) {
+		return null;
+	}
+	const rawWeight = params?.[weightKey];
+	const weight =
+		typeof rawWeight === "number" ? rawWeight : Number(rawWeight ?? "");
+	if (!Number.isFinite(weight)) {
+		return null;
+	}
+	return weight.toFixed(weight % 1 === 0 ? 0 : 2);
+}
+
+function getScenarioLoras({
+	availableLoras,
+	scenario,
+	workflow,
+}: {
+	availableLoras: LoraRegistryEntry[];
+	scenario: ScenarioRecord;
+	workflow: AdminSnapshot["workflows"][number] | null;
+}): ScenarioLoraItem[] {
+	if (!workflow) {
+		return [];
+	}
+	const lorasByUrl = new Map(
+		availableLoras.map((entry) => [entry.s3Url, entry])
+	);
+	const slots = getLoraSlots(workflow);
+	const items: ScenarioLoraItem[] = [];
+
+	for (const slot of slots) {
+		const rawUrl = scenario.params?.[slot.urlKey];
+		if (typeof rawUrl !== "string") {
+			continue;
+		}
+		const url = rawUrl.trim();
+		if (!url) {
+			continue;
+		}
+		const entry = lorasByUrl.get(url) ?? null;
+		items.push({
+			civitaiUrl: getCivitaiSourceUrl(entry, url),
+			id: `${slot.urlKey}:${url}`,
+			name: entry?.name ?? getUrlDisplayName(url),
+			slotLabel: slot.label,
+			triggerWords: entry?.triggerWords ?? [],
+			variant: entry?.variant ?? null,
+			weight: formatLoraWeight(scenario.params, slot.weightKey),
+		});
+	}
+
+	return items;
 }
 
 async function findPersonSlugByOperatorRunId(operatorRunId: string) {
@@ -561,6 +660,83 @@ function PromptOverrideEditor({
 	);
 }
 
+function ScenarioLorasFooter({
+	availableLoras,
+	scenario,
+	workflow,
+}: {
+	availableLoras: LoraRegistryEntry[];
+	scenario: ScenarioRecord;
+	workflow: AdminSnapshot["workflows"][number] | null;
+}) {
+	const scenarioLoras = useMemo(
+		() => getScenarioLoras({ availableLoras, scenario, workflow }),
+		[availableLoras, scenario, workflow]
+	);
+
+	if (scenarioLoras.length === 0) {
+		return null;
+	}
+
+	return (
+		<div className="grid min-w-0 gap-2 rounded-lg bg-foreground/[0.03] px-2.5 py-2">
+			<div className="flex items-center justify-between gap-2">
+				<div className="flex items-center gap-1.5">
+					<Sparkles className="size-3 text-muted-foreground" />
+					<SectionLabel>LoRAs</SectionLabel>
+				</div>
+				<span className="rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[10px] text-muted-foreground tabular-nums">
+					{scenarioLoras.length}
+				</span>
+			</div>
+			<div className="grid min-w-0 gap-1.5">
+				{scenarioLoras.map((lora) => (
+					<div
+						className="flex min-w-0 items-start justify-between gap-2 rounded-md bg-background/45 px-2 py-1.5 ring-1 ring-foreground/6"
+						key={lora.id}
+					>
+						<div className="grid min-w-0 gap-0.5">
+							<div className="flex min-w-0 items-center gap-1.5">
+								<span className="truncate font-medium text-[11px]">
+									{lora.name}
+								</span>
+								{lora.variant ? (
+									<span className="shrink-0 rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[9px] text-muted-foreground uppercase">
+										{lora.variant}
+									</span>
+								) : null}
+								{lora.weight ? (
+									<span className="shrink-0 rounded-full bg-foreground/[0.05] px-1.5 py-0.5 text-[9px] text-muted-foreground">
+										{lora.weight}x
+									</span>
+								) : null}
+							</div>
+							<p className="truncate text-[10px] text-muted-foreground">
+								{lora.slotLabel}
+								{lora.triggerWords.length > 0
+									? ` · ${lora.triggerWords.slice(0, 3).join(", ")}`
+									: ""}
+							</p>
+						</div>
+						{lora.civitaiUrl ? (
+							<a
+								aria-label={`Open ${lora.name} on Civitai`}
+								className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/15 px-1.5 py-0.5 text-[10px] text-muted-foreground transition hover:bg-muted/25 hover:text-foreground dark:bg-muted/8"
+								href={lora.civitaiUrl}
+								rel="noopener noreferrer"
+								target="_blank"
+							>
+								Civitai
+								<ExternalLink className="size-2.5" />
+							</a>
+						) : null}
+					</div>
+				))}
+			</div>
+		</div>
+	);
+}
+
 function LaunchSection({
 	activeRunCount,
 	draft,
@@ -660,6 +836,12 @@ function LaunchSection({
 					? "Add an input image"
 					: "Launch run"}
 			</Button>
+
+			<ScenarioLorasFooter
+				availableLoras={availableLoras}
+				scenario={scenario}
+				workflow={workflow}
+			/>
 		</section>
 	);
 }

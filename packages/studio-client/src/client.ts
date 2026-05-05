@@ -1,3 +1,9 @@
+import type {
+	CreateLoraFromUrlInput,
+	LoraRegistryEntry,
+	LoraSourcePreview,
+	PreviewLoraSourceInput,
+} from "@generator/contracts/loras";
 import type { StudioRunDebugBundle } from "@generator/contracts/studio";
 import { env } from "@generator/env/web";
 import { requestJson } from "@generator/http/client";
@@ -60,6 +66,38 @@ export async function createStudioScenario(
 		data: extractStudioScenario(payload),
 		source: "server",
 	};
+}
+
+export async function previewStudioLoraSource(
+	input: PreviewLoraSourceInput
+): Promise<LoraSourcePreview> {
+	const payload = await requestStudioJson<{ preview: LoraSourcePreview }>(
+		`${apiBaseUrl}/api/loras/preview`,
+		{
+			body: JSON.stringify(input),
+			method: "POST",
+		}
+	);
+	return payload.preview;
+}
+
+export async function importStudioLoraFromUrl(
+	input: CreateLoraFromUrlInput
+): Promise<LoraRegistryEntry[]> {
+	const payload = await requestStudioJson<{
+		lora?: LoraRegistryEntry;
+		loras?: LoraRegistryEntry[];
+	}>(`${apiBaseUrl}/api/loras/import`, {
+		body: JSON.stringify(input),
+		method: "POST",
+	});
+	if (payload.loras) {
+		return payload.loras;
+	}
+	if (payload.lora) {
+		return [payload.lora];
+	}
+	throw new Error("Server returned no LoRA records.");
 }
 
 export async function updateStudioScenario(

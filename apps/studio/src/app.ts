@@ -37,6 +37,8 @@ interface AppVariables extends AuthVariables {
 }
 
 interface AppOptions {
+	adminApiBaseUrl?: string;
+	adminInternalToken?: string;
 	authHandler: (request: Request) => Response | Promise<Response>;
 	callbackConfig?: {
 		token: string;
@@ -317,7 +319,14 @@ export function createApp(options: AppOptions): {
 				options.resolvePromptEnhanceClient ?? resolveStudioPromptEnhanceClient,
 		})
 	);
-	app.route("/api/loras", createLoraRoutes(loraReadRepository));
+	app.route(
+		"/api/loras",
+		createLoraRoutes(loraReadRepository, {
+			adminApiBaseUrl: options.adminApiBaseUrl,
+			adminInternalToken: options.adminInternalToken,
+			fetchImpl,
+		})
+	);
 	app.route(
 		"/api/input-assets",
 		createInputAssetRoutes({

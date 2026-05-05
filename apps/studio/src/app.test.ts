@@ -250,6 +250,120 @@ describe("studio backend", () => {
 		expect(response.status).toBe(200);
 	});
 
+	it("proxies LoRA preview and import requests to admin API", async () => {
+		const calls: Array<{
+			body: string | null;
+			headers: Headers;
+			url: string;
+		}> = [];
+		const loraEntry: LoraRegistryEntry = {
+			baseModel: "flux",
+			createdAt: new Date().toISOString(),
+			defaultWeight: 1,
+			description: "Imported style",
+			id: "lora-imported",
+			name: "Imported LoRA",
+			pairGroupId: null,
+			s3Key: "loras/imported.safetensors",
+			s3Url: "https://cdn.example.com/loras/imported.safetensors",
+			sizeBytes: 2048,
+			slug: "imported-lora",
+			sourceProvider: "civitai",
+			sourceUrl: "https://civitai.com/models/42",
+			status: "active",
+			triggerWords: ["imported"],
+			updatedAt: new Date().toISOString(),
+			variant: null,
+		};
+		const fetchImpl = (input: string | URL | Request, init?: RequestInit) => {
+			const url = input instanceof Request ? input.url : String(input);
+			calls.push({
+				body: typeof init?.body === "string" ? init.body : null,
+				headers: new Headers(init?.headers),
+				url,
+			});
+			if (url.endsWith("/api/admin/loras/preview")) {
+				return Promise.resolve(
+					Response.json({
+						preview: {
+							baseModel: "flux",
+							downloadUrl: "https://civitai.com/api/download/42",
+							name: "Imported LoRA",
+							provider: "civitai",
+							sourceUrl: "https://civitai.com/models/42",
+						},
+					})
+				);
+			}
+			return Promise.resolve(
+				Response.json({ lora: loraEntry }, { status: 201 })
+			);
+		};
+		const { app } = createApp({
+			adminApiBaseUrl: "http://admin.internal/",
+			adminInternalToken: "training-token",
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub(),
+			fetchImpl,
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve({
+					session: { id: "session-1" },
+					user: { id: "user-1" },
+				});
+			},
+			repository: createMemoryRepository(),
+			s3Config: fakeS3Config,
+		});
+
+		const previewResponse = await app.request(
+			"http://localhost/api/loras/preview",
+			{
+				body: JSON.stringify({ sourceUrl: "https://civitai.com/models/42" }),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+		expect(previewResponse.status).toBe(200);
+		expect(await previewResponse.json()).toEqual({
+			preview: {
+				baseModel: "flux",
+				downloadUrl: "https://civitai.com/api/download/42",
+				name: "Imported LoRA",
+				provider: "civitai",
+				sourceUrl: "https://civitai.com/models/42",
+			},
+		});
+
+		const importResponse = await app.request(
+			"http://localhost/api/loras/import",
+			{
+				body: JSON.stringify({
+					baseModel: "flux",
+					sourceUrl: "https://civitai.com/models/42",
+				}),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			}
+		);
+
+		expect(importResponse.status).toBe(201);
+		expect(await importResponse.json()).toEqual({ lora: loraEntry });
+		expect(calls.map((call) => call.url)).toEqual([
+			"http://admin.internal/api/admin/loras/preview",
+			"http://admin.internal/api/admin/loras",
+		]);
+		expect(calls[0]?.headers.get("authorization")).toBe(
+			"Bearer training-token"
+		);
+		expect(calls[1]?.headers.get("authorization")).toBe(
+			"Bearer training-token"
+		);
+	});
+
 	it("creates local scenarios and delegates execution to generator", async () => {
 		const repository = createMemoryRepository();
 		const calls: string[] = [];

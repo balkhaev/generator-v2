@@ -1,9 +1,17 @@
 "use client";
 
-import type {
-	LoraRegistryEntry,
-	LoraVariant,
+import {
+	LORA_BASE_MODELS,
+	type LoraBaseModel,
+	type LoraRegistryEntry,
+	type LoraSourcePreview,
+	type LoraSourcePreviewVariant,
+	type LoraVariant,
 } from "@generator/contracts/loras";
+import {
+	importStudioLoraFromUrl,
+	previewStudioLoraSource,
+} from "@generator/studio-client/client";
 import type {
 	ScenarioFormState,
 	WorkflowDefinition,
@@ -13,15 +21,19 @@ import { Button } from "@generator/ui/components/button";
 import { Input } from "@generator/ui/components/input";
 import {
 	Check,
+	Download,
 	ExternalLink,
+	Eye,
 	Layers3,
 	Link as LinkIcon,
+	Loader2,
 	Plus,
 	Search,
 	Sparkles,
 	X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import RangeSlider from "./range-slider";
 import type { LoraSlotDefinition } from "./workflow-matrix";
 
@@ -29,6 +41,7 @@ interface LoraStackProps {
 	adminHref: string;
 	availableLoras: LoraRegistryEntry[];
 	form: ScenarioFormState;
+	onLorasImported?: (entries: LoraRegistryEntry[]) => void;
 	onParamChange: (key: string, value: string) => void;
 	slots: LoraSlotDefinition[];
 	workflow: WorkflowDefinition;
@@ -93,6 +106,205 @@ function getSlotIndexForVariant(
 }
 
 const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
+
+function isCivitaiUrl(value: string): boolean {
+	try {
+		return civitaiHostPattern.test(new URL(value).hostname);
+	} catch {
+		return false;
+	}
+}
+
+function asLoraBaseModel(value: string | undefined): LoraBaseModel | undefined {
+	if (!value) {
+		return;
+	}
+	return LORA_BASE_MODELS.includes(value as LoraBaseModel)
+		? (value as LoraBaseModel)
+		: undefined;
+}
+
+function findPreviewVariant(
+	preview: LoraSourcePreview | null,
+	selectedVersionId: number | null
+): LoraSourcePreviewVariant | null {
+	if (!preview?.variants || selectedVersionId === null) {
+		return null;
+	}
+	return (
+		preview.variants.find(
+			(variant) => variant.versionId === selectedVersionId
+		) ?? null
+	);
+}
+
+function resolveImportBaseModel(input: {
+	activeVariant: LoraSourcePreviewVariant | null;
+	preview: LoraSourcePreview | null;
+	workflowBaseModel?: string;
+}): LoraBaseModel {
+	const workflowBaseModel = asLoraBaseModel(input.workflowBaseModel);
+	const detectedBaseModel =
+		input.activeVariant?.baseModel ?? input.preview?.baseModel;
+	if (
+		workflowBaseModel &&
+		detectedBaseModel &&
+		workflowBaseModel !== detectedBaseModel
+	) {
+		throw new Error(
+			`Civitai base model ${detectedBaseModel} does not match this workflow (${workflowBaseModel}).`
+		);
+	}
+	return workflowBaseModel ?? detectedBaseModel ?? "other";
+}
+
+function getDetectedPair(preview: LoraSourcePreview | null) {
+	const pairedFiles = preview?.pairedFiles ?? [];
+	if (pairedFiles.length !== 2) {
+		return null;
+	}
+	const high = pairedFiles.find((file) => file.variant === "high");
+	const low = pairedFiles.find((file) => file.variant === "low");
+	return high && low ? { high, low } : null;
+}
+
+function buildCivitaiImportInput(input: {
+	activeVariant: LoraSourcePreviewVariant | null;
+	importAsPair: boolean;
+	preview: LoraSourcePreview | null;
+	selectedVersionId: number | null;
+	sourceUrl: string;
+	workflowBaseModel?: string;
+}) {
+	const pair = getDetectedPair(input.preview);
+	const wantsPair = Boolean(pair && input.importAsPair);
+	const baseModel = resolveImportBaseModel(input);
+	const sourceVersionId =
+		input.activeVariant?.versionId ??
+		input.selectedVersionId ??
+		input.preview?.sourceVersionId;
+
+	return {
+		baseModel,
+		defaultWeight: 1,
+		description: input.preview?.description,
+		name: input.preview?.name,
+		pair:
+			wantsPair && pair
+				? {
+						sourceUrl: pair.low.sourceUrl,
+						sourceVersionId: pair.low.sourceVersionId,
+						variant: "low" as const,
+					}
+				: undefined,
+		sourceProvider: "civitai" as const,
+		sourceUrl: wantsPair && pair ? pair.high.sourceUrl : input.sourceUrl,
+		sourceVersionId:
+			wantsPair && pair ? pair.high.sourceVersionId : sourceVersionId,
+		variant: wantsPair ? ("high" as const) : undefined,
+	};
+}
+
+function pickImportedEntry(
+	entries: LoraRegistryEntry[],
+	restrictVariant: LoraVariant | undefined
+) {
+	if (entries.length === 0) {
+		return null;
+	}
+	if (!restrictVariant) {
+		return entries[0] ?? null;
+	}
+	return (
+		entries.find((entry) => entry.variant === restrictVariant) ??
+		entries.find((entry) => entry.variant === "both" || !entry.variant) ??
+		entries[0] ??
+		null
+	);
+}
+
+function CivitaiPreviewDetails({
+	activeVariant,
+	onVersionChange,
+	preview,
+	selectedVersionId,
+}: {
+	activeVariant: LoraSourcePreviewVariant | null;
+	onVersionChange: (versionId: number) => void;
+	preview: LoraSourcePreview;
+	selectedVersionId: number | null;
+}) {
+	const previewName = preview.name ?? "Civitai LoRA";
+	const previewVersion = activeVariant?.versionName ?? preview.versionName;
+	const previewFile = activeVariant?.fileName ?? preview.fileName;
+	const previewWords = activeVariant?.trainedWords ?? preview.trainedWords;
+
+	return (
+		<div className="grid gap-1.5 rounded-lg bg-foreground/[0.03] px-2.5 py-2">
+			<div className="grid min-w-0 gap-0.5">
+				<p className="truncate font-medium text-[11px]">{previewName}</p>
+				<p className="truncate text-[10px] text-muted-foreground">
+					{[previewVersion, previewFile].filter(Boolean).join(" / ")}
+				</p>
+			</div>
+			{previewWords && previewWords.length > 0 ? (
+				<div className="flex flex-wrap gap-1">
+					{previewWords.slice(0, 4).map((word) => (
+						<span
+							className="rounded border border-foreground/10 px-1.5 py-0.5 text-[10px]"
+							key={word}
+						>
+							{word}
+						</span>
+					))}
+				</div>
+			) : null}
+			{preview.variants && preview.variants.length > 1 ? (
+				<select
+					aria-label="Civitai model version"
+					className="h-7 rounded-md border border-foreground/10 bg-background px-2 text-[11px] outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
+					onChange={(event) => onVersionChange(Number(event.target.value))}
+					value={selectedVersionId ?? ""}
+				>
+					{preview.variants.map((variant) => (
+						<option key={variant.versionId} value={variant.versionId}>
+							{[variant.versionName, variant.baseModel, variant.fileName]
+								.filter(Boolean)
+								.join(" / ")}
+						</option>
+					))}
+				</select>
+			) : null}
+		</div>
+	);
+}
+
+function CivitaiPairToggle({
+	checked,
+	pair,
+	setChecked,
+}: {
+	checked: boolean;
+	pair: NonNullable<ReturnType<typeof getDetectedPair>>;
+	setChecked: (checked: boolean) => void;
+}) {
+	return (
+		<label className="flex items-start gap-2 rounded-lg bg-emerald-500/8 px-2.5 py-2 text-[10px] text-emerald-800 dark:text-emerald-200">
+			<input
+				checked={checked}
+				className="mt-0.5"
+				onChange={(event) => setChecked(event.target.checked)}
+				type="checkbox"
+			/>
+			<span className="grid gap-0.5">
+				<span className="font-medium">Import high+low pair</span>
+				<span className="text-emerald-700/75 dark:text-emerald-300/75">
+					{pair.high.fileName ?? "High"} / {pair.low.fileName ?? "Low"}
+				</span>
+			</span>
+		</label>
+	);
+}
 
 function getCivitaiSourceUrl(entry: LoraRegistryEntry) {
 	if (!entry.sourceUrl) {
@@ -304,13 +516,208 @@ interface PickerPopoverProps {
 	availableLoras: LoraRegistryEntry[];
 	excludedUrls: Set<string>;
 	onClose: () => void;
-	onPickEntry: (entry: LoraRegistryEntry) => void;
+	onLorasImported?: (entries: LoraRegistryEntry[]) => void;
+	onPickEntry: (
+		entry: LoraRegistryEntry,
+		peerEntries?: LoraRegistryEntry[]
+	) => void;
 	/**
 	 * Restricts the picker to entries matching this variant. Used for wan 2.2
 	 * workflows where each slot targets a specific transformer (high/low) and
 	 * we want to surface only relevant LoRAs for the slot being filled.
 	 */
 	restrictVariant?: LoraVariant;
+	workflowBaseModel?: string;
+}
+
+function CivitaiImportPanel({
+	onImported,
+	onLorasImported,
+	restrictVariant,
+	workflowBaseModel,
+}: {
+	onImported: (
+		entry: LoraRegistryEntry,
+		peerEntries?: LoraRegistryEntry[]
+	) => void;
+	onLorasImported?: (entries: LoraRegistryEntry[]) => void;
+	restrictVariant?: LoraVariant;
+	workflowBaseModel?: string;
+}) {
+	const [sourceUrl, setSourceUrl] = useState("");
+	const [preview, setPreview] = useState<LoraSourcePreview | null>(null);
+	const [selectedVersionId, setSelectedVersionId] = useState<number | null>(
+		null
+	);
+	const [importAsPair, setImportAsPair] = useState(true);
+	const [isPreviewing, setIsPreviewing] = useState(false);
+	const [isImporting, setIsImporting] = useState(false);
+	const trimmedSourceUrl = sourceUrl.trim();
+	const activeVariant = findPreviewVariant(preview, selectedVersionId);
+	const canUseUrl = isCivitaiUrl(trimmedSourceUrl);
+	const detectedPair = getDetectedPair(preview);
+
+	async function loadPreview(options: { silent?: boolean } = {}) {
+		if (!canUseUrl) {
+			toast.error("Paste a Civitai URL first.");
+			return null;
+		}
+		setIsPreviewing(true);
+		try {
+			const result = await previewStudioLoraSource({
+				sourceUrl: trimmedSourceUrl,
+				sourceVersionId: selectedVersionId ?? undefined,
+			});
+			setPreview(result);
+			setSelectedVersionId(
+				result.sourceVersionId ?? result.variants?.[0]?.versionId ?? null
+			);
+			if (!options.silent) {
+				toast.success("Civitai preview loaded.");
+			}
+			return result;
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Failed to preview LoRA."
+			);
+			return null;
+		} finally {
+			setIsPreviewing(false);
+		}
+	}
+
+	async function handleImport() {
+		if (!canUseUrl) {
+			toast.error("Paste a Civitai URL first.");
+			return;
+		}
+		setIsImporting(true);
+		try {
+			const previewForImport = preview ?? (await loadPreview({ silent: true }));
+			if (!previewForImport) {
+				return;
+			}
+			const activeVariantForImport = findPreviewVariant(
+				previewForImport,
+				selectedVersionId
+			);
+			const imported = await importStudioLoraFromUrl(
+				buildCivitaiImportInput({
+					activeVariant: activeVariantForImport,
+					importAsPair,
+					preview: previewForImport,
+					selectedVersionId,
+					sourceUrl: trimmedSourceUrl,
+					workflowBaseModel,
+				})
+			);
+			const selected = pickImportedEntry(imported, restrictVariant);
+			if (!selected) {
+				throw new Error("Server returned no LoRA records.");
+			}
+			onLorasImported?.(imported);
+			onImported(selected, imported);
+			toast.success(
+				imported.length > 1
+					? `Imported ${imported.length} LoRAs.`
+					: `Imported ${selected.name}.`
+			);
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Failed to import LoRA."
+			);
+		} finally {
+			setIsImporting(false);
+		}
+	}
+
+	function handleVersionChange(versionId: number) {
+		setSelectedVersionId(versionId);
+		const variant = preview?.variants?.find(
+			(item) => item.versionId === versionId
+		);
+		if (variant) {
+			setPreview((current) =>
+				current ? { ...current, sourceVersionId: variant.versionId } : current
+			);
+		}
+	}
+
+	const previewBaseModel =
+		activeVariant?.baseModel ?? preview?.baseModel ?? workflowBaseModel;
+
+	return (
+		<div className="grid gap-2 border-foreground/8 border-t pt-2">
+			<div className="flex items-center justify-between gap-2">
+				<span className="font-medium text-[11px]">Import Civitai</span>
+				{previewBaseModel ? (
+					<code className="rounded bg-foreground/[0.06] px-1.5 py-0.5 text-[9px] text-muted-foreground">
+						{previewBaseModel}
+					</code>
+				) : null}
+			</div>
+			<div className="flex min-w-0 gap-1.5">
+				<Input
+					aria-label="Civitai LoRA URL"
+					className="h-7 min-w-0 text-[11px]"
+					onChange={(event) => {
+						setSourceUrl(event.target.value);
+						setPreview(null);
+						setSelectedVersionId(null);
+					}}
+					placeholder="https://civitai.com/models/..."
+					value={sourceUrl}
+				/>
+				<Button
+					disabled={isPreviewing || isImporting}
+					onClick={() => {
+						loadPreview().catch(() => undefined);
+					}}
+					size="sm"
+					type="button"
+					variant="outline"
+				>
+					{isPreviewing ? (
+						<Loader2 className="size-3 animate-spin" />
+					) : (
+						<Eye className="size-3" />
+					)}
+					Preview
+				</Button>
+			</div>
+			{preview ? (
+				<CivitaiPreviewDetails
+					activeVariant={activeVariant}
+					onVersionChange={handleVersionChange}
+					preview={preview}
+					selectedVersionId={selectedVersionId}
+				/>
+			) : null}
+			{detectedPair ? (
+				<CivitaiPairToggle
+					checked={importAsPair}
+					pair={detectedPair}
+					setChecked={setImportAsPair}
+				/>
+			) : null}
+			<Button
+				className="w-full"
+				disabled={isPreviewing || isImporting || !canUseUrl}
+				onClick={() => {
+					handleImport().catch(() => undefined);
+				}}
+				size="sm"
+				type="button"
+			>
+				{isImporting ? (
+					<Loader2 className="size-3.5 animate-spin" />
+				) : (
+					<Download className="size-3.5" />
+				)}
+				Import and use
+			</Button>
+		</div>
+	);
 }
 
 function PickerPopover({
@@ -318,8 +725,10 @@ function PickerPopover({
 	availableLoras,
 	excludedUrls,
 	onClose,
+	onLorasImported,
 	onPickEntry,
 	restrictVariant,
+	workflowBaseModel,
 }: PickerPopoverProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [query, setQuery] = useState("");
@@ -460,6 +869,12 @@ function PickerPopover({
 					<ExternalLink className="size-2.5" />
 				</a>
 			</div>
+			<CivitaiImportPanel
+				onImported={onPickEntry}
+				onLorasImported={onLorasImported}
+				restrictVariant={restrictVariant}
+				workflowBaseModel={workflowBaseModel}
+			/>
 		</div>
 	);
 }
@@ -557,23 +972,31 @@ function LoraEmptySlotPickerRow({
 	availableLoras,
 	excludedUrls,
 	isMultiSlot,
+	onLorasImported,
 	onPickEntry,
 	openSlotKey,
 	restrictVariant,
 	setOpenSlotKey,
 	slot,
 	slotIndex,
+	workflowBaseModel,
 }: {
 	adminHref: string;
 	availableLoras: LoraRegistryEntry[];
 	excludedUrls: Set<string>;
 	isMultiSlot: boolean;
-	onPickEntry: (entry: LoraRegistryEntry, slotIndex: number) => void;
+	onLorasImported?: (entries: LoraRegistryEntry[]) => void;
+	onPickEntry: (
+		entry: LoraRegistryEntry,
+		slotIndex: number,
+		peerEntries?: LoraRegistryEntry[]
+	) => void;
 	openSlotKey: string | null;
 	restrictVariant?: LoraVariant;
 	setOpenSlotKey: (key: string | null) => void;
 	slot: ResolvedSlot;
 	slotIndex: number;
+	workflowBaseModel?: string;
 }) {
 	const isOpen = openSlotKey === slot.definition.urlKey;
 	return (
@@ -594,8 +1017,12 @@ function LoraEmptySlotPickerRow({
 					availableLoras={availableLoras}
 					excludedUrls={excludedUrls}
 					onClose={() => setOpenSlotKey(null)}
-					onPickEntry={(entry) => onPickEntry(entry, slotIndex)}
+					onLorasImported={onLorasImported}
+					onPickEntry={(entry, peerEntries) =>
+						onPickEntry(entry, slotIndex, peerEntries)
+					}
 					restrictVariant={restrictVariant}
+					workflowBaseModel={workflowBaseModel}
 				/>
 			) : null}
 		</div>
@@ -606,6 +1033,7 @@ export default function LoraStack({
 	adminHref,
 	availableLoras,
 	form,
+	onLorasImported,
 	onParamChange,
 	slots,
 	workflow,
@@ -642,14 +1070,18 @@ export default function LoraStack({
 		}
 	}
 
-	function autoFillPaired(entry: LoraRegistryEntry, sourceSlotIndex: number) {
+	function autoFillPaired(
+		entry: LoraRegistryEntry,
+		sourceSlotIndex: number,
+		peerEntries: LoraRegistryEntry[] = availableLoras
+	) {
 		// Wan 2.2 LoRAs are imported as a high+low pair sharing a pairGroupId.
 		// When the user picks one, find the matching variant and place it into
 		// the opposite slot so they don't have to repeat the search.
 		if (!(entry.pairGroupId && entry.variant) || entry.variant === "both") {
 			return;
 		}
-		const paired = availableLoras.find(
+		const paired = peerEntries.find(
 			(other) =>
 				other.id !== entry.id &&
 				other.pairGroupId === entry.pairGroupId &&
@@ -666,9 +1098,13 @@ export default function LoraStack({
 		}
 	}
 
-	function handlePickEntryForSlot(entry: LoraRegistryEntry, slotIndex: number) {
+	function handlePickEntryForSlot(
+		entry: LoraRegistryEntry,
+		slotIndex: number,
+		peerEntries?: LoraRegistryEntry[]
+	) {
 		fillSlot(slotIndex, entry.s3Url, entry.defaultWeight);
-		autoFillPaired(entry, slotIndex);
+		autoFillPaired(entry, slotIndex, peerEntries);
 		setOpenSlotKey(null);
 	}
 
@@ -710,12 +1146,14 @@ export default function LoraStack({
 				availableLoras={availableLoras}
 				excludedUrls={excludedUrls}
 				isMultiSlot={isMultiSlot}
+				onLorasImported={onLorasImported}
 				onPickEntry={handlePickEntryForSlot}
 				openSlotKey={openSlotKey}
 				restrictVariant={getSlotVariant(slot)}
 				setOpenSlotKey={setOpenSlotKey}
 				slot={slot}
 				slotIndex={slotIndex}
+				workflowBaseModel={workflow.baseModel}
 			/>
 		);
 	}

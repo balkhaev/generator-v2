@@ -301,6 +301,7 @@ interface LoraSectionProps {
 	isOptional: boolean;
 	loraSlots: LoraSlotDefinition[];
 	lorasError: string | null;
+	onLorasImported?: (entries: LoraRegistryEntry[]) => void;
 	onParamChange: (key: string, value: string) => void;
 	selectedWorkflow: WorkflowDefinition;
 }
@@ -312,6 +313,7 @@ function LoraSection({
 	isOptional,
 	loraSlots,
 	lorasError,
+	onLorasImported,
 	onParamChange,
 	selectedWorkflow,
 }: LoraSectionProps) {
@@ -346,6 +348,7 @@ function LoraSection({
 				adminHref={adminLorasHref}
 				availableLoras={availableLoras}
 				form={form}
+				onLorasImported={onLorasImported}
 				onParamChange={onParamChange}
 				slots={loraSlots}
 				workflow={selectedWorkflow}
@@ -489,6 +492,7 @@ interface ComposeFormProps {
 	isSubmitting: boolean;
 	lorasError?: string | null;
 	onFormChange: Dispatch<SetStateAction<ScenarioFormState | null>>;
+	onLorasImported?: (entries: LoraRegistryEntry[]) => void;
 	onSubmit: () => Promise<void> | void;
 	onValidityChange?: (input: { isReady: boolean; errors: string[] }) => void;
 	workflows: WorkflowDefinition[];
@@ -503,6 +507,7 @@ export default function ComposeForm({
 	isSubmitting,
 	lorasError = null,
 	onFormChange,
+	onLorasImported,
 	onSubmit,
 	onValidityChange,
 	workflows,
@@ -696,6 +701,7 @@ export default function ComposeForm({
 					isOptional={!selectedClassification.requiresLora}
 					loraSlots={loraSlots}
 					lorasError={lorasError}
+					onLorasImported={onLorasImported}
 					onParamChange={handleParamChange}
 					selectedWorkflow={selectedWorkflow}
 				/>

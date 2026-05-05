@@ -80,6 +80,26 @@ function useStudioLoras(baseModel: string | undefined, enabled: boolean) {
 	const [state, setState] = useState<LorasState>(
 		cached ?? { error: null, loras: [] }
 	);
+	const mergeImported = useCallback(
+		(entries: LoraRegistryEntry[]) => {
+			if (entries.length === 0) {
+				return;
+			}
+			setState((current) => {
+				const importedIds = new Set(entries.map((entry) => entry.id));
+				const next = {
+					error: null,
+					loras: [
+						...entries,
+						...current.loras.filter((entry) => !importedIds.has(entry.id)),
+					],
+				};
+				lorasCache.set(cacheKey, next);
+				return next;
+			});
+		},
+		[cacheKey]
+	);
 
 	useEffect(() => {
 		if (!enabled) {
@@ -103,7 +123,7 @@ function useStudioLoras(baseModel: string | undefined, enabled: boolean) {
 		};
 	}, [baseModel, cacheKey, enabled]);
 
-	return state;
+	return { ...state, mergeImported };
 }
 
 interface ComposeDialogBodyProps {
@@ -113,6 +133,7 @@ interface ComposeDialogBodyProps {
 	initialWorkflow: WorkflowDefinition;
 	isSaving: boolean;
 	lorasError: string | null;
+	onLorasImported: (entries: LoraRegistryEntry[]) => void;
 	onSubmit: (form: ScenarioFormState, workflow: WorkflowDefinition) => void;
 	onValidityChange: (input: { errors: string[]; isReady: boolean }) => void;
 	onWorkflowChange: (workflow: WorkflowDefinition | null) => void;
@@ -126,6 +147,7 @@ function ComposeDialogBody({
 	initialWorkflow,
 	isSaving,
 	lorasError,
+	onLorasImported,
 	onSubmit,
 	onValidityChange,
 	onWorkflowChange,
@@ -178,6 +200,7 @@ function ComposeDialogBody({
 						setForm(next);
 					}
 				}}
+				onLorasImported={onLorasImported}
 				onSubmit={() => onSubmit(form, selectedWorkflow)}
 				onValidityChange={onValidityChange}
 				workflows={workflows}
@@ -223,10 +246,11 @@ export default function ComposeDialog({
 		isReady: boolean;
 	}>({ errors: [], isReady: false });
 
-	const { error: lorasError, loras: availableLoras } = useStudioLoras(
-		activeWorkflow?.baseModel,
-		open
-	);
+	const {
+		error: lorasError,
+		loras: availableLoras,
+		mergeImported: mergeImportedLoras,
+	} = useStudioLoras(activeWorkflow?.baseModel, open);
 
 	const handleValidityChange = useCallback(
 		(input: { errors: string[]; isReady: boolean }) => {
@@ -332,6 +356,7 @@ export default function ComposeDialog({
 						isSaving={isSaving}
 						key={bodyKey}
 						lorasError={lorasError}
+						onLorasImported={mergeImportedLoras}
 						onSubmit={(form, workflow) => {
 							handleSubmit(form, workflow).catch(() => undefined);
 						}}

@@ -25,6 +25,8 @@ const repository = createDrizzleStudioRepository();
 const loraReadRepository = createLoraReadRepository();
 
 const { app, service } = createApp({
+	adminApiBaseUrl: env.ADMIN_API_URL,
+	adminInternalToken: env.TRAINING_CONTROL_TOKEN,
 	authHandler: handleAuthRequest,
 	callbackConfig: {
 		token: getGeneratorCallbackToken(),

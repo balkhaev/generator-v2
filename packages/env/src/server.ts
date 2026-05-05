@@ -172,7 +172,9 @@ const serverSchema = {
 	// Provider credentials
 	CIVITAI_API_KEY: z.string().min(1).optional(),
 	CIVITAI_API_TOKEN: z.string().min(1).optional(),
-	CIVITAI_API_BASE_URL: z.url().default("https://orchestration.civitai.com"),
+	CIVITAI_API_BASE_URL: z
+		.url()
+		.default("https://orchestration-new.civitai.com"),
 	FAL_KEY: z.string().min(1).optional(),
 	HF_TOKEN: z.string().min(1).optional(),
 	HUGGINGFACE_TOKEN: z.string().min(1).optional(),

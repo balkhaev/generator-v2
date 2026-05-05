@@ -6,7 +6,8 @@ import type {
 } from "./inference";
 
 const CIVITAI_ENDPOINT_ID_PREFIX = "civitai:";
-const DEFAULT_CIVITAI_API_BASE_URL = "https://orchestration.civitai.com";
+const DEFAULT_CIVITAI_API_BASE_URL = "https://orchestration-new.civitai.com";
+const CIVITAI_LTX_WORKFLOW_ENDPOINT_PREFIX = "ltx2.3:";
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_VALIDATION_MESSAGES = 6;
 const TRAILING_SLASH = /\/$/;
@@ -20,6 +21,8 @@ const failedEventTypes = new Set([
 	"Rejected",
 ]);
 const runningEventTypes = new Set(["Claimed", "Updated"]);
+const failedWorkflowStatuses = new Set(["canceled", "expired", "failed"]);
+const runningWorkflowStatuses = new Set(["preparing", "processing"]);
 
 type CivitaiFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -47,6 +50,26 @@ interface CivitaiJobStatus {
 interface CivitaiJobStatusCollection {
 	jobs?: CivitaiJobStatus[];
 	token?: string | null;
+}
+
+interface CivitaiWorkflowStepJob {
+	estimatedProgressRate?: number | null;
+	queuePosition?: CivitaiQueuePosition | null;
+	status?: string | null;
+}
+
+interface CivitaiWorkflowStep {
+	estimatedProgressRate?: number | null;
+	jobs?: CivitaiWorkflowStepJob[] | null;
+	name?: string | null;
+	output?: unknown;
+	status?: string | null;
+}
+
+interface CivitaiWorkflow {
+	id?: string | null;
+	status?: string | null;
+	steps?: CivitaiWorkflowStep[] | null;
 }
 
 export function formatCivitaiProviderEndpointId(model: string): string {
@@ -204,6 +227,38 @@ function buildCivitaiRequestBody(payload: Record<string, unknown>): {
 	};
 }
 
+function isCivitaiWorkflowEndpointKey(endpointKey: string): boolean {
+	return endpointKey.startsWith(CIVITAI_LTX_WORKFLOW_ENDPOINT_PREFIX);
+}
+
+function isCivitaiWorkflowEndpointId(endpointId: string): boolean {
+	return isCivitaiWorkflowEndpointKey(
+		parseCivitaiProviderEndpointId(endpointId)
+	);
+}
+
+function buildCivitaiWorkflowRequestBody(
+	step: Record<string, unknown>,
+	endpointKey: string
+): Record<string, unknown> {
+	return {
+		allowMatureContent: true,
+		currencies: [],
+		metadata: {
+			endpointKey,
+			source: "generator",
+		},
+		steps: [
+			{
+				name: "video",
+				priority: "normal",
+				retries: 1,
+				...step,
+			},
+		],
+	};
+}
+
 function getEventType(job: CivitaiJobStatus): string | null {
 	const type = job.lastEvent?.type;
 	return typeof type === "string" && type.length > 0 ? type : null;
@@ -231,6 +286,48 @@ function extractQueuePosition(job: CivitaiJobStatus): number | null {
 	return null;
 }
 
+function extractWorkflowQueuePosition(
+	workflow: CivitaiWorkflow
+): number | null {
+	for (const step of workflow.steps ?? []) {
+		for (const job of step.jobs ?? []) {
+			const precedingJobs = job.queuePosition?.precedingJobs;
+			if (typeof precedingJobs === "number" && Number.isFinite(precedingJobs)) {
+				return precedingJobs;
+			}
+		}
+	}
+	return null;
+}
+
+function extractWorkflowProgress(workflow: CivitaiWorkflow): number | null {
+	const progressValues = (workflow.steps ?? []).flatMap((step) => {
+		const values: number[] = [];
+		if (
+			typeof step.estimatedProgressRate === "number" &&
+			Number.isFinite(step.estimatedProgressRate)
+		) {
+			values.push(step.estimatedProgressRate);
+		}
+		for (const job of step.jobs ?? []) {
+			if (
+				typeof job.estimatedProgressRate === "number" &&
+				Number.isFinite(job.estimatedProgressRate)
+			) {
+				values.push(job.estimatedProgressRate);
+			}
+		}
+		return values;
+	});
+	if (progressValues.length === 0) {
+		return null;
+	}
+	const average =
+		progressValues.reduce((total, value) => total + value, 0) /
+		progressValues.length;
+	return Math.round(Math.min(1, Math.max(0, average)) * 100);
+}
+
 function extractFailureSummary(job: CivitaiJobStatus): string {
 	const context = job.lastEvent?.context;
 	for (const key of ["error", "message", "reason"] as const) {
@@ -241,6 +338,58 @@ function extractFailureSummary(job: CivitaiJobStatus): string {
 	}
 	const eventType = getEventType(job);
 	return eventType ? `Civitai job ${eventType}` : "Civitai job failed";
+}
+
+function normalizeWorkflowStatus(
+	status: string | null | undefined
+): InferenceStatus {
+	if (status === "succeeded") {
+		return "succeeded";
+	}
+	if (status && failedWorkflowStatuses.has(status)) {
+		return "failed";
+	}
+	if (status && runningWorkflowStatuses.has(status)) {
+		return "running";
+	}
+	return "queued";
+}
+
+function extractWorkflowFailureSummary(
+	workflow: CivitaiWorkflow
+): string | null {
+	const failedStep = (workflow.steps ?? []).find((step) => {
+		return step.status ? failedWorkflowStatuses.has(step.status) : false;
+	});
+	if (failedStep?.name) {
+		return `Civitai workflow step ${failedStep.name} ${failedStep.status}`;
+	}
+	return workflow.status ? `Civitai workflow ${workflow.status}` : null;
+}
+
+function normalizeWorkflow(
+	body: CivitaiWorkflow & Record<string, unknown>,
+	endpointId: string,
+	jobId: string
+): InferenceJob {
+	const status = normalizeWorkflowStatus(body.status);
+	const progress = status === "succeeded" ? 100 : extractWorkflowProgress(body);
+	const lastLogLine =
+		typeof body.status === "string" && body.status.length > 0
+			? `Civitai workflow ${body.status}`
+			: null;
+
+	return {
+		endpointId,
+		errorSummary:
+			status === "failed" ? extractWorkflowFailureSummary(body) : null,
+		jobId,
+		lastLogLine,
+		output: status === "succeeded" ? body : null,
+		progressPct: progress,
+		queuePosition: extractWorkflowQueuePosition(body),
+		status,
+	};
 }
 
 function normalizeJobCollection(
@@ -344,6 +493,36 @@ export function createCivitaiClient(options: {
 		async submit(payload): Promise<InferenceSubmission> {
 			const { endpointKey, requestBody } = buildCivitaiRequestBody(payload);
 			const endpointId = formatCivitaiProviderEndpointId(endpointKey);
+			if (isCivitaiWorkflowEndpointKey(endpointKey)) {
+				const body = await request<CivitaiWorkflow>(
+					buildUrl(apiBaseUrl, "/v2/consumer/workflows", {
+						hideMatureContent: "false",
+						wait: "0",
+					}),
+					{
+						body: JSON.stringify(
+							buildCivitaiWorkflowRequestBody(requestBody, endpointKey)
+						),
+						method: "POST",
+					},
+					"Civitai workflows.create"
+				);
+				const workflowId = readStringField(body, "id");
+				if (!workflowId) {
+					throw new Error(
+						"Civitai workflows.create response did not include id"
+					);
+				}
+				const normalized = normalizeWorkflow(body, endpointId, workflowId);
+				return {
+					endpointId,
+					jobId: workflowId,
+					lastLogLine: normalized.lastLogLine,
+					progressPct: normalized.progressPct,
+					queuePosition: normalized.queuePosition,
+					status: normalized.status,
+				};
+			}
 			const body = await request<CivitaiJobStatusCollection>(
 				buildUrl(apiBaseUrl, "/v1/consumer/jobs", {
 					detailed: "false",
@@ -377,6 +556,17 @@ export function createCivitaiClient(options: {
 					"Civitai provider requires endpointId for status check"
 				);
 			}
+			if (isCivitaiWorkflowEndpointId(endpointId)) {
+				const body = await request<CivitaiWorkflow>(
+					buildUrl(apiBaseUrl, `/v2/consumer/workflows/${jobId}`, {
+						hideMatureContent: "false",
+						wait: "false",
+					}),
+					undefined,
+					"Civitai workflows.get"
+				);
+				return normalizeWorkflow(body, endpointId, jobId);
+			}
 			parseCivitaiProviderEndpointId(endpointId);
 			const body = await request<CivitaiJobStatusCollection>(
 				buildUrl(apiBaseUrl, "/v1/consumer/jobs", {
@@ -395,6 +585,14 @@ export function createCivitaiClient(options: {
 				throw new Error(
 					"Civitai provider requires endpointId for cancellation"
 				);
+			}
+			if (isCivitaiWorkflowEndpointId(endpointId)) {
+				await request<Record<string, unknown>>(
+					buildUrl(apiBaseUrl, `/v2/consumer/workflows/${jobId}`, {}),
+					{ method: "DELETE" },
+					"Civitai workflows.cancel"
+				);
+				return;
 			}
 			parseCivitaiProviderEndpointId(endpointId);
 			await request<Record<string, unknown>>(

@@ -153,19 +153,19 @@ function ScenarioListItem({
 	scenario: ScenarioCardData;
 }) {
 	const hasActions = Boolean(onEdit || onDelete);
-	const actionPaddingClass = onEdit && onDelete ? "pr-14" : "pr-8";
 
 	return (
-		<li className="group/scenario relative">
+		<li
+			className={cn(
+				"group/scenario flex min-w-0 items-start rounded-lg transition",
+				isActive
+					? "bg-foreground text-background"
+					: "hover:bg-muted/20 dark:hover:bg-muted/10"
+			)}
+		>
 			<a
 				aria-current={isActive ? "true" : undefined}
-				className={cn(
-					"flex items-start gap-2 rounded-lg px-2 py-1.5 text-left transition",
-					isActive
-						? "bg-foreground text-background"
-						: "hover:bg-muted/20 dark:hover:bg-muted/10",
-					hasActions && actionPaddingClass
-				)}
+				className="flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-1.5 text-left"
 				href={getScenarioHref(scenario.id)}
 				onClick={(event) => {
 					if (
@@ -227,12 +227,15 @@ function ScenarioListItem({
 				</div>
 			</a>
 			{hasActions ? (
-				<div className="absolute top-1 right-1 z-10 flex items-center gap-0.5 rounded-md bg-background/90 p-0.5 shadow-sm ring-1 ring-border/60 backdrop-blur">
+				<div className="mr-1 flex shrink-0 items-center gap-0.5 py-1">
 					{onEdit ? (
 						<button
 							aria-label={`Edit ${scenario.name}`}
 							className={cn(
-								"inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
+								"inline-flex size-6 shrink-0 items-center justify-center rounded-md transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+								isActive
+									? "text-background/75 hover:bg-background/10 hover:text-background"
+									: "text-muted-foreground hover:bg-muted hover:text-foreground"
 							)}
 							onClick={(event) => {
 								event.preventDefault();
@@ -249,7 +252,10 @@ function ScenarioListItem({
 						<button
 							aria-label={`Delete ${scenario.name}`}
 							className={cn(
-								"inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-rose-500/15 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50 dark:hover:text-rose-400"
+								"inline-flex size-6 shrink-0 items-center justify-center rounded-md transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+								isActive
+									? "text-background/75 hover:bg-rose-500/25 hover:text-background"
+									: "text-muted-foreground hover:bg-rose-500/15 hover:text-rose-600 dark:hover:text-rose-400"
 							)}
 							onClick={(event) => {
 								event.preventDefault();

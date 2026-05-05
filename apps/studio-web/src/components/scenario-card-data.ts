@@ -5,8 +5,11 @@ export type ScenarioRailStatus =
 	| "ready"
 	| "running";
 
+export type ScenarioGenerationKind = "photo" | "video";
+
 export interface ScenarioCardData {
 	duration: string;
+	generationKind: ScenarioGenerationKind;
 	id: string;
 	name: string;
 	prompt: string;
@@ -14,4 +17,10 @@ export interface ScenarioCardData {
 	status: ScenarioRailStatus;
 	updatedAt: string | null;
 	workflowKey: string;
+}
+
+export function getScenarioGenerationKind(
+	workflowKey: string
+): ScenarioGenerationKind {
+	return workflowKey.toLowerCase().includes("video") ? "video" : "photo";
 }

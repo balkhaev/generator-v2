@@ -41,6 +41,7 @@ import type {
 	ScenarioCardData,
 	ScenarioRailStatus,
 } from "@/components/scenario-card-data";
+import { getScenarioGenerationKind } from "@/components/scenario-card-data";
 import { usePersonSelection } from "@/components/use-person-selection";
 import { useScenarioDeletion } from "@/components/use-scenario-deletion";
 import { useShotSaving } from "@/components/use-shot-saving";
@@ -149,6 +150,7 @@ function buildScenarioCards(
 
 		return {
 			duration: getScenarioDuration(scenario.params),
+			generationKind: getScenarioGenerationKind(scenario.workflowKey),
 			id: scenario.id,
 			name: scenario.name,
 			prompt: scenario.prompt,

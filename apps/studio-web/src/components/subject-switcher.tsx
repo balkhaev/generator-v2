@@ -13,13 +13,16 @@ import {
 	Activity,
 	ChevronDown,
 	Clock3,
+	ImageIcon,
 	Layers,
+	type LucideIcon,
 	Pencil,
 	Plus,
 	Search,
 	Trash2,
 	UserRound,
 	UsersRound,
+	Video,
 } from "lucide-react";
 import type { Route } from "next";
 import {
@@ -29,7 +32,10 @@ import {
 	useState,
 } from "react";
 
-import type { ScenarioCardData } from "@/components/scenario-card-data";
+import type {
+	ScenarioCardData,
+	ScenarioGenerationKind,
+} from "@/components/scenario-card-data";
 
 const scenarioStatusDot = {
 	draft: "bg-muted-foreground/40",
@@ -38,6 +44,22 @@ const scenarioStatusDot = {
 	ready: "bg-emerald-500",
 	running: "bg-amber-500 animate-pulse",
 } as const;
+
+const scenarioGenerationMeta: Record<
+	ScenarioGenerationKind,
+	{ Icon: LucideIcon; label: string; tone: string }
+> = {
+	photo: {
+		Icon: ImageIcon,
+		label: "Photo",
+		tone: "bg-emerald-500/10 text-emerald-600 ring-emerald-500/15 dark:text-emerald-400",
+	},
+	video: {
+		Icon: Video,
+		label: "Video",
+		tone: "bg-rose-500/10 text-rose-600 ring-rose-500/15 dark:text-rose-400",
+	},
+};
 
 type SubjectMode = "scenario" | "person";
 
@@ -54,6 +76,65 @@ export interface SubjectSwitcherProps {
 	selectedPerson: PersonRecord | null;
 	selectedPersonId: string | null;
 	selectedScenarioId: string | null;
+}
+
+function ScenarioGenerationBadge({
+	className,
+	generationKind,
+	isActive,
+	status,
+}: {
+	className?: string;
+	generationKind: ScenarioGenerationKind;
+	isActive: boolean;
+	status: ScenarioCardData["status"];
+}) {
+	const meta = scenarioGenerationMeta[generationKind];
+	const Icon = meta.Icon;
+
+	return (
+		<span
+			aria-label={`${meta.label} generation`}
+			className={cn(
+				"relative inline-flex size-7 shrink-0 items-center justify-center rounded-md ring-1",
+				isActive
+					? "bg-background/15 text-background ring-background/25"
+					: meta.tone,
+				className
+			)}
+			role="img"
+			title={`${meta.label} generation`}
+		>
+			<Icon aria-hidden="true" className="size-3.5" strokeWidth={1.8} />
+			<span
+				aria-hidden="true"
+				className={cn(
+					"absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2",
+					isActive ? "ring-foreground" : "ring-background",
+					scenarioStatusDot[status]
+				)}
+			/>
+		</span>
+	);
+}
+
+function ScenarioGenerationInline({
+	generationKind,
+}: {
+	generationKind: ScenarioGenerationKind;
+}) {
+	const meta = scenarioGenerationMeta[generationKind];
+	const Icon = meta.Icon;
+
+	return (
+		<span
+			className="inline-flex shrink-0 items-center gap-0.5"
+			title={`${meta.label} generation`}
+		>
+			<Icon aria-hidden="true" className="size-2.5" strokeWidth={1.8} />
+			{meta.label}
+		</span>
+	);
 }
 
 function ScenarioListItem({
@@ -97,12 +178,11 @@ function ScenarioListItem({
 					onPick(scenario.id);
 				}}
 			>
-				<span
-					aria-hidden="true"
-					className={cn(
-						"mt-1 size-2 shrink-0 rounded-full",
-						scenarioStatusDot[scenario.status]
-					)}
+				<ScenarioGenerationBadge
+					className="mt-0.5"
+					generationKind={scenario.generationKind}
+					isActive={isActive}
+					status={scenario.status}
 				/>
 				<div className="min-w-0 flex-1">
 					<p
@@ -123,11 +203,14 @@ function ScenarioListItem({
 					</p>
 					<div
 						className={cn(
-							"mt-0.5 flex items-center gap-2 text-[10px]",
+							"mt-0.5 flex min-w-0 items-center gap-2 text-[10px]",
 							isActive ? "text-background/60" : "text-muted-foreground/80"
 						)}
 					>
-						<span className="truncate">{scenario.workflowKey}</span>
+						<ScenarioGenerationInline
+							generationKind={scenario.generationKind}
+						/>
+						<span className="min-w-0 truncate">{scenario.workflowKey}</span>
 						<span className="inline-flex items-center gap-0.5">
 							<Clock3 className="size-2.5" />
 							{scenario.duration}
@@ -327,12 +410,10 @@ const SwitcherTrigger = forwardRef<HTMLButtonElement, SwitcherTriggerProps>(
 		return (
 			<button className={triggerClass} ref={ref} type="button" {...buttonProps}>
 				{selectedScenario ? (
-					<span
-						aria-hidden="true"
-						className={cn(
-							"size-2 shrink-0 rounded-full",
-							scenarioStatusDot[selectedScenario.status]
-						)}
+					<ScenarioGenerationBadge
+						generationKind={selectedScenario.generationKind}
+						isActive={false}
+						status={selectedScenario.status}
 					/>
 				) : (
 					<Layers
@@ -346,7 +427,7 @@ const SwitcherTrigger = forwardRef<HTMLButtonElement, SwitcherTriggerProps>(
 					</p>
 					<p className="truncate text-[10px] text-muted-foreground">
 						{selectedScenario
-							? `${selectedScenario.workflowKey} · ${selectedScenario.duration} · ${selectedScenario.runCount} runs`
+							? `${scenarioGenerationMeta[selectedScenario.generationKind].label} · ${selectedScenario.workflowKey} · ${selectedScenario.duration} · ${selectedScenario.runCount} runs`
 							: `${scenarioCount} scenarios`}
 					</p>
 				</div>

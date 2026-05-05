@@ -752,6 +752,26 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("extracts only RunPod Pod video artifacts", () => {
+		const workflow = getWorkflowDefinition("runpod-ltx-2-3-text-to-video");
+
+		expect(
+			workflow?.extractArtifactUrls({
+				logUrl: "https://assets.example.com/pod.log",
+				podId: "pod-123",
+				runpodPodConsoleUrl: "https://runpod.io/console/pods/pod-123",
+			})
+		).toEqual([]);
+
+		expect(
+			workflow?.extractArtifactUrls({
+				logUrl: "https://assets.example.com/pod.log",
+				runpodPodConsoleUrl: "https://runpod.io/console/pods/pod-123",
+				videoUrl: "https://assets.example.com/output.mp4",
+			})
+		).toEqual(["https://assets.example.com/output.mp4"]);
+	});
+
 	it("builds civitai-lustify-olt-sdxl payloads", () => {
 		const workflow = getWorkflowDefinition("civitai-lustify-olt-sdxl");
 		const buildInput = (extra: Record<string, unknown> = {}) =>

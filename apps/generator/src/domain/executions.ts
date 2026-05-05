@@ -81,6 +81,15 @@ function getNextSyncDelay(
 	return DEFAULT_QUEUED_SYNC_DELAY_MS;
 }
 
+function extractSucceededArtifactUrls(
+	workflow: NonNullable<ReturnType<typeof getWorkflowDefinition>>,
+	job: InferenceJob
+): string[] {
+	return job.status === "succeeded"
+		? workflow.extractArtifactUrls(job.output)
+		: [];
+}
+
 const PROGRESS_CAP_PCT = 90;
 const RUNNING_PROGRESS_FLOOR_PCT = 8;
 
@@ -350,6 +359,9 @@ export class ExecutionService {
 	}): Promise<
 		{ ok: true; urls: string[] } | { ok: false; errorSummary: string }
 	> {
+		if (input.rawUrls.length === 0) {
+			return { ok: true, urls: [] };
+		}
 		try {
 			const urls = await this.storageAdapter.persistArtifactUrls({
 				executionId: input.executionId,
@@ -523,11 +535,14 @@ export class ExecutionService {
 			parsed.providerJobId,
 			parsed.providerEndpointId
 		);
-		const rawArtifactUrls = workflow.extractArtifactUrls(job.output);
-		const artifacts = await this.storageAdapter.persistArtifactUrls({
-			executionId: parsed.providerJobId,
-			urls: rawArtifactUrls,
-		});
+		const rawArtifactUrls = extractSucceededArtifactUrls(workflow, job);
+		const artifacts =
+			rawArtifactUrls.length === 0
+				? []
+				: await this.storageAdapter.persistArtifactUrls({
+						executionId: parsed.providerJobId,
+						urls: rawArtifactUrls,
+					});
 
 		this.logger.info("generator.execution.status", {
 			debugCorrelationId: context?.debugCorrelationId ?? null,
@@ -775,7 +790,7 @@ export class ExecutionService {
 			);
 			const persistedArtifacts = await this.persistJobArtifacts({
 				executionId: execution.id,
-				rawUrls: workflow.extractArtifactUrls(job.output),
+				rawUrls: extractSucceededArtifactUrls(workflow, job),
 			});
 			if (!persistedArtifacts.ok) {
 				const failed = await this.repository.updateExecution(execution.id, {
@@ -919,7 +934,7 @@ export class ExecutionService {
 		const totalLifetimeMs = now - execution.createdAt.getTime();
 		const persisted = await this.persistJobArtifacts({
 			executionId: execution.id,
-			rawUrls: workflow.extractArtifactUrls(job.output),
+			rawUrls: extractSucceededArtifactUrls(workflow, job),
 		});
 		if (!persisted.ok) {
 			const failed = await this.repository.updateExecution(execution.id, {

@@ -833,6 +833,14 @@ function buildRunpodLtx23Input({
 	};
 }
 
+function collectRunpodPodVideoUrls(output: unknown): string[] {
+	if (!output || typeof output !== "object") {
+		return [];
+	}
+	const videoUrl = (output as Record<string, unknown>).videoUrl;
+	return typeof videoUrl === "string" && videoUrl.length > 0 ? [videoUrl] : [];
+}
+
 function extractModelNameFromUrl(url: string): string | undefined {
 	try {
 		const pathname = new URL(url).pathname;
@@ -1466,7 +1474,7 @@ export const workflowRegistry = {
 			const parsed = runpodLtx23ParamsSchema.parse(params);
 			return buildRunpodLtx23Input({ parsed, prompt });
 		},
-		extractArtifactUrls: collectArtifactUrls,
+		extractArtifactUrls: collectRunpodPodVideoUrls,
 	},
 	"runpod-ltx-2-3-image-to-video": {
 		baseModel: "ltx-2-3",
@@ -1481,7 +1489,7 @@ export const workflowRegistry = {
 			const parsed = runpodLtx23ParamsSchema.parse(params);
 			return buildRunpodLtx23Input({ inputImageUrl, parsed, prompt });
 		},
-		extractArtifactUrls: collectArtifactUrls,
+		extractArtifactUrls: collectRunpodPodVideoUrls,
 	},
 	"runpod-ltx-2-3-synth-text-to-video": {
 		baseModel: "ltx-2-3",
@@ -1497,7 +1505,7 @@ export const workflowRegistry = {
 			const parsed = runpodLtx23ParamsSchema.parse(params);
 			return buildRunpodLtx23Input({ parsed, prompt });
 		},
-		extractArtifactUrls: collectArtifactUrls,
+		extractArtifactUrls: collectRunpodPodVideoUrls,
 	},
 	"civitai-lustify-olt-sdxl": {
 		baseModel: "sdxl",

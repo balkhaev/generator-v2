@@ -253,6 +253,65 @@ describe("generator api", () => {
 		);
 	});
 
+	it("does not persist diagnostic URLs from running provider jobs", async () => {
+		let persistCalls = 0;
+		const storageAdapter: StorageAdapter = {
+			...createTestStorageAdapter(),
+			persistArtifactUrls({ urls }) {
+				persistCalls += 1;
+				return Promise.resolve(urls);
+			},
+		};
+		const app = createApp({
+			executionRepository: createMemoryExecutionRepository(),
+			inferenceClient: {
+				cancel() {
+					return Promise.resolve();
+				},
+				getStatus(jobId: string, endpointId?: string) {
+					return Promise.resolve({
+						endpointId: endpointId ?? "runpod-pod:ltx-2-3-video",
+						errorSummary: null,
+						jobId,
+						output: {
+							logUrl: "https://assets.example.com/pod.log",
+							podId: "pod-123",
+							runpodPodConsoleUrl: "https://runpod.io/console/pods/pod-123",
+						},
+						status: "running" as const,
+					});
+				},
+				submit() {
+					throw new Error("not used");
+				},
+			},
+			storageAdapter,
+		});
+
+		const response = await app.request("http://localhost/api/executions/sync", {
+			body: JSON.stringify({
+				providerEndpointId: "runpod-pod:ltx-2-3-video",
+				providerJobId: "pod-123:request-456",
+				workflowKey: "runpod-ltx-2-3-text-to-video",
+			}),
+			headers: {
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+
+		expect(response.status).toBe(200);
+		const { execution } = (await response.json()) as {
+			execution: {
+				artifacts: Array<{ url?: string | null }>;
+				status: string;
+			};
+		};
+		expect(execution.status).toBe("running");
+		expect(execution.artifacts).toEqual([]);
+		expect(persistCalls).toBe(0);
+	});
+
 	it("cancels persisted executions through the provider", async () => {
 		const repository = createMemoryExecutionRepository();
 		let cancelledJobId = "";

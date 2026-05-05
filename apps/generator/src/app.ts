@@ -107,6 +107,36 @@ function createConfiguredRunpodPodClient(input: {
 	if (!(input.runpodApiKey && bootstrapUrl && input.s3Config)) {
 		return undefined;
 	}
+	const ltx23PodWorkflow = {
+		bootstrapUrl,
+		cloudType:
+			process.env.RUNPOD_LTX23_POD_CLOUD_TYPE === "COMMUNITY"
+				? ("COMMUNITY" as const)
+				: ("SECURE" as const),
+		containerDiskInGb: readPositiveIntegerEnv(
+			process.env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
+			15
+		),
+		gpuTypeIds: splitCsv(
+			process.env.RUNPOD_LTX23_POD_GPU_TYPE_IDS ??
+				"NVIDIA RTX A6000,NVIDIA A40,NVIDIA H100 80GB HBM3"
+		),
+		imageName:
+			process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
+			"ls250824/run-comfyui-ltx:28042026",
+		namePrefix: "ltx23",
+		networkVolumeId: process.env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
+		podRunnerUrl: deriveSiblingUrl(bootstrapUrl, "pod_runner.py"),
+		templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID ?? "p4f6rm9tb4",
+		timeoutMs: readPositiveIntegerEnv(
+			process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,
+			60 * 60 * 1000
+		),
+		volumeInGb: readPositiveIntegerEnv(
+			process.env.RUNPOD_LTX23_POD_VOLUME_GB,
+			90
+		),
+	};
 	return createRunpodPodInferenceClient({
 		apiKey: input.runpodApiKey,
 		civitaiApiKey: input.civitaiApiKey,
@@ -115,36 +145,8 @@ function createConfiguredRunpodPodClient(input: {
 		restApiBaseUrl: process.env.RUNPOD_REST_API_BASE_URL,
 		s3Config: input.s3Config,
 		workflows: {
-			"ltx-2-3-synth-video": {
-				bootstrapUrl,
-				cloudType:
-					process.env.RUNPOD_LTX23_POD_CLOUD_TYPE === "COMMUNITY"
-						? "COMMUNITY"
-						: "SECURE",
-				containerDiskInGb: readPositiveIntegerEnv(
-					process.env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
-					15
-				),
-				gpuTypeIds: splitCsv(
-					process.env.RUNPOD_LTX23_POD_GPU_TYPE_IDS ??
-						"NVIDIA RTX A6000,NVIDIA A40,NVIDIA H100 80GB HBM3"
-				),
-				imageName:
-					process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
-					"ls250824/run-comfyui-ltx:28042026",
-				namePrefix: "ltx23-synth",
-				networkVolumeId: process.env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
-				podRunnerUrl: deriveSiblingUrl(bootstrapUrl, "pod_runner.py"),
-				templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID ?? "p4f6rm9tb4",
-				timeoutMs: readPositiveIntegerEnv(
-					process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,
-					60 * 60 * 1000
-				),
-				volumeInGb: readPositiveIntegerEnv(
-					process.env.RUNPOD_LTX23_POD_VOLUME_GB,
-					90
-				),
-			},
+			"ltx-2-3-video": ltx23PodWorkflow,
+			"ltx-2-3-synth-video": ltx23PodWorkflow,
 		},
 	});
 }

@@ -62,7 +62,9 @@ describe("runpod pod provider", () => {
 				FPS: "24",
 				HEIGHT: "1280",
 				HF_TOKEN: "hf-token",
-				LORA_URL: "https://civitai.red/api/download/models/2820451",
+				INPUT_IMAGE_URL: "https://example.com/input.png",
+				LORA_NAME: "ltxv/ltx2/custom-lora.safetensors",
+				LORA_URL: "",
 				NUM_FRAMES: "241",
 				OUTPUT_CONTENT_TYPE: "video/mp4",
 				POD_RUNNER_URL: "https://cdn.example.com/pod_runner.py",
@@ -92,7 +94,7 @@ describe("runpod pod provider", () => {
 			hfToken: "hf-token",
 			s3Config,
 			workflows: {
-				"ltx-2-3-synth-video": {
+				"ltx-2-3-video": {
 					bootstrapUrl: "https://cdn.example.com/pod-bootstrap.sh",
 					cloudType: "SECURE",
 					containerDiskInGb: 80,
@@ -107,10 +109,11 @@ describe("runpod pod provider", () => {
 		});
 
 		const submission = await client.submit({
-			__runpodPod: "ltx-2-3-synth-video",
+			__runpodPod: "ltx-2-3-video",
 			cfgScale: 1,
 			fps: 24,
 			height: 1280,
+			inputImageUrl: "https://example.com/input.png",
 			numFrames: 241,
 			prompt: "test prompt",
 			steps: 8,
@@ -118,7 +121,7 @@ describe("runpod pod provider", () => {
 		});
 
 		expect(submission.endpointId).toBe(
-			formatRunpodPodProviderEndpointId("ltx-2-3-synth-video")
+			formatRunpodPodProviderEndpointId("ltx-2-3-video")
 		);
 		expect(submission.jobId).toMatch(podJobIdPattern);
 		expect(submission.status).toBe("queued");

@@ -66,9 +66,14 @@ export default function RangeSlider({
 				type="range"
 				value={safeValue}
 			/>
-			<div className="flex w-20 shrink-0 items-center gap-1">
+			<div
+				className={cn(
+					"flex shrink-0 items-center gap-1",
+					suffix ? "w-28" : "w-20"
+				)}
+			>
 				<Input
-					className="h-7 px-1.5 text-right text-[11px] tabular-nums"
+					className="h-7 min-w-0 px-1.5 text-right text-[11px] tabular-nums"
 					disabled={disabled}
 					inputMode="decimal"
 					max={max}
@@ -79,7 +84,9 @@ export default function RangeSlider({
 					value={safeValue}
 				/>
 				{suffix ? (
-					<span className="text-[10px] text-muted-foreground">{suffix}</span>
+					<span className="shrink-0 text-[10px] text-muted-foreground">
+						{suffix}
+					</span>
 				) : null}
 			</div>
 		</div>

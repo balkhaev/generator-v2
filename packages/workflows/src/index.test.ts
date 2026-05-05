@@ -89,24 +89,37 @@ describe("workflow registry", () => {
 		});
 	});
 
-	it("resolves runpod-ltx-2-3-synth-text-to-video with correct defaults", () => {
-		const workflow = getWorkflowDefinition(
-			"runpod-ltx-2-3-synth-text-to-video"
-		);
-		expect(workflow).toBeDefined();
-		expect(workflow?.baseModel).toBe("ltx-2-3");
-		expect(workflow?.requiresInputImage).toBe(false);
-		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+	it("resolves runpod-ltx-2-3 workflows with correct defaults", () => {
+		const t2v = getWorkflowDefinition("runpod-ltx-2-3-text-to-video");
+		const i2v = getWorkflowDefinition("runpod-ltx-2-3-image-to-video");
+		const legacy = getWorkflowDefinition("runpod-ltx-2-3-synth-text-to-video");
+		const listedKeys = listWorkflows().map((workflow) => workflow.key);
+
+		expect(t2v).toBeDefined();
+		expect(i2v).toBeDefined();
+		expect(legacy).toBeDefined();
+		expect(t2v?.baseModel).toBe("ltx-2-3");
+		expect(i2v?.baseModel).toBe("ltx-2-3");
+		expect(t2v?.requiresInputImage).toBe(false);
+		expect(i2v?.requiresInputImage).toBe(true);
+		expect(listedKeys).toContain("runpod-ltx-2-3-text-to-video");
+		expect(listedKeys).toContain("runpod-ltx-2-3-image-to-video");
+		expect(listedKeys).not.toContain("runpod-ltx-2-3-synth-text-to-video");
+
+		const defaults = t2v?.parameterSchema.parse({}) as
+			| Record<string, unknown>
+			| undefined;
+		expect(defaults).toMatchObject({
 			cfgScale: 1,
 			distilledLoraScale: 0.6,
 			durationSeconds: 10,
 			fps: 24,
 			height: 1280,
 			loraScale: 1,
-			loraUrl: "https://civitai.red/api/download/models/2820451",
 			steps: 8,
 			width: 896,
 		});
+		expect(defaults?.loraUrl).toBeUndefined();
 	});
 
 	it("resolves civitai-lustify-olt-sdxl with correct defaults", () => {
@@ -438,7 +451,8 @@ describe("workflow registry", () => {
 		const keys = [
 			"fal-fast-sdxl",
 			"runpod-fooocus-sdxl",
-			"runpod-ltx-2-3-synth-text-to-video",
+			"runpod-ltx-2-3-text-to-video",
+			"runpod-ltx-2-3-image-to-video",
 			"replicate-fooocus-sdxl",
 			"fal-flux-dev",
 			"fal-zimage-turbo",
@@ -670,46 +684,50 @@ describe("workflow registry", () => {
 		});
 	});
 
-	it("builds runpod-ltx-2-3 synth LoRA pod payloads", () => {
-		const workflow = getWorkflowDefinition(
-			"runpod-ltx-2-3-synth-text-to-video"
-		);
-		const buildInput = (extra: Record<string, unknown> = {}) =>
+	it("builds runpod-ltx-2-3 pod payloads", () => {
+		const workflow = getWorkflowDefinition("runpod-ltx-2-3-text-to-video");
+		const i2vWorkflow = getWorkflowDefinition("runpod-ltx-2-3-image-to-video");
+		const buildInput = (
+			extra: Record<string, unknown> = {},
+			inputImageUrl?: string
+		) =>
 			workflow?.buildProviderInput({
+				inputImageUrl,
 				params: extra,
 				prompt: "A woman is doing gymnastics outdoors.",
 			}) as Record<string, unknown>;
 
 		expect(buildInput()).toMatchObject({
-			__runpodPod: "ltx-2-3-synth-video",
+			__runpodPod: "ltx-2-3-video",
 			cfgScale: 1,
 			distilledLoraName:
 				"ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
 			distilledLoraScale: 0.6,
 			fps: 24,
 			height: 1280,
-			loraName: "ltxv/ltx2/SynthPussy_01_rank32.safetensors",
-			loraScale: 1,
-			loraUrl: "https://civitai.red/api/download/models/2820451",
 			negativePrompt: expect.stringContaining("watermark"),
 			numFrames: 241,
 			prompt: "A woman is doing gymnastics outdoors.",
 			steps: 8,
 			width: 896,
 		});
+		expect(buildInput()).not.toHaveProperty("loraUrl");
 
 		expect(
 			buildInput({
 				durationSeconds: 15,
 				fps: 24,
 				height: 960,
+				loraUrl: "https://example.com/custom-ltx.safetensors",
 				loraScale: 0.85,
 				seed: 900,
 				width: 640,
 			})
 		).toMatchObject({
 			height: 960,
+			loraName: "custom-ltx.safetensors",
 			loraScale: 0.85,
+			loraUrl: "https://example.com/custom-ltx.safetensors",
 			numFrames: 361,
 			seed: 900,
 			width: 640,
@@ -721,6 +739,16 @@ describe("workflow registry", () => {
 			})
 		).toMatchObject({
 			numFrames: 121,
+		});
+
+		const i2vInput = i2vWorkflow?.buildProviderInput({
+			inputImageUrl: "https://example.com/input.png",
+			params: {},
+			prompt: "A woman is doing gymnastics outdoors.",
+		}) as Record<string, unknown>;
+		expect(i2vInput).toMatchObject({
+			__runpodPod: "ltx-2-3-video",
+			inputImageUrl: "https://example.com/input.png",
 		});
 	});
 

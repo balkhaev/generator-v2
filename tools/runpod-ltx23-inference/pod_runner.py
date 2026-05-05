@@ -1,9 +1,10 @@
 """
-Headless ComfyUI runner for LTX 2.3 + Synth LoRA on a disposable RunPod Pod.
+Headless ComfyUI runner for LTX 2.3 on a disposable RunPod Pod.
 
 The generator passes every runtime setting through env vars and gives this
 script pre-signed S3 PUT URLs. The final MP4 is uploaded directly to S3; the
-generator then polls S3 and deletes the Pod.
+generator then polls S3 and deletes the Pod. Text-to-video and image-to-video
+share the same official LTX 2.3 workflow; custom LoRAs are optional.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import urllib.request
 import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image
@@ -30,6 +32,7 @@ COMFYUI_HOST = os.getenv("COMFYUI_HOST", "127.0.0.1")
 COMFYUI_PORT = int(os.getenv("COMFYUI_PORT", "8188"))
 COMFYUI_BASE_URL = f"http://{COMFYUI_HOST}:{COMFYUI_PORT}"
 OUTPUT_EXTENSIONS = {".mp4", ".webm", ".mkv", ".mov"}
+IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 DEFAULT_MANUAL_SIGMAS = "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
 
 
@@ -72,6 +75,13 @@ def safe_relative_path(name: str) -> Path:
     return Path(*path.parts)
 
 
+def input_image_name_from_url(url: str) -> str:
+    suffix = Path(urlparse(url).path).suffix.lower()
+    if suffix not in IMAGE_EXTENSIONS:
+        suffix = ".png"
+    return f"generator_input{suffix}"
+
+
 def download_file(url: str, target: Path, *, token: str | None = None) -> None:
     if not url:
         return
@@ -94,7 +104,10 @@ def download_file(url: str, target: Path, *, token: str | None = None) -> None:
 
 
 def download_text(url: str) -> str:
-    request = urllib.request.Request(url, headers={"user-agent": "generator-runpod-ltx23/1.0"})
+    request = urllib.request.Request(
+        url,
+        headers={"user-agent": "generator-runpod-ltx23/1.0"},
+    )
     with urllib.request.urlopen(request, timeout=120) as response:
         return response.read().decode("utf-8")
 
@@ -117,6 +130,17 @@ def ensure_placeholder_image(width: int, height: int) -> None:
     log("placeholder-image.created", path=str(path), width=width, height=height)
 
 
+def prepare_input_image(settings: dict[str, Any]) -> None:
+    input_image_url = settings.get("input_image_url")
+    if not input_image_url:
+        ensure_placeholder_image(settings["width"], settings["height"])
+        return
+    download_file(
+        str(input_image_url),
+        COMFYUI_DIR / "input" / str(settings["input_image_name"]),
+    )
+
+
 def set_widget(node: dict[str, Any], index: int, value: Any) -> None:
     widgets = node.setdefault("widgets_values", [])
     while len(widgets) <= index:
@@ -125,6 +149,7 @@ def set_widget(node: dict[str, Any], index: int, value: Any) -> None:
 
 
 def patch_workflow_graph(workflow: dict[str, Any], settings: dict[str, Any]) -> None:
+    has_input_image = bool(settings.get("input_image_url"))
     noise_offset = 0
     save_index = 0
     for node in workflow.get("nodes", []):
@@ -181,9 +206,13 @@ def patch_workflow_graph(workflow: dict[str, Any], settings: dict[str, Any]) -> 
             set_widget(node, 2, "auto")
             save_index += 1
         elif node_type == "PrimitiveBoolean" and title == "bypass_i2v":
-            set_widget(node, 0, True)
+            set_widget(node, 0, not has_input_image)
         elif node_type == "LoadImage":
-            set_widget(node, 0, "example.png")
+            set_widget(
+                node,
+                0,
+                settings["input_image_name"] if has_input_image else "example.png",
+            )
             set_widget(node, 1, "image")
 
 
@@ -266,7 +295,7 @@ def replace_model_consumers(prompt: dict[str, Any], source_id: str, target_id: s
                 inputs[key] = [target_id, 0]
 
 
-def insert_synth_lora(prompt: dict[str, Any], lora_name: str, lora_scale: float) -> None:
+def insert_optional_lora(prompt: dict[str, Any], lora_name: str, lora_scale: float) -> None:
     if not lora_name or lora_scale <= 0:
         return
     next_id = max((int(node_id) for node_id in prompt), default=900000) + 1
@@ -434,6 +463,7 @@ def load_settings() -> dict[str, Any]:
     width = env_int("WIDTH", 896)
     height = env_int("HEIGHT", 1280)
     num_frames = env_int("NUM_FRAMES", 241)
+    input_image_url = env_optional("INPUT_IMAGE_URL") or None
     if width % 32 != 0 or height % 32 != 0:
         raise RuntimeError("WIDTH and HEIGHT must be divisible by 32")
     if (num_frames - 1) % 8 != 0:
@@ -447,10 +477,14 @@ def load_settings() -> dict[str, Any]:
         "distilled_lora_url": env_required("DISTILLED_LORA_URL"),
         "fps": env_int("FPS", 24),
         "height": height,
+        "input_image_name": (
+            input_image_name_from_url(input_image_url) if input_image_url else "example.png"
+        ),
+        "input_image_url": input_image_url,
         "job_id": env_optional("RUNPOD_JOB_ID", str(uuid.uuid4())),
-        "lora_name": env_required("LORA_NAME"),
+        "lora_name": env_optional("LORA_NAME", "ltxv/ltx2/custom-lora.safetensors"),
         "lora_scale": env_float("LORA_SCALE", 1.0),
-        "lora_url": env_required("LORA_URL"),
+        "lora_url": env_optional("LORA_URL") or None,
         "negative_prompt": env_optional("NEGATIVE_PROMPT"),
         "num_frames": num_frames,
         "output_content_type": env_optional("OUTPUT_CONTENT_TYPE", "video/mp4"),
@@ -484,7 +518,11 @@ def prepare_models(settings: dict[str, Any]) -> None:
         COMFYUI_DIR / "models" / "loras" / safe_relative_path(settings["distilled_lora_name"]),
         token=hf_token,
     )
-    lora_token = civitai_token if "civitai" in settings["lora_url"].lower() else None
+    if not settings["lora_url"]:
+        return
+    lora_token = (
+        civitai_token if "civitai" in settings["lora_url"].lower() else None
+    )
     download_file(
         settings["lora_url"],
         COMFYUI_DIR / "models" / "loras" / safe_relative_path(settings["lora_name"]),
@@ -498,6 +536,8 @@ def run() -> None:
         "settings.loaded",
         cfg_scale=settings["cfg_scale"],
         fps=settings["fps"],
+        has_input_image=bool(settings["input_image_url"]),
+        has_lora=bool(settings["lora_url"]),
         height=settings["height"],
         num_frames=settings["num_frames"],
         prompt_length=len(settings["prompt"]),
@@ -505,7 +545,7 @@ def run() -> None:
         width=settings["width"],
     )
 
-    ensure_placeholder_image(settings["width"], settings["height"])
+    prepare_input_image(settings)
     prepare_models(settings)
 
     workflow = json.loads(download_text(settings["workflow_url"]))
@@ -516,7 +556,12 @@ def run() -> None:
         wait_for_comfyui(proc)
         object_info = http_json("/object_info", timeout=60)
         prompt = convert_workflow_to_api_prompt(workflow, object_info)
-        insert_synth_lora(prompt, settings["lora_name"], settings["lora_scale"])
+        if settings["lora_url"]:
+            insert_optional_lora(
+                prompt,
+                settings["lora_name"],
+                settings["lora_scale"],
+            )
 
         payload = {"client_id": settings["job_id"], "prompt": prompt}
         response = http_json("/prompt", body=payload, timeout=120)

@@ -552,14 +552,10 @@ function buildPodEnv(input: {
 		LORA_NAME: readPayloadStringWithDefault(
 			payload,
 			"loraName",
-			"ltxv/ltx2/SynthPussy_01_rank32.safetensors"
+			"ltxv/ltx2/custom-lora.safetensors"
 		),
 		LORA_SCALE: readNumberStringWithDefault(payload.loraScale, "1"),
-		LORA_URL: readPayloadStringWithDefault(
-			payload,
-			"loraUrl",
-			"https://civitai.red/api/download/models/2820451"
-		),
+		LORA_URL: readPayloadStringWithDefault(payload, "loraUrl", ""),
 		NEGATIVE_PROMPT: readPayloadStringWithDefault(
 			payload,
 			"negativePrompt",
@@ -593,6 +589,10 @@ function buildPodEnv(input: {
 	const seed = readNumberString(payload.seed);
 	if (seed) {
 		env.SEED = seed;
+	}
+	const inputImageUrl = readPayloadString(payload, "inputImageUrl");
+	if (inputImageUrl) {
+		env.INPUT_IMAGE_URL = inputImageUrl;
 	}
 	if (input.podRunnerUrl) {
 		env.POD_RUNNER_URL = input.podRunnerUrl;

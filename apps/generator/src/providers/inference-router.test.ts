@@ -100,7 +100,7 @@ describe("inference router", () => {
 
 		await expect(
 			router.submit({
-				__runpodPod: "ltx-2-3-synth-video",
+				__runpodPod: "ltx-2-3-video",
 				prompt: "test",
 			})
 		).resolves.toMatchObject({
@@ -189,7 +189,7 @@ describe("inference router", () => {
 
 		expect(() =>
 			router.submit({
-				__runpodPod: "ltx-2-3-synth-video",
+				__runpodPod: "ltx-2-3-video",
 				prompt: "test",
 			})
 		).toThrow("RunPod Pod inference client is not configured");

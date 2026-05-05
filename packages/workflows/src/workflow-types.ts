@@ -23,6 +23,8 @@ export interface WorkflowDefinition<
 	 */
 	expectedDurationMs?: number;
 	extractArtifactUrls: (output: unknown) => string[];
+	/** Keep old workflow keys executable without showing them in new scenario UI. */
+	hiddenFromList?: boolean;
 	key: string;
 	name: string;
 	parameterFields: readonly WorkflowField[];

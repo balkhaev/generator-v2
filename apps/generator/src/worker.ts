@@ -72,6 +72,24 @@ const storageAdapter = createStorageAdapter({
 	downloadOptions: createProviderArtifactDownloadOptions({ replicateApiToken }),
 	logger: console,
 });
+const runpodLtx23PodWorkflow = runpodLtx23PodBootstrapUrl
+	? {
+			bootstrapUrl: runpodLtx23PodBootstrapUrl,
+			cloudType: env.RUNPOD_LTX23_POD_CLOUD_TYPE,
+			containerDiskInGb: env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
+			gpuTypeIds: splitCsv(env.RUNPOD_LTX23_POD_GPU_TYPE_IDS),
+			imageName: env.RUNPOD_LTX23_POD_IMAGE_NAME,
+			namePrefix: "ltx23",
+			networkVolumeId: env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
+			podRunnerUrl: deriveSiblingUrl(
+				runpodLtx23PodBootstrapUrl,
+				"pod_runner.py"
+			),
+			templateId: env.RUNPOD_LTX23_POD_TEMPLATE_ID,
+			timeoutMs: env.RUNPOD_LTX23_POD_TIMEOUT_MS,
+			volumeInGb: env.RUNPOD_LTX23_POD_VOLUME_GB,
+		}
+	: undefined;
 
 const inferenceClient = createInferenceRouter({
 	civitai: civitaiApiKey
@@ -106,22 +124,8 @@ const inferenceClient = createInferenceRouter({
 					restApiBaseUrl: env.RUNPOD_REST_API_BASE_URL,
 					s3Config,
 					workflows: {
-						"ltx-2-3-synth-video": {
-							bootstrapUrl: runpodLtx23PodBootstrapUrl,
-							cloudType: env.RUNPOD_LTX23_POD_CLOUD_TYPE,
-							containerDiskInGb: env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
-							gpuTypeIds: splitCsv(env.RUNPOD_LTX23_POD_GPU_TYPE_IDS),
-							imageName: env.RUNPOD_LTX23_POD_IMAGE_NAME,
-							namePrefix: "ltx23-synth",
-							networkVolumeId: env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
-							podRunnerUrl: deriveSiblingUrl(
-								runpodLtx23PodBootstrapUrl,
-								"pod_runner.py"
-							),
-							templateId: env.RUNPOD_LTX23_POD_TEMPLATE_ID,
-							timeoutMs: env.RUNPOD_LTX23_POD_TIMEOUT_MS,
-							volumeInGb: env.RUNPOD_LTX23_POD_VOLUME_GB,
-						},
+						"ltx-2-3-video": runpodLtx23PodWorkflow,
+						"ltx-2-3-synth-video": runpodLtx23PodWorkflow,
 					},
 				})
 			: undefined,

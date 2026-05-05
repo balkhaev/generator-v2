@@ -74,9 +74,7 @@ const CIVITAI_LTX23_DEFAULT_LORA_SOURCE_URL =
 const CIVITAI_LTX23_SYNTH_LORA_URN =
 	"urn:air:ltxv23:lora:civitai:2509189@2820451";
 const CIVITAI_LTX23_SYNTH_ENDPOINT_PREFIX = "ltx2.3:synth-lora";
-const CIVITAI_LTX23_SYNTH_LORA_DOWNLOAD_URL =
-	"https://civitai.red/api/download/models/2820451";
-const RUNPOD_LTX23_SYNTH_POD_KEY = "ltx-2-3-synth-video";
+const RUNPOD_LTX23_POD_KEY = "ltx-2-3-video";
 const RUNPOD_LTX23_WORKFLOW_URL =
 	"https://raw.githubusercontent.com/Lightricks/ComfyUI-LTXVideo/master/example_workflows/2.3/LTX-2.3_T2V_I2V_Single_Stage_Distilled_Full.json";
 const RUNPOD_LTX23_CHECKPOINT_NAME = "ltx-2.3-22b-dev.safetensors";
@@ -204,7 +202,7 @@ const ltx23FrameCountSchema = z
 		message: "LTX 2.3 frame count must be 8n + 1",
 	});
 
-const runpodLtx23SynthParamsSchema = z.object({
+const runpodLtx23ParamsSchema = z.object({
 	width: ltx23DimensionSchema.default(896),
 	height: ltx23DimensionSchema.default(1280),
 	durationSeconds: z.number().min(1).max(16).default(10),
@@ -218,11 +216,8 @@ const runpodLtx23SynthParamsSchema = z.object({
 			"news broadcast, 3d animation, computer graphics, pc game, console game, video game, cartoon, childish, watermark, logo, text, on screen text, subtitles, titles, signature, slowmo, static, ugly"
 		),
 	seed: z.number().int().nonnegative().optional(),
-	loraUrl: z.url().default(CIVITAI_LTX23_SYNTH_LORA_DOWNLOAD_URL),
-	loraName: z
-		.string()
-		.min(1)
-		.default("ltxv/ltx2/SynthPussy_01_rank32.safetensors"),
+	loraUrl: optionalUrlParamSchema,
+	loraName: z.string().min(1).optional(),
 	loraScale: z.number().min(0).max(2).default(1),
 	distilledLoraUrl: z.url().default(RUNPOD_LTX23_DISTILLED_LORA_URL),
 	distilledLoraName: z
@@ -737,7 +732,7 @@ function buildRunpodFooocusLoraUrls(
 }
 
 type RunpodFooocusSdxlParams = z.infer<typeof runpodFooocusSdxlParamsSchema>;
-type RunpodLtx23SynthParams = z.infer<typeof runpodLtx23SynthParamsSchema>;
+type RunpodLtx23Params = z.infer<typeof runpodLtx23ParamsSchema>;
 
 function buildRunpodFooocusSdxlInput({
 	parsed,
@@ -790,18 +785,31 @@ function normalizeLtx23FrameCount(
 	return Math.min(361, Math.max(17, normalized));
 }
 
-function buildRunpodLtx23SynthInput({
+function buildRunpodLtx23Input({
+	inputImageUrl,
 	parsed,
 	prompt,
 }: {
-	parsed: RunpodLtx23SynthParams;
+	inputImageUrl?: string;
+	parsed: RunpodLtx23Params;
 	prompt: string;
 }): Record<string, unknown> {
 	const numFrames =
 		parsed.numFrames ??
 		normalizeLtx23FrameCount(parsed.durationSeconds, parsed.fps);
+	const lora =
+		parsed.loraUrl === undefined
+			? {}
+			: {
+					loraName:
+						parsed.loraName ??
+						extractModelNameFromUrl(parsed.loraUrl) ??
+						buildStableLoraName(parsed.loraUrl),
+					loraScale: parsed.loraScale,
+					loraUrl: parsed.loraUrl,
+				};
 	return {
-		__runpodPod: RUNPOD_LTX23_SYNTH_POD_KEY,
+		__runpodPod: RUNPOD_LTX23_POD_KEY,
 		prompt,
 		negativePrompt: parsed.negativePrompt,
 		width: parsed.width,
@@ -811,9 +819,8 @@ function buildRunpodLtx23SynthInput({
 		fps: parsed.fps,
 		steps: parsed.steps,
 		cfgScale: parsed.cfgScale,
-		loraUrl: parsed.loraUrl,
-		loraName: parsed.loraName,
-		loraScale: parsed.loraScale,
+		...lora,
+		...(inputImageUrl === undefined ? {} : { inputImageUrl }),
 		distilledLoraUrl: parsed.distilledLoraUrl,
 		distilledLoraName: parsed.distilledLoraName,
 		distilledLoraScale: parsed.distilledLoraScale,
@@ -957,6 +964,8 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"civitai-ltx-2-3-synth-text-to-video": 2 * MINUTE,
 	"civitai-ltx-2-3-synth-image-to-video": 2 * MINUTE,
 	"runpod-fooocus-sdxl": 90 * SECOND,
+	"runpod-ltx-2-3-text-to-video": 35 * MINUTE,
+	"runpod-ltx-2-3-image-to-video": 35 * MINUTE,
 	"runpod-ltx-2-3-synth-text-to-video": 35 * MINUTE,
 	"replicate-fooocus-sdxl": 15 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
@@ -972,6 +981,110 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-ltx-2-3-text-to-video": 2 * MINUTE,
 	"fal-ltx-2-3-image-to-video": 2 * MINUTE,
 };
+
+const runpodLtx23ParameterFields: readonly WorkflowField[] = [
+	{
+		description: "Output video width in pixels. Must be divisible by 32.",
+		key: "width",
+		label: "Width",
+		max: 1536,
+		min: 512,
+		step: 32,
+		type: "number",
+	},
+	{
+		description: "Output video height in pixels. Must be divisible by 32.",
+		key: "height",
+		label: "Height",
+		max: 1536,
+		min: 512,
+		step: 32,
+		type: "number",
+	},
+	{
+		description:
+			"Target duration in seconds. Converted to an LTX-valid 8n+1 frame count.",
+		key: "durationSeconds",
+		label: "Duration",
+		max: 16,
+		min: 1,
+		step: 0.5,
+		unit: "s",
+		type: "number",
+	},
+	{
+		description:
+			"Explicit frame count override. Must be 8n+1, for example 121, 241, or 361.",
+		key: "numFrames",
+		label: "Frames",
+		max: 361,
+		min: 17,
+		optional: true,
+		step: 8,
+		unit: "frames",
+		type: "number",
+	},
+	{
+		description: "Output frames per second.",
+		key: "fps",
+		label: "FPS",
+		max: 60,
+		min: 8,
+		step: 1,
+		type: "number",
+	},
+	{
+		description: "Number of denoising steps.",
+		key: "steps",
+		label: "Steps",
+		max: 40,
+		min: 1,
+		step: 1,
+		unit: "steps",
+		type: "number",
+	},
+	{
+		description: "Classifier-free guidance scale.",
+		key: "cfgScale",
+		label: "CFG scale",
+		max: 20,
+		min: 0,
+		step: 0.1,
+		type: "number",
+	},
+	{
+		description: "Negative prompt to discourage unwanted content.",
+		key: "negativePrompt",
+		label: "Negative prompt",
+		optional: true,
+		type: "text",
+	},
+	{
+		description:
+			"Optional public URL pointing to LoRA weights. Leave empty to run plain LTX 2.3.",
+		key: "loraUrl",
+		kind: "lora-url",
+		label: "LoRA URL",
+		optional: true,
+		type: "text",
+	},
+	{
+		description: "Strength of the optional LoRA when a URL is provided.",
+		key: "loraScale",
+		label: "LoRA scale",
+		max: 2,
+		min: 0,
+		step: 0.05,
+		type: "number",
+	},
+	{
+		description: "Optional deterministic seed.",
+		key: "seed",
+		label: "Seed",
+		optional: true,
+		type: "number",
+	},
+];
 
 export const workflowRegistry = {
 	"fal-flux-schnell": {
@@ -1340,127 +1453,49 @@ export const workflowRegistry = {
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},
+	"runpod-ltx-2-3-text-to-video": {
+		baseModel: "ltx-2-3",
+		key: "runpod-ltx-2-3-text-to-video",
+		name: "LTX 2.3 (RunPod)",
+		description:
+			"LTX 2.3 text-to-video generation in a disposable RunPod GPU Pod. LoRAs are optional; the base model runs without a custom LoRA URL.",
+		requiresInputImage: false,
+		parameterSchema: runpodLtx23ParamsSchema,
+		parameterFields: runpodLtx23ParameterFields,
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = runpodLtx23ParamsSchema.parse(params);
+			return buildRunpodLtx23Input({ parsed, prompt });
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"runpod-ltx-2-3-image-to-video": {
+		baseModel: "ltx-2-3",
+		key: "runpod-ltx-2-3-image-to-video",
+		name: "LTX 2.3 I2V (RunPod)",
+		description:
+			"LTX 2.3 image-to-video generation in a disposable RunPod GPU Pod. LoRAs are optional; the base model runs without a custom LoRA URL.",
+		requiresInputImage: true,
+		parameterSchema: runpodLtx23ParamsSchema,
+		parameterFields: runpodLtx23ParameterFields,
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = runpodLtx23ParamsSchema.parse(params);
+			return buildRunpodLtx23Input({ inputImageUrl, parsed, prompt });
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
 	"runpod-ltx-2-3-synth-text-to-video": {
 		baseModel: "ltx-2-3",
+		hiddenFromList: true,
 		key: "runpod-ltx-2-3-synth-text-to-video",
-		name: "LTX 2.3 Synth LoRA (RunPod Pod)",
+		name: "LTX 2.3 (RunPod)",
 		description:
-			"LTX 2.3 text-to-video generation in a disposable RunPod GPU Pod. Boots ComfyUI, loads the Synth Civitai LoRA plus the Lightricks distilled LoRA, and uploads the MP4 artifact to S3.",
+			"Legacy LTX 2.3 RunPod workflow key kept executable for existing scenarios.",
 		requiresInputImage: false,
-		parameterSchema: runpodLtx23SynthParamsSchema,
-		parameterFields: [
-			{
-				description: "Output video width in pixels. Must be divisible by 32.",
-				key: "width",
-				label: "Width",
-				max: 1536,
-				min: 512,
-				step: 32,
-				type: "number",
-			},
-			{
-				description: "Output video height in pixels. Must be divisible by 32.",
-				key: "height",
-				label: "Height",
-				max: 1536,
-				min: 512,
-				step: 32,
-				type: "number",
-			},
-			{
-				description:
-					"Target duration in seconds. Converted to an LTX-valid 8n+1 frame count.",
-				key: "durationSeconds",
-				label: "Duration",
-				max: 16,
-				min: 1,
-				step: 0.5,
-				unit: "s",
-				type: "number",
-			},
-			{
-				description:
-					"Explicit frame count override. Must be 8n+1, for example 121, 241, or 361.",
-				key: "numFrames",
-				label: "Frames",
-				max: 361,
-				min: 17,
-				optional: true,
-				step: 8,
-				unit: "frames",
-				type: "number",
-			},
-			{
-				description: "Output frames per second.",
-				key: "fps",
-				label: "FPS",
-				max: 60,
-				min: 8,
-				step: 1,
-				type: "number",
-			},
-			{
-				description: "Number of denoising steps.",
-				key: "steps",
-				label: "Steps",
-				max: 40,
-				min: 1,
-				step: 1,
-				unit: "steps",
-				type: "number",
-			},
-			{
-				description: "Classifier-free guidance scale.",
-				key: "cfgScale",
-				label: "CFG scale",
-				max: 20,
-				min: 0,
-				step: 0.1,
-				type: "number",
-			},
-			{
-				description: "Negative prompt to discourage unwanted content.",
-				key: "negativePrompt",
-				label: "Negative prompt",
-				optional: true,
-				type: "text",
-			},
-			{
-				description: "Public URL to the Synth LTX 2.3 LoRA safetensors file.",
-				key: "loraUrl",
-				kind: "lora-url",
-				label: "Synth LoRA URL",
-				type: "text",
-			},
-			{
-				description: "Strength of the Synth LoRA.",
-				key: "loraScale",
-				label: "Synth LoRA scale",
-				max: 2,
-				min: 0,
-				step: 0.05,
-				type: "number",
-			},
-			{
-				description: "Strength of the Lightricks distilled LoRA.",
-				key: "distilledLoraScale",
-				label: "Distilled LoRA scale",
-				max: 2,
-				min: 0,
-				step: 0.05,
-				type: "number",
-			},
-			{
-				description: "Optional deterministic seed.",
-				key: "seed",
-				label: "Seed",
-				optional: true,
-				type: "number",
-			},
-		],
+		parameterSchema: runpodLtx23ParamsSchema,
+		parameterFields: runpodLtx23ParameterFields,
 		buildProviderInput: ({ params, prompt }) => {
-			const parsed = runpodLtx23SynthParamsSchema.parse(params);
-			return buildRunpodLtx23SynthInput({ parsed, prompt });
+			const parsed = runpodLtx23ParamsSchema.parse(params);
+			return buildRunpodLtx23Input({ parsed, prompt });
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},
@@ -3153,20 +3188,27 @@ function enrichField(field: WorkflowField, workflowKey: string): WorkflowField {
 }
 
 export function listWorkflows(): WorkflowSummary[] {
-	return Object.values(workflowRegistry).map((workflow) => {
-		const result = workflow.parameterSchema.safeParse({});
-		return {
-			baseModel: workflow.baseModel,
-			defaults: (result.success ? result.data : {}) as Record<string, unknown>,
-			description: workflow.description,
-			key: workflow.key,
-			name: workflow.name,
-			parameterFields: workflow.parameterFields.map((field) =>
-				enrichField(field, workflow.key)
-			),
-			requiresInputImage: workflow.requiresInputImage,
-		};
-	});
+	const workflows: WorkflowTypes.WorkflowDefinition[] =
+		Object.values(workflowRegistry);
+	return workflows
+		.filter((workflow) => !workflow.hiddenFromList)
+		.map((workflow) => {
+			const result = workflow.parameterSchema.safeParse({});
+			return {
+				baseModel: workflow.baseModel,
+				defaults: (result.success ? result.data : {}) as Record<
+					string,
+					unknown
+				>,
+				description: workflow.description,
+				key: workflow.key,
+				name: workflow.name,
+				parameterFields: workflow.parameterFields.map((field) =>
+					enrichField(field, workflow.key)
+				),
+				requiresInputImage: workflow.requiresInputImage,
+			};
+		});
 }
 
 export function getWorkflowDefinition(workflowKey: string) {

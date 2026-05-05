@@ -1,6 +1,7 @@
 # RunPod LTX 2.3 Pod Inference
 
-Disposable RunPod Pod runtime for `runpod-ltx-2-3-synth-text-to-video`.
+Disposable RunPod Pod runtime for `runpod-ltx-2-3-text-to-video` and
+`runpod-ltx-2-3-image-to-video`.
 
 ## Runtime Contract
 
@@ -35,10 +36,10 @@ volume. The generator defaults point at this template.
 
 The generator creates a RunPod Pod with pre-signed S3 PUT URLs in env. The Pod
 installs ComfyUI, installs `ComfyUI-LTXVideo`, downloads the LTX 2.3 checkpoint,
-Gemma text encoder, Lightricks distilled LoRA, and Synth Civitai LoRA, runs the
-official ComfyUI workflow, uploads the final MP4 to S3, and then sleeps. The
-generator polls S3 for the output object and deletes the Pod after the artifact
-appears.
+Gemma text encoder, and Lightricks distilled LoRA, runs the official ComfyUI
+workflow, uploads the final MP4 to S3, and then sleeps. If `INPUT_IMAGE_URL` is
+set, the same workflow runs image-to-video; otherwise it runs text-to-video. If
+`LORA_URL` is set, the runner downloads and inserts that custom LoRA.
 
 Default generation settings match the reference setup shape:
 
@@ -46,5 +47,5 @@ Default generation settings match the reference setup shape:
 - about 10 seconds (`241` frames at `24` fps)
 - `8` steps
 - CFG `1`
-- Synth LoRA scale `1`
+- no custom LoRA unless `loraUrl` is provided
 - distilled LoRA scale `0.6`

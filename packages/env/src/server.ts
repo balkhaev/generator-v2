@@ -215,7 +215,7 @@ const serverSchema = {
 	RUNPOD_API_BASE_URL: z.url().default("https://api.runpod.ai/v2"),
 	// Inference-only Fooocus SDXL endpoint used by generator-worker.
 	RUNPOD_FOOOCUS_ENDPOINT_ID: z.string().min(1).optional(),
-	// Inference-only disposable Pod for LTX 2.3 + Synth LoRA video generation.
+	// Inference-only disposable Pod for LTX 2.3 video generation.
 	RUNPOD_LTX23_POD_BOOTSTRAP_URL: z
 		.url()
 		.optional()

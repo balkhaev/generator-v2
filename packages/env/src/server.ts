@@ -88,6 +88,14 @@ export function normalizeServerRuntimeEnv(
 	if (openrouterKey) {
 		out.OPENROUTER_API_KEY = openrouterKey;
 	}
+
+	const replicateToken =
+		out.REPLICATE_API_TOKEN?.trim() ||
+		out.REPLICATE_API_KEY?.trim() ||
+		out.REPLICATE_TOKEN?.trim();
+	if (replicateToken) {
+		out.REPLICATE_API_TOKEN = replicateToken;
+	}
 	return out;
 }
 
@@ -167,6 +175,11 @@ const serverSchema = {
 	FAL_KEY: z.string().min(1).optional(),
 	HF_TOKEN: z.string().min(1).optional(),
 	HUGGINGFACE_TOKEN: z.string().min(1).optional(),
+	REPLICATE_API_TOKEN: z.string().min(1).optional(),
+	/** Aliases merged into `REPLICATE_API_TOKEN` by {@link normalizeServerRuntimeEnv}. */
+	REPLICATE_API_KEY: z.string().min(1).optional(),
+	REPLICATE_TOKEN: z.string().min(1).optional(),
+	REPLICATE_API_BASE_URL: z.url().default("https://api.replicate.com/v1"),
 	XAI_API_KEY: z.string().min(1).optional(),
 	/** Aliases merged into `XAI_API_KEY` by {@link normalizeServerRuntimeEnv}. */
 	GROK_API_KEY: z.string().min(1).optional(),

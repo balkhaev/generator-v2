@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { getWorkflowDefinition, listWorkflows } from "@generator/workflows";
 
-const workflowKeyProviderPrefixPattern = /^(fal|runpod)-/;
+const workflowKeyProviderPrefixPattern = /^(fal|replicate|runpod)-/;
 
 describe("workflow registry", () => {
 	it("lists only provider-prefixed workflows", () => {
@@ -310,6 +310,44 @@ describe("workflow registry", () => {
 			refiner_model_name: "None",
 			refiner_switch: 0.5,
 			require_base64: true,
+		});
+	});
+
+	it("builds the replicate-fooocus-sdxl payload with optional LoRAs", () => {
+		const workflow = getWorkflowDefinition("replicate-fooocus-sdxl");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					extraLoraUrl: "https://storage.example.com/style.safetensors",
+					extraLoraWeight: 0.3,
+					guidanceScale: 4.5,
+					imageSize: "portrait_4_3",
+					loraUrl: "https://storage.example.com/subject.safetensors",
+					loraWeight: 0.9,
+					negativePrompt: "blur, watermark",
+					numImages: 2,
+					performanceSelection: "Quality",
+					useDefaultLoras: "true",
+				},
+				prompt: "studio portrait of my_character, cinematic lighting",
+			})
+		).toMatchObject({
+			__replicateVersion:
+				"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c",
+			aspect_ratios_selection: "896*1152",
+			guidance_scale: 4.5,
+			image_number: 2,
+			image_seed: -1,
+			loras_custom_urls:
+				"https://storage.example.com/subject.safetensors,0.9;https://storage.example.com/style.safetensors,0.3",
+			negative_prompt: "blur, watermark",
+			performance_selection: "Quality",
+			prompt: "studio portrait of my_character, cinematic lighting",
+			refiner_switch: 0.5,
+			sharpness: 2,
+			style_selections: "Fooocus V2,Fooocus Enhance,Fooocus Sharp",
+			use_default_loras: true,
 		});
 	});
 

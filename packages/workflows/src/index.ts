@@ -64,6 +64,8 @@ const optionalUrlParamSchema = z.preprocess(
 const FOOOCUS_BASE_MODEL_NAME = "juggernautXL_version6Rundiffusion.safetensors";
 const FOOOCUS_REFINER_MODEL_NAME = "sd_xl_refiner_1.0_0.9vae.safetensors";
 const FOOOCUS_DISABLED_MODEL_NAME = "None";
+const REPLICATE_FOOOCUS_API_VERSION =
+	"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c";
 const FOOOCUS_ASPECT_RATIOS = {
 	landscape_4_3: "1152*896",
 	landscape_16_9: "1344*768",
@@ -153,6 +155,36 @@ const runpodFooocusSdxlParamsSchema = z.object({
 	loraWeight: z.number().min(0).max(2).default(1),
 	extraLoraUrl: optionalUrlParamSchema,
 	extraLoraWeight: z.number().min(0).max(2).default(0.5),
+});
+
+const replicateFooocusSdxlParamsSchema = z.object({
+	imageSize: z
+		.enum([
+			"square_hd",
+			"square",
+			"landscape_4_3",
+			"landscape_16_9",
+			"portrait_4_3",
+			"portrait_16_9",
+		])
+		.default("square_hd"),
+	performanceSelection: z
+		.enum(["Speed", "Quality", "Extreme Speed"])
+		.default("Speed"),
+	styleSelections: z
+		.string()
+		.default("Fooocus V2,Fooocus Enhance,Fooocus Sharp"),
+	numImages: z.number().int().min(1).max(8).default(1),
+	guidanceScale: z.number().min(1).max(30).default(7),
+	negativePrompt: z.string().default(""),
+	seed: z.number().int().nonnegative().optional(),
+	useDefaultLoras: booleanParamSchema(false),
+	loraUrl: optionalUrlParamSchema,
+	loraWeight: z.number().min(0).max(2).default(1),
+	extraLoraUrl: optionalUrlParamSchema,
+	extraLoraWeight: z.number().min(0).max(2).default(0.5),
+	sharpness: z.number().min(0).max(30).default(2),
+	refinerSwitch: z.number().min(0.1).max(1).default(0.5),
 });
 
 // Flux Dev always targets the `/flux-lora` endpoint — LoRA is optional and we
@@ -504,6 +536,7 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"fal-fast-sdxl": 10 * SECOND,
 	"fal-fast-fooocus-sdxl": 10 * SECOND,
 	"runpod-fooocus-sdxl": 90 * SECOND,
+	"replicate-fooocus-sdxl": 15 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
 	// queue ~10s + inference ~75-90s (5s 720p video)
@@ -911,6 +944,148 @@ export const workflowRegistry = {
 				...(parsed.seed === undefined
 					? {}
 					: { image_seed: parsed.seed, seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"replicate-fooocus-sdxl": {
+		baseModel: "sdxl",
+		key: "replicate-fooocus-sdxl",
+		name: "Fooocus SDXL (Replicate)",
+		description:
+			"Fooocus SDXL text-to-image generation on Replicate via mrhan1993/fooocus-api. Supports SDXL LoRA URLs.",
+		requiresInputImage: false,
+		parameterSchema: replicateFooocusSdxlParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Output image size preset controlling aspect ratio and resolution.",
+				key: "imageSize",
+				label: "Image size",
+				type: "text",
+			},
+			{
+				description: "Fooocus performance preset.",
+				enumValues: ["Speed", "Quality", "Extreme Speed"],
+				key: "performanceSelection",
+				label: "Performance",
+				type: "text",
+			},
+			{
+				description:
+					"Comma-separated Fooocus styles applied during generation.",
+				key: "styleSelections",
+				label: "Styles",
+				type: "text",
+			},
+			{
+				description: "Number of images to generate per request.",
+				key: "numImages",
+				label: "Number of images",
+				max: 8,
+				min: 1,
+				step: 1,
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "Guidance scale",
+				max: 30,
+				min: 1,
+				step: 0.1,
+				type: "number",
+			},
+			{
+				description: "Negative prompt to discourage unwanted content.",
+				key: "negativePrompt",
+				label: "Negative prompt",
+				optional: true,
+				type: "text",
+			},
+			{
+				description:
+					"Optional public URL pointing to trained SDXL LoRA weights.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the primary LoRA effect.",
+				key: "loraWeight",
+				label: "LoRA weight",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description:
+					"Optional second public URL pointing to SDXL LoRA weights.",
+				key: "extraLoraUrl",
+				kind: "lora-url",
+				label: "Extra LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the extra LoRA effect.",
+				key: "extraLoraWeight",
+				label: "Extra LoRA weight",
+				max: 2,
+				min: 0,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description: "Use Fooocus default LoRA set in addition to custom URLs.",
+				enumValues: ["true", "false"],
+				key: "useDefaultLoras",
+				label: "Default LoRAs",
+				type: "text",
+			},
+			{
+				description: "Fooocus sharpness parameter.",
+				key: "sharpness",
+				label: "Sharpness",
+				max: 30,
+				min: 0,
+				step: 0.1,
+				type: "number",
+			},
+			{
+				description: "Refiner switch threshold.",
+				key: "refinerSwitch",
+				label: "Refiner switch",
+				max: 1,
+				min: 0.1,
+				step: 0.05,
+				type: "number",
+			},
+			{
+				description: "Optional deterministic seed for repeatable outputs.",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = replicateFooocusSdxlParamsSchema.parse(params);
+			const loras = buildRunpodFooocusLoras(parsed);
+			return {
+				__replicateVersion: REPLICATE_FOOOCUS_API_VERSION,
+				prompt,
+				negative_prompt: parsed.negativePrompt,
+				style_selections: parsed.styleSelections,
+				performance_selection: parsed.performanceSelection,
+				aspect_ratios_selection: FOOOCUS_ASPECT_RATIOS[parsed.imageSize],
+				image_number: parsed.numImages,
+				image_seed: parsed.seed ?? -1,
+				use_default_loras: parsed.useDefaultLoras,
+				loras_custom_urls: buildRunpodFooocusLoraUrls(loras),
+				sharpness: parsed.sharpness,
+				guidance_scale: parsed.guidanceScale,
+				refiner_switch: parsed.refinerSwitch,
 			};
 		},
 		extractArtifactUrls: collectArtifactUrls,

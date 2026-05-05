@@ -1,6 +1,7 @@
 import {
 	type ArtifactPersister,
 	createArtifactPersister,
+	type DownloadRemoteAssetOptions,
 	resolveS3StorageConfig,
 	type S3StorageConfig,
 } from "@generator/storage";
@@ -8,6 +9,7 @@ import {
 const dataUrlScheme = "data:";
 const rootPath = "/";
 const trailingSlashesPattern = /\/+$/u;
+const replicateDeliveryHostnamePattern = /(^|\.)replicate\.delivery$/iu;
 
 function isConfiguredStorageEndpointUrl(
 	config: Pick<S3StorageConfig, "endpoint">,
@@ -59,7 +61,31 @@ export interface StorageAdapter {
 export interface CreateStorageAdapterOptions {
 	artifactPersister?: ArtifactPersister;
 	config?: S3StorageConfig;
+	downloadOptions?: DownloadRemoteAssetOptions;
 	logger?: Pick<Console, "info" | "warn" | "error">;
+}
+
+export function createProviderArtifactDownloadOptions(options: {
+	replicateApiToken?: null | string;
+}): DownloadRemoteAssetOptions | undefined {
+	const replicateApiToken = options.replicateApiToken?.trim();
+	if (!replicateApiToken) {
+		return undefined;
+	}
+
+	return {
+		headers(url) {
+			try {
+				const { hostname } = new URL(url);
+				if (replicateDeliveryHostnamePattern.test(hostname)) {
+					return { authorization: `Bearer ${replicateApiToken}` };
+				}
+			} catch {
+				return undefined;
+			}
+			return undefined;
+		},
+	};
 }
 
 export function createStorageAdapter(
@@ -70,6 +96,7 @@ export function createStorageAdapter(
 		options.artifactPersister ??
 		createArtifactPersister({
 			config,
+			downloadOptions: options.downloadOptions,
 			logger: options.logger,
 		});
 

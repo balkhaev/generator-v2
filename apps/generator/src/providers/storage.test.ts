@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { S3StorageConfig } from "@generator/storage";
 
-import { createStorageAdapter } from "@/providers/storage";
+import {
+	createProviderArtifactDownloadOptions,
+	createStorageAdapter,
+} from "@/providers/storage";
 
 const trustedStorageErrorPattern = /must be hosted in trusted S3 storage/u;
 const unsupportedSchemeErrorPattern = /must use http\(s\) or data: scheme/u;
@@ -87,5 +90,27 @@ describe("storage adapter", () => {
 		expect(persisted).toHaveLength(2);
 		expect(persisted[0]).toContain(`${config.publicBaseUrl}/persisted/`);
 		expect(persisted[1]).toBe(`${config.publicBaseUrl}/already-here.png`);
+	});
+
+	it("scopes Replicate download auth headers to replicate.delivery", () => {
+		const options = createProviderArtifactDownloadOptions({
+			replicateApiToken: "r8_test",
+		});
+
+		expect(options?.headers).toBeTypeOf("function");
+		if (typeof options?.headers !== "function") {
+			throw new Error("expected dynamic headers");
+		}
+		expect(options.headers("https://replicate.delivery/pbxt/out.png")).toEqual({
+			authorization: "Bearer r8_test",
+		});
+		expect(
+			options.headers("https://sub.replicate.delivery/pbxt/out.png")
+		).toEqual({
+			authorization: "Bearer r8_test",
+		});
+		expect(
+			options.headers("https://v3.fal.media/files/out.png")
+		).toBeUndefined();
 	});
 });

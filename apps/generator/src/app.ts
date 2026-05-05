@@ -18,6 +18,7 @@ import {
 import { createFalClient } from "@/providers/fal";
 import type { InferenceClient } from "@/providers/inference";
 import { createInferenceRouter } from "@/providers/inference-router";
+import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
 
 function createStubInferenceClient(): InferenceClient {
@@ -33,7 +34,11 @@ function createStubInferenceClient(): InferenceClient {
 
 import { tryResolveS3StorageConfig } from "@generator/storage";
 
-import { createStorageAdapter, type StorageAdapter } from "@/providers/storage";
+import {
+	createProviderArtifactDownloadOptions,
+	createStorageAdapter,
+	type StorageAdapter,
+} from "@/providers/storage";
 import {
 	createGeneratorExecutionQueueClient,
 	type GeneratorExecutionQueue,
@@ -66,6 +71,12 @@ export function createApp(options: AppOptions) {
 	// и кэшируется при первом доступе. Централизация сохраняется на уровне
 	// входных точек (index.ts/worker.ts); здесь нужен доступ без валидации.
 	const internalToken = process.env.GENERATOR_INTERNAL_TOKEN?.trim();
+	const falKey = process.env.FAL_KEY;
+	const replicateApiToken = process.env.REPLICATE_API_TOKEN;
+	const replicateApiBaseUrl = process.env.REPLICATE_API_BASE_URL;
+	const runpodApiKey = process.env.RUNPOD_API_KEY;
+	const runpodApiBaseUrl = process.env.RUNPOD_API_BASE_URL;
+	const runpodFooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID;
 	const storageAdapter =
 		options.storageAdapter ??
 		(() => {
@@ -76,14 +87,22 @@ export function createApp(options: AppOptions) {
 						"S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY (and S3_PUBLIC_BASE_URL when not derivable)."
 				);
 			}
-			return createStorageAdapter({ config, logger: options.loggerImpl });
+			return createStorageAdapter({
+				config,
+				downloadOptions: createProviderArtifactDownloadOptions({
+					replicateApiToken,
+				}),
+				logger: options.loggerImpl,
+			});
 		})();
-	const falKey = process.env.FAL_KEY;
-	const runpodApiKey = process.env.RUNPOD_API_KEY;
-	const runpodApiBaseUrl = process.env.RUNPOD_API_BASE_URL;
-	const runpodFooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID;
 
 	const falClient = falKey ? createFalClient({ apiKey: falKey }) : undefined;
+	const replicateClient = replicateApiToken
+		? createReplicateClient({
+				apiBaseUrl: replicateApiBaseUrl,
+				apiToken: replicateApiToken,
+			})
+		: undefined;
 	const runpodClient =
 		runpodApiKey && runpodFooocusEndpointId
 			? createRunpodClient({
@@ -97,9 +116,10 @@ export function createApp(options: AppOptions) {
 
 	const inferenceClient =
 		options.inferenceClient ??
-		(falClient || runpodClient
+		(falClient || replicateClient || runpodClient
 			? createInferenceRouter({
 					fal: falClient,
+					replicate: replicateClient,
 					runpod: runpodClient,
 				})
 			: createStubInferenceClient());

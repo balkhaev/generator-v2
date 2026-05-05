@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { getWorkflowDefinition, listWorkflows } from "./index";
 
-const workflowKeyProviderPrefixPattern = /^(fal|runpod)-/;
+const workflowKeyProviderPrefixPattern = /^(fal|replicate|runpod)-/;
 
 describe("workflow registry", () => {
 	it("exposes only provider-prefixed workflows", () => {
@@ -86,6 +86,25 @@ describe("workflow registry", () => {
 			numImages: 1,
 			numInferenceSteps: 30,
 			outputFormat: "jpeg",
+		});
+	});
+
+	it("resolves replicate-fooocus-sdxl with correct defaults", () => {
+		const workflow = getWorkflowDefinition("replicate-fooocus-sdxl");
+		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("sdxl");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			extraLoraWeight: 0.5,
+			guidanceScale: 7,
+			imageSize: "square_hd",
+			loraWeight: 1,
+			negativePrompt: "",
+			numImages: 1,
+			performanceSelection: "Speed",
+			refinerSwitch: 0.5,
+			sharpness: 2,
+			styleSelections: "Fooocus V2,Fooocus Enhance,Fooocus Sharp",
+			useDefaultLoras: false,
 		});
 	});
 
@@ -301,6 +320,7 @@ describe("workflow registry", () => {
 		const keys = [
 			"fal-fast-sdxl",
 			"runpod-fooocus-sdxl",
+			"replicate-fooocus-sdxl",
 			"fal-flux-dev",
 			"fal-zimage-turbo",
 			"fal-zimage-turbo-image-to-image",
@@ -526,6 +546,56 @@ describe("workflow registry", () => {
 			output_format: "png",
 			refiner_model_name: "None",
 			seed: 42,
+		});
+	});
+
+	it("builds replicate-fooocus-sdxl payloads with optional LoRAs", () => {
+		const workflow = getWorkflowDefinition("replicate-fooocus-sdxl");
+		const buildInput = (extra: Record<string, unknown> = {}) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "test",
+			}) as Record<string, unknown>;
+
+		expect(buildInput()).toMatchObject({
+			__replicateVersion:
+				"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c",
+			aspect_ratios_selection: "1024*1024",
+			guidance_scale: 7,
+			image_number: 1,
+			image_seed: -1,
+			loras_custom_urls: "",
+			negative_prompt: "",
+			performance_selection: "Speed",
+			prompt: "test",
+			refiner_switch: 0.5,
+			sharpness: 2,
+			style_selections: "Fooocus V2,Fooocus Enhance,Fooocus Sharp",
+			use_default_loras: false,
+		});
+
+		expect(
+			buildInput({
+				extraLoraUrl: "https://example.com/extra-sdxl.safetensors",
+				extraLoraWeight: 0.25,
+				guidanceScale: 4.5,
+				imageSize: "portrait_4_3",
+				loraUrl: "https://example.com/sdxl.safetensors",
+				loraWeight: 0.8,
+				negativePrompt: "blur",
+				performanceSelection: "Quality",
+				seed: 42,
+				useDefaultLoras: "true",
+			})
+		).toMatchObject({
+			aspect_ratios_selection: "896*1152",
+			guidance_scale: 4.5,
+			image_seed: 42,
+			loras_custom_urls:
+				"https://example.com/sdxl.safetensors,0.8;https://example.com/extra-sdxl.safetensors,0.25",
+			negative_prompt: "blur",
+			performance_selection: "Quality",
+			use_default_loras: true,
 		});
 	});
 

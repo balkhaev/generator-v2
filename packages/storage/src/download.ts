@@ -49,7 +49,9 @@ export interface DownloadRemoteAssetOptions {
 		input: string | URL | Request,
 		init?: RequestInit
 	) => Promise<Response>;
-	headers?: Record<string, string>;
+	headers?:
+		| ((url: string) => Record<string, string> | undefined)
+		| Record<string, string>;
 }
 
 export function downloadRemoteAsset(
@@ -59,7 +61,11 @@ export function downloadRemoteAsset(
 	const fetchImpl = options.fetchImpl ?? fetch;
 	return retry(
 		async () => {
-			const response = await fetchImpl(url, { headers: options.headers });
+			const headers =
+				typeof options.headers === "function"
+					? options.headers(url)
+					: options.headers;
+			const response = await fetchImpl(url, { headers });
 			if (!response.ok) {
 				throw new Error(
 					`Failed to download asset (${response.status}): ${url}`

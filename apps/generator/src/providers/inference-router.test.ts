@@ -67,6 +67,41 @@ describe("inference router", () => {
 		expect(fal.getStatus).toHaveBeenCalledWith("fal-job-1", "fal-ai/fast-sdxl");
 	});
 
+	it("routes Replicate-marked payloads and endpoint ids to Replicate", async () => {
+		const fal = createMockClient("fal");
+		const replicate = createMockClient("replicate");
+		const router = createInferenceRouter({ fal, replicate });
+
+		await expect(
+			router.submit({
+				__replicateVersion: "mrhan1993/fooocus-api:version-id",
+				prompt: "test",
+			})
+		).resolves.toMatchObject({
+			endpointId: "replicate-endpoint",
+		});
+		expect(replicate.submit).toHaveBeenCalledTimes(1);
+		expect(fal.submit).not.toHaveBeenCalled();
+
+		await router.getStatus(
+			"replicate-job-1",
+			"replicate:mrhan1993/fooocus-api:version-id"
+		);
+		expect(replicate.getStatus).toHaveBeenCalledWith(
+			"replicate-job-1",
+			"replicate:mrhan1993/fooocus-api:version-id"
+		);
+
+		await router.cancel(
+			"replicate-job-1",
+			"replicate:mrhan1993/fooocus-api:version-id"
+		);
+		expect(replicate.cancel).toHaveBeenCalledWith(
+			"replicate-job-1",
+			"replicate:mrhan1993/fooocus-api:version-id"
+		);
+	});
+
 	it("fails fast when a RunPod workflow is submitted without a RunPod client", () => {
 		const router = createInferenceRouter({ fal: createMockClient("fal") });
 
@@ -76,5 +111,16 @@ describe("inference router", () => {
 				prompt: "test",
 			})
 		).toThrow("RunPod inference client is not configured");
+	});
+
+	it("fails fast when a Replicate workflow is submitted without a Replicate client", () => {
+		const router = createInferenceRouter({ fal: createMockClient("fal") });
+
+		expect(() =>
+			router.submit({
+				__replicateVersion: "mrhan1993/fooocus-api:version-id",
+				prompt: "test",
+			})
+		).toThrow("Replicate inference client is not configured");
 	});
 });

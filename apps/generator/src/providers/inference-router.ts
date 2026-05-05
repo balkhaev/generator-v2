@@ -3,10 +3,12 @@ import type {
 	InferenceJob,
 	InferenceSubmission,
 } from "./inference";
+import { isReplicateProviderEndpointId } from "./replicate";
 import { isRunpodProviderEndpointId } from "./runpod";
 
 export function createInferenceRouter(clients: {
 	fal?: InferenceClient;
+	replicate?: InferenceClient;
 	runpod?: InferenceClient;
 }): InferenceClient {
 	function routeByPayload(payload: Record<string, unknown>): InferenceClient {
@@ -15,6 +17,12 @@ export function createInferenceRouter(clients: {
 				return clients.runpod;
 			}
 			throw new Error("RunPod inference client is not configured");
+		}
+		if ("__replicateVersion" in payload) {
+			if (clients.replicate) {
+				return clients.replicate;
+			}
+			throw new Error("Replicate inference client is not configured");
 		}
 		if ("__falModel" in payload && clients.fal) {
 			return clients.fal;
@@ -31,6 +39,12 @@ export function createInferenceRouter(clients: {
 				return clients.runpod;
 			}
 			throw new Error("RunPod inference client is not configured");
+		}
+		if (isReplicateProviderEndpointId(endpointId)) {
+			if (clients.replicate) {
+				return clients.replicate;
+			}
+			throw new Error("Replicate inference client is not configured");
 		}
 		if (clients.fal) {
 			return clients.fal;

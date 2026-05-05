@@ -5,8 +5,12 @@ import { resolveS3StorageConfig } from "@generator/storage";
 import { ExecutionService } from "@/domain/executions";
 import { createFalClient } from "@/providers/fal";
 import { createInferenceRouter } from "@/providers/inference-router";
+import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
-import { createStorageAdapter } from "@/providers/storage";
+import {
+	createProviderArtifactDownloadOptions,
+	createStorageAdapter,
+} from "@/providers/storage";
 import {
 	createGeneratorExecutionQueueClient,
 	createGeneratorExecutionWorker,
@@ -15,6 +19,7 @@ import { createDrizzleExecutionRepository } from "@/repositories/executions";
 
 const redisUrl = env.REDIS_URL;
 const falKey = env.FAL_KEY;
+const replicateApiToken = env.REPLICATE_API_TOKEN;
 const runpodApiKey = env.RUNPOD_API_KEY;
 const runpodFooocusEndpointId = env.RUNPOD_FOOOCUS_ENDPOINT_ID;
 const kafkaConfig = getKafkaEventBusConfig("generator-worker");
@@ -22,7 +27,9 @@ const eventPublisher = kafkaConfig
 	? createKafkaEventPublisher(kafkaConfig, { source: "generator-worker" })
 	: null;
 
-if (!(falKey || (runpodApiKey && runpodFooocusEndpointId))) {
+if (
+	!(falKey || replicateApiToken || (runpodApiKey && runpodFooocusEndpointId))
+) {
 	throw new Error(
 		"At least one inference provider is required for the generator worker"
 	);
@@ -31,11 +38,18 @@ if (!(falKey || (runpodApiKey && runpodFooocusEndpointId))) {
 const s3Config = resolveS3StorageConfig();
 const storageAdapter = createStorageAdapter({
 	config: s3Config,
+	downloadOptions: createProviderArtifactDownloadOptions({ replicateApiToken }),
 	logger: console,
 });
 
 const inferenceClient = createInferenceRouter({
 	fal: falKey ? createFalClient({ apiKey: falKey }) : undefined,
+	replicate: replicateApiToken
+		? createReplicateClient({
+				apiBaseUrl: env.REPLICATE_API_BASE_URL,
+				apiToken: replicateApiToken,
+			})
+		: undefined,
 	runpod:
 		runpodApiKey && runpodFooocusEndpointId
 			? createRunpodClient({

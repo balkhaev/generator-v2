@@ -8,6 +8,7 @@ import type {
 const CIVITAI_ENDPOINT_ID_PREFIX = "civitai:";
 const DEFAULT_CIVITAI_API_BASE_URL = "https://orchestration.civitai.com";
 const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_VALIDATION_MESSAGES = 6;
 const TRAILING_SLASH = /\/$/;
 
 const failedEventTypes = new Set([
@@ -96,10 +97,52 @@ function stringifyBodySnippet(body: Record<string, unknown>): string | null {
 	}
 }
 
+function collectValidationErrors(value: unknown): string[] {
+	if (!(value && typeof value === "object")) {
+		return [];
+	}
+	if (Array.isArray(value)) {
+		return value
+			.map(messageFromValue)
+			.filter((message): message is string => Boolean(message));
+	}
+	const messages: string[] = [];
+	for (const [field, fieldValue] of Object.entries(value)) {
+		const fieldMessages = Array.isArray(fieldValue)
+			? fieldValue
+					.map(messageFromValue)
+					.filter((message): message is string => Boolean(message))
+			: [messageFromValue(fieldValue)].filter((message): message is string =>
+					Boolean(message)
+				);
+		if (fieldMessages.length > 0) {
+			messages.push(`${field}: ${fieldMessages.join(", ")}`);
+		}
+	}
+	return messages;
+}
+
 function extractErrorMessage(
 	body: Record<string, unknown>,
 	fallbackStatus: number
 ): string {
+	const validationMessages = collectValidationErrors(body.errors);
+	if (validationMessages.length > 0) {
+		const title =
+			messageFromValue(body.title) ??
+			messageFromValue(body.message) ??
+			"Validation failed.";
+		const visibleMessages = validationMessages.slice(
+			0,
+			MAX_VALIDATION_MESSAGES
+		);
+		const suffix =
+			validationMessages.length > visibleMessages.length
+				? `; +${validationMessages.length - visibleMessages.length} more`
+				: "";
+		return `${title} ${visibleMessages.join("; ")}${suffix}`;
+	}
+
 	for (const key of ["detail", "error", "message", "title"] as const) {
 		const message = messageFromValue(body[key]);
 		if (message) {

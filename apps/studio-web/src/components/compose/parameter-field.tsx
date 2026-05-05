@@ -50,12 +50,13 @@ function EnumSelect({
 	options: readonly string[];
 	value: string;
 }) {
+	const selectedValue = options.includes(value) ? value : (options[0] ?? "");
 	return (
 		<select
 			className={selectClassName}
 			id={id}
 			onChange={(event) => onChange(event.target.value)}
-			value={value}
+			value={selectedValue}
 		>
 			{options.map((option) => (
 				<option key={option} value={option}>

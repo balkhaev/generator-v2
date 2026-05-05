@@ -114,7 +114,7 @@ describe("workflow registry", () => {
 		expect(t2v?.requiresInputImage).toBe(false);
 		expect(t2v?.parameterSchema.parse({})).toMatchObject({
 			aspectRatio: "16:9",
-			duration: 5,
+			duration: 3,
 			generateAudio: false,
 			guidanceScale: 3,
 			loraStrength: 1,
@@ -127,7 +127,7 @@ describe("workflow registry", () => {
 		expect(i2v?.requiresInputImage).toBe(true);
 		expect(i2v?.parameterSchema.parse({})).toMatchObject({
 			aspectRatio: "16:9",
-			duration: 5,
+			duration: 3,
 			generateAudio: false,
 			guidanceScale: 3,
 			loraStrength: 1,
@@ -694,7 +694,7 @@ describe("workflow registry", () => {
 			t2v?.buildProviderInput({
 				params: {
 					aspectRatio: "9:16",
-					duration: 6,
+					duration: 20,
 					generateAudio: "true",
 					guidanceScale: 4,
 					loraAir: "urn:air:ltxv23:lora:civitai:2487612@2800000",
@@ -717,7 +717,7 @@ describe("workflow registry", () => {
 				model: "22b-dev",
 				guidanceScale: 4,
 				steps: 32,
-				duration: 6,
+				duration: 20,
 				generateAudio: true,
 				loras: {
 					"urn:air:ltxv23:lora:civitai:2487612@2800000": 0.8,
@@ -746,13 +746,30 @@ describe("workflow registry", () => {
 				model: "22b-dev",
 				guidanceScale: 3,
 				steps: 30,
-				duration: 5,
+				duration: 3,
 				generateAudio: false,
 				loras: {
 					"urn:air:ltxv23:lora:civitai:2509189@2820451": 1,
 				},
 				firstFrame: "https://storage.example.com/first.png",
 				lastFrame: "https://storage.example.com/last.png",
+			},
+		});
+	});
+
+	it("normalizes stale Civitai LTX-2.3 durations before provider submit", () => {
+		const workflow = getWorkflowDefinition(
+			"civitai-ltx-2-3-synth-text-to-video"
+		);
+
+		expect(
+			workflow?.buildProviderInput({
+				params: { duration: 5 },
+				prompt: "test",
+			})
+		).toMatchObject({
+			input: {
+				duration: 3,
 			},
 		});
 	});

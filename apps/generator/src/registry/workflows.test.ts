@@ -357,7 +357,7 @@ describe("workflow registry", () => {
 			workflow?.buildProviderInput({
 				params: {
 					aspectRatio: "3:2",
-					duration: 7,
+					duration: 20,
 					guidanceScale: 4,
 					loraAir: "urn:air:ltxv23:lora:civitai:2487612@2800000",
 					loraStrength: 0.8,
@@ -378,7 +378,7 @@ describe("workflow registry", () => {
 				model: "22b-dev",
 				guidanceScale: 4,
 				steps: 32,
-				duration: 7,
+				duration: 20,
 				generateAudio: false,
 				loras: {
 					"urn:air:ltxv23:lora:civitai:2487612@2800000": 0.8,

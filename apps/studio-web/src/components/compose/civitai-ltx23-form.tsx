@@ -354,6 +354,9 @@ function SegmentedParameterField({
 	if (!(parameter?.enumValues && parameter.enumValues.length > 0)) {
 		return null;
 	}
+	const selectedValue = parameter.enumValues.includes(value)
+		? value
+		: parameter.defaultValue || parameter.enumValues[0] || "";
 	return (
 		<SegmentedControl
 			columns={columns}
@@ -363,7 +366,7 @@ function SegmentedParameterField({
 				label: labels?.[option] ?? option,
 				value: option,
 			}))}
-			value={value || parameter.defaultValue || parameter.enumValues[0]}
+			value={selectedValue}
 		/>
 	);
 }
@@ -766,10 +769,11 @@ export default function CivitaiLtx23Setup({
 			</div>
 
 			<div className="grid gap-3 sm:grid-cols-2">
-				<CivitaiParameterField
-					form={form}
+				<SegmentedParameterField
+					labels={{ "3": "3s", "20": "20s" }}
 					onParamChange={onParamChange}
 					parameter={duration}
+					value={getParamValue(form, duration)}
 				/>
 				<SegmentedParameterField
 					labels={{ false: "Audio off", true: "Audio on" }}

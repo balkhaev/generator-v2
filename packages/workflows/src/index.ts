@@ -245,11 +245,28 @@ const civitaiLtx23ResolutionSchema = z.enum(["720p", "1080p"]).default("720p");
 const civitaiLtx23AspectRatioSchema = z
 	.enum(["16:9", "3:2", "1:1", "2:3", "9:16"])
 	.default("16:9");
+const CIVITAI_LTX23_ALLOWED_DURATIONS = [3, 20] as const;
+const CIVITAI_LTX23_DEFAULT_DURATION = 3;
+
+function normalizeCivitaiLtx23Duration(value: unknown) {
+	if (value === undefined || value === null || value === "") {
+		return CIVITAI_LTX23_DEFAULT_DURATION;
+	}
+	const parsed = Number(value);
+	return CIVITAI_LTX23_ALLOWED_DURATIONS.some((duration) => duration === parsed)
+		? parsed
+		: CIVITAI_LTX23_DEFAULT_DURATION;
+}
+
+const civitaiLtx23DurationSchema = z.preprocess(
+	normalizeCivitaiLtx23Duration,
+	z.union([z.literal(3), z.literal(20)])
+);
 
 const civitaiLtx23SynthParamsSchema = z.object({
 	resolution: civitaiLtx23ResolutionSchema,
 	aspectRatio: civitaiLtx23AspectRatioSchema,
-	duration: z.number().int().min(3).max(20).default(5),
+	duration: civitaiLtx23DurationSchema,
 	steps: z.number().int().min(10).max(50).default(30),
 	guidanceScale: z.number().min(1).max(10).default(3),
 	generateAudio: booleanParamSchema(false),
@@ -1350,15 +1367,11 @@ export const workflowRegistry = {
 				type: "text",
 			},
 			{
-				description:
-					"Video duration in seconds. At 1080p, keep this at 15s or lower.",
+				description: "Civitai LTX 2.3 duration bucket.",
+				enumValues: ["3", "20"],
 				key: "duration",
 				label: "Duration",
-				max: 20,
-				min: 3,
-				step: 1,
-				unit: "seconds",
-				type: "number",
+				type: "text",
 			},
 			{
 				description: "Number of denoising steps for the LTX 2.3 dev model.",
@@ -1496,15 +1509,11 @@ export const workflowRegistry = {
 				type: "text",
 			},
 			{
-				description:
-					"Video duration in seconds. At 1080p, keep this at 15s or lower.",
+				description: "Civitai LTX 2.3 duration bucket.",
+				enumValues: ["3", "20"],
 				key: "duration",
 				label: "Duration",
-				max: 20,
-				min: 3,
-				step: 1,
-				unit: "seconds",
-				type: "number",
+				type: "text",
 			},
 			{
 				description: "Number of denoising steps for the LTX 2.3 dev model.",

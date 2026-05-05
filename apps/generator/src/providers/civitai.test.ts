@@ -263,6 +263,43 @@ describe("civitai provider", () => {
 		);
 	});
 
+	it("includes Civitai validation fields in submit errors", async () => {
+		const client = createCivitaiClient({
+			apiKey: "civitai_test_key",
+			fetchImpl: mock(() =>
+				Promise.resolve(
+					new Response(
+						JSON.stringify({
+							errors: {
+								"input.duration": ["The value 5 is not valid for Duration."],
+							},
+							title: "One or more validation errors occurred.",
+						}),
+						{
+							headers: { "content-type": "application/json" },
+							status: 400,
+						}
+					)
+				)
+			),
+		});
+
+		await expect(
+			client.submit({
+				__civitaiEndpoint: "ltx2.3:synth-lora:createVideo",
+				$type: "videoGen",
+				input: {
+					duration: 5,
+					engine: "ltx2.3",
+					operation: "createVideo",
+					prompt: "test",
+				},
+			})
+		).rejects.toThrow(
+			"Civitai jobs.create: One or more validation errors occurred. input.duration: The value 5 is not valid for Duration."
+		);
+	});
+
 	it("parses provider endpoint IDs", () => {
 		const endpointId = formatCivitaiProviderEndpointId(LUSTIFY_MODEL);
 		expect(endpointId).toBe(`civitai:${LUSTIFY_MODEL}`);

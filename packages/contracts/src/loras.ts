@@ -107,7 +107,9 @@ export interface LoraSourcePreview {
 	description?: string;
 	downloadUrl: string;
 	fileName?: string;
+	modelId?: number;
 	name?: string;
+	nsfw?: boolean;
 	/**
 	 * For dual-expert models (Wan 2.2): when the source contains both high and
 	 * low files, this lists the matched pair so the import flow can create the
@@ -121,6 +123,7 @@ export interface LoraSourcePreview {
 	sizeBytes?: number;
 	sourceUrl: string;
 	sourceVersionId?: number;
+	supportsGeneration?: boolean;
 	trainedWords?: string[];
 	variant?: LoraVariant;
 	variants?: LoraSourcePreviewVariant[];

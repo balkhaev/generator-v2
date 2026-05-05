@@ -66,6 +66,11 @@ const FOOOCUS_REFINER_MODEL_NAME = "sd_xl_refiner_1.0_0.9vae.safetensors";
 const FOOOCUS_DISABLED_MODEL_NAME = "None";
 const CIVITAI_LUSTIFY_OLT_MODEL_URN =
 	"urn:air:sdxl:checkpoint:civitai:573152@1569593";
+const CIVITAI_LTX23_DEFAULT_LORA_MODEL_ID = 2_509_189;
+const CIVITAI_LTX23_DEFAULT_LORA_VERSION_ID = 2_820_451;
+const CIVITAI_LTX23_DEFAULT_LORA_NAME = "Synth Pussy - LTX 2.3";
+const CIVITAI_LTX23_DEFAULT_LORA_SOURCE_URL =
+	"https://civitai.com/models/2509189/synth-pussy-ltx-23?modelVersionId=2820451";
 const CIVITAI_LTX23_SYNTH_LORA_URN =
 	"urn:air:ltxv23:lora:civitai:2509189@2820451";
 const CIVITAI_LTX23_SYNTH_ENDPOINT_PREFIX = "ltx2.3:synth-lora";
@@ -249,6 +254,22 @@ const civitaiLtx23SynthParamsSchema = z.object({
 	guidanceScale: z.number().min(1).max(10).default(3),
 	generateAudio: booleanParamSchema(false),
 	seed: z.number().int().nonnegative().optional(),
+	loraSourceUrl: z.url().default(CIVITAI_LTX23_DEFAULT_LORA_SOURCE_URL),
+	loraAir: z.string().min(1).default(CIVITAI_LTX23_SYNTH_LORA_URN),
+	loraModelId: z
+		.number()
+		.int()
+		.positive()
+		.default(CIVITAI_LTX23_DEFAULT_LORA_MODEL_ID),
+	loraVersionId: z
+		.number()
+		.int()
+		.positive()
+		.default(CIVITAI_LTX23_DEFAULT_LORA_VERSION_ID),
+	loraName: z.string().min(1).default(CIVITAI_LTX23_DEFAULT_LORA_NAME),
+	loraBaseModel: z.string().min(1).default("ltx-2-3"),
+	loraSupportsGeneration: booleanParamSchema(true),
+	loraTriggerWords: z.string().default(""),
 	loraStrength: z.number().min(0).max(2).default(1),
 });
 
@@ -317,7 +338,7 @@ function buildCivitaiLtx23SynthInput({
 			duration: parsed.duration,
 			generateAudio: parsed.generateAudio,
 			loras: {
-				[CIVITAI_LTX23_SYNTH_LORA_URN]: parsed.loraStrength,
+				[parsed.loraAir]: parsed.loraStrength,
 			},
 			...(firstFrame ? { firstFrame } : {}),
 			...(lastFrame ? { lastFrame } : {}),
@@ -1359,7 +1380,57 @@ export const workflowRegistry = {
 				type: "number",
 			},
 			{
-				description: "Strength of the fixed Civitai LoRA.",
+				description: "Civitai model page or model-version URL for the LoRA.",
+				key: "loraSourceUrl",
+				label: "Civitai LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Civitai AIR reference used directly by videoGen.",
+				key: "loraAir",
+				label: "LoRA AIR",
+				type: "text",
+			},
+			{
+				description: "Civitai model id for the selected LoRA.",
+				key: "loraModelId",
+				label: "LoRA model id",
+				type: "number",
+			},
+			{
+				description: "Civitai model version id for the selected LoRA.",
+				key: "loraVersionId",
+				label: "LoRA version id",
+				type: "number",
+			},
+			{
+				description: "Display name of the selected Civitai LoRA.",
+				key: "loraName",
+				label: "LoRA name",
+				type: "text",
+			},
+			{
+				description: "Detected Civitai base model compatibility.",
+				key: "loraBaseModel",
+				label: "LoRA base model",
+				type: "text",
+			},
+			{
+				description: "Whether Civitai marks this LoRA as generation-capable.",
+				enumValues: ["true", "false"],
+				key: "loraSupportsGeneration",
+				label: "Civitai generation",
+				type: "text",
+			},
+			{
+				description: "Comma-separated Civitai trigger words for this LoRA.",
+				key: "loraTriggerWords",
+				label: "Trigger words",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Strength of the selected Civitai LoRA.",
 				key: "loraStrength",
 				label: "LoRA strength",
 				max: 2,
@@ -1455,7 +1526,57 @@ export const workflowRegistry = {
 				type: "number",
 			},
 			{
-				description: "Strength of the fixed Civitai LoRA.",
+				description: "Civitai model page or model-version URL for the LoRA.",
+				key: "loraSourceUrl",
+				label: "Civitai LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Civitai AIR reference used directly by videoGen.",
+				key: "loraAir",
+				label: "LoRA AIR",
+				type: "text",
+			},
+			{
+				description: "Civitai model id for the selected LoRA.",
+				key: "loraModelId",
+				label: "LoRA model id",
+				type: "number",
+			},
+			{
+				description: "Civitai model version id for the selected LoRA.",
+				key: "loraVersionId",
+				label: "LoRA version id",
+				type: "number",
+			},
+			{
+				description: "Display name of the selected Civitai LoRA.",
+				key: "loraName",
+				label: "LoRA name",
+				type: "text",
+			},
+			{
+				description: "Detected Civitai base model compatibility.",
+				key: "loraBaseModel",
+				label: "LoRA base model",
+				type: "text",
+			},
+			{
+				description: "Whether Civitai marks this LoRA as generation-capable.",
+				enumValues: ["true", "false"],
+				key: "loraSupportsGeneration",
+				label: "Civitai generation",
+				type: "text",
+			},
+			{
+				description: "Comma-separated Civitai trigger words for this LoRA.",
+				key: "loraTriggerWords",
+				label: "Trigger words",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Strength of the selected Civitai LoRA.",
 				key: "loraStrength",
 				label: "LoRA strength",
 				max: 2,

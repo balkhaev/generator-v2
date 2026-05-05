@@ -359,6 +359,7 @@ describe("workflow registry", () => {
 					aspectRatio: "3:2",
 					duration: 7,
 					guidanceScale: 4,
+					loraAir: "urn:air:ltxv23:lora:civitai:2487612@2800000",
 					loraStrength: 0.8,
 					resolution: "1080p",
 					steps: 32,
@@ -380,7 +381,7 @@ describe("workflow registry", () => {
 				duration: 7,
 				generateAudio: false,
 				loras: {
-					"urn:air:ltxv23:lora:civitai:2509189@2820451": 0.8,
+					"urn:air:ltxv23:lora:civitai:2487612@2800000": 0.8,
 				},
 			},
 		});

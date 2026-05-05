@@ -55,7 +55,7 @@ import {
 
 const PROMPT_LIMIT = 1500;
 
-type ComposeTab = "scenario" | "settings";
+type ProviderTab = "inference" | "civitai";
 
 const promptCleanupPattern = /[^\p{L}\p{N}\s]/gu;
 const promptSplitPattern = /\s+/u;
@@ -294,6 +294,22 @@ function partitionNonLoraParameters(
 	return { advanced, output, sampling };
 }
 
+function validateCivitaiLtx23(form: ScenarioFormState): string[] {
+	const errors: string[] = [];
+	const loraAir = form.params.loraAir?.trim() ?? "";
+	const loraBaseModel = form.params.loraBaseModel?.trim() ?? "";
+	if (!loraAir) {
+		errors.push("Civitai LoRA AIR is required");
+	}
+	if (loraBaseModel && loraBaseModel !== "ltx-2-3") {
+		errors.push("Civitai LoRA must be compatible with LTXV 2.3");
+	}
+	if (form.params.loraSupportsGeneration === "false") {
+		errors.push("Civitai LoRA must support Civitai generation");
+	}
+	return errors;
+}
+
 function validate(
 	form: ScenarioFormState,
 	workflow: WorkflowDefinition
@@ -322,6 +338,10 @@ function validate(
 				errors.push(`${parameter.label} is required`);
 			}
 		}
+	}
+
+	if (isCivitaiLtx23Workflow(workflow)) {
+		errors.push(...validateCivitaiLtx23(form));
 	}
 
 	return errors;
@@ -629,21 +649,21 @@ function DefaultParameterSections({
 }
 
 function ComposeTabs({
+	civitaiDisabled = false,
 	onChange,
-	settingsLabel,
 	value,
 }: {
-	onChange: (next: ComposeTab) => void;
-	settingsLabel: string;
-	value: ComposeTab;
+	civitaiDisabled?: boolean;
+	onChange: (next: ProviderTab) => void;
+	value: ProviderTab;
 }) {
-	const tabs: { id: ComposeTab; label: string }[] = [
-		{ id: "scenario", label: "Scenario" },
-		{ id: "settings", label: settingsLabel },
+	const tabs: { disabled?: boolean; id: ProviderTab; label: string }[] = [
+		{ id: "inference", label: "Inference" },
+		{ disabled: civitaiDisabled, id: "civitai", label: "Civitai" },
 	];
 	return (
 		<div
-			aria-label="Scenario editor sections"
+			aria-label="Scenario inference provider"
 			className="grid grid-cols-2 gap-1 rounded-lg bg-foreground/[0.04] p-1"
 			role="tablist"
 		>
@@ -656,8 +676,10 @@ function ComposeTabs({
 							"h-8 rounded-md px-3 font-medium text-[11px] transition",
 							active
 								? "bg-background text-foreground shadow-sm"
-								: "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+								: "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+							tab.disabled && "cursor-not-allowed opacity-45"
 						)}
+						disabled={tab.disabled}
 						key={tab.id}
 						onClick={() => onChange(tab.id)}
 						role="tab"
@@ -890,40 +912,48 @@ export default function ComposeForm({
 	onValidityChange,
 	workflows,
 }: ComposeFormProps) {
-	const [activeTab, setActiveTab] = useState<ComposeTab>("scenario");
-	const didAutoOpenSettingsRef = useRef(false);
-
 	const selectedWorkflow =
 		workflows.find((workflow) => workflow.key === form.workflowKey) ?? null;
 	const isCivitaiLtx23 = selectedWorkflow
 		? isCivitaiLtx23Workflow(selectedWorkflow)
 		: false;
+	const providerTab: ProviderTab = isCivitaiLtx23 ? "civitai" : "inference";
+	const inferenceWorkflows = useMemo(
+		() => workflows.filter((workflow) => !isCivitaiLtx23Workflow(workflow)),
+		[workflows]
+	);
+	const civitaiWorkflows = useMemo(
+		() => workflows.filter(isCivitaiLtx23Workflow),
+		[workflows]
+	);
+	const workflowPool =
+		providerTab === "civitai" ? civitaiWorkflows : inferenceWorkflows;
 	const selectedClassification = selectedWorkflow
 		? classifyWorkflow(selectedWorkflow)
 		: null;
 
 	const availableModalities = useMemo(
-		() => getAvailableModalities(workflows),
-		[workflows]
+		() => getAvailableModalities(workflowPool),
+		[workflowPool]
 	);
 
 	const availableApproaches = useMemo(
 		() =>
 			selectedClassification
-				? getAvailableApproaches(workflows, selectedClassification.modality)
+				? getAvailableApproaches(workflowPool, selectedClassification.modality)
 				: [],
-		[workflows, selectedClassification]
+		[workflowPool, selectedClassification]
 	);
 
 	const filteredWorkflows = useMemo(() => {
 		if (!selectedClassification) {
 			return [] as WorkflowDefinition[];
 		}
-		return filterWorkflows(workflows, {
+		return filterWorkflows(workflowPool, {
 			approach: selectedClassification.approach,
 			modality: selectedClassification.modality,
 		});
-	}, [workflows, selectedClassification]);
+	}, [workflowPool, selectedClassification]);
 
 	const loraSlots = selectedWorkflow ? getLoraSlots(selectedWorkflow) : [];
 	const showLoraSection = Boolean(
@@ -984,13 +1014,6 @@ export default function ComposeForm({
 		onValidityChange?.({ errors, isReady });
 	}, [errors, isReady, onValidityChange]);
 
-	useEffect(() => {
-		if (isCivitaiLtx23 && !didAutoOpenSettingsRef.current) {
-			didAutoOpenSettingsRef.current = true;
-			setActiveTab("settings");
-		}
-	}, [isCivitaiLtx23]);
-
 	function applyWorkflow(nextWorkflow: WorkflowDefinition | null) {
 		if (!nextWorkflow || nextWorkflow.key === form.workflowKey) {
 			return;
@@ -1008,6 +1031,31 @@ export default function ComposeForm({
 		});
 	}
 
+	function pickWorkflowForProvider(nextProvider: ProviderTab) {
+		const pool =
+			nextProvider === "civitai" ? civitaiWorkflows : inferenceWorkflows;
+		if (pool.length === 0) {
+			return null;
+		}
+		if (selectedClassification) {
+			const sameShape = pickDefaultWorkflow(pool, {
+				approach: selectedClassification.approach,
+				modality: selectedClassification.modality,
+			});
+			if (sameShape) {
+				return sameShape;
+			}
+		}
+		return pool[0] ?? null;
+	}
+
+	function handleProviderTabChange(nextProvider: ProviderTab) {
+		if (nextProvider === providerTab) {
+			return;
+		}
+		applyWorkflow(pickWorkflowForProvider(nextProvider));
+	}
+
 	function handleModalityChange(nextModality: Modality) {
 		if (
 			!selectedClassification ||
@@ -1016,12 +1064,12 @@ export default function ComposeForm({
 			return;
 		}
 		const nextApproach = resolveApproach(
-			workflows,
+			workflowPool,
 			selectedClassification.approach,
 			nextModality
 		);
 		applyWorkflow(
-			pickDefaultWorkflow(workflows, {
+			pickDefaultWorkflow(workflowPool, {
 				approach: nextApproach,
 				modality: nextModality,
 			})
@@ -1036,7 +1084,7 @@ export default function ComposeForm({
 			return;
 		}
 		applyWorkflow(
-			pickDefaultWorkflow(workflows, {
+			pickDefaultWorkflow(workflowPool, {
 				approach: nextApproach,
 				modality: selectedClassification.modality,
 			})
@@ -1048,7 +1096,7 @@ export default function ComposeForm({
 			return;
 		}
 		applyWorkflow(
-			workflows.find((workflow) => workflow.key === nextWorkflowKey) ?? null
+			workflowPool.find((workflow) => workflow.key === nextWorkflowKey) ?? null
 		);
 	}
 
@@ -1086,21 +1134,25 @@ export default function ComposeForm({
 	return (
 		<form className="grid min-w-0 gap-5" id={formId} onSubmit={handleSubmit}>
 			<ComposeTabs
-				onChange={setActiveTab}
-				settingsLabel={isCivitaiLtx23 ? "Civitai" : "Settings"}
-				value={activeTab}
+				civitaiDisabled={civitaiWorkflows.length === 0}
+				onChange={handleProviderTabChange}
+				value={providerTab}
 			/>
 
-			{activeTab === "scenario" ? (
-				<ScenarioSection
-					finalPromptPreview={finalPromptPreview}
+			{isCivitaiLtx23 ? (
+				<WorkflowSetupSection
+					availableApproaches={availableApproaches}
+					availableModalities={availableModalities}
+					filteredWorkflows={filteredWorkflows}
 					form={form}
-					isOverLimit={isOverLimit}
-					onFormChange={onFormChange}
-					promptLength={promptLength}
-					referenceImageUrl={referenceImageUrl}
+					isCivitaiLtx23={isCivitaiLtx23}
+					onApproachChange={handleApproachChange}
+					onModalityChange={handleModalityChange}
+					onParamChange={handleParamChange}
+					onWorkflowChange={handleWorkflowChange}
+					selectedClassification={selectedClassification}
 					selectedWorkflow={selectedWorkflow}
-					suggestedName={suggestedName}
+					workflows={civitaiWorkflows}
 				/>
 			) : (
 				<SettingsSection
@@ -1123,9 +1175,20 @@ export default function ComposeForm({
 					selectedClassification={selectedClassification}
 					selectedWorkflow={selectedWorkflow}
 					showLoraSection={showLoraSection}
-					workflows={workflows}
+					workflows={inferenceWorkflows}
 				/>
 			)}
+
+			<ScenarioSection
+				finalPromptPreview={finalPromptPreview}
+				form={form}
+				isOverLimit={isOverLimit}
+				onFormChange={onFormChange}
+				promptLength={promptLength}
+				referenceImageUrl={referenceImageUrl}
+				selectedWorkflow={selectedWorkflow}
+				suggestedName={suggestedName}
+			/>
 
 			{hideFooter ? null : (
 				<FooterBar

@@ -697,6 +697,7 @@ describe("workflow registry", () => {
 					duration: 6,
 					generateAudio: "true",
 					guidanceScale: 4,
+					loraAir: "urn:air:ltxv23:lora:civitai:2487612@2800000",
 					loraStrength: 0.8,
 					resolution: "720p",
 					seed: 42,
@@ -719,7 +720,7 @@ describe("workflow registry", () => {
 				duration: 6,
 				generateAudio: true,
 				loras: {
-					"urn:air:ltxv23:lora:civitai:2509189@2820451": 0.8,
+					"urn:air:ltxv23:lora:civitai:2487612@2800000": 0.8,
 				},
 				seed: 42,
 			},

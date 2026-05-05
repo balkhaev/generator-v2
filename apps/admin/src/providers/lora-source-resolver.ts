@@ -31,7 +31,9 @@ export interface ResolvedLoraSource {
 	downloadHeaders?: HeaderRecord;
 	downloadUrl: string;
 	fileName?: string;
+	modelId?: number;
 	name?: string;
+	nsfw?: boolean;
 	/**
 	 * Detected high/low pair for dual-expert base models (Wan 2.2). When set,
 	 * the importer can create both registry entries and link them via a shared
@@ -45,6 +47,7 @@ export interface ResolvedLoraSource {
 	sizeBytes?: number;
 	sourceUrl: string;
 	sourceVersionId?: number;
+	supportsGeneration?: boolean;
 	trainedWords?: string[];
 	variant?: LoraVariant;
 	variants?: LoraSourcePreviewVariant[];
@@ -76,6 +79,8 @@ interface CivitaiModel {
 	id: number;
 	modelVersions?: CivitaiModelVersion[];
 	name: string;
+	nsfw?: boolean;
+	supportsGeneration?: boolean;
 	type?: string;
 }
 
@@ -88,8 +93,11 @@ interface CivitaiModelVersion {
 	images?: CivitaiImage[];
 	model?: {
 		name?: string;
+		nsfw?: boolean;
+		supportsGeneration?: boolean;
 		type?: string;
 	};
+	modelId?: number;
 	name: string;
 	trainedWords?: string[];
 }
@@ -181,9 +189,15 @@ function parseCivitaiModelVersion(value: unknown): CivitaiModelVersion | null {
 		model: model
 			? {
 					name: asString(model.name),
+					nsfw: typeof model.nsfw === "boolean" ? model.nsfw : undefined,
+					supportsGeneration:
+						typeof model.supportsGeneration === "boolean"
+							? model.supportsGeneration
+							: undefined,
 					type: asString(model.type),
 				}
 			: undefined,
+		modelId: asNumber(record.modelId),
 		name,
 		trainedWords,
 	};
@@ -221,6 +235,11 @@ function parseCivitaiModel(value: unknown): CivitaiModel {
 			.map(parseCivitaiModelVersion)
 			.filter((version): version is CivitaiModelVersion => Boolean(version)),
 		name,
+		nsfw: typeof record.nsfw === "boolean" ? record.nsfw : undefined,
+		supportsGeneration:
+			typeof record.supportsGeneration === "boolean"
+				? record.supportsGeneration
+				: undefined,
 		type: asString(record.type),
 	};
 }
@@ -608,8 +627,11 @@ function buildResolvedCivitaiSource(input: {
 	downloadHeaders: HeaderRecord;
 	input: CreateLoraFromUrlInput;
 	modelDescription?: null | string;
+	modelId?: number;
 	modelName: string;
+	nsfw?: boolean;
 	pairedFiles?: LoraSourcePreviewPairedFile[];
+	supportsGeneration?: boolean;
 	variant: LoraSourcePreviewVariant;
 	variants?: LoraSourcePreviewVariant[];
 }): ResolvedLoraSource {
@@ -622,7 +644,9 @@ function buildResolvedCivitaiSource(input: {
 		downloadHeaders: input.downloadHeaders,
 		downloadUrl: input.variant.downloadUrl,
 		fileName: input.variant.fileName,
+		modelId: input.modelId,
 		name: input.modelName,
+		nsfw: input.nsfw,
 		pairedFiles: input.pairedFiles,
 		previewImageUrl:
 			input.variant.mediaType === "image" ? input.variant.mediaUrl : undefined,
@@ -632,6 +656,7 @@ function buildResolvedCivitaiSource(input: {
 		sizeBytes: input.variant.sizeBytes,
 		sourceUrl: input.input.sourceUrl.trim(),
 		sourceVersionId: input.variant.versionId,
+		supportsGeneration: input.supportsGeneration,
 		trainedWords: input.variant.trainedWords,
 		variant: input.variant.variant,
 		variants: input.variants,
@@ -754,8 +779,11 @@ export function createLoraSourceResolver(
 				downloadHeaders,
 				input,
 				modelDescription: model.description,
+				modelId: model.id,
 				modelName: model.name,
+				nsfw: model.nsfw,
 				pairedFiles,
+				supportsGeneration: model.supportsGeneration,
 				variant,
 				variants,
 			});
@@ -781,7 +809,10 @@ export function createLoraSourceResolver(
 			return buildResolvedCivitaiSource({
 				downloadHeaders,
 				input,
+				modelId: version.modelId,
 				modelName: version.model?.name ?? version.name,
+				nsfw: version.model?.nsfw,
+				supportsGeneration: version.model?.supportsGeneration,
 				variant,
 				variants: [variant],
 			});
@@ -861,7 +892,9 @@ export function toLoraSourcePreview(
 		description: source.description,
 		downloadUrl: source.downloadUrl,
 		fileName: source.fileName,
+		modelId: source.modelId,
 		name: source.name,
+		nsfw: source.nsfw,
 		pairedFiles: source.pairedFiles,
 		previewMediaType: source.previewMediaType,
 		previewMediaUrl: source.previewMediaUrl,
@@ -870,6 +903,7 @@ export function toLoraSourcePreview(
 		sizeBytes: source.sizeBytes,
 		sourceUrl: source.sourceUrl,
 		sourceVersionId: source.sourceVersionId,
+		supportsGeneration: source.supportsGeneration,
 		trainedWords: source.trainedWords,
 		variant: source.variant,
 		variants: source.variants,

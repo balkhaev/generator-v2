@@ -88,6 +88,84 @@ describe("createLoraSourceResolver", () => {
 		expect(source.versionName).toBe("v1");
 	});
 
+	it("falls back to Civitai REST when TRPC omits file download URLs", async () => {
+		const requests: string[] = [];
+		const resolver = createLoraSourceResolver({
+			fetchImpl(input) {
+				const url = input.toString();
+				requests.push(url);
+				const body = url.includes("/api/trpc/model.getById")
+					? [
+							{
+								result: {
+									data: {
+										json: {
+											id: 2_509_189,
+											modelVersions: [
+												{
+													baseModel: "LTXV 2.3",
+													files: [
+														{
+															metadata: { format: "SafeTensor" },
+															name: "detail-ltx.safetensors",
+															primary: true,
+														},
+													],
+													id: 2_820_451,
+													name: "v1.0",
+												},
+											],
+											name: "LTX Detail LoRA",
+											type: "LORA",
+										},
+									},
+								},
+							},
+						]
+					: {
+							id: 2_509_189,
+							modelVersions: [
+								{
+									baseModel: "LTXV 2.3",
+									files: [
+										{
+											downloadUrl:
+												"https://civitai.red/api/download/models/2820451",
+											metadata: { format: "SafeTensor" },
+											name: "detail-ltx.safetensors",
+											primary: true,
+											sizeKB: 344_485.726_562_5,
+										},
+									],
+									id: 2_820_451,
+									name: "v1.0",
+								},
+							],
+							name: "LTX Detail LoRA",
+							type: "LORA",
+						};
+				return Promise.resolve(
+					new Response(JSON.stringify(body), { status: 200 })
+				);
+			},
+		});
+
+		const source = await resolver.resolve({
+			baseModel: "ltx-2-3",
+			sourceUrl:
+				"https://civitai.red/models/2509189/detail-ltx?modelVersionId=2820451",
+		});
+
+		expect(requests[0]).toContain("/api/trpc/model.getById");
+		expect(requests[1]).toBe("https://civitai.red/api/v1/models/2509189");
+		expect(source.baseModel).toBe("ltx-2-3");
+		expect(source.downloadUrl).toBe(
+			"https://civitai.red/api/download/models/2820451"
+		);
+		expect(source.fileName).toBe("detail-ltx.safetensors");
+		expect(source.sizeBytes).toBe(352_753_384);
+	});
+
 	it("detects high/low pair across modelVersions for Wan 2.2", async () => {
 		const resolver = createLoraSourceResolver({
 			fetchImpl() {

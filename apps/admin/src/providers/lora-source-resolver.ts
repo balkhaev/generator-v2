@@ -152,12 +152,13 @@ function parseCivitaiFile(value: unknown): CivitaiFile | null {
 		return null;
 	}
 	const metadata = asRecord(record.metadata);
+	const sizeKb = asNumber(record.sizeKb) ?? asNumber(record.sizeKB);
 	return {
 		downloadUrl: asString(record.downloadUrl),
 		metadata: metadata ? { format: asString(metadata.format) } : undefined,
 		name: asString(record.name),
 		primary: typeof record.primary === "boolean" ? record.primary : undefined,
-		sizeKb: asNumber(record.sizeKb),
+		sizeKb,
 	};
 }
 
@@ -788,13 +789,59 @@ export function createLoraSourceResolver(
 				)
 			);
 		} catch {
-			return parseCivitaiModel(
-				await fetchJson(
-					buildCivitaiApiUrl(url, `/api/v1/models/${modelId}`),
-					headers
-				)
-			);
+			return fetchCivitaiRestModel(url, modelId, headers);
 		}
+	}
+
+	async function fetchCivitaiRestModel(
+		url: URL,
+		modelId: number,
+		headers: HeaderRecord
+	): Promise<CivitaiModel> {
+		return parseCivitaiModel(
+			await fetchJson(
+				buildCivitaiApiUrl(url, `/api/v1/models/${modelId}`),
+				headers
+			)
+		);
+	}
+
+	function buildCivitaiModelSource(input: {
+		downloadHeaders: HeaderRecord;
+		model: CivitaiModel;
+		modelVersionId?: number;
+		sourceInput: CreateLoraFromUrlInput;
+	}): ResolvedLoraSource | null {
+		const version = selectCivitaiVersion(input.model, input.modelVersionId);
+		const variants = (input.model.modelVersions ?? [])
+			.map(buildCivitaiVariant)
+			.filter((variant): variant is LoraSourcePreviewVariant =>
+				Boolean(variant)
+			);
+		const variant =
+			variants.find((item) => item.versionId === version.id) ??
+			buildCivitaiVariant(version);
+		if (!variant) {
+			return null;
+		}
+		const pairedFiles = findPairedFiles({
+			baseModel: variant.baseModel,
+			primary: variant,
+			versions: input.model.modelVersions ?? [],
+		});
+		return buildResolvedCivitaiSource({
+			canGenerate: input.model.canGenerate,
+			downloadHeaders: input.downloadHeaders,
+			input: input.sourceInput,
+			modelDescription: input.model.description,
+			modelId: input.model.id,
+			modelName: input.model.name,
+			nsfw: input.model.nsfw,
+			pairedFiles,
+			supportsGeneration: input.model.supportsGeneration,
+			variant,
+			variants,
+		});
 	}
 
 	async function resolveCivitaiModelSource(input: {
@@ -810,36 +857,31 @@ export function createLoraSourceResolver(
 			input.modelId,
 			input.requestHeaders
 		);
-		const version = selectCivitaiVersion(model, input.modelVersionId);
-		const variants = (model.modelVersions ?? [])
-			.map(buildCivitaiVariant)
-			.filter((variant): variant is LoraSourcePreviewVariant =>
-				Boolean(variant)
-			);
-		const variant =
-			variants.find((item) => item.versionId === version.id) ??
-			buildCivitaiVariant(version);
-		if (!variant) {
-			throw new Error(`Civitai model "${model.name}" has no download URL.`);
-		}
-		const pairedFiles = findPairedFiles({
-			baseModel: variant.baseModel,
-			primary: variant,
-			versions: model.modelVersions ?? [],
-		});
-		return buildResolvedCivitaiSource({
-			canGenerate: model.canGenerate,
+		const resolved = buildCivitaiModelSource({
 			downloadHeaders: input.downloadHeaders,
-			input: input.sourceInput,
-			modelDescription: model.description,
-			modelId: model.id,
-			modelName: model.name,
-			nsfw: model.nsfw,
-			pairedFiles,
-			supportsGeneration: model.supportsGeneration,
-			variant,
-			variants,
+			model,
+			modelVersionId: input.modelVersionId,
+			sourceInput: input.sourceInput,
 		});
+		if (resolved) {
+			return resolved;
+		}
+
+		const restModel = await fetchCivitaiRestModel(
+			input.url,
+			input.modelId,
+			input.requestHeaders
+		);
+		const restResolved = buildCivitaiModelSource({
+			downloadHeaders: input.downloadHeaders,
+			model: restModel,
+			modelVersionId: input.modelVersionId,
+			sourceInput: input.sourceInput,
+		});
+		if (restResolved) {
+			return restResolved;
+		}
+		throw new Error(`Civitai model "${restModel.name}" has no download URL.`);
 	}
 
 	async function resolveCivitaiVersionSource(input: {

@@ -29,6 +29,10 @@ export interface ComfyUIClient {
 	authorizedFetch(path: string, init?: RequestInit): Promise<Response>;
 	cancelDownload(downloadId: string): Promise<void>;
 	downloadArtifact(ref: ComfyUIArtifactRef): Promise<ArrayBuffer>;
+	getCivitaiVersionInfo(
+		modelType: string,
+		modelVersionId: number
+	): Promise<CivitaiVersionInfo | null>;
 	getHistory(): Promise<Record<string, ComfyUIHistoryItem>>;
 	getHistoryEntry(promptId: string): Promise<ComfyUIHistoryEntry | null>;
 	getQueue(): Promise<ComfyUIQueueResponse>;
@@ -45,6 +49,19 @@ export interface ComfyUIClient {
 		overwrite?: boolean;
 		subfolder?: string;
 	}): Promise<{ name: string; subfolder: string; type: string }>;
+}
+
+export interface CivitaiVersionInfo {
+	files?: Array<{
+		downloadUrl?: string;
+		name?: string;
+		primary?: boolean;
+		sizeKB?: number;
+	}>;
+	id?: number;
+	model?: { name?: string; type?: string };
+	modelId?: number;
+	name?: string;
 }
 
 /**
@@ -310,6 +327,26 @@ export function createComfyUIClient(
 		return await response.text();
 	};
 
+	const getCivitaiVersionInfo = async (
+		modelType: string,
+		modelVersionId: number
+	): Promise<CivitaiVersionInfo | null> => {
+		await ensureCookie();
+		const response = await request(
+			`/api/lm/${encodeURIComponent(modelType)}/civitai/model/version/${encodeURIComponent(String(modelVersionId))}`
+		);
+		if (response.status === 404) {
+			return null;
+		}
+		const data = await expectJson<
+			CivitaiVersionInfo | { success: boolean; data?: CivitaiVersionInfo }
+		>(response, "comfyui /api/lm/civitai/model/version");
+		if ("success" in data && "data" in data) {
+			return data.data ?? null;
+		}
+		return data as CivitaiVersionInfo;
+	};
+
 	return {
 		authorizedFetch: async (path, init) => {
 			await ensureCookie();
@@ -317,6 +354,7 @@ export function createComfyUIClient(
 		},
 		cancelDownload,
 		downloadArtifact,
+		getCivitaiVersionInfo,
 		getHistory,
 		getHistoryEntry,
 		getQueue,

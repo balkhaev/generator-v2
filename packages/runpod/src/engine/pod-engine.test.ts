@@ -97,6 +97,7 @@ function buildClientStub(overrides: ClientStubOverrides = {}): ComfyUIClient {
 		downloadArtifact:
 			overrides.downloadArtifact ??
 			(mock(() => Promise.resolve(new ArrayBuffer(8))) as never),
+		getCivitaiVersionInfo: dummy as never,
 		getHistory: overrides.getHistory ?? (() => Promise.resolve({})),
 		getHistoryEntry: dummy as never,
 		getQueue:

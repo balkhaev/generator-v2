@@ -286,6 +286,7 @@ export function createPodEngine<TInput, TOutput>(
 			return { inFlight: true, submitted: true };
 		}
 		const built = await workflow.buildPrompt(input, {
+			client,
 			clientId: requestId,
 			requestId,
 		});

@@ -16,10 +16,32 @@
 import { resolveS3StorageConfig } from "@generator/storage";
 
 import { createPodsApi } from "../src/api/pods";
+import type { ComfyUIClient } from "../src/comfyui/client";
 import { createPodEngine } from "../src/engine/pod-engine";
 import { TERMINAL_STATUSES } from "../src/engine/status";
 import { createRunpodHttpClient } from "../src/http/client";
 import { createLtx23VideoWorkflow } from "../src/workflows/ltx-2-3-video";
+
+function createDryRunComfyClient(): ComfyUIClient {
+	const fail = () => Promise.reject(new Error("not available in dry-run"));
+	return {
+		authorizedFetch: fail as never,
+		cancelDownload: fail as never,
+		downloadArtifact: fail as never,
+		getCivitaiVersionInfo: fail as never,
+		getHistory: fail as never,
+		getHistoryEntry: fail as never,
+		getQueue: fail as never,
+		getSystemStats: fail as never,
+		listUserdata: fail as never,
+		login: fail as never,
+		pollLoraDownload: fail as never,
+		readUserdata: fail as never,
+		startLoraDownload: fail as never,
+		submitPrompt: fail as never,
+		uploadInputImage: fail as never,
+	};
+}
 
 interface CliArgs {
 	dryRun: boolean;
@@ -141,9 +163,13 @@ async function main(): Promise<void> {
 			inputImageUrl: args.imageUrl,
 			prompt: args.prompt,
 		});
-		const built = workflow.buildPrompt(
+		const built = await workflow.buildPrompt(
 			{ inputImageUrl: args.imageUrl, prompt: args.prompt },
-			{ clientId: "dry-run", requestId: "dry-run" }
+			{
+				client: createDryRunComfyClient(),
+				clientId: "dry-run",
+				requestId: "dry-run",
+			}
 		);
 		logEvent("smoke.dry-run.parsed", { input: parsed });
 		logEvent("smoke.dry-run.api-graph", {

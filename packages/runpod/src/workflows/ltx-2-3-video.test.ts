@@ -6,6 +6,7 @@ import { createLtx23VideoWorkflow, LTX_23_I2V_NODE_IDS } from "./ltx-2-3-video";
 
 const SAMPLE_INPUT_IMAGE_URL = "https://example.com/in.png";
 const SAMPLE_BYTES = new ArrayBuffer(8);
+const FAILED_RESOLVE_LORA_PATTERN = /Failed to resolve Civitai LoRA filename/u;
 
 function buildClient(overrides: Partial<ComfyUIClient> = {}): ComfyUIClient {
 	const noop = mock(() => Promise.reject(new Error("not stubbed")));
@@ -13,6 +14,7 @@ function buildClient(overrides: Partial<ComfyUIClient> = {}): ComfyUIClient {
 		authorizedFetch: noop as never,
 		cancelDownload: noop as never,
 		downloadArtifact: noop as never,
+		getCivitaiVersionInfo: noop as never,
 		getHistory: noop as never,
 		getHistoryEntry: noop as never,
 		getQueue: noop as never,
@@ -61,13 +63,14 @@ describe("ltx-2-3-video workflow", () => {
 		});
 	});
 
-	it("buildPrompt patches user prompt, dims, seed and image filename in the API graph", () => {
+	it("buildPrompt patches user prompt, dims, seed and image filename in the API graph", async () => {
 		const wf = buildWorkflow();
 		const ctx: PodSubmitContext = {
+			client: buildClient(),
 			clientId: "req-1",
 			requestId: "req-1",
 		};
-		const result = wf.buildPrompt(
+		const result = await wf.buildPrompt(
 			{
 				height: 720,
 				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
@@ -98,9 +101,21 @@ describe("ltx-2-3-video workflow", () => {
 		).toBe("req-req-1.png");
 	});
 
-	it("buildPrompt installs Civitai LoRA in the LoraManager node when ids are provided", () => {
+	it("buildPrompt installs Civitai LoRA in the LoraManager node when ids are provided", async () => {
 		const wf = buildWorkflow();
-		const result = wf.buildPrompt(
+		const getCivitaiVersionInfo = mock(() =>
+			Promise.resolve({
+				files: [
+					{
+						name: "synth-pussy-LTX-2-3.safetensors",
+						primary: true,
+					},
+				],
+				id: 2_841_299,
+				modelId: 2_509_189,
+			})
+		);
+		const result = await wf.buildPrompt(
 			{
 				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
 				loraCivitaiModelId: 2_509_189,
@@ -108,7 +123,13 @@ describe("ltx-2-3-video workflow", () => {
 				loraScale: 0.85,
 				prompt: "p",
 			},
-			{ clientId: "r-1", requestId: "r-1" }
+			{
+				client: buildClient({
+					getCivitaiVersionInfo: getCivitaiVersionInfo as never,
+				}),
+				clientId: "r-1",
+				requestId: "r-1",
+			}
 		);
 		const loraNode = result.prompt[LTX_23_I2V_NODE_IDS.NODE_LORA_LOADER];
 		expect(loraNode).toBeDefined();
@@ -118,10 +139,33 @@ describe("ltx-2-3-video workflow", () => {
 		expect(inputs.loras.__value__).toEqual([
 			{
 				active: true,
-				name: "civitai-2509189-2841299.safetensors",
+				name: "synth-pussy-LTX-2-3.safetensors",
 				strength: 0.85,
 			},
 		] as never);
+		expect(getCivitaiVersionInfo).toHaveBeenCalledWith("loras", 2_841_299);
+	});
+
+	it("buildPrompt throws when Civitai LoRA filename cannot be resolved", async () => {
+		const wf = buildWorkflow();
+		const getCivitaiVersionInfo = mock(() => Promise.resolve(null));
+		await expect(
+			wf.buildPrompt(
+				{
+					inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+					loraCivitaiModelId: 1,
+					loraCivitaiVersionId: 2,
+					prompt: "p",
+				},
+				{
+					client: buildClient({
+						getCivitaiVersionInfo: getCivitaiVersionInfo as never,
+					}),
+					clientId: "r-1",
+					requestId: "r-1",
+				}
+			)
+		).rejects.toThrow(FAILED_RESOLVE_LORA_PATTERN);
 	});
 
 	it("prepare uploads input image bytes and reports ready=true without LoRA", async () => {

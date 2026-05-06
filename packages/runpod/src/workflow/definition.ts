@@ -54,6 +54,7 @@ export interface PodPrepareStatus {
 }
 
 export interface PodSubmitContext {
+	client: ComfyUIClient;
 	clientId: string;
 	requestId: string;
 }
@@ -79,9 +80,16 @@ export interface PodWorkflow<TInput, TOutput> {
 	 * CIVITAI_TOKEN/HF_TOKEN, которые добавляет engine).
 	 */
 	buildEnv?(input: TInput): Record<string, string>;
-	/** Вернуть API workflow для POST /prompt. Должен быть синхронным —
-	 *  все длинные операции (загрузки/аплоады) делать в `prepare`. */
-	buildPrompt(input: TInput, ctx: PodSubmitContext): PodSubmitResult;
+	/**
+	 * Вернуть API workflow для POST /prompt. Может быть async — короткие
+	 * lookup'ы в LM/Civitai (например резолв реального filename LoRA после
+	 * download) тут уместны. Длинные операции (загрузка чекпоинтов, image
+	 * upload) — в `prepare`.
+	 */
+	buildPrompt(
+		input: TInput,
+		ctx: PodSubmitContext
+	): PodSubmitResult | Promise<PodSubmitResult>;
 	id: string;
 	inputSchema: z.ZodType<TInput>;
 	mode: "pod";

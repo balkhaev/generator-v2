@@ -114,7 +114,10 @@ export function createLtx23VideoWorkflow(
 		buildEnv() {
 			return {};
 		},
-		buildPrompt(input: Ltx23Input, ctx: PodSubmitContext): PodSubmitResult {
+		async buildPrompt(
+			input: Ltx23Input,
+			ctx: PodSubmitContext
+		): Promise<PodSubmitResult> {
 			const parsed = ltx23InputSchema.parse(input);
 			const graph = deepCloneJson(
 				LTX_23_I2V_API_GRAPH as unknown as Record<string, ComfyUINodeApiInput>
@@ -140,15 +143,23 @@ export function createLtx23VideoWorkflow(
 				image: buildInputImageFilename(ctx.requestId),
 			});
 			if (parsed.loraCivitaiModelId && parsed.loraCivitaiVersionId) {
+				const loraFilename = await resolveLoraFilename({
+					client: ctx.client,
+					downloadId: ctx.requestId,
+					modelId: parsed.loraCivitaiModelId,
+					modelVersionId: parsed.loraCivitaiVersionId,
+				});
+				if (!loraFilename) {
+					throw new Error(
+						`Failed to resolve Civitai LoRA filename for model ${parsed.loraCivitaiModelId} version ${parsed.loraCivitaiVersionId}`
+					);
+				}
 				patchNodeInputs(graph, NODE_LORA_LOADER, {
 					loras: {
 						__value__: [
 							{
 								active: true,
-								name: buildLoraFilename(
-									parsed.loraCivitaiModelId,
-									parsed.loraCivitaiVersionId
-								),
+								name: loraFilename,
 								strength: parsed.loraScale,
 							},
 						],
@@ -240,7 +251,6 @@ interface EnsureLoraArgs {
 async function ensureLoraDownloaded(
 	args: EnsureLoraArgs
 ): Promise<PodPrepareStatus> {
-	const relativePath = buildLoraFilename(args.modelId, args.modelVersionId);
 	const progress = await args.client.pollLoraDownload(args.downloadId);
 	if (progress.error) {
 		return {
@@ -273,9 +283,8 @@ async function ensureLoraDownloaded(
 		await args.client.startLoraDownload({
 			downloadId: args.downloadId,
 			modelId: args.modelId,
-			modelRoot: "loras",
 			modelVersionId: args.modelVersionId,
-			relativePath,
+			useDefaultPaths: true,
 		});
 	} catch (error) {
 		return {
@@ -288,13 +297,26 @@ async function ensureLoraDownloaded(
 	return { progressPct: 0, ready: false };
 }
 
+async function resolveLoraFilename(
+	args: EnsureLoraArgs
+): Promise<string | undefined> {
+	try {
+		const info = await args.client.getCivitaiVersionInfo(
+			"loras",
+			args.modelVersionId
+		);
+		const file =
+			info?.files?.find((f) => f.primary && f.name) ??
+			info?.files?.find((f) => f.name);
+		return file?.name;
+	} catch {
+		return undefined;
+	}
+}
+
 function buildInputImageFilename(requestId: string): string {
 	const safe = requestId.replace(/[^a-zA-Z0-9_-]+/gu, "-");
 	return `req-${safe}.png`;
-}
-
-function buildLoraFilename(modelId: number, modelVersionId: number): string {
-	return `civitai-${modelId}-${modelVersionId}.safetensors`;
 }
 
 function patchNodeInputs(

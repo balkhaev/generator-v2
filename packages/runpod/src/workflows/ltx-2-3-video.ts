@@ -491,6 +491,7 @@ function pickLorasRoot(snapshot: LoraManagerLibrariesSnapshot): string | null {
 async function resolveLoraFilename(
 	args: EnsureLoraArgs
 ): Promise<string | undefined> {
+	let civitaiName: string | undefined;
 	try {
 		const info = await args.client.getCivitaiVersionInfo(
 			"loras",
@@ -499,10 +500,62 @@ async function resolveLoraFilename(
 		const file =
 			info?.files?.find((f) => f.primary && f.name) ??
 			info?.files?.find((f) => f.name);
-		return file?.name;
+		civitaiName = file?.name;
 	} catch {
-		return undefined;
+		civitaiName = undefined;
 	}
+	if (!civitaiName) {
+		return;
+	}
+	// Lora Manager often saves Civitai LoRAs into category subfolders
+	// (e.g. `LTXV 2.3/concept/SynthPussy_01_rank32.safetensors`).
+	// ComfyUI validates `lora_name` against the exact entry in
+	// `LoraLoaderModelOnly.lora_name` combo, so we resolve the bare
+	// Civitai filename to the actual on-disk relative path by suffix
+	// match against the live combo list.
+	try {
+		const info = await args.client.getObjectInfo("LoraLoaderModelOnly");
+		const tuple = info?.input?.required?.lora_name;
+		const list = readLoraNameOptions(tuple);
+		if (list?.length) {
+			const exact = list.find((entry) => entry === civitaiName);
+			if (exact) {
+				return exact;
+			}
+			const suffix = list.find(
+				(entry) =>
+					entry.endsWith(`/${civitaiName}`) ||
+					entry.endsWith(`\\${civitaiName}`)
+			);
+			if (suffix) {
+				return suffix;
+			}
+		}
+	} catch {
+		// fall through to civitaiName
+	}
+	return civitaiName;
+}
+
+function readLoraNameOptions(
+	tuple: [unknown, Record<string, unknown>?] | undefined
+): string[] | null {
+	if (!tuple) {
+		return null;
+	}
+	const head = tuple[0];
+	if (Array.isArray(head)) {
+		return head.filter((entry): entry is string => typeof entry === "string");
+	}
+	if (head === "COMBO" && tuple[1] && typeof tuple[1] === "object") {
+		const options = (tuple[1] as { options?: unknown }).options;
+		if (Array.isArray(options)) {
+			return options.filter(
+				(entry): entry is string => typeof entry === "string"
+			);
+		}
+	}
+	return null;
 }
 
 function buildInputImageFilename(requestId: string): string {

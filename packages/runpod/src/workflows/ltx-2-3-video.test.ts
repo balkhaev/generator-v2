@@ -201,6 +201,58 @@ describe("ltx-2-3-video workflow", () => {
 		expect(getCivitaiVersionInfo).toHaveBeenCalledWith("loras", 2_841_299);
 	});
 
+	it("buildPrompt resolves Civitai filename to LoraManager subfolder path via /object_info combo", async () => {
+		const wf = buildWorkflow();
+		const getCivitaiVersionInfo = mock(() =>
+			Promise.resolve({
+				files: [{ name: "SynthPussy_01_rank32.safetensors", primary: true }],
+				id: 2_820_451,
+				modelId: 2_509_189,
+			})
+		);
+		const getObjectInfo = mock((nodeClass: string) => {
+			if (nodeClass === "LoraLoaderModelOnly") {
+				return Promise.resolve({
+					input: {
+						required: {
+							lora_name: [
+								[
+									"loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+									"LTXV 2.3/concept/SynthPussy_01_rank32.safetensors",
+								],
+								{},
+							],
+						},
+					},
+				});
+			}
+			return Promise.resolve(null);
+		});
+		const result = await wf.buildPrompt(
+			{
+				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+				loraCivitaiModelId: 2_509_189,
+				loraCivitaiVersionId: 2_820_451,
+				loraScale: 1,
+				prompt: "p",
+			},
+			{
+				client: buildClient({
+					getCivitaiVersionInfo: getCivitaiVersionInfo as never,
+					getObjectInfo: getObjectInfo as never,
+				}),
+				clientId: "r-1",
+				requestId: "r-1",
+			}
+		);
+		const loraNode = result.prompt[LTX_23_I2V_NODE_IDS.NODE_LORA_LOADER];
+		expect(loraNode?.class_type).toBe("LoraLoaderModelOnly");
+		const inputs = loraNode?.inputs as { lora_name: string };
+		expect(inputs.lora_name).toBe(
+			"LTXV 2.3/concept/SynthPussy_01_rank32.safetensors"
+		);
+	});
+
 	it("buildPrompt throws when Civitai LoRA filename cannot be resolved", async () => {
 		const wf = buildWorkflow();
 		const getCivitaiVersionInfo = mock(() => Promise.resolve(null));

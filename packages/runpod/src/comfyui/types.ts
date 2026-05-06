@@ -130,3 +130,15 @@ export interface ComfyUINodeApiInput {
 		number | string | boolean | [string, number] | unknown
 	>;
 }
+
+/**
+ * Subset of `/object_info/{nodeClass}` response we consume.
+ * ComfyUI returns input config as a tuple where index 0 is the value list
+ * (for COMBO inputs that's `string[]`) and index 1 is options metadata.
+ */
+export interface ComfyUIObjectInfoEntry {
+	input?: {
+		optional?: Record<string, [unknown, Record<string, unknown>?]>;
+		required?: Record<string, [unknown, Record<string, unknown>?]>;
+	};
+}

@@ -5,6 +5,7 @@ import LTX_23_I2V_API_GRAPH from "../../templates/api/ltx-2-3-i2v-lvram.json" wi
 import type {
 	ComfyUIClient,
 	ComfyUINodeApiInput,
+	ComfyUIObjectInfoEntry,
 	LoraManagerLibrariesSnapshot,
 } from "../comfyui/client";
 import type {
@@ -197,6 +198,10 @@ async function prepareLtx23(
 	args: PrepareInternalArgs
 ): Promise<PodPrepareStatus> {
 	const parsed = ltx23InputSchema.parse(args.input);
+	const modelsStatus = await ensureModelsProvisioned(args.client);
+	if (modelsStatus.errorSummary || !modelsStatus.ready) {
+		return modelsStatus;
+	}
 	const imageStatus = await ensureInputImageUploaded({
 		client: args.client,
 		fetchBytes: args.fetchBytes,
@@ -216,6 +221,99 @@ async function prepareLtx23(
 		modelId: parsed.loraCivitaiModelId,
 		modelVersionId: parsed.loraCivitaiVersionId,
 	});
+}
+
+/**
+ * Pre-flight: убедиться, что HF-провижининг pod template уже докачал
+ * все нужные нам файлы (LTX 2.3 transformer, VAE, gemma text encoder,
+ * spatial upscaler, distilled LoRA) до того как мы сабмитим /prompt.
+ *
+ * Без этой проверки `submitPromptIfNeeded` уходит в /prompt пока списки
+ * `loras/`, `vae/`, `text_encoders/`, `diffusion_models/` ещё пустые
+ * (ComfyUI стартует за ~1 минуту, а провижининг 40+ GB длится ~5–10 минут),
+ * и ComfyUI отвечает 400 `prompt_outputs_failed_validation`
+ * "Value not in list" по каждому загрузчику.
+ */
+const REQUIRED_FILES: Array<{ file: string; input: string; node: string }> = [
+	{
+		file: "diffusion_models/ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+		input: "unet_name",
+		node: "UNETLoader",
+	},
+	{
+		file: "loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+		input: "lora_name",
+		node: "LoraLoaderModelOnly",
+	},
+	{
+		file: "vae/LTX23_video_vae_bf16.safetensors",
+		input: "vae_name",
+		node: "VAELoader",
+	},
+	{
+		file: "comfyui/gemma-3-12b-it-heretic-v2_fp8_e4m3fn.safetensors",
+		input: "clip_name1",
+		node: "DualCLIPLoader",
+	},
+	{
+		file: "text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+		input: "clip_name2",
+		node: "DualCLIPLoader",
+	},
+	{
+		file: "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+		input: "model_name",
+		node: "LatentUpscaleModelLoader",
+	},
+];
+
+async function ensureModelsProvisioned(
+	client: ComfyUIClient
+): Promise<PodPrepareStatus> {
+	let satisfied = 0;
+	const total = REQUIRED_FILES.length;
+	const missing: string[] = [];
+	for (const requirement of REQUIRED_FILES) {
+		try {
+			const info = await client.getObjectInfo(requirement.node);
+			const list = readComfyComboValues(info, requirement.input);
+			if (list?.includes(requirement.file)) {
+				satisfied += 1;
+			} else {
+				missing.push(requirement.file);
+			}
+		} catch {
+			missing.push(requirement.file);
+		}
+	}
+	if (missing.length === 0) {
+		return { progressPct: 100, ready: true };
+	}
+	const progressPct = Math.round((satisfied / total) * 100);
+	return {
+		progressPct,
+		ready: false,
+	};
+}
+
+function readComfyComboValues(
+	info: ComfyUIObjectInfoEntry | null,
+	inputName: string
+): string[] | null {
+	if (!info) {
+		return null;
+	}
+	const required = info.input?.required?.[inputName];
+	const optional = info.input?.optional?.[inputName];
+	const tuple = required ?? optional;
+	if (!tuple) {
+		return null;
+	}
+	const head = tuple[0];
+	if (Array.isArray(head)) {
+		return head.filter((entry): entry is string => typeof entry === "string");
+	}
+	return null;
 }
 
 interface EnsureImageArgs {

@@ -3,6 +3,7 @@ import type {
 	ComfyUIClientOptions,
 	ComfyUIHistoryEntry,
 	ComfyUIHistoryItem,
+	ComfyUIObjectInfoEntry,
 	ComfyUIPromptArgs,
 	ComfyUIPromptResponse,
 	ComfyUIQueueResponse,
@@ -17,6 +18,7 @@ export type {
 	ComfyUIClientOptions,
 	ComfyUIHistoryItem,
 	ComfyUINodeApiInput,
+	ComfyUIObjectInfoEntry,
 	ComfyUIQueueResponse,
 } from "./types";
 
@@ -55,6 +57,7 @@ export interface ComfyUIClient {
 	getHistoryEntry(promptId: string): Promise<ComfyUIHistoryEntry | null>;
 	getLoraManagerLibraries(): Promise<LoraManagerLibrariesSnapshot>;
 	getLoraManagerSettings(): Promise<LoraManagerSettings>;
+	getObjectInfo(nodeClass: string): Promise<ComfyUIObjectInfoEntry | null>;
 	getQueue(): Promise<ComfyUIQueueResponse>;
 	getSystemStats(): Promise<ComfyUISystemStats>;
 	listUserdata(dir: string): Promise<ComfyUIUserdataEntry[]>;
@@ -382,6 +385,23 @@ export function createComfyUIClient(
 		}
 	};
 
+	const getObjectInfo = async (
+		nodeClass: string
+	): Promise<ComfyUIObjectInfoEntry | null> => {
+		await ensureCookie();
+		const response = await request(
+			`/object_info/${encodeURIComponent(nodeClass)}`
+		);
+		if (response.status === 404) {
+			return null;
+		}
+		const data = await expectJson<Record<string, ComfyUIObjectInfoEntry>>(
+			response,
+			"comfyui /object_info"
+		);
+		return data[nodeClass] ?? null;
+	};
+
 	const getCivitaiVersionInfo = async (
 		modelType: string,
 		modelVersionId: number
@@ -414,6 +434,7 @@ export function createComfyUIClient(
 		getHistoryEntry,
 		getLoraManagerLibraries,
 		getLoraManagerSettings,
+		getObjectInfo,
 		getQueue,
 		getSystemStats,
 		listUserdata,

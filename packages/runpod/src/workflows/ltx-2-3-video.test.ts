@@ -1,12 +1,58 @@
 import { describe, expect, it, mock } from "bun:test";
 
-import type { ComfyUIClient } from "../comfyui/client";
+import type { ComfyUIClient, ComfyUIObjectInfoEntry } from "../comfyui/client";
 import type { PodSubmitContext } from "../workflow/definition";
 import { createLtx23VideoWorkflow, LTX_23_I2V_NODE_IDS } from "./ltx-2-3-video";
 
 const SAMPLE_INPUT_IMAGE_URL = "https://example.com/in.png";
 const SAMPLE_BYTES = new ArrayBuffer(8);
 const FAILED_RESOLVE_LORA_PATTERN = /Failed to resolve Civitai LoRA filename/u;
+
+const TEMPLATE_REQUIRED_FILES_BY_NODE: Record<
+	string,
+	Record<string, string[]>
+> = {
+	DualCLIPLoader: {
+		clip_name1: ["comfyui/gemma-3-12b-it-heretic-v2_fp8_e4m3fn.safetensors"],
+		clip_name2: ["text_encoders/ltx-2.3_text_projection_bf16.safetensors"],
+	},
+	LatentUpscaleModelLoader: {
+		model_name: ["ltx-2.3-spatial-upscaler-x2-1.1.safetensors"],
+	},
+	LoraLoaderModelOnly: {
+		lora_name: [
+			"loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+		],
+	},
+	UNETLoader: {
+		unet_name: [
+			"diffusion_models/ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+		],
+	},
+	VAELoader: {
+		vae_name: ["vae/LTX23_video_vae_bf16.safetensors"],
+	},
+};
+
+function buildObjectInfoEntry(
+	nodeClass: string
+): ComfyUIObjectInfoEntry | null {
+	const fields = TEMPLATE_REQUIRED_FILES_BY_NODE[nodeClass];
+	if (!fields) {
+		return null;
+	}
+	const required: Record<string, [string[], Record<string, unknown>]> = {};
+	for (const [input, list] of Object.entries(fields)) {
+		required[input] = [list, {}];
+	}
+	return { input: { required } };
+}
+
+function readyObjectInfo() {
+	return mock((nodeClass: string) =>
+		Promise.resolve(buildObjectInfoEntry(nodeClass))
+	);
+}
 
 function buildClient(overrides: Partial<ComfyUIClient> = {}): ComfyUIClient {
 	const noop = mock(() => Promise.reject(new Error("not stubbed")));
@@ -19,6 +65,7 @@ function buildClient(overrides: Partial<ComfyUIClient> = {}): ComfyUIClient {
 		getHistoryEntry: noop as never,
 		getLoraManagerLibraries: noop as never,
 		getLoraManagerSettings: noop as never,
+		getObjectInfo: readyObjectInfo() as never,
 		getQueue: noop as never,
 		getSystemStats: noop as never,
 		listUserdata: noop as never,
@@ -169,6 +216,23 @@ describe("ltx-2-3-video workflow", () => {
 				}
 			)
 		).rejects.toThrow(FAILED_RESOLVE_LORA_PATTERN);
+	});
+
+	it("prepare returns ready=false while LTX 2.3 models are still being provisioned", async () => {
+		const wf = buildWorkflow();
+		const status = await wf.prepare?.({
+			client: buildClient({
+				getObjectInfo: (() =>
+					Promise.resolve({
+						input: { required: { unet_name: [[], {}] } },
+					})) as never,
+			}),
+			downloadId: "r-1",
+			input: { inputImageUrl: SAMPLE_INPUT_IMAGE_URL, prompt: "p" },
+			requestId: "r-1",
+		});
+		expect(status?.ready).toBe(false);
+		expect(typeof status?.progressPct).toBe("number");
 	});
 
 	it("prepare uploads input image bytes and reports ready=true without LoRA", async () => {

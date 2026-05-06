@@ -75,6 +75,7 @@ function makeStat(key: string, sizeBytes: number): S3ObjectStat {
 interface ClientStubOverrides {
 	downloadArtifact?: ComfyUIClient["downloadArtifact"];
 	getHistory?: () => Promise<Record<string, ComfyUIHistoryItem>>;
+	getObjectInfo?: ComfyUIClient["getObjectInfo"];
 	getQueue?: () => Promise<ComfyUIQueueResponse>;
 	getSystemStats?: () => Promise<ComfyUISystemStats>;
 	listUserdata?: () => Promise<ComfyUIUserdataEntry[]>;
@@ -101,6 +102,7 @@ function buildClientStub(overrides: ClientStubOverrides = {}): ComfyUIClient {
 		getHistory: overrides.getHistory ?? (() => Promise.resolve({})),
 		getLoraManagerLibraries: dummy as never,
 		getLoraManagerSettings: dummy as never,
+		getObjectInfo: overrides.getObjectInfo ?? (dummy as never),
 		getHistoryEntry: dummy as never,
 		getQueue:
 			overrides.getQueue ??

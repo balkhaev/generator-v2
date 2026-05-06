@@ -33,6 +33,7 @@ function createDryRunComfyClient(): ComfyUIClient {
 		getHistoryEntry: fail as never,
 		getLoraManagerLibraries: fail as never,
 		getLoraManagerSettings: fail as never,
+		getObjectInfo: fail as never,
 		getQueue: fail as never,
 		getSystemStats: fail as never,
 		listUserdata: fail as never,

@@ -246,6 +246,16 @@ const REQUIRED_FILES: Array<{ file: string; input: string; node: string }> = [
 		node: "VAELoader",
 	},
 	{
+		file: "vae/LTX23_audio_vae_bf16.safetensors",
+		input: "vae_name",
+		node: "VAELoaderKJ",
+	},
+	{
+		file: "vae/taeltx2_3.safetensors",
+		input: "vae_name",
+		node: "VAELoader",
+	},
+	{
 		file: "comfyui/gemma-3-12b-it-heretic-v2.safetensors",
 		input: "clip_name1",
 		node: "DualCLIPLoader",

@@ -30,7 +30,13 @@ const TEMPLATE_REQUIRED_FILES_BY_NODE: Record<
 		],
 	},
 	VAELoader: {
-		vae_name: ["vae/LTX23_video_vae_bf16.safetensors"],
+		vae_name: [
+			"vae/LTX23_video_vae_bf16.safetensors",
+			"vae/taeltx2_3.safetensors",
+		],
+	},
+	VAELoaderKJ: {
+		vae_name: ["vae/LTX23_audio_vae_bf16.safetensors"],
 	},
 };
 

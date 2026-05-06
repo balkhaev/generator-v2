@@ -224,10 +224,11 @@ export function createPodEngine<TInput, TOutput>(
 		if (!artifactRef) {
 			if (status?.completed) {
 				const outputsSummary = summarizeHistoryOutputs(entry.outputs);
+				const messagesSummary = stringifyMessages(status.messages);
 				await cleanupPod(podId, "completed-without-artifact");
 				return failedResult(
 					jobId,
-					`ComfyUI workflow completed but produced no artifact (outputs: ${outputsSummary})`
+					`ComfyUI workflow completed but produced no artifact (outputs: ${outputsSummary}; status: ${messagesSummary})`
 				);
 			}
 			return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
@@ -665,9 +666,9 @@ function stringifyMessages(messages: unknown): string {
 		return "no details";
 	}
 	try {
-		return JSON.stringify(messages).slice(0, 500);
+		return JSON.stringify(messages).slice(0, 2000);
 	} catch {
-		return String(messages).slice(0, 500);
+		return String(messages).slice(0, 2000);
 	}
 }
 

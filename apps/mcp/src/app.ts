@@ -1018,12 +1018,24 @@ async function handleKafkaToolCall(
 	}
 }
 
+const GENERATOR_INTERNAL_TOKEN_HEADER = "x-generator-internal-token";
+
+function getGeneratorInternalToken() {
+	const token = process.env.GENERATOR_INTERNAL_TOKEN?.trim();
+	return token && token.length > 0 ? token : null;
+}
+
 function postJson(path: string, payload: unknown) {
+	const internalToken = getGeneratorInternalToken();
+	const headers: Record<string, string> = {
+		"content-type": "application/json",
+	};
+	if (internalToken) {
+		headers[GENERATOR_INTERNAL_TOKEN_HEADER] = internalToken;
+	}
 	return fetchServiceSnapshot("generator", path, {
 		body: JSON.stringify(payload),
-		headers: {
-			"content-type": "application/json",
-		},
+		headers,
 		method: "POST",
 	});
 }
@@ -2464,13 +2476,19 @@ async function handleToolCall(message: JsonRpcRequest) {
 				)
 			);
 		}
-		case "generator_workflows_get":
+		case "generator_workflows_get": {
+			const internalToken = getGeneratorInternalToken();
 			return createOkResponse(
 				id,
 				createToolResult(
-					await fetchServiceSnapshot("generator", "/api/workflows")
+					await fetchServiceSnapshot("generator", "/api/workflows", {
+						headers: internalToken
+							? { [GENERATOR_INTERNAL_TOKEN_HEADER]: internalToken }
+							: undefined,
+					})
 				)
 			);
+		}
 		default:
 			return createErrorResponse(id, `Unknown tool: ${name}`);
 	}

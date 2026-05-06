@@ -223,10 +223,11 @@ export function createPodEngine<TInput, TOutput>(
 		const artifactRef = pickPrimaryArtifact(entry.outputs);
 		if (!artifactRef) {
 			if (status?.completed) {
+				const outputsSummary = summarizeHistoryOutputs(entry.outputs);
 				await cleanupPod(podId, "completed-without-artifact");
 				return failedResult(
 					jobId,
-					"ComfyUI workflow completed but produced no artifact"
+					`ComfyUI workflow completed but produced no artifact (outputs: ${outputsSummary})`
 				);
 			}
 			return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
@@ -605,6 +606,31 @@ function pickPrimaryArtifact(
 		}
 	}
 	return null;
+}
+
+/**
+ * Summarises the structure of ComfyUI history `outputs` so engine errors carry
+ * enough context to diagnose unexpected output shapes (e.g. custom nodes that
+ * use non-standard keys like `result_files` or `audio`).
+ */
+function summarizeHistoryOutputs(
+	outputs: ComfyUIHistoryItem["outputs"]
+): string {
+	const summary: Record<string, string[]> = {};
+	for (const [nodeId, node] of Object.entries(outputs)) {
+		if (!node || typeof node !== "object") {
+			continue;
+		}
+		summary[nodeId] = Object.keys(node);
+	}
+	const entries = Object.entries(summary);
+	if (entries.length === 0) {
+		return "{}";
+	}
+	return entries
+		.map(([nid, keys]) => `${nid}=[${keys.join(",")}]`)
+		.join(" ")
+		.slice(0, 600);
 }
 
 function findEntryByClientId(

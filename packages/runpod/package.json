@@ -1,0 +1,23 @@
+{
+  "name": "@generator/runpod",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "smoke:serverless": "bun run scripts/smoke-serverless.ts",
+    "smoke:pod": "bun run scripts/smoke-pod.ts"
+  },
+  "dependencies": {
+    "@generator/storage": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@generator/config": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "^5"
+  }
+}

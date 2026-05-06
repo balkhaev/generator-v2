@@ -96,6 +96,34 @@ curl -H 'x-debug-correlation-id: dbg-manual-123' http://localhost:3005/api/healt
 3. если нужен tool-driven режим для агента:
    `bun --cwd packages/debug-tools run mcp`
 
+## RunPod smoke probes
+
+Минимальные пробы для отладки RunPod-инференса (serverless и pod) живут в
+[packages/runpod/scripts](../packages/runpod/scripts) и работают напрямую через
+`@generator/runpod`, без БД и worker'а. Полезно как self-debug step, когда
+непонятно, виноват провайдер, наш payload, или сам workflow.
+
+```bash
+# Serverless: реальный submit/poll/cancel минимального Fooocus-prompt
+RUNPOD_API_KEY=rpa_xxx \
+RUNPOD_FOOOCUS_ENDPOINT_ID=xxxxxx \
+bun run packages/runpod/scripts/smoke-serverless.ts -- --prompt="cat"
+
+# Pod: dry-run печатает env и dockerStartCmd без вызова RunPod
+S3_BUCKET=... S3_ENDPOINT=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=... \
+RUNPOD_API_KEY=rpa_xxx \
+RUNPOD_LTX23_POD_BOOTSTRAP_URL=https://.../pod-bootstrap.sh \
+bun run packages/runpod/scripts/smoke-pod.ts -- --dry-run --prompt="cat"
+
+# Pod: live запускает реальный pod LTX 2.3 и ждёт MP4 в S3
+bun run packages/runpod/scripts/smoke-pod.ts -- --live --prompt="cat"
+```
+
+Скрипты печатают таймлайн (`smoke.start`, `smoke.submitted`, `smoke.poll`,
+`smoke.success | smoke.failed | smoke.timeout`), что удобно складывать в
+debug-bundle при инцидентах. Если live-проба зависла — Ctrl-C, скрипт
+best-effort удалит pod через тот же engine.
+
 ## Внешние источники
 
 - Replicate API docs: <https://replicate.com/docs/reference/http>

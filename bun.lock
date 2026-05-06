@@ -107,6 +107,7 @@
         "@generator/events": "workspace:*",
         "@generator/http": "workspace:*",
         "@generator/queue": "workspace:*",
+        "@generator/runpod": "workspace:*",
         "@generator/storage": "workspace:*",
         "@generator/workflows": "workspace:*",
         "hono": "^4.8.2",
@@ -376,6 +377,19 @@
       "dependencies": {
         "bullmq": "^5.73.0",
         "ioredis": "^5.10.1",
+      },
+      "devDependencies": {
+        "@generator/config": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "^5",
+      },
+    },
+    "packages/runpod": {
+      "name": "@generator/runpod",
+      "version": "0.0.0",
+      "dependencies": {
+        "@generator/storage": "workspace:*",
+        "zod": "catalog:",
       },
       "devDependencies": {
         "@generator/config": "workspace:*",
@@ -683,6 +697,8 @@
     "@generator/http": ["@generator/http@workspace:packages/http"],
 
     "@generator/queue": ["@generator/queue@workspace:packages/queue"],
+
+    "@generator/runpod": ["@generator/runpod@workspace:packages/runpod"],
 
     "@generator/runtime-config": ["@generator/runtime-config@workspace:packages/runtime-config"],
 

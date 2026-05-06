@@ -9,6 +9,13 @@ import {
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
 import {
+	type AnyWorkflowDefinition,
+	createFooocusSdxlWorkflow,
+	createLtx23VideoWorkflow,
+	createRunpodService,
+	type RunpodService,
+} from "@generator/runpod";
+import {
 	type S3StorageConfig,
 	tryResolveS3StorageConfig,
 } from "@generator/storage";
@@ -25,9 +32,6 @@ import type { InferenceClient } from "@/providers/inference";
 import { createInferenceRouter } from "@/providers/inference-router";
 import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
-import { createRunpodPodInferenceClient } from "@/providers/runpod-pod";
-
-const TRAILING_FILENAME_PATTERN = /[^/]*$/u;
 
 function createStubInferenceClient(): InferenceClient {
 	const fail = (): never => {
@@ -53,18 +57,6 @@ function readPositiveIntegerEnv(
 ): number {
 	const parsed = Number(value);
 	return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
-}
-
-function deriveSiblingUrl(baseUrl: string, siblingFilename: string): string {
-	try {
-		const url = new URL(baseUrl);
-		const segments = url.pathname.split("/");
-		segments[segments.length - 1] = siblingFilename;
-		url.pathname = segments.join("/");
-		return url.toString();
-	} catch {
-		return baseUrl.replace(TRAILING_FILENAME_PATTERN, siblingFilename);
-	}
 }
 
 import {
@@ -98,56 +90,69 @@ const isPublicApiPath = createPublicPathMatcher({
 	exact: ["/api/health", "/api/ready"],
 });
 
-function createConfiguredRunpodPodClient(input: {
+function createConfiguredRunpodService(input: {
 	civitaiApiKey?: string;
 	runpodApiKey?: string;
 	s3Config: S3StorageConfig | null;
-}) {
-	const bootstrapUrl = process.env.RUNPOD_LTX23_POD_BOOTSTRAP_URL;
-	if (!(input.runpodApiKey && bootstrapUrl && input.s3Config)) {
-		return undefined;
+}): RunpodService | null {
+	if (!input.runpodApiKey) {
+		return null;
 	}
-	const ltx23PodWorkflow = {
-		bootstrapUrl,
-		cloudType:
-			process.env.RUNPOD_LTX23_POD_CLOUD_TYPE === "COMMUNITY"
-				? ("COMMUNITY" as const)
-				: ("SECURE" as const),
-		containerDiskInGb: readPositiveIntegerEnv(
-			process.env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
-			15
-		),
-		gpuTypeIds: splitCsv(
-			process.env.RUNPOD_LTX23_POD_GPU_TYPE_IDS ??
-				"NVIDIA RTX A6000,NVIDIA A40,NVIDIA H100 80GB HBM3"
-		),
-		imageName:
-			process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
-			"ls250824/run-comfyui-ltx:28042026",
-		namePrefix: "ltx23",
-		networkVolumeId: process.env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
-		podRunnerUrl: deriveSiblingUrl(bootstrapUrl, "pod_runner.py"),
-		templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID ?? "p4f6rm9tb4",
-		timeoutMs: readPositiveIntegerEnv(
-			process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,
-			60 * 60 * 1000
-		),
-		volumeInGb: readPositiveIntegerEnv(
-			process.env.RUNPOD_LTX23_POD_VOLUME_GB,
-			90
-		),
-	};
-	return createRunpodPodInferenceClient({
+	const workflows: AnyWorkflowDefinition[] = [];
+	const fooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID;
+	if (fooocusEndpointId) {
+		workflows.push(
+			createFooocusSdxlWorkflow({ endpointId: fooocusEndpointId })
+		);
+	}
+	const bootstrapUrl = process.env.RUNPOD_LTX23_POD_BOOTSTRAP_URL;
+	if (bootstrapUrl && input.s3Config) {
+		workflows.push(
+			createLtx23VideoWorkflow({
+				civitaiApiKey: input.civitaiApiKey,
+				hfToken:
+					process.env.HF_TOKEN?.trim() || process.env.HUGGINGFACE_TOKEN?.trim(),
+				pod: {
+					bootstrapUrl,
+					cloudType:
+						process.env.RUNPOD_LTX23_POD_CLOUD_TYPE === "COMMUNITY"
+							? "COMMUNITY"
+							: "SECURE",
+					containerDiskInGb: readPositiveIntegerEnv(
+						process.env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
+						15
+					),
+					gpuTypeIds: splitCsv(
+						process.env.RUNPOD_LTX23_POD_GPU_TYPE_IDS ??
+							"NVIDIA RTX A6000,NVIDIA A40,NVIDIA H100 80GB HBM3"
+					),
+					imageName:
+						process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
+						"ls250824/run-comfyui-ltx:28042026",
+					namePrefix: "ltx23",
+					networkVolumeId: process.env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
+					templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID ?? "p4f6rm9tb4",
+					timeoutMs: readPositiveIntegerEnv(
+						process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,
+						60 * 60 * 1000
+					),
+					volumeInGb: readPositiveIntegerEnv(
+						process.env.RUNPOD_LTX23_POD_VOLUME_GB,
+						90
+					),
+				},
+			})
+		);
+	}
+	if (workflows.length === 0 || !input.s3Config) {
+		return null;
+	}
+	return createRunpodService({
 		apiKey: input.runpodApiKey,
-		civitaiApiKey: input.civitaiApiKey,
-		hfToken:
-			process.env.HF_TOKEN?.trim() || process.env.HUGGINGFACE_TOKEN?.trim(),
-		restApiBaseUrl: process.env.RUNPOD_REST_API_BASE_URL,
-		s3Config: input.s3Config,
-		workflows: {
-			"ltx-2-3-video": ltx23PodWorkflow,
-			"ltx-2-3-synth-video": ltx23PodWorkflow,
-		},
+		podsBaseUrl: process.env.RUNPOD_REST_API_BASE_URL,
+		s3: input.s3Config,
+		serverlessBaseUrl: process.env.RUNPOD_API_BASE_URL,
+		workflows,
 	});
 }
 
@@ -165,8 +170,6 @@ export function createApp(options: AppOptions) {
 	const replicateApiToken = process.env.REPLICATE_API_TOKEN;
 	const replicateApiBaseUrl = process.env.REPLICATE_API_BASE_URL;
 	const runpodApiKey = process.env.RUNPOD_API_KEY;
-	const runpodApiBaseUrl = process.env.RUNPOD_API_BASE_URL;
-	const runpodFooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID;
 	const resolvedS3Config = tryResolveS3StorageConfig();
 	const storageAdapter =
 		options.storageAdapter ??
@@ -200,35 +203,23 @@ export function createApp(options: AppOptions) {
 				apiToken: replicateApiToken,
 			})
 		: undefined;
-	const runpodClient =
-		runpodApiKey && runpodFooocusEndpointId
-			? createRunpodClient({
-					apiBaseUrl: runpodApiBaseUrl,
-					apiKey: runpodApiKey,
-					endpoints: {
-						"fooocus-sdxl": runpodFooocusEndpointId,
-					},
-				})
-			: undefined;
-	const runpodPodClient = createConfiguredRunpodPodClient({
+	const runpodService = createConfiguredRunpodService({
 		civitaiApiKey,
 		runpodApiKey,
 		s3Config: resolvedS3Config,
 	});
+	const runpodClient = runpodService
+		? createRunpodClient(runpodService)
+		: undefined;
 
 	const inferenceClient =
 		options.inferenceClient ??
-		(civitaiClient ||
-		falClient ||
-		replicateClient ||
-		runpodClient ||
-		runpodPodClient
+		(civitaiClient || falClient || replicateClient || runpodClient
 			? createInferenceRouter({
 					civitai: civitaiClient,
 					fal: falClient,
 					replicate: replicateClient,
 					runpod: runpodClient,
-					runpodPod: runpodPodClient,
 				})
 			: createStubInferenceClient());
 	const redisUrl =

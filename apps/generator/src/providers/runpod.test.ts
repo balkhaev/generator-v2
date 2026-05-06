@@ -1,238 +1,188 @@
 import { describe, expect, it, mock } from "bun:test";
+import {
+	createFooocusSdxlWorkflow,
+	createRunpodService,
+	type PodWorkflow,
+} from "@generator/runpod";
+import type { S3StorageConfig } from "@generator/storage";
+import { z } from "zod";
 
 import {
 	createRunpodClient,
-	formatRunpodProviderEndpointId,
-	normalizeRunpodStatus,
+	isRunpodEndpointId,
+	isRunpodPayload,
+	RUNPOD_LEGACY_ENDPOINT_PAYLOAD_KEY,
+	RUNPOD_LEGACY_POD_PAYLOAD_KEY,
+	RUNPOD_WORKFLOW_PAYLOAD_KEY,
 } from "@/providers/runpod";
 
-describe("runpod provider", () => {
-	it("normalizes queue statuses", () => {
-		expect(normalizeRunpodStatus("IN_QUEUE")).toBe("queued");
-		expect(normalizeRunpodStatus("IN_PROGRESS")).toBe("running");
-		expect(normalizeRunpodStatus("COMPLETED")).toBe("succeeded");
-		expect(normalizeRunpodStatus("FAILED")).toBe("failed");
-		expect(normalizeRunpodStatus("ERROR")).toBe("failed");
-		expect(() => normalizeRunpodStatus("UNKNOWN")).toThrow(
-			"Unsupported RunPod status: UNKNOWN"
-		);
+const s3: S3StorageConfig = {
+	accessKeyId: "access",
+	bucket: "assets",
+	endpoint: "https://s3.example.com",
+	publicBaseUrl: "https://assets.example.com",
+	region: "hel1",
+	secretAccessKey: "secret",
+};
+
+const ltxWorkflow: PodWorkflow<{ prompt: string }, unknown> = {
+	id: "ltx-2-3-video",
+	mode: "pod",
+	pod: {
+		bootstrapUrl: "https://cdn.example.com/boot.sh",
+		gpuTypeIds: ["A6000"],
+		imageName: "img:latest",
+	},
+	inputSchema: z.object({ prompt: z.string() }),
+	artifactContentType: "video/mp4",
+	buildEnv: () => ({}),
+	parseOutput: () => ({}),
+};
+
+function buildService(fetchImpl: ReturnType<typeof mock>) {
+	return createRunpodService({
+		apiKey: "rpa_test",
+		fetchImpl,
+		s3,
+		workflows: [
+			createFooocusSdxlWorkflow({ endpointId: "endpoint-x" }),
+			ltxWorkflow,
+		],
 	});
+}
 
-	it("submits to the configured endpoint and strips internal routing keys", async () => {
-		const fetchImpl = mock((url: string, init?: RequestInit) => {
-			expect(url).toBe("https://api.runpod.ai/v2/endpoint-xyz/run");
-			expect(init?.method).toBe("POST");
-			expect(init?.headers).toMatchObject({
-				authorization: "Bearer rpa_test_key",
-				"content-type": "application/json",
-			});
-			expect(JSON.parse(String(init?.body))).toEqual({
-				input: {
-					loras: [
-						{
-							url: "https://example.com/sdxl.safetensors",
-							weight: 0.8,
-						},
-					],
-					prompt: "test",
-				},
-			});
-			return Promise.resolve(
-				new Response(
-					JSON.stringify({
-						id: "rp-job-123",
-						status: "IN_QUEUE",
-					}),
-					{
-						headers: { "content-type": "application/json" },
-						status: 200,
-					}
-				)
-			);
-		});
-		const client = createRunpodClient({
-			apiKey: "rpa_test_key",
-			endpoints: {
-				"fooocus-sdxl": "endpoint-xyz",
-			},
-			fetchImpl,
-		});
+describe("RunPod adapter", () => {
+	it("submits using the canonical __runpodWorkflow marker", async () => {
+		const fetchImpl = mock(() =>
+			Promise.resolve(Response.json({ id: "job-1", status: "IN_QUEUE" }))
+		);
+		const adapter = createRunpodClient(buildService(fetchImpl));
 
-		const submission = await client.submit({
-			__runpodEndpoint: "fooocus-sdxl",
-			loras: [
-				{
-					url: "https://example.com/sdxl.safetensors",
-					weight: 0.8,
-				},
-			],
+		const result = await adapter.submit({
+			[RUNPOD_WORKFLOW_PAYLOAD_KEY]: "fooocus-sdxl",
 			prompt: "test",
 		});
-
-		expect(submission).toEqual({
-			endpointId: "runpod:endpoint-xyz",
-			jobId: "rp-job-123",
+		expect(result).toEqual({
+			endpointId: "runpod:fooocus-sdxl",
+			jobId: "job-1",
 			queuePosition: null,
 			status: "queued",
 		});
 	});
 
-	it("returns completed output from /status", async () => {
-		const fetchImpl = mock((url: string) => {
-			expect(url).toBe(
-				"https://api.runpod.ai/v2/endpoint-xyz/status/rp-job-123"
-			);
-			return Promise.resolve(
-				new Response(
-					JSON.stringify({
-						id: "rp-job-123",
-						output: {
-							images: [{ url: "https://assets.example.com/out.png" }],
-						},
-						status: "COMPLETED",
-					}),
-					{
-						headers: { "content-type": "application/json" },
-						status: 200,
-					}
-				)
-			);
-		});
-		const client = createRunpodClient({
-			apiKey: "rpa_test_key",
-			endpoints: { "fooocus-sdxl": "endpoint-xyz" },
-			fetchImpl,
-		});
-
-		const job = await client.getStatus(
-			"rp-job-123",
-			formatRunpodProviderEndpointId("endpoint-xyz")
-		);
-
-		expect(job).toMatchObject({
-			endpointId: "runpod:endpoint-xyz",
-			errorSummary: null,
-			jobId: "rp-job-123",
-			output: {
-				images: [{ url: "https://assets.example.com/out.png" }],
-			},
-			progressPct: 100,
-			status: "succeeded",
-		});
-	});
-
-	it("adds data URLs for Fooocus base64 outputs", async () => {
+	it("treats legacy __runpodEndpoint as workflowId fallback", async () => {
 		const fetchImpl = mock(() =>
-			Promise.resolve(
-				new Response(
-					JSON.stringify({
-						id: "rp-job-123",
-						output: [{ base64: "iVBORw0KGgo=", finish_reason: "SUCCESS" }],
-						status: "COMPLETED",
-					}),
-					{
-						headers: { "content-type": "application/json" },
-						status: 200,
-					}
-				)
-			)
+			Promise.resolve(Response.json({ id: "job-1", status: "IN_QUEUE" }))
 		);
-		const client = createRunpodClient({
-			apiKey: "rpa_test_key",
-			endpoints: { "fooocus-sdxl": "endpoint-xyz" },
-			fetchImpl,
+		const adapter = createRunpodClient(buildService(fetchImpl));
+
+		const result = await adapter.submit({
+			[RUNPOD_LEGACY_ENDPOINT_PAYLOAD_KEY]: "fooocus-sdxl",
+			prompt: "test",
 		});
-
-		const job = await client.getStatus(
-			"rp-job-123",
-			formatRunpodProviderEndpointId("endpoint-xyz")
-		);
-
-		expect(job.output).toEqual([
-			{
-				base64: "iVBORw0KGgo=",
-				dataUrl: "data:image/png;base64,iVBORw0KGgo=",
-				finish_reason: "SUCCESS",
-			},
-		]);
+		expect(result.endpointId).toBe("runpod:fooocus-sdxl");
 	});
 
-	it("surfaces failed RunPod status errors", async () => {
+	it("treats legacy __runpodEndpoint with raw RunPod endpoint id", async () => {
 		const fetchImpl = mock(() =>
-			Promise.resolve(
-				new Response(
-					JSON.stringify({
-						error: { message: "Fooocus failed to load LoRA" },
-						id: "rp-job-123",
-						status: "FAILED",
-					}),
-					{
-						headers: { "content-type": "application/json" },
-						status: 200,
-					}
-				)
-			)
+			Promise.resolve(Response.json({ id: "job-1", status: "IN_QUEUE" }))
 		);
-		const client = createRunpodClient({
-			apiKey: "rpa_test_key",
-			endpoints: { "fooocus-sdxl": "endpoint-xyz" },
-			fetchImpl,
+		const adapter = createRunpodClient(buildService(fetchImpl));
+
+		const result = await adapter.submit({
+			[RUNPOD_LEGACY_ENDPOINT_PAYLOAD_KEY]: "endpoint-x",
+			prompt: "test",
 		});
-
-		const job = await client.getStatus(
-			"rp-job-123",
-			formatRunpodProviderEndpointId("endpoint-xyz")
-		);
-
-		expect(job.status).toBe("failed");
-		expect(job.errorSummary).toBe("Fooocus failed to load LoRA");
-		expect(job.output).toBeNull();
+		expect(result.endpointId).toBe("runpod:fooocus-sdxl");
 	});
 
-	it("cancels jobs through the decoded endpoint id", async () => {
-		const fetchImpl = mock((url: string, init?: RequestInit) => {
-			expect(url).toBe(
-				"https://api.runpod.ai/v2/endpoint-xyz/cancel/rp-job-123"
-			);
-			expect(init?.method).toBe("POST");
-			return Promise.resolve(
-				new Response(
-					JSON.stringify({
-						id: "rp-job-123",
-						status: "CANCELLED",
-					}),
-					{
-						headers: { "content-type": "application/json" },
-						status: 200,
-					}
-				)
-			);
-		});
-		const client = createRunpodClient({
-			apiKey: "rpa_test_key",
-			endpoints: { "fooocus-sdxl": "endpoint-xyz" },
-			fetchImpl,
-		});
-
-		await client.cancel(
-			"rp-job-123",
-			formatRunpodProviderEndpointId("endpoint-xyz")
+	it("uses __runpodPod for legacy pod workflows", async () => {
+		const fetchImpl = mock(() =>
+			Promise.resolve(Response.json({ id: "pod-1", desiredStatus: "RUNNING" }))
 		);
+		const adapter = createRunpodClient(buildService(fetchImpl));
+
+		const result = await adapter.submit({
+			[RUNPOD_LEGACY_POD_PAYLOAD_KEY]: "ltx-2-3-video",
+			prompt: "test",
+		});
+		expect(result.endpointId).toBe("runpod:ltx-2-3-video");
+		expect(result.status).toBe("queued");
+	});
+
+	it("strips routing markers before passing input to the engine", async () => {
+		const fetchImpl = mock((_url: string, init?: RequestInit) => {
+			const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+			expect(body.input).not.toHaveProperty(RUNPOD_WORKFLOW_PAYLOAD_KEY);
+			expect(body.input).toHaveProperty("prompt", "hi");
+			return Promise.resolve(
+				Response.json({ id: "job-1", status: "IN_QUEUE" })
+			);
+		});
+		const adapter = createRunpodClient(buildService(fetchImpl));
+
+		await adapter.submit({
+			[RUNPOD_WORKFLOW_PAYLOAD_KEY]: "fooocus-sdxl",
+			prompt: "hi",
+		});
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
 	});
 
-	it("throws when the endpoint key is not configured", async () => {
-		const client = createRunpodClient({
-			apiKey: "rpa_test_key",
-			endpoints: {},
-			fetchImpl: mock(() => Promise.reject(new Error("unexpected"))),
+	it("propagates getStatus and cancel through the service", async () => {
+		const calls: string[] = [];
+		const fetchImpl = mock((url: string, init?: RequestInit) => {
+			calls.push(`${init?.method ?? "GET"} ${url}`);
+			if (url.includes("/cancel/")) {
+				return Promise.resolve(Response.json({ id: "job-1" }));
+			}
+			return Promise.resolve(
+				Response.json({
+					id: "job-1",
+					status: "COMPLETED",
+					output: [{ url: "https://x/y.png" }],
+				})
+			);
 		});
+		const adapter = createRunpodClient(buildService(fetchImpl));
 
-		await expect(
-			client.submit({
-				__runpodEndpoint: "fooocus-sdxl",
-				prompt: "test",
-			})
-		).rejects.toThrow("RunPod endpoint is not configured: fooocus-sdxl");
+		const job = await adapter.getStatus("job-1", "runpod:fooocus-sdxl");
+		expect(job.status).toBe("succeeded");
+		expect(job.endpointId).toBe("runpod:fooocus-sdxl");
+		expect(job.output).toBeDefined();
+
+		await adapter.cancel("job-1", "runpod:fooocus-sdxl");
+		expect(calls).toEqual([
+			"GET https://api.runpod.ai/v2/endpoint-x/status/job-1",
+			"POST https://api.runpod.ai/v2/endpoint-x/cancel/job-1",
+		]);
+	});
+
+	it("rejects payloads without any RunPod marker", async () => {
+		const adapter = createRunpodClient(
+			buildService(mock(() => Promise.reject(new Error("noop"))))
+		);
+		await expect(adapter.submit({ prompt: "test" })).rejects.toThrow(
+			"RunPod payload requires"
+		);
+	});
+});
+
+describe("RunPod payload markers", () => {
+	it("isRunpodPayload covers all three markers", () => {
+		expect(isRunpodPayload({ [RUNPOD_WORKFLOW_PAYLOAD_KEY]: "x" })).toBe(true);
+		expect(isRunpodPayload({ [RUNPOD_LEGACY_ENDPOINT_PAYLOAD_KEY]: "x" })).toBe(
+			true
+		);
+		expect(isRunpodPayload({ [RUNPOD_LEGACY_POD_PAYLOAD_KEY]: "x" })).toBe(
+			true
+		);
+		expect(isRunpodPayload({ prompt: "x" })).toBe(false);
+	});
+
+	it("isRunpodEndpointId recognises both prefixes", () => {
+		expect(isRunpodEndpointId("runpod:fooocus-sdxl")).toBe(true);
+		expect(isRunpodEndpointId("runpod-pod:ltx-2-3-video")).toBe(true);
+		expect(isRunpodEndpointId("fal-ai/foo")).toBe(false);
+		expect(isRunpodEndpointId(undefined)).toBe(false);
 	});
 });

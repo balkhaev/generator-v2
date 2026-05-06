@@ -276,7 +276,7 @@ describe("workflow registry", () => {
 				prompt: "studio portrait of my_character, cinematic lighting",
 			})
 		).toMatchObject({
-			__runpodEndpoint: "fooocus-sdxl",
+			__runpodWorkflow: "fooocus-sdxl",
 			advanced_params: {
 				overwrite_step: 32,
 			},

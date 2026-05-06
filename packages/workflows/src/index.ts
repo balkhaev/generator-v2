@@ -743,7 +743,7 @@ function buildRunpodFooocusSdxlInput({
 }): Record<string, unknown> {
 	const loras = buildRunpodFooocusLoras(parsed);
 	return {
-		__runpodEndpoint: "fooocus-sdxl",
+		__runpodWorkflow: "fooocus-sdxl",
 		api_name: "txt2img",
 		prompt,
 		// Fooocus-API-LORA accepts these native field names. The RunPod
@@ -809,7 +809,7 @@ function buildRunpodLtx23Input({
 					loraUrl: parsed.loraUrl,
 				};
 	return {
-		__runpodPod: RUNPOD_LTX23_POD_KEY,
+		__runpodWorkflow: RUNPOD_LTX23_POD_KEY,
 		prompt,
 		negativePrompt: parsed.negativePrompt,
 		width: parsed.width,

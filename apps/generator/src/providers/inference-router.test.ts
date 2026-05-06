@@ -64,62 +64,48 @@ describe("inference router", () => {
 		expect(civitai.submit).toHaveBeenCalledTimes(2);
 	});
 
-	it("routes RunPod-marked payloads and endpoint ids to RunPod", async () => {
+	it("routes new __runpodWorkflow payloads to the RunPod adapter", async () => {
 		const fal = createMockClient("fal");
 		const runpod = createMockClient("runpod");
 		const router = createInferenceRouter({ fal, runpod });
 
 		await expect(
 			router.submit({
-				__runpodEndpoint: "fooocus-sdxl",
+				__runpodWorkflow: "fooocus-sdxl",
 				prompt: "test",
 			})
-		).resolves.toMatchObject({
-			endpointId: "runpod-endpoint",
-		});
+		).resolves.toMatchObject({ endpointId: "runpod-endpoint" });
 		expect(runpod.submit).toHaveBeenCalledTimes(1);
 		expect(fal.submit).not.toHaveBeenCalled();
-
-		await router.getStatus("rp-job-1", "runpod:endpoint-xyz");
-		expect(runpod.getStatus).toHaveBeenCalledWith(
-			"rp-job-1",
-			"runpod:endpoint-xyz"
-		);
-
-		await router.cancel("rp-job-1", "runpod:endpoint-xyz");
-		expect(runpod.cancel).toHaveBeenCalledWith(
-			"rp-job-1",
-			"runpod:endpoint-xyz"
-		);
 	});
 
-	it("routes RunPod Pod-marked payloads and endpoint ids to RunPod Pod", async () => {
+	it("routes legacy __runpodEndpoint and __runpodPod payloads to RunPod", async () => {
 		const fal = createMockClient("fal");
-		const runpodPod = createMockClient("runpod-pod");
-		const router = createInferenceRouter({ fal, runpodPod });
+		const runpod = createMockClient("runpod");
+		const router = createInferenceRouter({ fal, runpod });
 
-		await expect(
-			router.submit({
-				__runpodPod: "ltx-2-3-video",
-				prompt: "test",
-			})
-		).resolves.toMatchObject({
-			endpointId: "runpod-pod-endpoint",
+		await router.submit({
+			__runpodEndpoint: "fooocus-sdxl",
+			prompt: "test",
 		});
-		expect(runpodPod.submit).toHaveBeenCalledTimes(1);
-		expect(fal.submit).not.toHaveBeenCalled();
+		await router.submit({
+			__runpodPod: "ltx-2-3-video",
+			prompt: "test",
+		});
+		expect(runpod.submit).toHaveBeenCalledTimes(2);
+	});
 
-		await router.getStatus("pod-123:request-456", "runpod-pod:ltx-2-3");
-		expect(runpodPod.getStatus).toHaveBeenCalledWith(
-			"pod-123:request-456",
-			"runpod-pod:ltx-2-3"
-		);
+	it("routes runpod: and runpod-pod: endpoint ids to the same adapter", async () => {
+		const fal = createMockClient("fal");
+		const runpod = createMockClient("runpod");
+		const router = createInferenceRouter({ fal, runpod });
 
-		await router.cancel("pod-123:request-456", "runpod-pod:ltx-2-3");
-		expect(runpodPod.cancel).toHaveBeenCalledWith(
-			"pod-123:request-456",
-			"runpod-pod:ltx-2-3"
-		);
+		await router.getStatus("rp-job-1", "runpod:fooocus-sdxl");
+		await router.getStatus("pod-1:req-1", "runpod-pod:ltx-2-3-video");
+		await router.cancel("rp-job-1", "runpod:fooocus-sdxl");
+		await router.cancel("pod-1:req-1", "runpod-pod:ltx-2-3-video");
+		expect(runpod.getStatus).toHaveBeenCalledTimes(2);
+		expect(runpod.cancel).toHaveBeenCalledTimes(2);
 	});
 
 	it("keeps fal routing for fal payloads and unprefixed endpoint ids", async () => {
@@ -178,21 +164,16 @@ describe("inference router", () => {
 
 		expect(() =>
 			router.submit({
-				__runpodEndpoint: "fooocus-sdxl",
+				__runpodWorkflow: "fooocus-sdxl",
 				prompt: "test",
 			})
 		).toThrow("RunPod inference client is not configured");
-	});
-
-	it("fails fast when a RunPod Pod workflow is submitted without a RunPod Pod client", () => {
-		const router = createInferenceRouter({ fal: createMockClient("fal") });
-
 		expect(() =>
 			router.submit({
 				__runpodPod: "ltx-2-3-video",
 				prompt: "test",
 			})
-		).toThrow("RunPod Pod inference client is not configured");
+		).toThrow("RunPod inference client is not configured");
 	});
 
 	it("fails fast when a Civitai workflow is submitted without a Civitai client", () => {

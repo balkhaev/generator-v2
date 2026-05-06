@@ -626,7 +626,7 @@ describe("workflow registry", () => {
 			}) as Record<string, unknown>;
 
 		expect(buildInput()).toMatchObject({
-			__runpodEndpoint: "fooocus-sdxl",
+			__runpodWorkflow: "fooocus-sdxl",
 			advanced_params: {
 				overwrite_step: 30,
 			},
@@ -661,7 +661,7 @@ describe("workflow registry", () => {
 				seed: 42,
 			})
 		).toMatchObject({
-			__runpodEndpoint: "fooocus-sdxl",
+			__runpodWorkflow: "fooocus-sdxl",
 			enable_refiner: false,
 			image_seed: 42,
 			loras: [
@@ -698,7 +698,7 @@ describe("workflow registry", () => {
 			}) as Record<string, unknown>;
 
 		expect(buildInput()).toMatchObject({
-			__runpodPod: "ltx-2-3-video",
+			__runpodWorkflow: "ltx-2-3-video",
 			cfgScale: 1,
 			distilledLoraName:
 				"ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
@@ -747,7 +747,7 @@ describe("workflow registry", () => {
 			prompt: "A woman is doing gymnastics outdoors.",
 		}) as Record<string, unknown>;
 		expect(i2vInput).toMatchObject({
-			__runpodPod: "ltx-2-3-video",
+			__runpodWorkflow: "ltx-2-3-video",
 			inputImageUrl: "https://example.com/input.png",
 		});
 	});

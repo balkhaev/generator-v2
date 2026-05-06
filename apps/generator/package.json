@@ -19,6 +19,7 @@
     "@generator/events": "workspace:*",
     "@generator/http": "workspace:*",
     "@generator/queue": "workspace:*",
+    "@generator/runpod": "workspace:*",
     "@generator/storage": "workspace:*",
     "@generator/workflows": "workspace:*",
     "hono": "^4.8.2",

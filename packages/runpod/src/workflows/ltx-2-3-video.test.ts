@@ -151,7 +151,7 @@ describe("ltx-2-3-video workflow", () => {
 		).toBe("req-req-1.png");
 	});
 
-	it("buildPrompt installs Civitai LoRA in the LoraManager node when ids are provided", async () => {
+	it("buildPrompt swaps the LoraManager slot for a standard LoraLoaderModelOnly when ids are provided", async () => {
 		const wf = buildWorkflow();
 		const getCivitaiVersionInfo = mock(() =>
 			Promise.resolve({
@@ -183,16 +183,15 @@ describe("ltx-2-3-video workflow", () => {
 		);
 		const loraNode = result.prompt[LTX_23_I2V_NODE_IDS.NODE_LORA_LOADER];
 		expect(loraNode).toBeDefined();
+		expect(loraNode?.class_type).toBe("LoraLoaderModelOnly");
 		const inputs = loraNode?.inputs as {
-			loras: { __value__: Array<{ name: string; strength: number }> };
+			lora_name: string;
+			model: [string, number];
+			strength_model: number;
 		};
-		expect(inputs.loras.__value__).toEqual([
-			{
-				active: true,
-				name: "synth-pussy-LTX-2-3.safetensors",
-				strength: 0.85,
-			},
-		] as never);
+		expect(inputs.lora_name).toBe("synth-pussy-LTX-2-3.safetensors");
+		expect(inputs.strength_model).toBe(0.85);
+		expect(Array.isArray(inputs.model)).toBe(true);
 		expect(getCivitaiVersionInfo).toHaveBeenCalledWith("loras", 2_841_299);
 	});
 

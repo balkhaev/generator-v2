@@ -159,17 +159,12 @@ export function createLtx23VideoWorkflow(
 						`Failed to resolve Civitai LoRA filename for model ${parsed.loraCivitaiModelId} version ${parsed.loraCivitaiVersionId}`
 					);
 				}
-				patchNodeInputs(graph, NODE_LORA_LOADER, {
-					loras: {
-						__value__: [
-							{
-								active: true,
-								name: loraFilename,
-								strength: parsed.loraScale,
-							},
-						],
-					},
-				});
+				replaceLoraManagerWithStandardLoader(
+					graph,
+					NODE_LORA_LOADER,
+					loraFilename,
+					parsed.loraScale
+				);
 			}
 			return { prompt: graph };
 		},
@@ -517,6 +512,42 @@ function patchNodeInputs(
 		);
 	}
 	node.inputs = { ...node.inputs, ...patch };
+}
+
+/**
+ * Заменяет `Lora Loader (LoraManager)`-ноду на стандартную ComfyUI
+ * `LoraLoaderModelOnly` с тем же id. LoraManager-кастом-ноду мы используем
+ * только как «слот» в шаблоне: на ней нестабильная сериализация и runtime
+ * легко падает на пустых полях. Стандартная LoraLoaderModelOnly работает
+ * на любом ComfyUI и понимает `lora_name` относительно `models/loras/`.
+ */
+function replaceLoraManagerWithStandardLoader(
+	graph: Record<string, ComfyUINodeApiInput>,
+	nodeId: string,
+	loraFilename: string,
+	strength: number
+): void {
+	const node = graph[nodeId];
+	if (!node) {
+		throw new Error(
+			`LTX 2.3 API graph is missing node id ${nodeId}; template likely changed`
+		);
+	}
+	const modelInput = node.inputs?.model;
+	if (!Array.isArray(modelInput)) {
+		throw new Error(
+			`LTX 2.3 API graph node ${nodeId} has no model input; template likely changed`
+		);
+	}
+	graph[nodeId] = {
+		_meta: { title: "Civitai LoRA" },
+		class_type: "LoraLoaderModelOnly",
+		inputs: {
+			lora_name: loraFilename,
+			model: modelInput,
+			strength_model: strength,
+		},
+	};
 }
 
 function deepCloneJson<T>(value: T): T {

@@ -210,6 +210,7 @@ async function prepareLtx23(
 		return { ready: true };
 	}
 	return await ensureLoraDownloaded({
+		civitaiApiKey: args.civitaiApiKey,
 		client: args.client,
 		downloadId: args.requestId,
 		modelId: parsed.loraCivitaiModelId,
@@ -246,6 +247,7 @@ async function ensureInputImageUploaded(
 }
 
 interface EnsureLoraArgs {
+	civitaiApiKey?: string;
 	client: ComfyUIClient;
 	downloadId: string;
 	modelId: number;
@@ -284,7 +286,7 @@ async function ensureLoraDownloaded(
 		};
 	}
 	try {
-		await ensureDefaultLoraRoot(args.client);
+		await ensureLoraManagerBootstrapped(args.client, args.civitaiApiKey);
 		await args.client.startLoraDownload({
 			downloadId: args.downloadId,
 			modelId: args.modelId,
@@ -303,29 +305,51 @@ async function ensureLoraDownloaded(
 }
 
 /**
- * Lora Manager хранит `default_lora_root` в settings. На свежем pod-инстансе
- * RunPod template ключ может быть пустым — в этом случае
- * `/api/lm/download-model` с `use_default_paths: true` вернёт 500
- * "Default lora root path not set in settings". Здесь мы идемпотентно его
- * чиним: смотрим текущие settings, если default не задан — берём первый
- * `folder_paths.loras` из active library и POST'им обратно.
+ * Lora Manager на свежем RunPod template требует две настройки, которые
+ * по умолчанию пустые:
+ *
+ * - `default_lora_root` — куда сохранять скачанную LoRA. Без него
+ *   `/api/lm/download-model use_default_paths=true` валится 500
+ *   "Default lora root path not set in settings".
+ * - `civitai_api_key` — токен для Civitai. Без него Civitai API возвращает
+ *   401/403 и Lora Manager отдаёт 500 "Download failed with status 500"
+ *   уже из downloader.py. Lora Manager при старте читает env var
+ *   `CIVITAI_API_KEY`, но если она пуста или процесс уже запустился до
+ *   подъёма env, мы перебиваем настройку явно.
+ *
+ * Идемпотентно: проверяем что уже стоит, и пишем недостающее.
  */
-async function ensureDefaultLoraRoot(client: ComfyUIClient): Promise<void> {
+async function ensureLoraManagerBootstrapped(
+	client: ComfyUIClient,
+	civitaiApiKey?: string
+): Promise<void> {
 	const settings = await client.getLoraManagerSettings();
+	const patch: Record<string, unknown> = {};
 	if (
-		typeof settings.default_lora_root === "string" &&
-		settings.default_lora_root.trim().length > 0
+		typeof settings.default_lora_root !== "string" ||
+		settings.default_lora_root.trim().length === 0
 	) {
-		return;
+		const libraries = await client.getLoraManagerLibraries();
+		const candidate = pickLorasRoot(libraries);
+		if (!candidate) {
+			throw new Error(
+				"ComfyUI Lora Manager has no configured loras folder paths; cannot infer default_lora_root"
+			);
+		}
+		patch.default_lora_root = candidate;
 	}
-	const libraries = await client.getLoraManagerLibraries();
-	const candidate = pickLorasRoot(libraries);
-	if (!candidate) {
-		throw new Error(
-			"ComfyUI Lora Manager has no configured loras folder paths; cannot infer default_lora_root"
-		);
+	const existingApiKey = settings.civitai_api_key;
+	if (
+		civitaiApiKey &&
+		(typeof existingApiKey !== "string" ||
+			existingApiKey.trim().length === 0 ||
+			existingApiKey !== civitaiApiKey)
+	) {
+		patch.civitai_api_key = civitaiApiKey;
 	}
-	await client.updateLoraManagerSettings({ default_lora_root: candidate });
+	if (Object.keys(patch).length > 0) {
+		await client.updateLoraManagerSettings(patch);
+	}
 }
 
 function pickLorasRoot(snapshot: LoraManagerLibrariesSnapshot): string | null {

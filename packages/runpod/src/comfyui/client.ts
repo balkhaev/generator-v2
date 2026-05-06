@@ -38,6 +38,7 @@ export interface LoraManagerLibrary {
 }
 
 export interface LoraManagerSettings {
+	civitai_api_key?: string;
 	default_lora_root?: string;
 	[key: string]: unknown;
 }

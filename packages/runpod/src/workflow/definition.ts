@@ -41,6 +41,9 @@ export interface PodSpec {
 }
 
 export interface PodPrepareArgs<TInput> {
+	/** Civitai API key proxied from the engine; used for Lora Manager
+	 * bootstrap when env-based auto-detection didn't kick in. */
+	civitaiApiKey?: string;
 	client: ComfyUIClient;
 	downloadId: string;
 	input: TInput;

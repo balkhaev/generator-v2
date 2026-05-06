@@ -368,6 +368,7 @@ export function createPodEngine<TInput, TOutput>(
 		let prepareStatus: PodPrepareStatus;
 		try {
 			prepareStatus = await workflow.prepare({
+				civitaiApiKey,
 				client,
 				downloadId: requestId,
 				input,
@@ -494,6 +495,7 @@ export function createPodEngine<TInput, TOutput>(
 			};
 			if (civitaiApiKey) {
 				env.CIVITAI_TOKEN = civitaiApiKey;
+				env.CIVITAI_API_KEY = civitaiApiKey;
 			}
 			if (hfToken) {
 				env.HF_TOKEN = hfToken;

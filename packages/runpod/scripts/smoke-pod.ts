@@ -7,7 +7,6 @@
  *
  * Запуск (live, поднимает реальный pod LTX 2.3 и ждёт MP4 в S3):
  *   RUNPOD_API_KEY=rpa_xxx \
- *   RUNPOD_LTX23_POD_BOOTSTRAP_URL=https://.../pod-bootstrap.sh \
  *   S3_ENDPOINT=... S3_BUCKET=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=... \
  *   bun run packages/runpod/scripts/smoke-pod.ts -- --live --prompt="cat"
  *
@@ -25,6 +24,7 @@ import { createLtx23VideoWorkflow } from "../src/workflows/ltx-2-3-video";
 interface CliArgs {
 	dryRun: boolean;
 	gpuTypeIds?: string[];
+	imageUrl: string;
 	live: boolean;
 	pollIntervalMs: number;
 	prompt: string;
@@ -34,6 +34,9 @@ interface CliArgs {
 function parseArgs(argv: string[]): CliArgs {
 	const args: CliArgs = {
 		dryRun: false,
+		imageUrl:
+			process.env.LTX_SMOKE_INPUT_IMAGE_URL ??
+			"https://raw.githubusercontent.com/Lightricks/LTX-Video/main/assets/cat.png",
 		live: false,
 		pollIntervalMs: 30_000,
 		prompt: "a cat dancing in a tutu, cinematic, 4k",
@@ -96,7 +99,7 @@ async function sleep(ms: number): Promise<void> {
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
 	const apiKey = process.env.RUNPOD_API_KEY;
-	const bootstrapUrl = process.env.RUNPOD_LTX23_POD_BOOTSTRAP_URL;
+	const templateId = process.env.RUNPOD_LTX23_POD_TEMPLATE_ID ?? "p4f6rm9tb4";
 	const imageName =
 		process.env.RUNPOD_LTX23_POD_IMAGE_NAME ??
 		"ls250824/run-comfyui-ltx:28042026";
@@ -111,21 +114,15 @@ async function main(): Promise<void> {
 	if (!apiKey) {
 		throw new Error("RUNPOD_API_KEY is required");
 	}
-	if (!bootstrapUrl) {
-		throw new Error("RUNPOD_LTX23_POD_BOOTSTRAP_URL is required");
-	}
 
 	const s3 = resolveS3StorageConfig();
 	const workflow = createLtx23VideoWorkflow({
-		hfToken: process.env.HF_TOKEN ?? process.env.HUGGINGFACE_TOKEN,
-		civitaiApiKey: process.env.CIVITAI_API_KEY,
 		pod: {
-			bootstrapUrl,
 			cloudType: "SECURE",
 			containerDiskInGb: 15,
 			gpuTypeIds,
 			imageName,
-			templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID,
+			templateId,
 			timeoutMs: 30 * 60 * 1000,
 			volumeInGb: 90,
 		},
@@ -136,26 +133,21 @@ async function main(): Promise<void> {
 		gpuTypeIds,
 		imageName,
 		live: args.live,
+		templateId,
 	});
 
 	if (args.dryRun) {
-		const parsed = workflow.inputSchema.parse({ prompt: args.prompt });
-		const env = workflow.buildEnv(parsed, {
-			logPublicUrl: "https://example.com/log.txt",
-			logUploadUrl: "https://example.com/log-put",
-			outputContentType: "video/mp4",
-			outputPublicUrl: "https://example.com/output.mp4",
-			outputUploadUrl: "https://example.com/output-put",
-			requestId: "dry-run-request",
-			s3,
-			timeoutMs: workflow.pod.timeoutMs,
-		});
-		logEvent("smoke.dry-run.env", {
-			keys: Object.keys(env),
+		const parsed = workflow.inputSchema.parse({
+			inputImageUrl: args.imageUrl,
 			prompt: args.prompt,
 		});
-		logEvent("smoke.dry-run.dockerStartCmd", {
-			value: `bash -lc 'curl -sSfL "${bootstrapUrl}" | bash'`,
+		const built = workflow.buildPrompt(
+			{ inputImageUrl: args.imageUrl, prompt: args.prompt },
+			{ clientId: "dry-run", requestId: "dry-run" }
+		);
+		logEvent("smoke.dry-run.parsed", { input: parsed });
+		logEvent("smoke.dry-run.api-graph", {
+			nodeCount: Object.keys(built.prompt).length,
 		});
 		return;
 	}
@@ -168,12 +160,17 @@ async function main(): Promise<void> {
 	const api = createPodsApi(http);
 	const engine = createPodEngine({
 		api,
+		civitaiApiKey: process.env.CIVITAI_API_KEY ?? process.env.CIVITAI_TOKEN,
+		hfToken: process.env.HF_TOKEN ?? process.env.HUGGINGFACE_TOKEN,
 		logger: console,
 		s3,
 		workflow,
 	});
 
-	const submission = await engine.submit({ prompt: args.prompt });
+	const submission = await engine.submit({
+		inputImageUrl: args.imageUrl,
+		prompt: args.prompt,
+	});
 	logEvent("smoke.submitted", submission);
 
 	let interrupted = false;

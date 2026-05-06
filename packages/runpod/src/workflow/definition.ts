@@ -1,5 +1,7 @@
-import type { S3ObjectStat, S3StorageConfig } from "@generator/storage";
+import type { S3ObjectStat } from "@generator/storage";
 import type { z } from "zod";
+
+import type { ComfyUIClient, ComfyUINodeApiInput } from "../comfyui/client";
 
 export type WorkflowMode = "serverless" | "pod";
 
@@ -19,8 +21,13 @@ export interface ServerlessWorkflow<TInput, TOutput> {
 	policy?: RunpodPolicy;
 }
 
+/**
+ * Спецификация запускаемого pod'а — только то, что отдаём в RunPod REST.
+ * `dockerStartCmd` намеренно не закладывается: template'у поверх образа
+ * `ls250824/run-comfyui-ltx` и подобных, его перекрывать нельзя — иначе их
+ * provisioning не запускается, и каждый pod заново качает все модели.
+ */
 export interface PodSpec {
-	bootstrapUrl: string;
 	cloudType?: "SECURE" | "COMMUNITY";
 	containerDiskInGb?: number;
 	gpuCount?: number;
@@ -33,40 +40,59 @@ export interface PodSpec {
 	volumeInGb?: number;
 }
 
-/**
- * Контекст, который PodEngine выдаёт workflow'у в момент сборки env: ID
- * запроса, presigned PUT URL'ы для артефакта и логов, публичные URL'ы для
- * чтения после загрузки. Workflow возвращает env, который попадёт в pod.
- */
-export interface PodRuntimeContext {
-	logPublicUrl: string;
-	logUploadUrl: string;
-	outputContentType: string;
-	outputPublicUrl: string;
-	outputUploadUrl: string;
+export interface PodPrepareArgs<TInput> {
+	client: ComfyUIClient;
+	downloadId: string;
+	input: TInput;
 	requestId: string;
-	s3: S3StorageConfig;
-	timeoutMs: number | undefined;
+}
+
+export interface PodPrepareStatus {
+	errorSummary?: string;
+	progressPct?: number;
+	ready: boolean;
+}
+
+export interface PodSubmitContext {
+	clientId: string;
+	requestId: string;
+}
+
+export interface PodSubmitResult {
+	outputNodeId?: string;
+	prompt: Record<string, ComfyUINodeApiInput>;
 }
 
 export interface PodSuccessContext {
-	logPublicUrl: string;
-	outputPublicUrl: string;
-	outputStat: S3ObjectStat;
+	artifactPublicUrl: string;
+	artifactStat: S3ObjectStat;
 	podId: string;
 	requestId: string;
 	runpodPodConsoleUrl: string;
 }
 
 export interface PodWorkflow<TInput, TOutput> {
+	/** Mime-type финального артефакта; используется для S3 заливки. */
 	artifactContentType: string;
-	/** Контракт env, ожидаемый pod_runner внутри пода. */
-	buildEnv(input: TInput, ctx: PodRuntimeContext): Record<string, string>;
+	/**
+	 * Дополнительный env, который надо передать в pod (поверх PASSWORD/
+	 * CIVITAI_TOKEN/HF_TOKEN, которые добавляет engine).
+	 */
+	buildEnv?(input: TInput): Record<string, string>;
+	/** Вернуть API workflow для POST /prompt. Должен быть синхронным —
+	 *  все длинные операции (загрузки/аплоады) делать в `prepare`. */
+	buildPrompt(input: TInput, ctx: PodSubmitContext): PodSubmitResult;
 	id: string;
 	inputSchema: z.ZodType<TInput>;
 	mode: "pod";
 	parseOutput(ctx: PodSuccessContext): TOutput;
 	pod: PodSpec;
+	/**
+	 * Идемпотентный шаг между готовностью ComfyUI и сабмитом /prompt:
+	 * скачивание LoRA, аплоад входных изображений, etc. Возвращает прогресс,
+	 * чтобы engine мог корректно репортить state в worker.
+	 */
+	prepare?(args: PodPrepareArgs<TInput>): Promise<PodPrepareStatus>;
 }
 
 export type WorkflowDefinition<TInput, TOutput> =

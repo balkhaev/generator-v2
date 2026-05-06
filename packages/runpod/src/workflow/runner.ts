@@ -47,7 +47,9 @@ export interface RunpodJob<TOutput = unknown> {
 
 export interface CreateRunpodServiceOptions {
 	apiKey: string;
+	civitaiApiKey?: string;
 	fetchImpl?: RunpodFetch;
+	hfToken?: string;
 	httpTimeoutMs?: number;
 	logger?: Pick<Console, "info" | "warn">;
 	podsBaseUrl?: string;
@@ -124,6 +126,8 @@ export function parseEndpointId(
 }
 
 interface BuildEnginesContext {
+	civitaiApiKey?: string;
+	hfToken?: string;
 	logger?: Pick<Console, "info" | "warn">;
 	podsApi: RunpodPodsApi;
 	s3: S3StorageConfig;
@@ -142,6 +146,8 @@ function buildEngine(
 	}
 	return createPodEngine({
 		api: ctx.podsApi,
+		civitaiApiKey: ctx.civitaiApiKey,
+		hfToken: ctx.hfToken,
 		logger: ctx.logger,
 		s3: ctx.s3,
 		workflow: workflow as PodWorkflow<unknown, unknown>,
@@ -175,6 +181,8 @@ export function createRunpodService(
 		}
 		const workflow = registry.get(workflowId);
 		const engine = buildEngine(workflow, {
+			civitaiApiKey: options.civitaiApiKey,
+			hfToken: options.hfToken,
 			logger: options.logger,
 			podsApi,
 			s3: options.s3,

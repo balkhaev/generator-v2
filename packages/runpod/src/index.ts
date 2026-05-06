@@ -10,6 +10,23 @@ export {
 	type ServerlessJobStatus,
 	type ServerlessSubmission,
 } from "./api/serverless";
+export {
+	type ComfyUIClient,
+	createComfyUIClient,
+} from "./comfyui/client";
+export type {
+	ComfyUIArtifactRef,
+	ComfyUIClientOptions,
+	ComfyUIHistoryEntry,
+	ComfyUINodeApiInput,
+	ComfyUIOutputs,
+	ComfyUIPromptArgs,
+	ComfyUIPromptResponse,
+	ComfyUISystemStats,
+	ComfyUIUserdataEntry,
+	LoraDownloadProgressEntry,
+	LoraDownloadStartArgs,
+} from "./comfyui/types";
 export type { Engine, EngineJob, EngineSubmission } from "./engine/engine";
 export {
 	createPodEngine,
@@ -30,8 +47,11 @@ export {
 } from "./http/client";
 export type {
 	AnyWorkflowDefinition,
-	PodRuntimeContext,
+	PodPrepareArgs,
+	PodPrepareStatus,
 	PodSpec,
+	PodSubmitContext,
+	PodSubmitResult,
 	PodSuccessContext,
 	PodWorkflow,
 	RunpodPolicy,

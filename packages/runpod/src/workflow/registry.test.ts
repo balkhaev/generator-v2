@@ -17,13 +17,13 @@ const podWf: PodWorkflow<unknown, unknown> = {
 	id: "ltx-2-3-video",
 	mode: "pod",
 	pod: {
-		bootstrapUrl: "https://cdn.example.com/x.sh",
 		gpuTypeIds: ["A6000"],
 		imageName: "img:latest",
+		templateId: "tpl-x",
 	},
 	inputSchema: z.unknown() as z.ZodType<unknown>,
 	artifactContentType: "video/mp4",
-	buildEnv: () => ({}),
+	buildPrompt: () => ({ prompt: {} }),
 	parseOutput: () => ({}),
 };
 
@@ -48,7 +48,7 @@ describe("WorkflowRegistry", () => {
 		).toThrow("not contain ':'");
 	});
 
-	it("rejects pod workflows without gpu types or bootstrap url", () => {
+	it("rejects pod workflows without gpu types, image, or templateId", () => {
 		expect(() =>
 			createWorkflowRegistry([
 				{
@@ -61,10 +61,18 @@ describe("WorkflowRegistry", () => {
 			createWorkflowRegistry([
 				{
 					...podWf,
-					pod: { ...podWf.pod, bootstrapUrl: "" },
+					pod: { ...podWf.pod, imageName: "" },
 				},
 			])
-		).toThrow("bootstrapUrl");
+		).toThrow("imageName");
+		expect(() =>
+			createWorkflowRegistry([
+				{
+					...podWf,
+					pod: { ...podWf.pod, templateId: undefined },
+				},
+			])
+		).toThrow("templateId");
 	});
 
 	it("throws UnknownWorkflowError on missing id", () => {

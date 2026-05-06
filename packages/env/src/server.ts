@@ -216,12 +216,6 @@ const serverSchema = {
 	// Inference-only Fooocus SDXL endpoint used by generator-worker.
 	RUNPOD_FOOOCUS_ENDPOINT_ID: z.string().min(1).optional(),
 	// Inference-only disposable Pod for LTX 2.3 video generation.
-	RUNPOD_LTX23_POD_BOOTSTRAP_URL: z
-		.url()
-		.optional()
-		.describe(
-			"Public URL of tools/runpod-ltx23-inference/pod-bootstrap.sh executed inside a disposable RunPod Pod."
-		),
 	RUNPOD_LTX23_POD_IMAGE_NAME: z
 		.string()
 		.min(1)

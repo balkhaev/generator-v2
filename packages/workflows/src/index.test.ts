@@ -90,28 +90,25 @@ describe("workflow registry", () => {
 	});
 
 	it("resolves runpod-ltx-2-3 workflows with correct defaults", () => {
-		const t2v = getWorkflowDefinition("runpod-ltx-2-3-text-to-video");
 		const i2v = getWorkflowDefinition("runpod-ltx-2-3-image-to-video");
 		const legacy = getWorkflowDefinition("runpod-ltx-2-3-synth-text-to-video");
+		const t2vLegacy = getWorkflowDefinition("runpod-ltx-2-3-text-to-video");
 		const listedKeys = listWorkflows().map((workflow) => workflow.key);
 
-		expect(t2v).toBeDefined();
 		expect(i2v).toBeDefined();
 		expect(legacy).toBeDefined();
-		expect(t2v?.baseModel).toBe("ltx-2-3");
+		expect(t2vLegacy).toBeDefined();
 		expect(i2v?.baseModel).toBe("ltx-2-3");
-		expect(t2v?.requiresInputImage).toBe(false);
 		expect(i2v?.requiresInputImage).toBe(true);
-		expect(listedKeys).toContain("runpod-ltx-2-3-text-to-video");
 		expect(listedKeys).toContain("runpod-ltx-2-3-image-to-video");
+		expect(listedKeys).not.toContain("runpod-ltx-2-3-text-to-video");
 		expect(listedKeys).not.toContain("runpod-ltx-2-3-synth-text-to-video");
 
-		const defaults = t2v?.parameterSchema.parse({}) as
+		const defaults = i2v?.parameterSchema.parse({}) as
 			| Record<string, unknown>
 			| undefined;
 		expect(defaults).toMatchObject({
 			cfgScale: 1,
-			distilledLoraScale: 0.6,
 			durationSeconds: 10,
 			fps: 24,
 			height: 1280,
@@ -119,7 +116,8 @@ describe("workflow registry", () => {
 			steps: 8,
 			width: 896,
 		});
-		expect(defaults?.loraUrl).toBeUndefined();
+		expect(defaults?.loraCivitaiModelId).toBeUndefined();
+		expect(defaults?.loraCivitaiVersionId).toBeUndefined();
 	});
 
 	it("resolves civitai-lustify-olt-sdxl with correct defaults", () => {
@@ -451,8 +449,6 @@ describe("workflow registry", () => {
 		const keys = [
 			"fal-fast-sdxl",
 			"runpod-fooocus-sdxl",
-			"runpod-ltx-2-3-text-to-video",
-			"runpod-ltx-2-3-image-to-video",
 			"replicate-fooocus-sdxl",
 			"fal-flux-dev",
 			"fal-zimage-turbo",
@@ -685,13 +681,12 @@ describe("workflow registry", () => {
 	});
 
 	it("builds runpod-ltx-2-3 pod payloads", () => {
-		const workflow = getWorkflowDefinition("runpod-ltx-2-3-text-to-video");
 		const i2vWorkflow = getWorkflowDefinition("runpod-ltx-2-3-image-to-video");
 		const buildInput = (
 			extra: Record<string, unknown> = {},
-			inputImageUrl?: string
+			inputImageUrl = "https://example.com/input.png"
 		) =>
-			workflow?.buildProviderInput({
+			i2vWorkflow?.buildProviderInput({
 				inputImageUrl,
 				params: extra,
 				prompt: "A woman is doing gymnastics outdoors.",
@@ -700,34 +695,33 @@ describe("workflow registry", () => {
 		expect(buildInput()).toMatchObject({
 			__runpodWorkflow: "ltx-2-3-video",
 			cfgScale: 1,
-			distilledLoraName:
-				"ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
-			distilledLoraScale: 0.6,
 			fps: 24,
 			height: 1280,
+			inputImageUrl: "https://example.com/input.png",
 			negativePrompt: expect.stringContaining("watermark"),
 			numFrames: 241,
 			prompt: "A woman is doing gymnastics outdoors.",
 			steps: 8,
 			width: 896,
 		});
-		expect(buildInput()).not.toHaveProperty("loraUrl");
+		expect(buildInput()).not.toHaveProperty("loraCivitaiModelId");
 
 		expect(
 			buildInput({
 				durationSeconds: 15,
 				fps: 24,
 				height: 960,
-				loraUrl: "https://example.com/custom-ltx.safetensors",
+				loraCivitaiModelId: 2_509_189,
+				loraCivitaiVersionId: 2_820_451,
 				loraScale: 0.85,
 				seed: 900,
 				width: 640,
 			})
 		).toMatchObject({
 			height: 960,
-			loraName: "custom-ltx.safetensors",
+			loraCivitaiModelId: 2_509_189,
+			loraCivitaiVersionId: 2_820_451,
 			loraScale: 0.85,
-			loraUrl: "https://example.com/custom-ltx.safetensors",
 			numFrames: 361,
 			seed: 900,
 			width: 640,
@@ -740,20 +734,10 @@ describe("workflow registry", () => {
 		).toMatchObject({
 			numFrames: 121,
 		});
-
-		const i2vInput = i2vWorkflow?.buildProviderInput({
-			inputImageUrl: "https://example.com/input.png",
-			params: {},
-			prompt: "A woman is doing gymnastics outdoors.",
-		}) as Record<string, unknown>;
-		expect(i2vInput).toMatchObject({
-			__runpodWorkflow: "ltx-2-3-video",
-			inputImageUrl: "https://example.com/input.png",
-		});
 	});
 
 	it("extracts only RunPod Pod video artifacts", () => {
-		const workflow = getWorkflowDefinition("runpod-ltx-2-3-text-to-video");
+		const workflow = getWorkflowDefinition("runpod-ltx-2-3-image-to-video");
 
 		expect(
 			workflow?.extractArtifactUrls({

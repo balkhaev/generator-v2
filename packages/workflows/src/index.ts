@@ -75,18 +75,6 @@ const CIVITAI_LTX23_SYNTH_LORA_URN =
 	"urn:air:ltxv23:lora:civitai:2509189@2820451";
 const CIVITAI_LTX23_SYNTH_ENDPOINT_PREFIX = "ltx2.3:synth-lora";
 const RUNPOD_LTX23_POD_KEY = "ltx-2-3-video";
-const RUNPOD_LTX23_WORKFLOW_URL =
-	"https://raw.githubusercontent.com/Lightricks/ComfyUI-LTXVideo/master/example_workflows/2.3/LTX-2.3_T2V_I2V_Single_Stage_Distilled_Full.json";
-const RUNPOD_LTX23_CHECKPOINT_NAME = "ltx-2.3-22b-dev.safetensors";
-const RUNPOD_LTX23_CHECKPOINT_URL =
-	"https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-dev.safetensors";
-const RUNPOD_LTX23_TEXT_ENCODER_NAME = "gemma_3_12B_it_fp4_mixed.safetensors";
-const RUNPOD_LTX23_TEXT_ENCODER_URL =
-	"https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors";
-const RUNPOD_LTX23_DISTILLED_LORA_NAME =
-	"ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors";
-const RUNPOD_LTX23_DISTILLED_LORA_URL =
-	"https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384-1.1.safetensors";
 const REPLICATE_FOOOCUS_API_VERSION =
 	"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c";
 const REPLICATE_WAN_22_I2V_FAST_VERSION =
@@ -202,6 +190,12 @@ const ltx23FrameCountSchema = z
 		message: "LTX 2.3 frame count must be 8n + 1",
 	});
 
+/**
+ * Параметры RunPod LTX 2.3 image-to-video workflow поверх pre-provisioned
+ * template `p4f6rm9tb4`. Pod уже содержит ComfyUI + модели LTX 2.3, наш
+ * engine только патчит API graph (templates/api/ltx-2-3-i2v-lvram.json) и
+ * скачивает указанную Civitai LoRA через Lora Manager API в самом pod'е.
+ */
 const runpodLtx23ParamsSchema = z.object({
 	width: ltx23DimensionSchema.default(896),
 	height: ltx23DimensionSchema.default(1280),
@@ -216,20 +210,9 @@ const runpodLtx23ParamsSchema = z.object({
 			"news broadcast, 3d animation, computer graphics, pc game, console game, video game, cartoon, childish, watermark, logo, text, on screen text, subtitles, titles, signature, slowmo, static, ugly"
 		),
 	seed: z.number().int().nonnegative().optional(),
-	loraUrl: optionalUrlParamSchema,
-	loraName: z.string().min(1).optional(),
+	loraCivitaiModelId: z.coerce.number().int().positive().optional(),
+	loraCivitaiVersionId: z.coerce.number().int().positive().optional(),
 	loraScale: z.number().min(0).max(2).default(1),
-	distilledLoraUrl: z.url().default(RUNPOD_LTX23_DISTILLED_LORA_URL),
-	distilledLoraName: z
-		.string()
-		.min(1)
-		.default(RUNPOD_LTX23_DISTILLED_LORA_NAME),
-	distilledLoraScale: z.number().min(0).max(2).default(0.6),
-	workflowUrl: z.url().default(RUNPOD_LTX23_WORKFLOW_URL),
-	checkpointName: z.string().min(1).default(RUNPOD_LTX23_CHECKPOINT_NAME),
-	checkpointUrl: z.url().default(RUNPOD_LTX23_CHECKPOINT_URL),
-	textEncoderName: z.string().min(1).default(RUNPOD_LTX23_TEXT_ENCODER_NAME),
-	textEncoderUrl: z.url().default(RUNPOD_LTX23_TEXT_ENCODER_URL),
 });
 
 const replicateFooocusSdxlParamsSchema = z.object({
@@ -798,15 +781,13 @@ function buildRunpodLtx23Input({
 		parsed.numFrames ??
 		normalizeLtx23FrameCount(parsed.durationSeconds, parsed.fps);
 	const lora =
-		parsed.loraUrl === undefined
+		parsed.loraCivitaiModelId === undefined ||
+		parsed.loraCivitaiVersionId === undefined
 			? {}
 			: {
-					loraName:
-						parsed.loraName ??
-						extractModelNameFromUrl(parsed.loraUrl) ??
-						buildStableLoraName(parsed.loraUrl),
+					loraCivitaiModelId: parsed.loraCivitaiModelId,
+					loraCivitaiVersionId: parsed.loraCivitaiVersionId,
 					loraScale: parsed.loraScale,
-					loraUrl: parsed.loraUrl,
 				};
 	return {
 		__runpodWorkflow: RUNPOD_LTX23_POD_KEY,
@@ -814,21 +795,12 @@ function buildRunpodLtx23Input({
 		negativePrompt: parsed.negativePrompt,
 		width: parsed.width,
 		height: parsed.height,
-		durationSeconds: parsed.durationSeconds,
 		numFrames,
 		fps: parsed.fps,
 		steps: parsed.steps,
 		cfgScale: parsed.cfgScale,
 		...lora,
 		...(inputImageUrl === undefined ? {} : { inputImageUrl }),
-		distilledLoraUrl: parsed.distilledLoraUrl,
-		distilledLoraName: parsed.distilledLoraName,
-		distilledLoraScale: parsed.distilledLoraScale,
-		workflowUrl: parsed.workflowUrl,
-		checkpointName: parsed.checkpointName,
-		checkpointUrl: parsed.checkpointUrl,
-		textEncoderName: parsed.textEncoderName,
-		textEncoderUrl: parsed.textEncoderUrl,
 		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 	};
 }
@@ -1069,15 +1041,21 @@ const runpodLtx23ParameterFields: readonly WorkflowField[] = [
 	},
 	{
 		description:
-			"Optional public URL pointing to LoRA weights. Leave empty to run plain LTX 2.3.",
-		key: "loraUrl",
-		kind: "lora-url",
-		label: "LoRA URL",
+			"Civitai model id для LoRA, которую Lora Manager скачает в pod (необязательно).",
+		key: "loraCivitaiModelId",
+		label: "Civitai model id",
 		optional: true,
-		type: "text",
+		type: "number",
 	},
 	{
-		description: "Strength of the optional LoRA when a URL is provided.",
+		description: "Civitai model version id для LoRA (необязательно).",
+		key: "loraCivitaiVersionId",
+		label: "Civitai version id",
+		optional: true,
+		type: "number",
+	},
+	{
+		description: "Strength of the optional LoRA when Civitai ids are provided.",
 		key: "loraScale",
 		label: "LoRA scale",
 		max: 2,
@@ -1461,27 +1439,31 @@ export const workflowRegistry = {
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},
-	"runpod-ltx-2-3-text-to-video": {
-		baseModel: "ltx-2-3",
-		key: "runpod-ltx-2-3-text-to-video",
-		name: "LTX 2.3 (RunPod)",
-		description:
-			"LTX 2.3 text-to-video generation in a disposable RunPod GPU Pod. LoRAs are optional; the base model runs without a custom LoRA URL.",
-		requiresInputImage: false,
-		parameterSchema: runpodLtx23ParamsSchema,
-		parameterFields: runpodLtx23ParameterFields,
-		buildProviderInput: ({ params, prompt }) => {
-			const parsed = runpodLtx23ParamsSchema.parse(params);
-			return buildRunpodLtx23Input({ parsed, prompt });
-		},
-		extractArtifactUrls: collectRunpodPodVideoUrls,
-	},
 	"runpod-ltx-2-3-image-to-video": {
 		baseModel: "ltx-2-3",
 		key: "runpod-ltx-2-3-image-to-video",
 		name: "LTX 2.3 I2V (RunPod)",
 		description:
-			"LTX 2.3 image-to-video generation in a disposable RunPod GPU Pod. LoRAs are optional; the base model runs without a custom LoRA URL.",
+			"LTX 2.3 image-to-video поверх pre-provisioned RunPod template (ComfyUI + Lora Manager). LoRA опциональна — задаётся через Civitai model id + version id, скачивается уже внутри pod'а.",
+		requiresInputImage: true,
+		parameterSchema: runpodLtx23ParamsSchema,
+		parameterFields: runpodLtx23ParameterFields,
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = runpodLtx23ParamsSchema.parse(params);
+			return buildRunpodLtx23Input({ inputImageUrl, parsed, prompt });
+		},
+		extractArtifactUrls: collectRunpodPodVideoUrls,
+	},
+	// Legacy ключи: оставляем функционирующими, но скрываем из списка — старая
+	// архитектура (text-to-video на bootstrap pod) не поддерживается template
+	// p4f6rm9tb4, поэтому фактически они мапятся на тот же i2v пайплайн.
+	"runpod-ltx-2-3-text-to-video": {
+		baseModel: "ltx-2-3",
+		hiddenFromList: true,
+		key: "runpod-ltx-2-3-text-to-video",
+		name: "LTX 2.3 (RunPod, legacy)",
+		description:
+			"Legacy LTX 2.3 text-to-video RunPod workflow. Новая архитектура поддерживает только i2v через template — этот ключ оставлен для обратной совместимости existing scenarios.",
 		requiresInputImage: true,
 		parameterSchema: runpodLtx23ParamsSchema,
 		parameterFields: runpodLtx23ParameterFields,
@@ -1495,15 +1477,15 @@ export const workflowRegistry = {
 		baseModel: "ltx-2-3",
 		hiddenFromList: true,
 		key: "runpod-ltx-2-3-synth-text-to-video",
-		name: "LTX 2.3 (RunPod)",
+		name: "LTX 2.3 Synth LoRA (RunPod, legacy)",
 		description:
-			"Legacy LTX 2.3 RunPod workflow key kept executable for existing scenarios.",
-		requiresInputImage: false,
+			"Legacy ключ Synth Pussy text-to-video. Скрыт; existing scenarios должны мигрировать на runpod-ltx-2-3-image-to-video с inputImageUrl.",
+		requiresInputImage: true,
 		parameterSchema: runpodLtx23ParamsSchema,
 		parameterFields: runpodLtx23ParameterFields,
-		buildProviderInput: ({ params, prompt }) => {
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
 			const parsed = runpodLtx23ParamsSchema.parse(params);
-			return buildRunpodLtx23Input({ parsed, prompt });
+			return buildRunpodLtx23Input({ inputImageUrl, parsed, prompt });
 		},
 		extractArtifactUrls: collectRunpodPodVideoUrls,
 	},

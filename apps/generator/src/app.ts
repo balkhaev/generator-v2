@@ -95,7 +95,7 @@ function createConfiguredRunpodService(input: {
 	runpodApiKey?: string;
 	s3Config: S3StorageConfig | null;
 }): RunpodService | null {
-	if (!input.runpodApiKey) {
+	if (!(input.runpodApiKey && input.s3Config)) {
 		return null;
 	}
 	const workflows: AnyWorkflowDefinition[] = [];
@@ -105,15 +105,12 @@ function createConfiguredRunpodService(input: {
 			createFooocusSdxlWorkflow({ endpointId: fooocusEndpointId })
 		);
 	}
-	const bootstrapUrl = process.env.RUNPOD_LTX23_POD_BOOTSTRAP_URL;
-	if (bootstrapUrl && input.s3Config) {
+	const ltxTemplateId =
+		process.env.RUNPOD_LTX23_POD_TEMPLATE_ID?.trim() || "p4f6rm9tb4";
+	if (ltxTemplateId) {
 		workflows.push(
 			createLtx23VideoWorkflow({
-				civitaiApiKey: input.civitaiApiKey,
-				hfToken:
-					process.env.HF_TOKEN?.trim() || process.env.HUGGINGFACE_TOKEN?.trim(),
 				pod: {
-					bootstrapUrl,
 					cloudType:
 						process.env.RUNPOD_LTX23_POD_CLOUD_TYPE === "COMMUNITY"
 							? "COMMUNITY"
@@ -131,7 +128,7 @@ function createConfiguredRunpodService(input: {
 						"ls250824/run-comfyui-ltx:28042026",
 					namePrefix: "ltx23",
 					networkVolumeId: process.env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
-					templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID ?? "p4f6rm9tb4",
+					templateId: ltxTemplateId,
 					timeoutMs: readPositiveIntegerEnv(
 						process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,
 						60 * 60 * 1000
@@ -144,11 +141,14 @@ function createConfiguredRunpodService(input: {
 			})
 		);
 	}
-	if (workflows.length === 0 || !input.s3Config) {
+	if (workflows.length === 0) {
 		return null;
 	}
 	return createRunpodService({
 		apiKey: input.runpodApiKey,
+		civitaiApiKey: input.civitaiApiKey,
+		hfToken:
+			process.env.HF_TOKEN?.trim() || process.env.HUGGINGFACE_TOKEN?.trim(),
 		podsBaseUrl: process.env.RUNPOD_REST_API_BASE_URL,
 		s3: input.s3Config,
 		serverlessBaseUrl: process.env.RUNPOD_API_BASE_URL,

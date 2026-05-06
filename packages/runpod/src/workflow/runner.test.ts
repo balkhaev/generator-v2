@@ -107,13 +107,13 @@ describe("RunpodService routing", () => {
 			id: "ltx-2-3-video",
 			mode: "pod",
 			pod: {
-				bootstrapUrl: "https://cdn.example.com/boot.sh",
 				gpuTypeIds: ["A6000"],
 				imageName: "img:latest",
+				templateId: "tpl-x",
 			},
 			inputSchema: z.object({ prompt: z.string() }),
 			artifactContentType: "video/mp4",
-			buildEnv: () => ({ HELLO: "world" }),
+			buildPrompt: () => ({ prompt: {} }),
 			parseOutput: () => ({}),
 		};
 
@@ -126,7 +126,7 @@ describe("RunpodService routing", () => {
 
 		await service.cancel({
 			endpointId: "runpod-pod:ltx-2-3-video",
-			jobId: "pod-1:req-1",
+			jobId: "pod-1:req-1:pwd-1",
 		});
 
 		expect(fetchImpl).toHaveBeenCalledTimes(1);

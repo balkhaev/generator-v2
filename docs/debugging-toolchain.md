@@ -109,13 +109,13 @@ RUNPOD_API_KEY=rpa_xxx \
 RUNPOD_FOOOCUS_ENDPOINT_ID=xxxxxx \
 bun run packages/runpod/scripts/smoke-serverless.ts -- --prompt="cat"
 
-# Pod: dry-run печатает env и dockerStartCmd без вызова RunPod
+# Pod: dry-run валидирует input и собирает API graph без вызова RunPod
 S3_BUCKET=... S3_ENDPOINT=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=... \
 RUNPOD_API_KEY=rpa_xxx \
-RUNPOD_LTX23_POD_BOOTSTRAP_URL=https://.../pod-bootstrap.sh \
+RUNPOD_LTX23_POD_TEMPLATE_ID=p4f6rm9tb4 \
 bun run packages/runpod/scripts/smoke-pod.ts -- --dry-run --prompt="cat"
 
-# Pod: live запускает реальный pod LTX 2.3 и ждёт MP4 в S3
+# Pod: live поднимает реальный pod LTX 2.3 (template-driven), ждёт MP4 в S3
 bun run packages/runpod/scripts/smoke-pod.ts -- --live --prompt="cat"
 ```
 

@@ -59,10 +59,12 @@ function validateWorkflow(workflow: AnyWorkflowDefinition): void {
 	if (workflow.pod.gpuTypeIds.length === 0) {
 		throw new Error(`Pod workflow ${workflow.id} has no gpuTypeIds`);
 	}
-	if (!workflow.pod.bootstrapUrl) {
-		throw new Error(`Pod workflow ${workflow.id} requires pod.bootstrapUrl`);
-	}
 	if (!workflow.pod.imageName) {
 		throw new Error(`Pod workflow ${workflow.id} requires pod.imageName`);
+	}
+	if (!workflow.pod.templateId) {
+		throw new Error(
+			`Pod workflow ${workflow.id} requires pod.templateId (template-driven runtime)`
+		);
 	}
 }

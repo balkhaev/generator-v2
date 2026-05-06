@@ -41,7 +41,7 @@ const runpod = createRunpodService({
     }),
     createLtx23VideoWorkflow({
       pod: {
-        bootstrapUrl: process.env.RUNPOD_LTX23_POD_BOOTSTRAP_URL!,
+        templateId: process.env.RUNPOD_LTX23_POD_TEMPLATE_ID ?? "p4f6rm9tb4",
         gpuTypeIds: ["NVIDIA RTX A6000", "NVIDIA A40"],
         imageName: "ls250824/run-comfyui-ltx:28042026",
       },
@@ -72,10 +72,10 @@ bun run packages/runpod/scripts/smoke-serverless.ts -- --prompt="cat"
 ```
 
 ```bash
-# Dry-run (без вызовов RunPod, только печать env и dockerStartCmd)
+# Dry-run (без вызовов RunPod, только печать env и валидация ввода)
 S3_BUCKET=... S3_ENDPOINT=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=... \
 RUNPOD_API_KEY=rpa_xxx \
-RUNPOD_LTX23_POD_BOOTSTRAP_URL=https://.../pod-bootstrap.sh \
+RUNPOD_LTX23_POD_TEMPLATE_ID=p4f6rm9tb4 \
 bun run packages/runpod/scripts/smoke-pod.ts -- --dry-run --prompt="cat"
 
 # Live (реально создаёт pod, ждёт MP4 в S3, удаляет pod)
@@ -102,21 +102,29 @@ interface ServerlessWorkflow<TInput, TOutput> {
 interface PodWorkflow<TInput, TOutput> {
   id: string;
   mode: "pod";
-  pod: PodSpec;
+  pod: PodSpec; // templateId обязателен — поверх pre-provisioned RunPod template
   inputSchema: z.ZodType<TInput>;
   artifactContentType: string; // "video/mp4" | "image/png" | ...
-  buildEnv(input: TInput, ctx: PodRuntimeContext): Record<string, string>;
+  buildEnv?(input: TInput): Record<string, string>;
+  buildPrompt(input: TInput, ctx: PodSubmitContext): PodSubmitResult;
+  prepare?(args: PodPrepareArgs<TInput>): Promise<PodPrepareStatus>;
   parseOutput(ctx: PodSuccessContext): TOutput;
 }
 ```
 
-`PodEngine` сам выдаёт workflow'у:
+`PodEngine` создаёт pod из template без перекрытия `dockerStartCmd`,
+закидывает в env `INFERENCE_INPUT_JSON_B64` (Zod-валидный input),
+`PASSWORD` для ComfyUI-Login и `CIVITAI_TOKEN/HF_TOKEN`. На каждый
+`getStatus` engine идёт в ComfyUI HTTP API (после `/login` через
+`AIOHTTP_SESSION` cookie):
 
-- `requestId` (uuid),
-- presigned PUT URL для артефакта (`OUTPUT_UPLOAD_URL`) и логов (`LOG_UPLOAD_URL`),
-- публичные URL для чтения после загрузки.
-
-Workflow возвращает `Record<string, string>` env, который попадает в pod.
+1. ждёт `/system_stats` и `userdata/workflows` (template ещё качает чекпоинты);
+2. вызывает `workflow.prepare` (idempotent — там скачка LoRA через Lora
+   Manager API + загрузка input image через `/upload/image`);
+3. сабмитит `/prompt` с api graph из `workflow.buildPrompt` (идемпотентно
+   через `client_id = requestId`);
+4. ждёт `/history`, скачивает артефакт через `/view`, заливает в S3 и
+   удаляет pod.
 
 ## Endpoint id format
 

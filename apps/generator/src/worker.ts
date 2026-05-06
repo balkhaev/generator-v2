@@ -37,14 +37,14 @@ const falKey = env.FAL_KEY;
 const replicateApiToken = env.REPLICATE_API_TOKEN;
 const runpodApiKey = env.RUNPOD_API_KEY;
 const runpodFooocusEndpointId = env.RUNPOD_FOOOCUS_ENDPOINT_ID;
-const runpodLtx23PodBootstrapUrl = env.RUNPOD_LTX23_POD_BOOTSTRAP_URL;
+const runpodLtx23TemplateId = env.RUNPOD_LTX23_POD_TEMPLATE_ID;
 const kafkaConfig = getKafkaEventBusConfig("generator-worker");
 const eventPublisher = kafkaConfig
 	? createKafkaEventPublisher(kafkaConfig, { source: "generator-worker" })
 	: null;
 
 const hasAnyRunpodWorkflow = Boolean(
-	runpodApiKey && (runpodFooocusEndpointId || runpodLtx23PodBootstrapUrl)
+	runpodApiKey && (runpodFooocusEndpointId || runpodLtx23TemplateId)
 );
 
 if (!(civitaiApiKey || falKey || replicateApiToken || hasAnyRunpodWorkflow)) {
@@ -66,19 +66,16 @@ if (runpodFooocusEndpointId) {
 		createFooocusSdxlWorkflow({ endpointId: runpodFooocusEndpointId })
 	);
 }
-if (runpodLtx23PodBootstrapUrl) {
+if (runpodLtx23TemplateId) {
 	runpodWorkflows.push(
 		createLtx23VideoWorkflow({
-			civitaiApiKey,
-			hfToken: env.HF_TOKEN ?? env.HUGGINGFACE_TOKEN,
 			pod: {
-				bootstrapUrl: runpodLtx23PodBootstrapUrl,
 				cloudType: env.RUNPOD_LTX23_POD_CLOUD_TYPE,
 				containerDiskInGb: env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
 				gpuTypeIds: splitCsv(env.RUNPOD_LTX23_POD_GPU_TYPE_IDS),
 				imageName: env.RUNPOD_LTX23_POD_IMAGE_NAME,
 				networkVolumeId: env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
-				templateId: env.RUNPOD_LTX23_POD_TEMPLATE_ID,
+				templateId: runpodLtx23TemplateId,
 				timeoutMs: env.RUNPOD_LTX23_POD_TIMEOUT_MS,
 				volumeInGb: env.RUNPOD_LTX23_POD_VOLUME_GB,
 			},
@@ -90,6 +87,8 @@ const runpodService =
 	runpodApiKey && runpodWorkflows.length > 0
 		? createRunpodService({
 				apiKey: runpodApiKey,
+				civitaiApiKey,
+				hfToken: env.HF_TOKEN ?? env.HUGGINGFACE_TOKEN,
 				logger: console,
 				podsBaseUrl: env.RUNPOD_REST_API_BASE_URL,
 				s3: s3Config,

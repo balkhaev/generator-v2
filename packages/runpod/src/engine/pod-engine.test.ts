@@ -3,6 +3,13 @@ import type { S3ObjectStat, S3StorageConfig } from "@generator/storage";
 import { z } from "zod";
 
 import type { PodSnapshot, RunpodPodsApi } from "../api/pods";
+import type { ComfyUIClient } from "../comfyui/client";
+import type {
+	ComfyUIHistoryItem,
+	ComfyUIQueueResponse,
+	ComfyUISystemStats,
+	ComfyUIUserdataEntry,
+} from "../comfyui/types";
 import type { PodWorkflow } from "../workflow/definition";
 import { createPodEngine, formatPodJobId, parsePodJobId } from "./pod-engine";
 
@@ -15,42 +22,31 @@ const s3: S3StorageConfig = {
 	secretAccessKey: "secret",
 };
 
-const ltxInputSchema = z.object({
-	prompt: z.string(),
-});
+const ltxInputSchema = z.object({ prompt: z.string() });
 
 interface VideoOutput {
-	logUrl: string;
 	podId: string;
+	requestId: string;
 	videoUrl: string;
 }
 
-const ltxWorkflow: PodWorkflow<z.infer<typeof ltxInputSchema>, VideoOutput> = {
+const baseWorkflow: PodWorkflow<z.infer<typeof ltxInputSchema>, VideoOutput> = {
+	artifactContentType: "video/mp4",
 	id: "ltx-2-3-video",
+	inputSchema: ltxInputSchema,
 	mode: "pod",
 	pod: {
-		bootstrapUrl: "https://cdn.example.com/pod-bootstrap.sh",
 		gpuTypeIds: ["NVIDIA RTX A6000"],
-		imageName: "runpod/pytorch:test",
+		imageName: "ls250824/run-comfyui-ltx:test",
 		namePrefix: "ltx23",
+		templateId: "p4f6rm9tb4",
 	},
-	inputSchema: ltxInputSchema,
-	artifactContentType: "video/mp4",
-	buildEnv(input, ctx) {
-		return {
-			LOG_UPLOAD_URL: ctx.logUploadUrl,
-			OUTPUT_UPLOAD_URL: ctx.outputUploadUrl,
-			PROMPT: input.prompt,
-			REQUEST_ID: ctx.requestId,
-		};
-	},
-	parseOutput(ctx) {
-		return {
-			logUrl: ctx.logPublicUrl,
-			podId: ctx.podId,
-			videoUrl: ctx.outputPublicUrl,
-		};
-	},
+	buildPrompt: () => ({ prompt: { "1": { class_type: "Foo", inputs: {} } } }),
+	parseOutput: (ctx) => ({
+		podId: ctx.podId,
+		requestId: ctx.requestId,
+		videoUrl: ctx.artifactPublicUrl,
+	}),
 };
 
 function buildApi(overrides: Partial<RunpodPodsApi> = {}): RunpodPodsApi {
@@ -76,142 +72,308 @@ function makeStat(key: string, sizeBytes: number): S3ObjectStat {
 	};
 }
 
+interface ClientStubOverrides {
+	downloadArtifact?: ComfyUIClient["downloadArtifact"];
+	getHistory?: () => Promise<Record<string, ComfyUIHistoryItem>>;
+	getQueue?: () => Promise<ComfyUIQueueResponse>;
+	getSystemStats?: () => Promise<ComfyUISystemStats>;
+	listUserdata?: () => Promise<ComfyUIUserdataEntry[]>;
+	submitPrompt?: ComfyUIClient["submitPrompt"];
+}
+
+function buildClientStub(overrides: ClientStubOverrides = {}): ComfyUIClient {
+	const dummy = mock(() => Promise.reject(new Error("not stubbed")));
+	const userdataEntries: ComfyUIUserdataEntry[] = Array.from(
+		{ length: 6 },
+		(_, i) => ({
+			name: `wf-${i}.json`,
+			path: `workflows/wf-${i}.json`,
+			type: "file" as const,
+		})
+	);
+	return {
+		authorizedFetch: dummy as never,
+		cancelDownload: dummy as never,
+		downloadArtifact:
+			overrides.downloadArtifact ??
+			(mock(() => Promise.resolve(new ArrayBuffer(8))) as never),
+		getHistory: overrides.getHistory ?? (() => Promise.resolve({})),
+		getHistoryEntry: dummy as never,
+		getQueue:
+			overrides.getQueue ??
+			(() =>
+				Promise.resolve({
+					queue_pending: [],
+					queue_running: [],
+				})),
+		getSystemStats:
+			overrides.getSystemStats ??
+			(() =>
+				Promise.resolve({
+					devices: [],
+					system: { os: "linux", ram_free: 0, ram_total: 0 },
+				})),
+		listUserdata:
+			overrides.listUserdata ?? (() => Promise.resolve(userdataEntries)),
+		login: () => Promise.resolve(),
+		pollLoraDownload: dummy as never,
+		readUserdata: dummy as never,
+		startLoraDownload: dummy as never,
+		submitPrompt:
+			overrides.submitPrompt ??
+			(mock(() => Promise.resolve({ number: 1, prompt_id: "p-1" })) as never),
+		uploadInputImage: dummy as never,
+	};
+}
+
 describe("podJobId helpers", () => {
 	it("formats and parses pod job ids", () => {
-		expect(formatPodJobId({ podId: "pod-1", requestId: "req-1" })).toBe(
-			"pod-1:req-1"
-		);
-		expect(parsePodJobId("pod-1:req-1")).toEqual({
+		const jobId = formatPodJobId({
+			password: "pwd",
+			podId: "pod-1",
+			requestId: "req-1",
+		});
+		expect(jobId).toBe("pod-1:req-1:pwd");
+		expect(parsePodJobId(jobId)).toEqual({
+			password: "pwd",
 			podId: "pod-1",
 			requestId: "req-1",
 		});
 		expect(() => parsePodJobId("bad")).toThrow();
+		expect(() => parsePodJobId("a:b")).toThrow();
+		expect(() => parsePodJobId("a::b")).toThrow();
 	});
 });
 
 describe("PodEngine submit", () => {
-	it("creates a pod with bootstrap dockerStartCmd and presigned URLs", async () => {
+	it("creates a pod without dockerStartCmd and serialises input into env", async () => {
 		const create = mock((spec: { env: Record<string, string> }) => {
-			expect(spec.env.OUTPUT_UPLOAD_URL).toContain(
-				"generator-artifacts/runpod-pod/req-fixed/output.mp4"
+			expect(spec).not.toHaveProperty("dockerStartCmd");
+			expect(spec.env.PASSWORD).toBe("fixed-password");
+			expect(spec.env.CIVITAI_TOKEN).toBe("civitai-key");
+			expect(spec.env.HF_TOKEN).toBe("hf-token");
+			const decoded = JSON.parse(
+				Buffer.from(
+					spec.env.INFERENCE_INPUT_JSON_B64 as string,
+					"base64"
+				).toString("utf8")
 			);
-			expect(spec.env.LOG_UPLOAD_URL).toContain(
-				"generator-artifacts/runpod-pod/req-fixed/pod.log"
-			);
-			expect(spec.env.PROMPT).toBe("hello world");
+			expect(decoded).toEqual({ prompt: "hello" });
 			return Promise.resolve<PodSnapshot>({
-				id: "pod-XYZ",
 				desiredStatus: "RUNNING",
+				id: "pod-XYZ",
 			});
 		});
-		const createPutUrl = mock((input: { key: string }) =>
-			Promise.resolve(`https://uploads.example.com/${input.key}`)
-		);
-
 		const engine = createPodEngine({
 			api: buildApi({ create }),
-			createPutUrl: createPutUrl as never,
+			civitaiApiKey: "civitai-key",
+			hfToken: "hf-token",
+			randomPassword: () => "fixed-password",
 			randomRequestId: () => "req-fixed",
 			s3,
-			workflow: ltxWorkflow,
+			workflow: baseWorkflow,
 		});
-
-		const submission = await engine.submit({ prompt: "hello world" });
-		expect(submission.jobId).toBe("pod-XYZ:req-fixed");
+		const submission = await engine.submit({ prompt: "hello" });
+		expect(submission.jobId).toBe("pod-XYZ:req-fixed:fixed-password");
 		expect(submission.status).toBe("queued");
 		expect(create).toHaveBeenCalledTimes(1);
-		expect(createPutUrl).toHaveBeenCalledTimes(2);
 	});
 });
 
 describe("PodEngine getStatus", () => {
-	it("returns succeeded and deletes the pod once the artifact is in S3", async () => {
+	const jobId = "pod-XYZ:req-fixed:pwd";
+
+	it("returns succeeded when the artifact already exists in S3", async () => {
 		const deleteFn = mock(() => Promise.resolve());
 		const statObject = mock((key: string) =>
 			Promise.resolve(makeStat(key, 2048))
 		);
 		const engine = createPodEngine({
 			api: buildApi({ delete: deleteFn }),
+			createClient: () => buildClientStub(),
 			s3,
 			statObject: statObject as never,
-			workflow: ltxWorkflow,
+			workflow: baseWorkflow,
 		});
-
-		const job = await engine.getStatus("pod-XYZ:req-fixed");
+		const job = await engine.getStatus(jobId);
 		expect(job.status).toBe("succeeded");
-		expect(job.progressPct).toBe(100);
 		expect(job.output).toEqual({
-			logUrl:
-				"https://assets.example.com/generator-artifacts/runpod-pod/req-fixed/pod.log",
 			podId: "pod-XYZ",
+			requestId: "req-fixed",
 			videoUrl:
 				"https://assets.example.com/generator-artifacts/runpod-pod/req-fixed/output.mp4",
 		});
 		expect(deleteFn).toHaveBeenCalledWith("pod-XYZ");
 	});
 
-	it("fails terminated pods that never uploaded artifacts", async () => {
+	it("fails terminated pods that never produced an artifact", async () => {
 		const deleteFn = mock(() => Promise.resolve());
-		const get = mock(() =>
-			Promise.resolve<PodSnapshot>({
-				id: "pod-XYZ",
-				desiredStatus: "EXITED",
-			})
-		);
-		const statObject = mock(() => {
-			throw new Error("not found");
-		});
 		const engine = createPodEngine({
-			api: buildApi({ delete: deleteFn, get }),
+			api: buildApi({
+				delete: deleteFn,
+				get: () =>
+					Promise.resolve<PodSnapshot>({
+						desiredStatus: "EXITED",
+						id: "pod-XYZ",
+					}),
+			}),
+			createClient: () => buildClientStub(),
 			s3,
-			statObject: statObject as never,
-			workflow: ltxWorkflow,
+			statObject: (() => {
+				throw new Error("not found");
+			}) as never,
+			workflow: baseWorkflow,
 		});
-
-		const job = await engine.getStatus("pod-XYZ:req-fixed");
+		const job = await engine.getStatus(jobId);
 		expect(job.status).toBe("failed");
-		expect(job.errorSummary).toContain("finished without uploading output");
+		expect(job.errorSummary).toContain("EXITED");
 		expect(deleteFn).toHaveBeenCalledTimes(1);
 	});
 
-	it("reports running while pod desiredStatus is RUNNING", async () => {
-		const get = mock(() =>
-			Promise.resolve<PodSnapshot>({
-				id: "pod-XYZ",
-				desiredStatus: "RUNNING",
-			})
-		);
-		const statObject = mock(() => {
-			throw new Error("not found");
-		});
+	it("returns running while ComfyUI is not ready yet", async () => {
 		const engine = createPodEngine({
-			api: buildApi({ get }),
+			api: buildApi({
+				get: () =>
+					Promise.resolve<PodSnapshot>({
+						desiredStatus: "RUNNING",
+						id: "pod-XYZ",
+					}),
+			}),
+			createClient: () =>
+				buildClientStub({
+					getSystemStats: () => Promise.reject(new Error("auth")),
+				}),
 			s3,
-			statObject: statObject as never,
-			workflow: ltxWorkflow,
+			statObject: (() => {
+				throw new Error("not found");
+			}) as never,
+			workflow: baseWorkflow,
 		});
-
-		const job = await engine.getStatus("pod-XYZ:req-fixed");
+		const job = await engine.getStatus(jobId);
 		expect(job.status).toBe("running");
-		expect(job.errorSummary).toBeNull();
-		expect(job.output).toBeNull();
+		expect(job.progressPct).toBeGreaterThanOrEqual(0);
 	});
 
-	it("treats a missing pod as failed without throwing", async () => {
-		const get = mock(() => Promise.reject(new Error("404 pod gone")));
-		const statObject = mock(() => {
-			throw new Error("not found");
+	it("returns running while workflows are still being provisioned", async () => {
+		const engine = createPodEngine({
+			api: buildApi({
+				get: () =>
+					Promise.resolve({
+						desiredStatus: "RUNNING",
+						env: {
+							INFERENCE_INPUT_JSON_B64: encodeBase64Json({ prompt: "p" }),
+						},
+						id: "pod-XYZ",
+					} as never),
+			}),
+			createClient: () =>
+				buildClientStub({
+					listUserdata: () =>
+						Promise.resolve([
+							{
+								name: "wf-0.json",
+								path: "workflows/wf-0.json",
+								type: "file",
+							},
+						]),
+				}),
+			s3,
+			statObject: (() => {
+				throw new Error("not found");
+			}) as never,
+			workflow: baseWorkflow,
+		});
+		const job = await engine.getStatus(jobId);
+		expect(job.status).toBe("running");
+	});
+
+	it("submits prompt when ComfyUI is ready and no entry exists yet", async () => {
+		const submitPrompt = mock(() =>
+			Promise.resolve({ number: 1, prompt_id: "p-1" })
+		);
+		const engine = createPodEngine({
+			api: buildApi({
+				get: () =>
+					Promise.resolve({
+						desiredStatus: "RUNNING",
+						env: {
+							INFERENCE_INPUT_JSON_B64: encodeBase64Json({ prompt: "p" }),
+						},
+						id: "pod-XYZ",
+					} as never),
+			}),
+			createClient: () =>
+				buildClientStub({ submitPrompt: submitPrompt as never }),
+			s3,
+			statObject: (() => {
+				throw new Error("not found");
+			}) as never,
+			workflow: baseWorkflow,
+		});
+		const job = await engine.getStatus(jobId);
+		expect(job.status).toBe("running");
+		expect(submitPrompt).toHaveBeenCalledTimes(1);
+	});
+
+	it("downloads artifact and uploads to S3 when /history has matching client_id", async () => {
+		const uploadObject = mock(() =>
+			Promise.resolve({
+				key: "k",
+				sizeBytes: 8,
+				url: "https://assets.example.com/k",
+			})
+		);
+		const deleteFn = mock(() => Promise.resolve());
+		let statCall = 0;
+		const statObject = mock((key: string) => {
+			statCall += 1;
+			if (statCall === 1) {
+				throw new Error("not found");
+			}
+			return Promise.resolve(makeStat(key, 16));
 		});
 		const engine = createPodEngine({
-			api: buildApi({ get }),
+			api: buildApi({
+				delete: deleteFn,
+				get: () =>
+					Promise.resolve({
+						desiredStatus: "RUNNING",
+						env: {
+							INFERENCE_INPUT_JSON_B64: encodeBase64Json({ prompt: "p" }),
+						},
+						id: "pod-XYZ",
+					} as never),
+			}),
+			createClient: () =>
+				buildClientStub({
+					getHistory: () =>
+						Promise.resolve({
+							"p-1": {
+								outputs: {
+									"42": {
+										videos: [
+											{
+												filename: "out.mp4",
+												subfolder: "",
+												type: "output",
+											},
+										],
+									},
+								},
+								prompt: [1, "p-1", {}, { client_id: "req-fixed" }, ["42"]],
+								status: { completed: true, status_str: "success" },
+							},
+						}),
+				}),
 			s3,
 			statObject: statObject as never,
-			workflow: ltxWorkflow,
+			uploadObject: uploadObject as never,
+			workflow: baseWorkflow,
 		});
-
-		const job = await engine.getStatus("pod-XYZ:req-fixed");
-		expect(job.status).toBe("failed");
-		expect(job.errorSummary).toBe("404 pod gone");
+		const job = await engine.getStatus(jobId);
+		expect(job.status).toBe("succeeded");
+		expect(uploadObject).toHaveBeenCalledTimes(1);
+		expect(deleteFn).toHaveBeenCalledWith("pod-XYZ");
 	});
 });
 
@@ -220,10 +382,15 @@ describe("PodEngine cancel", () => {
 		const deleteFn = mock(() => Promise.resolve());
 		const engine = createPodEngine({
 			api: buildApi({ delete: deleteFn }),
+			createClient: () => buildClientStub(),
 			s3,
-			workflow: ltxWorkflow,
+			workflow: baseWorkflow,
 		});
-		await engine.cancel("pod-A:req-2");
+		await engine.cancel("pod-A:req-2:pwd");
 		expect(deleteFn).toHaveBeenCalledWith("pod-A");
 	});
 });
+
+function encodeBase64Json(value: unknown): string {
+	return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
+}

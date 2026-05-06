@@ -1,113 +1,221 @@
-import { describe, expect, it } from "bun:test";
-import type { S3StorageConfig } from "@generator/storage";
+import { describe, expect, it, mock } from "bun:test";
 
-import type { PodRuntimeContext } from "../workflow/definition";
-import { createLtx23VideoWorkflow } from "./ltx-2-3-video";
+import type { ComfyUIClient } from "../comfyui/client";
+import type { PodSubmitContext } from "../workflow/definition";
+import { createLtx23VideoWorkflow, LTX_23_I2V_NODE_IDS } from "./ltx-2-3-video";
 
-const s3: S3StorageConfig = {
-	accessKeyId: "access",
-	bucket: "assets",
-	endpoint: "https://s3.example.com",
-	publicBaseUrl: "https://assets.example.com",
-	region: "hel1",
-	secretAccessKey: "secret",
-};
+const SAMPLE_INPUT_IMAGE_URL = "https://example.com/in.png";
+const SAMPLE_BYTES = new ArrayBuffer(8);
 
-const baseCtx: PodRuntimeContext = {
-	logPublicUrl: "https://assets.example.com/log.txt",
-	logUploadUrl: "https://uploads.example.com/log",
-	outputContentType: "video/mp4",
-	outputPublicUrl: "https://assets.example.com/output.mp4",
-	outputUploadUrl: "https://uploads.example.com/output",
-	requestId: "req-1",
-	s3,
-	timeoutMs: undefined,
-};
+function buildClient(overrides: Partial<ComfyUIClient> = {}): ComfyUIClient {
+	const noop = mock(() => Promise.reject(new Error("not stubbed")));
+	return {
+		authorizedFetch: noop as never,
+		cancelDownload: noop as never,
+		downloadArtifact: noop as never,
+		getHistory: noop as never,
+		getHistoryEntry: noop as never,
+		getQueue: noop as never,
+		getSystemStats: noop as never,
+		listUserdata: noop as never,
+		login: () => Promise.resolve(),
+		pollLoraDownload: noop as never,
+		readUserdata: noop as never,
+		startLoraDownload: noop as never,
+		submitPrompt: noop as never,
+		uploadInputImage: noop as never,
+		...overrides,
+	};
+}
+
+function buildWorkflow(deps: { fetchBytes?: () => Promise<ArrayBuffer> } = {}) {
+	return createLtx23VideoWorkflow(
+		{
+			pod: {
+				gpuTypeIds: ["NVIDIA RTX A6000"],
+				imageName: "ls250824/run-comfyui-ltx:test",
+				templateId: "p4f6rm9tb4",
+			},
+		},
+		{
+			fetchBytes: deps.fetchBytes ?? (() => Promise.resolve(SAMPLE_BYTES)),
+		}
+	);
+}
 
 describe("ltx-2-3-video workflow", () => {
-	const workflow = createLtx23VideoWorkflow({
-		hfToken: "hf-token",
-		pod: {
-			bootstrapUrl: "https://cdn.example.com/runpod-ltx23/pod-bootstrap.sh",
-			gpuTypeIds: ["NVIDIA RTX A6000"],
-			imageName: "ls250824/run-comfyui-ltx:test",
-		},
-	});
-
-	it("produces canonical env keys consumed by pod_runner.py", () => {
-		const parsed = workflow.inputSchema.parse({ prompt: "test prompt" });
-		const env = workflow.buildEnv(parsed, baseCtx);
-
-		expect(env).toMatchObject({
-			CFG_SCALE: "1",
-			FPS: "24",
-			HEIGHT: "1280",
-			HF_TOKEN: "hf-token",
-			NUM_FRAMES: "241",
-			OUTPUT_CONTENT_TYPE: "video/mp4",
-			OUTPUT_UPLOAD_URL: "https://uploads.example.com/output",
-			LOG_UPLOAD_URL: "https://uploads.example.com/log",
-			POD_RUNNER_URL: "https://cdn.example.com/runpod-ltx23/pod_runner.py",
-			PROMPT: "test prompt",
-			RUNPOD_JOB_ID: "req-1",
-			STEPS: "8",
-			WIDTH: "896",
-			WORKFLOW_URL:
-				"https://raw.githubusercontent.com/Lightricks/ComfyUI-LTXVideo/master/example_workflows/2.3/LTX-2.3_T2V_I2V_Single_Stage_Distilled_Full.json",
-		});
-		expect(env.LORA_URL).toBe("");
-		expect(env.SEED).toBeUndefined();
-		expect(env.INPUT_IMAGE_URL).toBeUndefined();
-	});
-
-	it("threads optional inputs (seed, image, lora, civitai) into env", () => {
-		const wf = createLtx23VideoWorkflow({
-			civitaiApiKey: "civitai-key",
-			pod: {
-				bootstrapUrl: "https://cdn.example.com/pod-bootstrap.sh",
-				gpuTypeIds: ["A6000"],
-				imageName: "img:latest",
-				timeoutMs: 35 * 60 * 1000,
-			},
-		});
-
+	it("normalises input with sane defaults", () => {
+		const wf = buildWorkflow();
 		const parsed = wf.inputSchema.parse({
-			prompt: "test",
-			seed: 42,
-			inputImageUrl: "https://example.com/in.png",
-			loraUrl: "https://example.com/lora.safetensors",
+			inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+			prompt: "hi",
 		});
-		const env = wf.buildEnv(parsed, { ...baseCtx, timeoutMs: 35 * 60 * 1000 });
-
-		expect(env.SEED).toBe("42");
-		expect(env.INPUT_IMAGE_URL).toBe("https://example.com/in.png");
-		expect(env.LORA_URL).toBe("https://example.com/lora.safetensors");
-		expect(env.CIVITAI_API_KEY).toBe("civitai-key");
-		expect(env.RUNPOD_POD_TIMEOUT_SECONDS).toBe("2100");
+		expect(parsed).toMatchObject({
+			cfgScale: 1,
+			fps: 24,
+			height: 736,
+			numFrames: 121,
+			prompt: "hi",
+			steps: 8,
+			width: 1280,
+		});
 	});
 
-	it("returns shape consumed by generator with public URLs and pod info", () => {
-		const output = workflow.parseOutput({
-			logPublicUrl: baseCtx.logPublicUrl,
-			outputPublicUrl: baseCtx.outputPublicUrl,
-			outputStat: {
+	it("buildPrompt patches user prompt, dims, seed and image filename in the API graph", () => {
+		const wf = buildWorkflow();
+		const ctx: PodSubmitContext = {
+			clientId: "req-1",
+			requestId: "req-1",
+		};
+		const result = wf.buildPrompt(
+			{
+				height: 720,
+				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+				numFrames: 121,
+				prompt: "a cat dancing",
+				seed: 7,
+				width: 1280,
+			},
+			ctx
+		);
+		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_PROMPT]?.inputs.value).toBe(
+			"a cat dancing"
+		);
+		expect(
+			result.prompt[LTX_23_I2V_NODE_IDS.NODE_NOISE_FIRST]?.inputs.noise_seed
+		).toBe(7);
+		expect(
+			result.prompt[LTX_23_I2V_NODE_IDS.NODE_NOISE_SECOND]?.inputs.noise_seed
+		).toBe(8);
+		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_WIDTH]?.inputs.value).toBe(
+			1280
+		);
+		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_HEIGHT]?.inputs.value).toBe(
+			720
+		);
+		expect(
+			result.prompt[LTX_23_I2V_NODE_IDS.NODE_LOAD_IMAGE]?.inputs.image
+		).toBe("req-req-1.png");
+	});
+
+	it("buildPrompt installs Civitai LoRA in the LoraManager node when ids are provided", () => {
+		const wf = buildWorkflow();
+		const result = wf.buildPrompt(
+			{
+				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+				loraCivitaiModelId: 2_509_189,
+				loraCivitaiVersionId: 2_841_299,
+				loraScale: 0.85,
+				prompt: "p",
+			},
+			{ clientId: "r-1", requestId: "r-1" }
+		);
+		const loraNode = result.prompt[LTX_23_I2V_NODE_IDS.NODE_LORA_LOADER];
+		expect(loraNode).toBeDefined();
+		const inputs = loraNode?.inputs as {
+			loras: { __value__: Array<{ name: string; strength: number }> };
+		};
+		expect(inputs.loras.__value__).toEqual([
+			{
+				active: true,
+				name: "civitai-2509189-2841299.safetensors",
+				strength: 0.85,
+			},
+		] as never);
+	});
+
+	it("prepare uploads input image bytes and reports ready=true without LoRA", async () => {
+		const uploadInputImage = mock(() =>
+			Promise.resolve({ name: "x", subfolder: "", type: "input" })
+		);
+		const wf = buildWorkflow();
+		const status = await wf.prepare?.({
+			client: buildClient({ uploadInputImage: uploadInputImage as never }),
+			downloadId: "r-1",
+			input: { inputImageUrl: SAMPLE_INPUT_IMAGE_URL, prompt: "p" },
+			requestId: "r-1",
+		});
+		expect(status).toEqual({ ready: true });
+		expect(uploadInputImage).toHaveBeenCalledTimes(1);
+	});
+
+	it("prepare starts a Civitai LoRA download when one is requested but missing", async () => {
+		const startLoraDownload = mock(() => Promise.resolve({}));
+		const pollLoraDownload = mock(() => Promise.resolve({ status: "idle" }));
+		const wf = buildWorkflow();
+		const status = await wf.prepare?.({
+			client: buildClient({
+				pollLoraDownload: pollLoraDownload as never,
+				startLoraDownload: startLoraDownload as never,
+				uploadInputImage: (() =>
+					Promise.resolve({
+						name: "x",
+						subfolder: "",
+						type: "input",
+					})) as never,
+			}),
+			downloadId: "req-1",
+			input: {
+				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+				loraCivitaiModelId: 2_509_189,
+				loraCivitaiVersionId: 2_841_299,
+				prompt: "x",
+			},
+			requestId: "req-1",
+		});
+		expect(status?.ready).toBe(false);
+		expect(startLoraDownload).toHaveBeenCalledTimes(1);
+	});
+
+	it("prepare reports ready=true once LoRA download completes", async () => {
+		const wf = buildWorkflow();
+		const status = await wf.prepare?.({
+			client: buildClient({
+				pollLoraDownload: (() =>
+					Promise.resolve({
+						progress: 1,
+						status: "completed",
+					})) as never,
+				uploadInputImage: (() =>
+					Promise.resolve({
+						name: "x",
+						subfolder: "",
+						type: "input",
+					})) as never,
+			}),
+			downloadId: "req-1",
+			input: {
+				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+				loraCivitaiModelId: 2_509_189,
+				loraCivitaiVersionId: 2_841_299,
+				prompt: "x",
+			},
+			requestId: "req-1",
+		});
+		expect(status).toMatchObject({ progressPct: 100, ready: true });
+	});
+
+	it("parseOutput returns artifact public URL and pod metadata", () => {
+		const wf = buildWorkflow();
+		const output = wf.parseOutput({
+			artifactPublicUrl: "https://assets.example.com/output.mp4",
+			artifactStat: {
 				etag: "etag",
-				key: "k",
+				key: "output.mp4",
 				lastModified: new Date(),
 				sizeBytes: 1234,
 				type: "video/mp4",
-				url: baseCtx.outputPublicUrl,
+				url: "https://assets.example.com/output.mp4",
 			},
 			podId: "pod-7",
 			requestId: "req-1",
 			runpodPodConsoleUrl: "https://runpod.io/console/pods/pod-7",
 		});
 		expect(output).toEqual({
-			logUrl: baseCtx.logPublicUrl,
 			podConsoleUrl: "https://runpod.io/console/pods/pod-7",
 			podId: "pod-7",
 			requestId: "req-1",
-			videoUrl: baseCtx.outputPublicUrl,
+			videoUrl: "https://assets.example.com/output.mp4",
 		});
 	});
 });

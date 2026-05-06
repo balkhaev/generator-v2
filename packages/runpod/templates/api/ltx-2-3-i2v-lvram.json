@@ -320,7 +320,7 @@
   },
   "190": {
     "inputs": {
-      "clip_name1": "comfyui/gemma-3-12b-it-heretic-v2_fp8_e4m3fn.safetensors",
+      "clip_name1": "comfyui/gemma-3-12b-it-heretic-v2.safetensors",
       "clip_name2": "text_encoders/ltx-2.3_text_projection_bf16.safetensors",
       "type": "ltxv",
       "device": "default"
@@ -446,7 +446,7 @@
   },
   "329": {
     "inputs": {
-      "unet_name": "diffusion_models/ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+      "unet_name": "diffusion_models/ltx-2.3-22b-dev_transformer_only_bf16.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",

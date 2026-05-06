@@ -13,7 +13,7 @@ const TEMPLATE_REQUIRED_FILES_BY_NODE: Record<
 	Record<string, string[]>
 > = {
 	DualCLIPLoader: {
-		clip_name1: ["comfyui/gemma-3-12b-it-heretic-v2_fp8_e4m3fn.safetensors"],
+		clip_name1: ["comfyui/gemma-3-12b-it-heretic-v2.safetensors"],
 		clip_name2: ["text_encoders/ltx-2.3_text_projection_bf16.safetensors"],
 	},
 	LatentUpscaleModelLoader: {
@@ -26,7 +26,7 @@ const TEMPLATE_REQUIRED_FILES_BY_NODE: Record<
 	},
 	UNETLoader: {
 		unet_name: [
-			"diffusion_models/ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+			"diffusion_models/ltx-2.3-22b-dev_transformer_only_bf16.safetensors",
 		],
 	},
 	VAELoader: {
@@ -233,6 +233,43 @@ describe("ltx-2-3-video workflow", () => {
 		});
 		expect(status?.ready).toBe(false);
 		expect(typeof status?.progressPct).toBe("number");
+	});
+
+	it("prepare reads modern ComfyUI COMBO entries (e.g. LatentUpscaleModelLoader)", async () => {
+		const wf = buildWorkflow();
+		const getObjectInfo = mock((nodeClass: string) => {
+			if (nodeClass === "LatentUpscaleModelLoader") {
+				return Promise.resolve({
+					input: {
+						required: {
+							model_name: [
+								"COMBO",
+								{
+									multiselect: false,
+									options: ["ltx-2.3-spatial-upscaler-x2-1.1.safetensors"],
+								},
+							],
+						},
+					},
+				});
+			}
+			return Promise.resolve(buildObjectInfoEntry(nodeClass));
+		});
+		const status = await wf.prepare?.({
+			client: buildClient({
+				getObjectInfo: getObjectInfo as never,
+				uploadInputImage: (() =>
+					Promise.resolve({
+						name: "x",
+						subfolder: "",
+						type: "input",
+					})) as never,
+			}),
+			downloadId: "r-1",
+			input: { inputImageUrl: SAMPLE_INPUT_IMAGE_URL, prompt: "p" },
+			requestId: "r-1",
+		});
+		expect(status).toEqual({ ready: true });
 	});
 
 	it("prepare uploads input image bytes and reports ready=true without LoRA", async () => {

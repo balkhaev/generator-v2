@@ -236,7 +236,7 @@ async function prepareLtx23(
  */
 const REQUIRED_FILES: Array<{ file: string; input: string; node: string }> = [
 	{
-		file: "diffusion_models/ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+		file: "diffusion_models/ltx-2.3-22b-dev_transformer_only_bf16.safetensors",
 		input: "unet_name",
 		node: "UNETLoader",
 	},
@@ -251,7 +251,7 @@ const REQUIRED_FILES: Array<{ file: string; input: string; node: string }> = [
 		node: "VAELoader",
 	},
 	{
-		file: "comfyui/gemma-3-12b-it-heretic-v2_fp8_e4m3fn.safetensors",
+		file: "comfyui/gemma-3-12b-it-heretic-v2.safetensors",
 		input: "clip_name1",
 		node: "DualCLIPLoader",
 	},
@@ -312,6 +312,14 @@ function readComfyComboValues(
 	const head = tuple[0];
 	if (Array.isArray(head)) {
 		return head.filter((entry): entry is string => typeof entry === "string");
+	}
+	if (head === "COMBO" && tuple[1] && typeof tuple[1] === "object") {
+		const options = (tuple[1] as { options?: unknown }).options;
+		if (Array.isArray(options)) {
+			return options.filter(
+				(entry): entry is string => typeof entry === "string"
+			);
+		}
 	}
 	return null;
 }

@@ -23,7 +23,7 @@ const DEFAULT_FPS = 24;
 const DEFAULT_STEPS = 8;
 const DEFAULT_CFG_SCALE = 1;
 const DEFAULT_LORA_SCALE = 1;
-const COMPLETE_PROGRESS_THRESHOLD = 0.999;
+const COMPLETE_PROGRESS_THRESHOLD = 99.9;
 const RANDOM_SEED_BITS = 24;
 const NEGATIVE_PROMPT_DEFAULT =
 	"blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud";
@@ -259,7 +259,13 @@ async function ensureLoraDownloaded(
 	}
 	if (progress.status === "downloading") {
 		return {
-			progressPct: Math.round((progress.progress ?? 0) * 100),
+			progressPct: Math.round(progress.progress ?? 0),
+			ready: false,
+		};
+	}
+	if (typeof progress.progress === "number") {
+		return {
+			progressPct: Math.round(progress.progress),
 			ready: false,
 		};
 	}

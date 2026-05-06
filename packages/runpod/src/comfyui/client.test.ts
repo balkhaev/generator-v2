@@ -189,8 +189,8 @@ describe("ComfyUIClient", () => {
 		});
 	});
 
-	it("polls Lora download progress and unwraps {downloads:[]} shape", async () => {
-		const { impl } = mockFetch([
+	it("polls Lora download progress against /api/lm/download-progress/{id}", async () => {
+		const { calls, impl } = mockFetch([
 			{
 				headers: { "set-cookie": "AIOHTTP_SESSION=t; Path=/" },
 				match: ({ url }) => url.endsWith("/login"),
@@ -198,17 +198,13 @@ describe("ComfyUIClient", () => {
 			},
 			{
 				body: {
-					downloads: [
-						{
-							bytes_downloaded: 50,
-							bytes_total: 100,
-							download_id: "dl-1",
-							progress: 0.5,
-							status: "downloading",
-						},
-					],
+					bytes_downloaded: 50,
+					progress: 50,
+					status: "downloading",
+					success: true,
+					total_bytes: 100,
 				},
-				match: ({ url }) => url.includes("/api/lm/download-progress"),
+				match: ({ url }) => url.includes("/api/lm/download-progress/dl-1"),
 			},
 		]);
 		const client = createComfyUIClient({
@@ -218,8 +214,32 @@ describe("ComfyUIClient", () => {
 			username: "u",
 		});
 		const progress = await client.pollLoraDownload("dl-1");
-		expect(progress.progress).toBe(0.5);
+		expect(progress.progress).toBe(50);
 		expect(progress.status).toBe("downloading");
+		expect(calls[1]?.url).toContain("/api/lm/download-progress/dl-1");
+	});
+
+	it("returns empty entry when /api/lm/download-progress is 404", async () => {
+		const { impl } = mockFetch([
+			{
+				headers: { "set-cookie": "AIOHTTP_SESSION=t; Path=/" },
+				match: ({ url }) => url.endsWith("/login"),
+				status: 302,
+			},
+			{
+				body: { error: "Download ID not found", success: false },
+				match: ({ url }) => url.includes("/api/lm/download-progress/"),
+				status: 404,
+			},
+		]);
+		const client = createComfyUIClient({
+			baseUrl: "https://pod.proxy.runpod.net",
+			fetchImpl: impl as unknown as typeof fetch,
+			password: "x",
+			username: "u",
+		});
+		const progress = await client.pollLoraDownload("dl-missing");
+		expect(progress).toEqual({});
 	});
 
 	it("downloads artifact bytes via /view", async () => {

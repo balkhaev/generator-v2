@@ -173,7 +173,7 @@ describe("ltx-2-3-video workflow", () => {
 			client: buildClient({
 				pollLoraDownload: (() =>
 					Promise.resolve({
-						progress: 1,
+						progress: 100,
 						status: "completed",
 					})) as never,
 				uploadInputImage: (() =>

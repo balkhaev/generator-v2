@@ -73,12 +73,19 @@ export interface LoraDownloadStartArgs {
 
 export interface LoraDownloadProgressEntry {
 	bytes_downloaded?: number;
-	bytes_total?: number;
+	bytes_per_second?: number;
 	error?: string;
 	file_path?: string;
+	message?: string;
+	/**
+	 * Lora Manager reports progress as 0-100 percent (per
+	 * `py/services/websocket_manager.py` and `get_download_progress` handler).
+	 */
 	progress?: number;
 	relative_path?: string;
 	status?: string;
+	success?: boolean;
+	total_bytes?: number;
 }
 
 export interface ComfyUIPromptArgs {

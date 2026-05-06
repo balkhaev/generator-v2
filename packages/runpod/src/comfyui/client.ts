@@ -264,8 +264,11 @@ export function createComfyUIClient(
 	): Promise<LoraDownloadProgressEntry> => {
 		await ensureCookie();
 		const response = await request(
-			`/api/lm/download-progress?download_id=${encodeURIComponent(downloadId)}`
+			`/api/lm/download-progress/${encodeURIComponent(downloadId)}`
 		);
+		if (response.status === 404) {
+			return {};
+		}
 		const data = await expectJson<
 			LoraDownloadProgressEntry | { downloads: LoraDownloadProgressEntry[] }
 		>(response, "comfyui /api/lm/download-progress");

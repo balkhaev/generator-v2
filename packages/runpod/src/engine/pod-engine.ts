@@ -31,7 +31,6 @@ const COMFYUI_USERNAME = "agent";
 const COMFYUI_PORT = 8188;
 const POD_INPUT_ENV_KEY = "INFERENCE_INPUT_JSON_B64";
 const POD_TIMEOUT_ENV_KEY = "INFERENCE_TIMEOUT_S";
-const REQUIRED_WORKFLOW_FILES_PROVISIONED = 6;
 const PROGRESS_PCT_POD_BOOTING = 5;
 const PROGRESS_PCT_COMFY_PROVISIONING = 30;
 const PROGRESS_PCT_PREPARE = 60;
@@ -251,18 +250,6 @@ export function createPodEngine<TInput, TOutput>(
 		return successResult(jobId, output);
 	};
 
-	const ensureWorkflowsProvisioned = async (
-		client: ComfyUIClient
-	): Promise<boolean> => {
-		try {
-			const entries = await client.listUserdata("workflows");
-			const fileCount = entries.filter((e) => e.type === "file").length;
-			return fileCount >= REQUIRED_WORKFLOW_FILES_PROVISIONED;
-		} catch {
-			return false;
-		}
-	};
-
 	const tryComfyReady = async (client: ComfyUIClient): Promise<boolean> => {
 		try {
 			await client.getSystemStats();
@@ -448,9 +435,6 @@ export function createPodEngine<TInput, TOutput>(
 			const client = buildClient(podId, password);
 			if (!(await tryComfyReady(client))) {
 				return runningResult(jobId, PROGRESS_PCT_POD_BOOTING);
-			}
-			if (!(await ensureWorkflowsProvisioned(client))) {
-				return runningResult(jobId, PROGRESS_PCT_COMFY_PROVISIONING);
 			}
 
 			const decoded = decodeInputFromPod(

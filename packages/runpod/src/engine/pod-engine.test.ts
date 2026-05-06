@@ -99,6 +99,8 @@ function buildClientStub(overrides: ClientStubOverrides = {}): ComfyUIClient {
 			(mock(() => Promise.resolve(new ArrayBuffer(8))) as never),
 		getCivitaiVersionInfo: dummy as never,
 		getHistory: overrides.getHistory ?? (() => Promise.resolve({})),
+		getLoraManagerLibraries: dummy as never,
+		getLoraManagerSettings: dummy as never,
 		getHistoryEntry: dummy as never,
 		getQueue:
 			overrides.getQueue ??
@@ -123,6 +125,7 @@ function buildClientStub(overrides: ClientStubOverrides = {}): ComfyUIClient {
 		submitPrompt:
 			overrides.submitPrompt ??
 			(mock(() => Promise.resolve({ number: 1, prompt_id: "p-1" })) as never),
+		updateLoraManagerSettings: dummy as never,
 		uploadInputImage: dummy as never,
 	};
 }
@@ -253,39 +256,6 @@ describe("PodEngine getStatus", () => {
 		const job = await engine.getStatus(jobId);
 		expect(job.status).toBe("running");
 		expect(job.progressPct).toBeGreaterThanOrEqual(0);
-	});
-
-	it("returns running while workflows are still being provisioned", async () => {
-		const engine = createPodEngine({
-			api: buildApi({
-				get: () =>
-					Promise.resolve({
-						desiredStatus: "RUNNING",
-						env: {
-							INFERENCE_INPUT_JSON_B64: encodeBase64Json({ prompt: "p" }),
-						},
-						id: "pod-XYZ",
-					} as never),
-			}),
-			createClient: () =>
-				buildClientStub({
-					listUserdata: () =>
-						Promise.resolve([
-							{
-								name: "wf-0.json",
-								path: "workflows/wf-0.json",
-								type: "file",
-							},
-						]),
-				}),
-			s3,
-			statObject: (() => {
-				throw new Error("not found");
-			}) as never,
-			workflow: baseWorkflow,
-		});
-		const job = await engine.getStatus(jobId);
-		expect(job.status).toBe("running");
 	});
 
 	it("submits prompt when ComfyUI is ready and no entry exists yet", async () => {

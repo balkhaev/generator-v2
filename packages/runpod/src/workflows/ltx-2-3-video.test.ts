@@ -17,6 +17,8 @@ function buildClient(overrides: Partial<ComfyUIClient> = {}): ComfyUIClient {
 		getCivitaiVersionInfo: noop as never,
 		getHistory: noop as never,
 		getHistoryEntry: noop as never,
+		getLoraManagerLibraries: noop as never,
+		getLoraManagerSettings: noop as never,
 		getQueue: noop as never,
 		getSystemStats: noop as never,
 		listUserdata: noop as never,
@@ -25,6 +27,7 @@ function buildClient(overrides: Partial<ComfyUIClient> = {}): ComfyUIClient {
 		readUserdata: noop as never,
 		startLoraDownload: noop as never,
 		submitPrompt: noop as never,
+		updateLoraManagerSettings: noop as never,
 		uploadInputImage: noop as never,
 		...overrides,
 	};
@@ -186,11 +189,25 @@ describe("ltx-2-3-video workflow", () => {
 	it("prepare starts a Civitai LoRA download when one is requested but missing", async () => {
 		const startLoraDownload = mock(() => Promise.resolve({}));
 		const pollLoraDownload = mock(() => Promise.resolve({ status: "idle" }));
+		const updateLoraManagerSettings = mock(() => Promise.resolve());
 		const wf = buildWorkflow();
 		const status = await wf.prepare?.({
 			client: buildClient({
+				getLoraManagerLibraries: (() =>
+					Promise.resolve({
+						active_library: "comfyui",
+						libraries: {
+							comfyui: {
+								folder_paths: {
+									loras: ["/workspace/ComfyUI/models/loras"],
+								},
+							},
+						},
+					})) as never,
+				getLoraManagerSettings: (() => Promise.resolve({})) as never,
 				pollLoraDownload: pollLoraDownload as never,
 				startLoraDownload: startLoraDownload as never,
+				updateLoraManagerSettings: updateLoraManagerSettings as never,
 				uploadInputImage: (() =>
 					Promise.resolve({
 						name: "x",
@@ -209,6 +226,44 @@ describe("ltx-2-3-video workflow", () => {
 		});
 		expect(status?.ready).toBe(false);
 		expect(startLoraDownload).toHaveBeenCalledTimes(1);
+		expect(updateLoraManagerSettings).toHaveBeenCalledWith({
+			default_lora_root: "/workspace/ComfyUI/models/loras",
+		});
+	});
+
+	it("prepare skips updateLoraManagerSettings when default_lora_root already set", async () => {
+		const startLoraDownload = mock(() => Promise.resolve({}));
+		const pollLoraDownload = mock(() => Promise.resolve({ status: "idle" }));
+		const updateLoraManagerSettings = mock(() => Promise.resolve());
+		const wf = buildWorkflow();
+		const status = await wf.prepare?.({
+			client: buildClient({
+				getLoraManagerSettings: (() =>
+					Promise.resolve({
+						default_lora_root: "/workspace/ComfyUI/models/loras",
+					})) as never,
+				pollLoraDownload: pollLoraDownload as never,
+				startLoraDownload: startLoraDownload as never,
+				updateLoraManagerSettings: updateLoraManagerSettings as never,
+				uploadInputImage: (() =>
+					Promise.resolve({
+						name: "x",
+						subfolder: "",
+						type: "input",
+					})) as never,
+			}),
+			downloadId: "req-1",
+			input: {
+				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+				loraCivitaiModelId: 2_509_189,
+				loraCivitaiVersionId: 2_841_299,
+				prompt: "x",
+			},
+			requestId: "req-1",
+		});
+		expect(status?.ready).toBe(false);
+		expect(startLoraDownload).toHaveBeenCalledTimes(1);
+		expect(updateLoraManagerSettings).not.toHaveBeenCalled();
 	});
 
 	it("prepare reports ready=true once LoRA download completes", async () => {

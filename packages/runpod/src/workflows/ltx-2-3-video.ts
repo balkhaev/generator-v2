@@ -2,7 +2,11 @@ import { z } from "zod";
 import LTX_23_I2V_API_GRAPH from "../../templates/api/ltx-2-3-i2v-lvram.json" with {
 	type: "json",
 };
-import type { ComfyUIClient, ComfyUINodeApiInput } from "../comfyui/client";
+import type {
+	ComfyUIClient,
+	ComfyUINodeApiInput,
+	LoraManagerLibrariesSnapshot,
+} from "../comfyui/client";
 import type {
 	PodPrepareArgs,
 	PodPrepareStatus,
@@ -280,6 +284,7 @@ async function ensureLoraDownloaded(
 		};
 	}
 	try {
+		await ensureDefaultLoraRoot(args.client);
 		await args.client.startLoraDownload({
 			downloadId: args.downloadId,
 			modelId: args.modelId,
@@ -295,6 +300,57 @@ async function ensureLoraDownloaded(
 		};
 	}
 	return { progressPct: 0, ready: false };
+}
+
+/**
+ * Lora Manager хранит `default_lora_root` в settings. На свежем pod-инстансе
+ * RunPod template ключ может быть пустым — в этом случае
+ * `/api/lm/download-model` с `use_default_paths: true` вернёт 500
+ * "Default lora root path not set in settings". Здесь мы идемпотентно его
+ * чиним: смотрим текущие settings, если default не задан — берём первый
+ * `folder_paths.loras` из active library и POST'им обратно.
+ */
+async function ensureDefaultLoraRoot(client: ComfyUIClient): Promise<void> {
+	const settings = await client.getLoraManagerSettings();
+	if (
+		typeof settings.default_lora_root === "string" &&
+		settings.default_lora_root.trim().length > 0
+	) {
+		return;
+	}
+	const libraries = await client.getLoraManagerLibraries();
+	const candidate = pickLorasRoot(libraries);
+	if (!candidate) {
+		throw new Error(
+			"ComfyUI Lora Manager has no configured loras folder paths; cannot infer default_lora_root"
+		);
+	}
+	await client.updateLoraManagerSettings({ default_lora_root: candidate });
+}
+
+function pickLorasRoot(snapshot: LoraManagerLibrariesSnapshot): string | null {
+	const libs = snapshot.libraries ?? {};
+	const active = snapshot.active_library;
+	const order = active ? [active, ...Object.keys(libs)] : Object.keys(libs);
+	for (const name of order) {
+		const lib = libs[name];
+		if (
+			typeof lib?.default_lora_root === "string" &&
+			lib.default_lora_root.trim().length > 0
+		) {
+			return lib.default_lora_root;
+		}
+		const folder = lib?.folder_paths?.loras;
+		if (Array.isArray(folder) && folder.length > 0) {
+			const first = folder.find(
+				(p) => typeof p === "string" && p.trim().length > 0
+			);
+			if (first) {
+				return first;
+			}
+		}
+	}
+	return null;
 }
 
 async function resolveLoraFilename(

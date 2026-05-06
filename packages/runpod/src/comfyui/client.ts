@@ -25,6 +25,23 @@ const COOKIE_HEADER = /AIOHTTP_SESSION="?([^;",]+)/u;
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_ERROR_BODY_LENGTH = 2000;
 
+export interface LoraManagerLibrariesSnapshot {
+	active_library?: string;
+	libraries?: Record<string, LoraManagerLibrary>;
+}
+
+export interface LoraManagerLibrary {
+	default_lora_root?: string;
+	folder_paths?: {
+		loras?: string[];
+	};
+}
+
+export interface LoraManagerSettings {
+	default_lora_root?: string;
+	[key: string]: unknown;
+}
+
 export interface ComfyUIClient {
 	authorizedFetch(path: string, init?: RequestInit): Promise<Response>;
 	cancelDownload(downloadId: string): Promise<void>;
@@ -35,6 +52,8 @@ export interface ComfyUIClient {
 	): Promise<CivitaiVersionInfo | null>;
 	getHistory(): Promise<Record<string, ComfyUIHistoryItem>>;
 	getHistoryEntry(promptId: string): Promise<ComfyUIHistoryEntry | null>;
+	getLoraManagerLibraries(): Promise<LoraManagerLibrariesSnapshot>;
+	getLoraManagerSettings(): Promise<LoraManagerSettings>;
 	getQueue(): Promise<ComfyUIQueueResponse>;
 	getSystemStats(): Promise<ComfyUISystemStats>;
 	listUserdata(dir: string): Promise<ComfyUIUserdataEntry[]>;
@@ -43,6 +62,7 @@ export interface ComfyUIClient {
 	readUserdata(relativePath: string): Promise<string>;
 	startLoraDownload(args: LoraDownloadStartArgs): Promise<unknown>;
 	submitPrompt(args: ComfyUIPromptArgs): Promise<ComfyUIPromptResponse>;
+	updateLoraManagerSettings(patch: Record<string, unknown>): Promise<void>;
 	uploadInputImage(args: {
 		bytes: ArrayBuffer | Uint8Array;
 		filename: string;
@@ -327,6 +347,40 @@ export function createComfyUIClient(
 		return await response.text();
 	};
 
+	const getLoraManagerSettings = async (): Promise<LoraManagerSettings> => {
+		await ensureCookie();
+		const response = await request("/api/lm/settings");
+		const data = await expectJson<{
+			settings?: LoraManagerSettings;
+			success?: boolean;
+		}>(response, "comfyui /api/lm/settings");
+		return data.settings ?? {};
+	};
+
+	const getLoraManagerLibraries =
+		async (): Promise<LoraManagerLibrariesSnapshot> => {
+			await ensureCookie();
+			const response = await request("/api/lm/settings/libraries");
+			const data = await expectJson<
+				LoraManagerLibrariesSnapshot & { success?: boolean }
+			>(response, "comfyui /api/lm/settings/libraries");
+			return data;
+		};
+
+	const updateLoraManagerSettings = async (
+		patch: Record<string, unknown>
+	): Promise<void> => {
+		await ensureCookie();
+		const response = await request("/api/lm/settings", {
+			body: JSON.stringify(patch),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		if (!response.ok) {
+			throw await toError(response, "comfyui /api/lm/settings (POST)");
+		}
+	};
+
 	const getCivitaiVersionInfo = async (
 		modelType: string,
 		modelVersionId: number
@@ -357,6 +411,8 @@ export function createComfyUIClient(
 		getCivitaiVersionInfo,
 		getHistory,
 		getHistoryEntry,
+		getLoraManagerLibraries,
+		getLoraManagerSettings,
 		getQueue,
 		getSystemStats,
 		listUserdata,
@@ -365,6 +421,7 @@ export function createComfyUIClient(
 		readUserdata,
 		startLoraDownload,
 		submitPrompt,
+		updateLoraManagerSettings,
 		uploadInputImage,
 	};
 }

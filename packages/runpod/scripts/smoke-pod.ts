@@ -31,6 +31,8 @@ function createDryRunComfyClient(): ComfyUIClient {
 		getCivitaiVersionInfo: fail as never,
 		getHistory: fail as never,
 		getHistoryEntry: fail as never,
+		getLoraManagerLibraries: fail as never,
+		getLoraManagerSettings: fail as never,
 		getQueue: fail as never,
 		getSystemStats: fail as never,
 		listUserdata: fail as never,
@@ -39,6 +41,7 @@ function createDryRunComfyClient(): ComfyUIClient {
 		readUserdata: fail as never,
 		startLoraDownload: fail as never,
 		submitPrompt: fail as never,
+		updateLoraManagerSettings: fail as never,
 		uploadInputImage: fail as never,
 	};
 }

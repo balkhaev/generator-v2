@@ -206,7 +206,19 @@ export function createComfyUIClient(
 			headers: { "content-type": "application/json" },
 			method: "POST",
 		});
-		return expectJson<ComfyUIPromptResponse>(response, "comfyui /prompt");
+		const parsed = await expectJson<ComfyUIPromptResponse>(
+			response,
+			"comfyui /prompt"
+		);
+		const failedNodes = parsed.node_errors;
+		if (failedNodes && Object.keys(failedNodes).length > 0) {
+			throw new Error(
+				`comfyui /prompt accepted with node_errors (some output nodes will be skipped): ${JSON.stringify(
+					failedNodes
+				).slice(0, 1000)}`
+			);
+		}
+		return parsed;
 	};
 
 	const getHistoryEntry = async (

@@ -1166,10 +1166,16 @@ describe("studio backend", () => {
 		);
 		expect(ok.status).toBe(200);
 		const payload = (await ok.json()) as {
-			scenario: { id: string; workflowKey: string };
+			scenario: {
+				id: string;
+				params: Record<string, unknown>;
+				workflowKey: string;
+			};
 		};
 		expect(payload.scenario.id).toBe("scenario-update");
 		expect(payload.scenario.workflowKey).toBe("runpod-ltx-2-3-image-to-video");
+		// PATCH без params не должен затирать существующие значения.
+		expect(payload.scenario.params).toEqual({ duration: "5" });
 
 		const empty = await app.request(
 			"http://localhost/api/internal/scenarios/scenario-update",

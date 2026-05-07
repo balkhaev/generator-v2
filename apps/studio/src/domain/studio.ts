@@ -46,8 +46,13 @@ export const createStudioScenarioInputSchema = z.object({
 	workflowKey: z.string().trim().min(1, "Workflow key is required"),
 });
 
+// Update схема не наследует `.default({})` create-варианта для params: иначе
+// PATCH без params затирает существующие значения в `{}`.
 export const updateStudioScenarioInputSchema = createStudioScenarioInputSchema
 	.partial()
+	.extend({
+		params: z.record(z.string(), z.unknown()).optional(),
+	})
 	.refine(
 		(value) => Object.keys(value).length > 0,
 		"At least one field must be provided"

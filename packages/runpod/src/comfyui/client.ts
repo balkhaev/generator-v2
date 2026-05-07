@@ -218,11 +218,6 @@ export function createComfyUIClient(
 				).slice(0, 1000)}`
 			);
 		}
-		console.log("comfyui /prompt accepted", {
-			number: parsed.number,
-			prompt_id: parsed.prompt_id,
-			node_errors: parsed.node_errors,
-		});
 		return parsed;
 	};
 

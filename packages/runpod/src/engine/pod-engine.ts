@@ -37,6 +37,42 @@ const PROGRESS_PCT_PREPARE = 60;
 const PROGRESS_PCT_PROMPT_QUEUED = 75;
 const PROGRESS_PCT_PROMPT_RUNNING = 90;
 
+// RunPod proxy (pod-id-PORT.proxy.runpod.net) is fronted by Cloudflare и
+// периодически отдаёт 5xx/timeout, пока pod ещё провижинится или из-за
+// transient edge-проблем. Такие ошибки не должны валить exec — следующий poll
+// либо пройдёт, либо api.get отдаст 404, и мы корректно зафейлим.
+const COMFY_TRANSIENT_STATUSES = new Set([
+	502, 503, 504, 520, 521, 522, 523, 524,
+]);
+const COMFY_FAILED_STATUS_PATTERN = /failed \((\d{3})\)/u;
+const POD_NOT_FOUND_PATTERN = /\/pods\/[^\s]+\s*\(get\) failed \(404\)/u;
+const FETCH_NETWORK_ERROR_PATTERN =
+	/fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|socket hang up|UND_ERR/iu;
+
+export function isComfyTransientProxyError(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false;
+	}
+	if (!error.message.startsWith("comfyui ")) {
+		// Network-level fetch error без HTTP статуса — тоже считаем транзиентным
+		// для ComfyUI запросов, но только если это произошло в comfyui/* контексте.
+		return false;
+	}
+	if (FETCH_NETWORK_ERROR_PATTERN.test(error.message)) {
+		return true;
+	}
+	const match = error.message.match(COMFY_FAILED_STATUS_PATTERN);
+	if (!match) {
+		return false;
+	}
+	const status = Number.parseInt(match[1] ?? "0", 10);
+	return COMFY_TRANSIENT_STATUSES.has(status);
+}
+
+export function isPodNotFoundError(error: unknown): boolean {
+	return error instanceof Error && POD_NOT_FOUND_PATTERN.test(error.message);
+}
+
 type PodCreateClient = (options: ComfyUIClientOptions) => ComfyUIClient;
 
 interface PodEngineDeps {
@@ -311,6 +347,19 @@ export function createPodEngine<TInput, TOutput>(
 			}
 			return { kind: "alive", pod };
 		} catch (error) {
+			if (isPodNotFoundError(error)) {
+				logger?.warn?.("runpod-pod.vanished", {
+					message: error instanceof Error ? error.message : String(error),
+					podId,
+				});
+				return {
+					kind: "result",
+					value: failedResult(
+						jobId,
+						`RunPod pod ${podId} vanished from RunPod inventory before finishing — likely auto-terminated due to a container crash, OOM, or platform preemption. Check the pod logs in the RunPod console for details.`
+					),
+				};
+			}
 			return {
 				kind: "result",
 				value: failedResult(
@@ -405,6 +454,62 @@ export function createPodEngine<TInput, TOutput>(
 		return null;
 	};
 
+	// Завернули post-snapshot часть getStatus в guard: транзиентные 5xx от
+	// RunPod proxy (Cloudflare) возвращаем как `running`, не давая упасть
+	// в worker retry → потеря контекста (типичный случай: 502 на /history,
+	// retry → api.get → 404 → бесполезный «pod not found»).
+	const runWithTransientGuard = async (args: {
+		artifactKey: string;
+		client: ComfyUIClient;
+		input: TInput;
+		jobId: string;
+		podId: string;
+		requestId: string;
+	}): Promise<EngineJob & { output: TOutput | null }> => {
+		const { artifactKey, client, input, jobId, podId, requestId } = args;
+		try {
+			const prepareResult = await runPrepareStep(
+				jobId,
+				podId,
+				client,
+				input,
+				requestId
+			);
+			if (prepareResult) {
+				return prepareResult;
+			}
+
+			const submission = await submitPromptIfNeeded(client, input, requestId);
+			if (!submission.submitted || submission.inFlight) {
+				return runningResult(jobId, PROGRESS_PCT_PROMPT_QUEUED);
+			}
+
+			const history = await client.getHistory();
+			const entry = findEntryByClientId(history, requestId);
+			if (!entry) {
+				return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
+			}
+			return await handleHistoryEntry(
+				jobId,
+				entry,
+				client,
+				podId,
+				requestId,
+				artifactKey
+			);
+		} catch (error) {
+			if (isComfyTransientProxyError(error)) {
+				logger?.warn?.("runpod-pod.comfyui-transient", {
+					message: error instanceof Error ? error.message : String(error),
+					podId,
+					requestId,
+				});
+				return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
+			}
+			throw error;
+		}
+	};
+
 	return {
 		async cancel(jobId) {
 			const { podId } = parsePodJobId(jobId);
@@ -450,39 +555,14 @@ export function createPodEngine<TInput, TOutput>(
 				return decoded.value;
 			}
 
-			const prepareResult = await runPrepareStep(
+			return await runWithTransientGuard({
+				artifactKey,
+				client,
+				input: decoded.input,
 				jobId,
-				podId,
-				client,
-				decoded.input,
-				requestId
-			);
-			if (prepareResult) {
-				return prepareResult;
-			}
-
-			const submission = await submitPromptIfNeeded(
-				client,
-				decoded.input,
-				requestId
-			);
-			if (!submission.submitted || submission.inFlight) {
-				return runningResult(jobId, PROGRESS_PCT_PROMPT_QUEUED);
-			}
-
-			const history = await client.getHistory();
-			const entry = findEntryByClientId(history, requestId);
-			if (!entry) {
-				return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
-			}
-			return await handleHistoryEntry(
-				jobId,
-				entry,
-				client,
 				podId,
 				requestId,
-				artifactKey
-			);
+			});
 		},
 
 		async submit(input): Promise<EngineSubmission> {

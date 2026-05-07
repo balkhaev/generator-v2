@@ -11,7 +11,13 @@ import type {
 	ComfyUIUserdataEntry,
 } from "../comfyui/types";
 import type { PodWorkflow } from "../workflow/definition";
-import { createPodEngine, formatPodJobId, parsePodJobId } from "./pod-engine";
+import {
+	createPodEngine,
+	formatPodJobId,
+	isComfyTransientProxyError,
+	isPodNotFoundError,
+	parsePodJobId,
+} from "./pod-engine";
 
 const s3: S3StorageConfig = {
 	accessKeyId: "access",
@@ -361,6 +367,108 @@ describe("PodEngine cancel", () => {
 		});
 		await engine.cancel("pod-A:req-2:pwd");
 		expect(deleteFn).toHaveBeenCalledWith("pod-A");
+	});
+});
+
+describe("error helpers", () => {
+	it("recognises comfyui Cloudflare proxy 5xx as transient", () => {
+		expect(
+			isComfyTransientProxyError(
+				new Error("comfyui /history failed (502): <html>Bad gateway</html>")
+			)
+		).toBe(true);
+		expect(
+			isComfyTransientProxyError(
+				new Error("comfyui /queue failed (524): timeout")
+			)
+		).toBe(true);
+		expect(
+			isComfyTransientProxyError(
+				new Error("comfyui /system_stats: fetch failed (TLS)")
+			)
+		).toBe(true);
+	});
+
+	it("does not flag deterministic comfyui errors as transient", () => {
+		expect(
+			isComfyTransientProxyError(
+				new Error("comfyui /prompt failed (400): value_not_in_list")
+			)
+		).toBe(false);
+		expect(
+			isComfyTransientProxyError(
+				new Error("comfyui /prompt failed (401): authentication required")
+			)
+		).toBe(false);
+		expect(
+			isComfyTransientProxyError(new Error("runpod /pods (get) failed (502)"))
+		).toBe(false);
+	});
+
+	it("recognises pod-not-found 404 from runpod API", () => {
+		expect(
+			isPodNotFoundError(
+				new Error("runpod /pods/abcd1234 (get) failed (404): pod not found")
+			)
+		).toBe(true);
+		expect(
+			isPodNotFoundError(new Error("runpod /pods (create) failed (404)"))
+		).toBe(false);
+	});
+});
+
+describe("PodEngine getStatus error handling", () => {
+	const jobId = "pod-LOST:req-fixed:pwd";
+
+	it("emits a clear error when the pod has vanished from RunPod", async () => {
+		const engine = createPodEngine({
+			api: buildApi({
+				get: () =>
+					Promise.reject(
+						new Error("runpod /pods/pod-LOST (get) failed (404): pod not found")
+					),
+			}),
+			createClient: () => buildClientStub(),
+			s3,
+			statObject: (() => {
+				throw new Error("not found");
+			}) as never,
+			workflow: baseWorkflow,
+		});
+		const job = await engine.getStatus(jobId);
+		expect(job.status).toBe("failed");
+		expect(job.errorSummary).toContain("vanished");
+		expect(job.errorSummary).toContain("pod-LOST");
+	});
+
+	it("treats transient ComfyUI proxy 5xx as still running", async () => {
+		const engine = createPodEngine({
+			api: buildApi({
+				get: () =>
+					Promise.resolve({
+						desiredStatus: "RUNNING",
+						env: {
+							INFERENCE_INPUT_JSON_B64: encodeBase64Json({ prompt: "p" }),
+						},
+						id: "pod-LOST",
+					} as PodSnapshot & { env: Record<string, string> }),
+			}),
+			createClient: () =>
+				buildClientStub({
+					getHistory: () =>
+						Promise.reject(
+							new Error("comfyui /history failed (502): Bad gateway")
+						),
+				}),
+			s3,
+			statObject: (() => {
+				throw new Error("not found");
+			}) as never,
+			workflow: baseWorkflow,
+		});
+		const job = await engine.getStatus(jobId);
+		expect(job.status).toBe("running");
+		expect(job.errorSummary).toBeNull();
 	});
 });
 

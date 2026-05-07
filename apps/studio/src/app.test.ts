@@ -1118,6 +1118,86 @@ describe("studio backend", () => {
 		expect(notFound.status).toBe(404);
 	});
 
+	it("updates a scenario via internal endpoint with callback token", async () => {
+		const repository = createMemoryRepository();
+		await repository.createScenario({
+			generatorScenarioId: null,
+			id: "scenario-update",
+			name: "Migrate me",
+			params: { duration: "5" },
+			prompt: "old prompt",
+			workflowKey: "civitai-ltx-2-3-synth-image-to-video",
+		});
+
+		const { app } = createApp({
+			authHandler() {
+				return new Response("auth", { status: 200 });
+			},
+			corsOrigins: ["http://localhost:3002"],
+			executionClient: createExecutionClientStub(),
+			generatorBaseUrl: "http://generator.internal",
+			getSession() {
+				return Promise.resolve(null);
+			},
+			repository,
+			s3Config: fakeS3Config,
+		});
+
+		const unauthorized = await app.request(
+			"http://localhost/api/internal/scenarios/scenario-update",
+			{
+				body: JSON.stringify({ workflowKey: "runpod-ltx-2-3-image-to-video" }),
+				headers: { "content-type": "application/json" },
+				method: "PATCH",
+			}
+		);
+		expect(unauthorized.status).toBe(401);
+
+		const ok = await app.request(
+			"http://localhost/api/internal/scenarios/scenario-update",
+			{
+				body: JSON.stringify({ workflowKey: "runpod-ltx-2-3-image-to-video" }),
+				headers: {
+					"content-type": "application/json",
+					"x-generator-callback-token": "local-generator-callback-token",
+				},
+				method: "PATCH",
+			}
+		);
+		expect(ok.status).toBe(200);
+		const payload = (await ok.json()) as {
+			scenario: { id: string; workflowKey: string };
+		};
+		expect(payload.scenario.id).toBe("scenario-update");
+		expect(payload.scenario.workflowKey).toBe("runpod-ltx-2-3-image-to-video");
+
+		const empty = await app.request(
+			"http://localhost/api/internal/scenarios/scenario-update",
+			{
+				body: JSON.stringify({}),
+				headers: {
+					"content-type": "application/json",
+					"x-generator-callback-token": "local-generator-callback-token",
+				},
+				method: "PATCH",
+			}
+		);
+		expect(empty.status).toBe(400);
+
+		const notFound = await app.request(
+			"http://localhost/api/internal/scenarios/missing",
+			{
+				body: JSON.stringify({ workflowKey: "runpod-ltx-2-3-image-to-video" }),
+				headers: {
+					"content-type": "application/json",
+					"x-generator-callback-token": "local-generator-callback-token",
+				},
+				method: "PATCH",
+			}
+		);
+		expect(notFound.status).toBe(404);
+	});
+
 	it("streams initial snapshot via /api/runs/stream", async () => {
 		const repository = createMemoryRepository();
 		await repository.createScenario({

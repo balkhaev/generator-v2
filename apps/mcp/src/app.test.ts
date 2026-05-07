@@ -51,7 +51,56 @@ describe("mcp app", () => {
 		expect(toolNames).toContain("persons_lora_generation_debug");
 		expect(toolNames).toContain("studio_execution_debug");
 		expect(toolNames).toContain("studio_run_mark_failed");
+		expect(toolNames).toContain("studio_scenario_update");
 		expect(toolNames).toContain("admin_lora_training_queue_snapshot");
+	});
+
+	it("validates studio scenario update arguments", async () => {
+		const noScenario = await app.request("/mcp", {
+			body: JSON.stringify({
+				id: 1,
+				jsonrpc: "2.0",
+				method: "tools/call",
+				params: {
+					arguments: {},
+					name: "studio_scenario_update",
+				},
+			}),
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+		expect(noScenario.status).toBe(200);
+		const noScenarioPayload = (await noScenario.json()) as {
+			error?: { message: string };
+		};
+		expect(noScenarioPayload.error?.message).toBe("scenarioId is required");
+
+		const noFields = await app.request("/mcp", {
+			body: JSON.stringify({
+				id: 2,
+				jsonrpc: "2.0",
+				method: "tools/call",
+				params: {
+					arguments: { scenarioId: "scenario-1" },
+					name: "studio_scenario_update",
+				},
+			}),
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+		expect(noFields.status).toBe(200);
+		const noFieldsPayload = (await noFields.json()) as {
+			error?: { message: string };
+		};
+		expect(noFieldsPayload.error?.message).toBe(
+			"at least one of name/prompt/params/workflowKey must be provided"
+		);
 	});
 
 	it("validates lora generation debug target before touching data sources", async () => {

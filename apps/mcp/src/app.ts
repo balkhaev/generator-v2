@@ -544,6 +544,40 @@ const toolDefinitions = [
 		},
 		name: "studio_execution_debug",
 	},
+	{
+		description:
+			"Patch a studio scenario by id (workflow migration helper). At least one of name/prompt/params/workflowKey must be provided. Authorized via internal callback token; meant for MCP-driven cleanup like switching legacy scenarios to new workflows.",
+		inputSchema: {
+			properties: {
+				name: {
+					description: "Optional new scenario display name.",
+					type: "string",
+				},
+				params: {
+					additionalProperties: true,
+					description:
+						"Replacement params object. Pass the full desired params (server stores it as-is, prompt source metadata is recomputed).",
+					type: "object",
+				},
+				prompt: {
+					description: "Optional new scenario prompt text.",
+					type: "string",
+				},
+				scenarioId: {
+					description: "Studio scenario id (uuid).",
+					type: "string",
+				},
+				workflowKey: {
+					description:
+						"Optional new workflow key (e.g. 'runpod-ltx-2-3-image-to-video').",
+					type: "string",
+				},
+			},
+			required: ["scenarioId"],
+			type: "object",
+		},
+		name: "studio_scenario_update",
+	},
 ] as const;
 
 function createToolResult(payload: unknown, isError = false) {
@@ -2380,6 +2414,66 @@ async function handleStudioRunMarkFailedToolCall(
 	);
 }
 
+async function handleStudioScenarioUpdateToolCall(
+	_name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const scenarioId = parseOptionalString(argumentsPayload.scenarioId);
+	if (!scenarioId) {
+		return createErrorResponse(id, "scenarioId is required");
+	}
+
+	const body: Record<string, unknown> = {};
+	const name = parseOptionalString(argumentsPayload.name);
+	if (name) {
+		body.name = name;
+	}
+	const prompt = parseOptionalString(argumentsPayload.prompt);
+	if (prompt) {
+		body.prompt = prompt;
+	}
+	const workflowKey = parseOptionalString(argumentsPayload.workflowKey);
+	if (workflowKey) {
+		body.workflowKey = workflowKey;
+	}
+	if (
+		argumentsPayload.params &&
+		typeof argumentsPayload.params === "object" &&
+		!Array.isArray(argumentsPayload.params)
+	) {
+		body.params = argumentsPayload.params;
+	}
+
+	if (Object.keys(body).length === 0) {
+		return createErrorResponse(
+			id,
+			"at least one of name/prompt/params/workflowKey must be provided"
+		);
+	}
+
+	const callbackToken =
+		process.env.GENERATOR_CALLBACK_TOKEN ?? "local-generator-callback-token";
+
+	return createOkResponse(
+		id,
+		createToolResult(
+			await fetchServiceSnapshot(
+				"studio",
+				`/api/internal/scenarios/${encodeURIComponent(scenarioId)}`,
+				{
+					body: JSON.stringify(body),
+					headers: {
+						"content-type": "application/json",
+						"x-generator-callback-token": callbackToken,
+					},
+					method: "PATCH",
+				}
+			)
+		)
+	);
+}
+
 type ToolHandler = (
 	name: string,
 	argumentsPayload: Record<string, unknown>,
@@ -2395,6 +2489,7 @@ const toolHandlers: Record<string, ToolHandler> = {
 	lora_list: handleLoraToolCall,
 	studio_execution_debug: handleStudioExecutionDebugToolCall,
 	studio_run_mark_failed: handleStudioRunMarkFailedToolCall,
+	studio_scenario_update: handleStudioScenarioUpdateToolCall,
 	test_user_get: handleTestUserToolCall,
 	test_user_upsert: handleTestUserToolCall,
 	training_provider_get: handleTrainingProviderToolCall,

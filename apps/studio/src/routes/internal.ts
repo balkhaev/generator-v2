@@ -25,6 +25,23 @@ const markFailedPayloadSchema = z.object({
 	errorSummary: z.string().trim().min(1).max(500).optional(),
 });
 
+// Точечный апдейт сценария по callback-токену. Поля совпадают с
+// updateStudioScenarioInputSchema, но дублированы здесь, чтобы не тащить zod
+// схему из домена (избегаем циклической зависимости routes → domain → routes).
+// MCP-tool studio_scenario_update патчит сценарии (например, миграция
+// workflowKey старых сценариев на новый pipeline) без участия пользователя.
+const scenarioUpdatePayloadSchema = z
+	.object({
+		name: z.string().trim().min(1).optional(),
+		params: z.record(z.string(), z.unknown()).optional(),
+		prompt: z.string().trim().min(1).optional(),
+		workflowKey: z.string().trim().min(1).optional(),
+	})
+	.refine(
+		(value) => Object.keys(value).length > 0,
+		"At least one field must be provided"
+	);
+
 export function createInternalRoutes(service: StudioService) {
 	const app = new Hono();
 
@@ -82,6 +99,36 @@ export function createInternalRoutes(service: StudioService) {
 			return c.json({ error: "Run not found" }, 404);
 		}
 		return c.json({ run });
+	});
+
+	app.patch("/scenarios/:scenarioId", async (c) => {
+		const token = c.req.header(GENERATOR_CALLBACK_TOKEN_HEADER);
+		if (token !== getGeneratorCallbackToken()) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+
+		const body = await c.req.json().catch(() => ({}) as unknown);
+		const result = scenarioUpdatePayloadSchema.safeParse(body);
+		if (!result.success) {
+			return c.json(
+				{ error: "Invalid payload", issues: result.error.issues },
+				400
+			);
+		}
+
+		try {
+			const scenario = await service.updateScenario(
+				c.req.param("scenarioId"),
+				result.data
+			);
+			if (!scenario) {
+				return c.json({ error: "Scenario not found" }, 404);
+			}
+			return c.json({ scenario });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return c.json({ error: message }, 400);
+		}
 	});
 
 	return app;

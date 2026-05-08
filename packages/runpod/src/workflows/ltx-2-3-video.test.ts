@@ -2,7 +2,12 @@ import { describe, expect, it, mock } from "bun:test";
 
 import type { ComfyUIClient, ComfyUIObjectInfoEntry } from "../comfyui/client";
 import type { PodSubmitContext } from "../workflow/definition";
-import { createLtx23VideoWorkflow, LTX_23_I2V_NODE_IDS } from "./ltx-2-3-video";
+import {
+	createLtx23VideoWorkflow,
+	deriveOutputDimensionsFromImage,
+	LTX_23_I2V_NODE_IDS,
+	probeImageDimensions,
+} from "./ltx-2-3-video";
 
 const SAMPLE_INPUT_IMAGE_URL = "https://example.com/in.png";
 const SAMPLE_BYTES = new ArrayBuffer(8);
@@ -86,6 +91,22 @@ function buildClient(overrides: Partial<ComfyUIClient> = {}): ComfyUIClient {
 	};
 }
 
+// Generates the smallest valid JPEG header that exposes width × height to a
+// SOF parser. Не настоящий JPEG (нет самих данных), но нашему `probeImageDimensions`
+// достаточно SOI + один SOF0 сегмент.
+function buildJpeg(width: number, height: number): ArrayBuffer {
+	const buf = new Uint8Array(20);
+	const view = new DataView(buf.buffer);
+	view.setUint16(0, 0xff_d8); // SOI
+	view.setUint8(2, 0xff);
+	view.setUint8(3, 0xc0); // SOF0
+	view.setUint16(4, 11); // segment length
+	view.setUint8(6, 8); // precision
+	view.setUint16(7, height);
+	view.setUint16(9, width);
+	return buf.buffer;
+}
+
 function buildWorkflow(deps: { fetchBytes?: () => Promise<ArrayBuffer> } = {}) {
 	return createLtx23VideoWorkflow(
 		{
@@ -102,7 +123,7 @@ function buildWorkflow(deps: { fetchBytes?: () => Promise<ArrayBuffer> } = {}) {
 }
 
 describe("ltx-2-3-video workflow", () => {
-	it("normalises input with sane defaults", () => {
+	it("leaves width/height undefined so they can be derived from the input image", () => {
 		const wf = buildWorkflow();
 		const parsed = wf.inputSchema.parse({
 			inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
@@ -111,12 +132,12 @@ describe("ltx-2-3-video workflow", () => {
 		expect(parsed).toMatchObject({
 			cfgScale: 1,
 			fps: 24,
-			height: 736,
 			numFrames: 121,
 			prompt: "hi",
 			steps: 8,
-			width: 1280,
 		});
+		expect(parsed.width).toBeUndefined();
+		expect(parsed.height).toBeUndefined();
 	});
 
 	it("buildPrompt patches user prompt, dims, seed and image filename in the API graph", async () => {
@@ -128,7 +149,7 @@ describe("ltx-2-3-video workflow", () => {
 		};
 		const result = await wf.buildPrompt(
 			{
-				height: 720,
+				height: 736,
 				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
 				numFrames: 121,
 				prompt: "a cat dancing",
@@ -150,11 +171,57 @@ describe("ltx-2-3-video workflow", () => {
 			1280
 		);
 		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_HEIGHT]?.inputs.value).toBe(
-			720
+			736
 		);
 		expect(
 			result.prompt[LTX_23_I2V_NODE_IDS.NODE_LOAD_IMAGE]?.inputs.image
 		).toBe("req-req-1.png");
+	});
+
+	it("buildPrompt derives output dimensions from the input image when not explicit", async () => {
+		const wf = buildWorkflow({
+			fetchBytes: () => Promise.resolve(buildJpeg(700, 875)),
+		});
+		const result = await wf.buildPrompt(
+			{
+				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+				prompt: "p",
+			},
+			{
+				client: buildClient(),
+				clientId: "r-1",
+				requestId: "r-1",
+			}
+		);
+		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_WIDTH]?.inputs.value).toBe(
+			704
+		);
+		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_HEIGHT]?.inputs.value).toBe(
+			864
+		);
+	});
+
+	it("buildPrompt snaps explicit non-multiple-of-32 dims to nearest valid LTX size", async () => {
+		const wf = buildWorkflow();
+		const result = await wf.buildPrompt(
+			{
+				height: 720,
+				inputImageUrl: SAMPLE_INPUT_IMAGE_URL,
+				prompt: "p",
+				width: 1281,
+			},
+			{
+				client: buildClient(),
+				clientId: "r-2",
+				requestId: "r-2",
+			}
+		);
+		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_WIDTH]?.inputs.value).toBe(
+			1280
+		);
+		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_HEIGHT]?.inputs.value).toBe(
+			736
+		);
 	});
 
 	it("buildPrompt swaps the LoraManager slot for a standard LoraLoaderModelOnly when ids are provided", async () => {
@@ -473,6 +540,55 @@ describe("ltx-2-3-video workflow", () => {
 			podId: "pod-7",
 			requestId: "req-1",
 			videoUrl: "https://assets.example.com/output.mp4",
+		});
+	});
+});
+
+describe("ltx 2.3 dimension helpers", () => {
+	it("probes JPEG SOF dimensions", () => {
+		expect(probeImageDimensions(buildJpeg(700, 875))).toEqual({
+			height: 875,
+			width: 700,
+		});
+	});
+
+	it("probes PNG IHDR dimensions", () => {
+		const buf = new Uint8Array(24);
+		const view = new DataView(buf.buffer);
+		view.setUint32(0, 0x89_50_4e_47);
+		view.setUint32(4, 0x0d_0a_1a_0a);
+		view.setUint32(16, 1920);
+		view.setUint32(20, 1080);
+		expect(probeImageDimensions(buf.buffer)).toEqual({
+			height: 1080,
+			width: 1920,
+		});
+	});
+
+	it("returns null on unsupported / truncated buffers", () => {
+		expect(probeImageDimensions(new ArrayBuffer(8))).toBeNull();
+		expect(probeImageDimensions(new ArrayBuffer(0))).toBeNull();
+	});
+
+	it("derives 32-aligned dimensions from a portrait source under the cap", () => {
+		expect(
+			deriveOutputDimensionsFromImage({ height: 875, width: 700 })
+		).toEqual({
+			height: 864,
+			width: 704,
+		});
+	});
+
+	it("derives 32-aligned dimensions from oversized landscape source by scaling to MAX_OUTPUT_EDGE_PX", () => {
+		expect(
+			deriveOutputDimensionsFromImage({ height: 1080, width: 1920 })
+		).toEqual({ height: 736, width: 1280 });
+	});
+
+	it("does not produce a dimension below the lower bound", () => {
+		expect(deriveOutputDimensionsFromImage({ height: 64, width: 64 })).toEqual({
+			height: 256,
+			width: 256,
 		});
 	});
 });

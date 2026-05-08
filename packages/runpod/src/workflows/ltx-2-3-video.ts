@@ -21,8 +21,8 @@ import type {
 const finiteNumber = z.coerce.number().finite();
 const finiteInt = z.coerce.number().int().finite();
 
-const DEFAULT_WIDTH = 1280;
-const DEFAULT_HEIGHT = 736;
+const DEFAULT_FALLBACK_WIDTH = 1280;
+const DEFAULT_FALLBACK_HEIGHT = 736;
 const DEFAULT_FRAMES = 121;
 const DEFAULT_FPS = 24;
 const DEFAULT_STEPS = 8;
@@ -30,6 +30,12 @@ const DEFAULT_CFG_SCALE = 1;
 const DEFAULT_LORA_SCALE = 1;
 const COMPLETE_PROGRESS_THRESHOLD = 99.9;
 const RANDOM_SEED_BITS = 24;
+// LTX 2.3 spatial requirements + practical VRAM budget on the template GPU.
+// Любая сторона должна делиться на 32; подбираем размеры от исходного фото
+// и round-к-32 (nearest), чтобы не терять aspect ratio.
+const DIM_ALIGNMENT = 32;
+const MAX_OUTPUT_EDGE_PX = 1280;
+const MIN_OUTPUT_EDGE_PX = 256;
 const NEGATIVE_PROMPT_DEFAULT =
 	"blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud";
 
@@ -50,8 +56,10 @@ const NODE_LORA_LOADER = "366"; // Lora Loader (LoraManager)
 export const ltx23InputSchema = z.object({
 	prompt: z.string().min(1),
 	negativePrompt: z.string().default(""),
-	width: finiteInt.default(DEFAULT_WIDTH),
-	height: finiteInt.default(DEFAULT_HEIGHT),
+	// width/height специально optional: если не заданы, выводим из самого
+	// inputImage (snap-to-32, cap MAX_OUTPUT_EDGE_PX), сохраняя aspect ratio.
+	width: finiteInt.optional(),
+	height: finiteInt.optional(),
 	numFrames: finiteInt.default(DEFAULT_FRAMES),
 	fps: finiteInt.default(DEFAULT_FPS),
 	steps: finiteInt.default(DEFAULT_STEPS),
@@ -127,6 +135,12 @@ export function createLtx23VideoWorkflow(
 			const graph = deepCloneJson(
 				LTX_23_I2V_API_GRAPH as unknown as Record<string, ComfyUINodeApiInput>
 			);
+			const dims = await resolveOutputDimensions({
+				explicitHeight: parsed.height,
+				explicitWidth: parsed.width,
+				fetchBytes,
+				inputImageUrl: parsed.inputImageUrl,
+			});
 			patchNodeInputs(graph, NODE_PROMPT, { value: parsed.prompt });
 			patchNodeInputs(graph, NODE_NEG_TEXT, {
 				text: parsed.negativePrompt || NEGATIVE_PROMPT_DEFAULT,
@@ -134,8 +148,8 @@ export function createLtx23VideoWorkflow(
 			const seed = parsed.seed ?? randomSeed();
 			patchNodeInputs(graph, NODE_NOISE_FIRST, { noise_seed: seed });
 			patchNodeInputs(graph, NODE_NOISE_SECOND, { noise_seed: seed + 1 });
-			patchNodeInputs(graph, NODE_WIDTH, { value: parsed.width });
-			patchNodeInputs(graph, NODE_HEIGHT, { value: parsed.height });
+			patchNodeInputs(graph, NODE_WIDTH, { value: dims.width });
+			patchNodeInputs(graph, NODE_HEIGHT, { value: dims.height });
 			patchNodeInputs(graph, NODE_LENGTH_SECONDS, {
 				value: Math.max(
 					1,
@@ -622,6 +636,119 @@ function randomSeed(): number {
 	crypto.getRandomValues(bytes);
 	const view = new DataView(bytes.buffer);
 	return view.getUint32(0) % 2 ** RANDOM_SEED_BITS;
+}
+
+interface ResolveOutputDimensionsArgs {
+	explicitHeight?: number;
+	explicitWidth?: number;
+	fetchBytes: (url: string) => Promise<ArrayBuffer>;
+	inputImageUrl: string;
+}
+
+async function resolveOutputDimensions(
+	args: ResolveOutputDimensionsArgs
+): Promise<{ height: number; width: number }> {
+	if (args.explicitWidth && args.explicitHeight) {
+		return {
+			height: snapDimension(args.explicitHeight),
+			width: snapDimension(args.explicitWidth),
+		};
+	}
+	let probed: ImageDimensions | null = null;
+	try {
+		const bytes = await args.fetchBytes(args.inputImageUrl);
+		probed = probeImageDimensions(bytes);
+	} catch {
+		probed = null;
+	}
+	if (!probed) {
+		return {
+			height: snapDimension(args.explicitHeight ?? DEFAULT_FALLBACK_HEIGHT),
+			width: snapDimension(args.explicitWidth ?? DEFAULT_FALLBACK_WIDTH),
+		};
+	}
+	return deriveOutputDimensionsFromImage(probed);
+}
+
+export function deriveOutputDimensionsFromImage(source: ImageDimensions): {
+	height: number;
+	width: number;
+} {
+	const longest = Math.max(source.width, source.height);
+	const scale = longest > MAX_OUTPUT_EDGE_PX ? MAX_OUTPUT_EDGE_PX / longest : 1;
+	return {
+		height: snapDimension(source.height * scale),
+		width: snapDimension(source.width * scale),
+	};
+}
+
+function snapDimension(value: number): number {
+	const rounded =
+		Math.round(value / DIM_ALIGNMENT) * DIM_ALIGNMENT || DIM_ALIGNMENT;
+	return Math.max(MIN_OUTPUT_EDGE_PX, Math.min(MAX_OUTPUT_EDGE_PX, rounded));
+}
+
+export interface ImageDimensions {
+	height: number;
+	width: number;
+}
+
+const PNG_SIGNATURE_HEAD = 0x89_50_4e_47;
+const PNG_SIGNATURE_TAIL = 0x0d_0a_1a_0a;
+const JPEG_SOI = 0xff_d8;
+const JPEG_MARKER_BYTE = 0xff;
+
+/**
+ * Лёгкий probe размеров для PNG и JPEG. WebP и AVIF пока не поддержаны —
+ * для них вернётся null и `resolveOutputDimensions` уйдёт в fallback на
+ * defaults. Studio-инпуты сейчас всегда JPG/PNG, поэтому достаточно.
+ */
+export function probeImageDimensions(
+	buffer: ArrayBuffer
+): ImageDimensions | null {
+	if (buffer.byteLength < 8) {
+		return null;
+	}
+	const view = new DataView(buffer);
+	if (
+		buffer.byteLength >= 24 &&
+		view.getUint32(0) === PNG_SIGNATURE_HEAD &&
+		view.getUint32(4) === PNG_SIGNATURE_TAIL
+	) {
+		return { height: view.getUint32(20), width: view.getUint32(16) };
+	}
+	if (view.getUint16(0) === JPEG_SOI && view.getUint8(2) === JPEG_MARKER_BYTE) {
+		return readJpegDimensions(view);
+	}
+	return null;
+}
+
+function readJpegDimensions(view: DataView): ImageDimensions | null {
+	let offset = 2;
+	while (offset + 8 < view.byteLength) {
+		if (view.getUint8(offset) !== JPEG_MARKER_BYTE) {
+			return null;
+		}
+		const marker = view.getUint8(offset + 1);
+		const segmentLength = view.getUint16(offset + 2);
+		if (isJpegSofMarker(marker)) {
+			return {
+				height: view.getUint16(offset + 5),
+				width: view.getUint16(offset + 7),
+			};
+		}
+		offset += 2 + segmentLength;
+	}
+	return null;
+}
+
+function isJpegSofMarker(marker: number): boolean {
+	return (
+		(marker >= 0xc0 && marker <= 0xc3) ||
+		(marker >= 0xc5 && marker <= 0xc7) ||
+		(marker >= 0xc9 && marker <= 0xcb) ||
+		(marker >= 0xcd && marker <= 0xcf)
+	);
 }
 
 export type Ltx23ParsedInput = Ltx23Parsed;

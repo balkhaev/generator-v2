@@ -670,12 +670,21 @@ async function resolveOutputDimensions(
 	return deriveOutputDimensionsFromImage(probed);
 }
 
+/**
+ * LTX 2.3 graph внутри (см. `templates/api/ltx-2-3-i2v-lvram.json`)
+ * прогоняет картинку через ImageResizeKJv2 → ResizeImagesByLongerEdge=1536 →
+ * latent upsampler ×2, поэтому если мы запрашиваем маленький dim
+ * (например 704×864), output получается раздутым неоднородно по осям и
+ * исходный aspect ratio теряется. Поэтому всегда нормализуем requested
+ * dim до MAX_OUTPUT_EDGE_PX по длинной стороне с сохранением соотношения
+ * сторон — графу всё равно нужно крутиться на больших латентах.
+ */
 export function deriveOutputDimensionsFromImage(source: ImageDimensions): {
 	height: number;
 	width: number;
 } {
 	const longest = Math.max(source.width, source.height);
-	const scale = longest > MAX_OUTPUT_EDGE_PX ? MAX_OUTPUT_EDGE_PX / longest : 1;
+	const scale = MAX_OUTPUT_EDGE_PX / longest;
 	return {
 		height: snapDimension(source.height * scale),
 		width: snapDimension(source.width * scale),

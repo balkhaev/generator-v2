@@ -193,11 +193,15 @@ describe("ltx-2-3-video workflow", () => {
 				requestId: "r-1",
 			}
 		);
+		// LTX 2.3 graph внутри ресайзит картинку до longer-edge 1536, из-за
+		// чего запрос вроде 704×864 раздувается неравномерно. Нормализуем
+		// исходный aspect ratio (700:875) до 1280 по длинной стороне
+		// (→ 1024×1280 — оба %32).
 		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_WIDTH]?.inputs.value).toBe(
-			704
+			1024
 		);
 		expect(result.prompt[LTX_23_I2V_NODE_IDS.NODE_HEIGHT]?.inputs.value).toBe(
-			864
+			1280
 		);
 	});
 
@@ -570,25 +574,25 @@ describe("ltx 2.3 dimension helpers", () => {
 		expect(probeImageDimensions(new ArrayBuffer(0))).toBeNull();
 	});
 
-	it("derives 32-aligned dimensions from a portrait source under the cap", () => {
+	it("scales a small portrait source up to MAX_OUTPUT_EDGE_PX preserving aspect", () => {
 		expect(
 			deriveOutputDimensionsFromImage({ height: 875, width: 700 })
 		).toEqual({
-			height: 864,
-			width: 704,
+			height: 1280,
+			width: 1024,
 		});
 	});
 
-	it("derives 32-aligned dimensions from oversized landscape source by scaling to MAX_OUTPUT_EDGE_PX", () => {
+	it("scales an oversized landscape source down to MAX_OUTPUT_EDGE_PX preserving aspect", () => {
 		expect(
 			deriveOutputDimensionsFromImage({ height: 1080, width: 1920 })
 		).toEqual({ height: 736, width: 1280 });
 	});
 
-	it("does not produce a dimension below the lower bound", () => {
+	it("normalises a square source to MAX_OUTPUT_EDGE_PX × MAX_OUTPUT_EDGE_PX", () => {
 		expect(deriveOutputDimensionsFromImage({ height: 64, width: 64 })).toEqual({
-			height: 256,
-			width: 256,
+			height: 1280,
+			width: 1280,
 		});
 	});
 });

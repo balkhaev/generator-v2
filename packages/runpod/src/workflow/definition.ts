@@ -22,19 +22,36 @@ export interface ServerlessWorkflow<TInput, TOutput> {
 }
 
 /**
+ * Описание одного network-volume'а: RunPod ID + список GPU-типов, доступных
+ * в DC этого volume. Network volume привязан к одному датацентру, и под
+ * можно поднять только в нём. Несколько volume'ов = расширенный пул DC×GPU.
+ */
+export interface PodNetworkVolume {
+	/** GPU type id'ы RunPod (e.g. "NVIDIA RTX A6000"), доступные в DC. */
+	gpuTypeIds: string[];
+	/** Опциональная человекочитаемая метка (e.g. "EU-RO-1") для логов. */
+	label?: string;
+	/** RunPod ID network volume'а; DC определяется автоматически. */
+	networkVolumeId: string;
+}
+
+/**
  * Спецификация запускаемого pod'а — только то, что отдаём в RunPod REST.
  * `dockerStartCmd` намеренно не закладывается: template'у поверх образа
  * `ls250824/run-comfyui-ltx` и подобных, его перекрывать нельзя — иначе их
  * provisioning не запускается, и каждый pod заново качает все модели.
+ *
+ * `networkVolumes` обязательны: модели кешируются на volume, без него каждый
+ * cold start качает ~40 ГБ из HuggingFace. Несколько volume'ов перебираются
+ * по очереди при `no capacity`.
  */
 export interface PodSpec {
 	cloudType?: "SECURE" | "COMMUNITY";
 	containerDiskInGb?: number;
 	gpuCount?: number;
-	gpuTypeIds: string[];
 	imageName: string;
 	namePrefix?: string;
-	networkVolumeId?: string;
+	networkVolumes: PodNetworkVolume[];
 	templateId?: string;
 	timeoutMs?: number;
 	volumeInGb?: number;

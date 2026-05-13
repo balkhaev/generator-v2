@@ -44,19 +44,56 @@ function createStubInferenceClient(): InferenceClient {
 	};
 }
 
-function splitCsv(value: string | undefined): string[] {
-	return (value ?? "")
-		.split(",")
-		.map((item) => item.trim())
-		.filter((item) => item.length > 0);
-}
-
 function readPositiveIntegerEnv(
 	value: string | undefined,
 	defaultValue: number
 ): number {
 	const parsed = Number(value);
 	return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+interface Ltx23VolumeEnvEntry {
+	gpus: string[];
+	id: string;
+	label?: string;
+}
+
+function parseLtx23NetworkVolumesEnv(raw: string | undefined): Array<{
+	gpuTypeIds: string[];
+	label?: string;
+	networkVolumeId: string;
+}> {
+	if (!raw?.trim()) {
+		return [];
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		throw new Error(
+			"RUNPOD_LTX23_POD_NETWORK_VOLUMES must be a JSON array of {id,gpus[,label]} objects"
+		);
+	}
+	if (!Array.isArray(parsed)) {
+		throw new Error("RUNPOD_LTX23_POD_NETWORK_VOLUMES must be a JSON array");
+	}
+	return parsed.map((entry, index) => {
+		const candidate = entry as Partial<Ltx23VolumeEnvEntry>;
+		if (
+			typeof candidate.id !== "string" ||
+			!Array.isArray(candidate.gpus) ||
+			candidate.gpus.length === 0
+		) {
+			throw new Error(
+				`RUNPOD_LTX23_POD_NETWORK_VOLUMES[${index}] must have a non-empty id and gpus[]`
+			);
+		}
+		return {
+			gpuTypeIds: candidate.gpus,
+			label: candidate.label,
+			networkVolumeId: candidate.id,
+		};
+	});
 }
 
 import {
@@ -107,7 +144,10 @@ function createConfiguredRunpodService(input: {
 	}
 	const ltxTemplateId =
 		process.env.RUNPOD_LTX23_POD_TEMPLATE_ID?.trim() || "p4f6rm9tb4";
-	if (ltxTemplateId) {
+	const ltxNetworkVolumes = parseLtx23NetworkVolumesEnv(
+		process.env.RUNPOD_LTX23_POD_NETWORK_VOLUMES
+	);
+	if (ltxTemplateId && ltxNetworkVolumes.length > 0) {
 		workflows.push(
 			createLtx23VideoWorkflow({
 				pod: {
@@ -119,15 +159,11 @@ function createConfiguredRunpodService(input: {
 						process.env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
 						15
 					),
-					gpuTypeIds: splitCsv(
-						process.env.RUNPOD_LTX23_POD_GPU_TYPE_IDS ??
-							"NVIDIA RTX A6000,NVIDIA A40,NVIDIA H100 80GB HBM3"
-					),
 					imageName:
 						process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
 						"ls250824/run-comfyui-ltx:28042026",
 					namePrefix: "ltx23",
-					networkVolumeId: process.env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
+					networkVolumes: ltxNetworkVolumes,
 					templateId: ltxTemplateId,
 					timeoutMs: readPositiveIntegerEnv(
 						process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,

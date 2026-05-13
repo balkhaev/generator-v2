@@ -24,13 +24,6 @@ import {
 } from "@/queue/executions";
 import { createDrizzleExecutionRepository } from "@/repositories/executions";
 
-function splitCsv(value: string): string[] {
-	return value
-		.split(",")
-		.map((item) => item.trim())
-		.filter((item) => item.length > 0);
-}
-
 const redisUrl = env.REDIS_URL;
 const civitaiApiKey = env.CIVITAI_API_KEY;
 const falKey = env.FAL_KEY;
@@ -67,14 +60,23 @@ if (runpodFooocusEndpointId) {
 	);
 }
 if (runpodLtx23TemplateId) {
+	const ltx23NetworkVolumes = env.RUNPOD_LTX23_POD_NETWORK_VOLUMES;
+	if (ltx23NetworkVolumes.length === 0) {
+		throw new Error(
+			"RUNPOD_LTX23_POD_NETWORK_VOLUMES is required when RUNPOD_LTX23_POD_TEMPLATE_ID is set"
+		);
+	}
 	runpodWorkflows.push(
 		createLtx23VideoWorkflow({
 			pod: {
 				cloudType: env.RUNPOD_LTX23_POD_CLOUD_TYPE,
 				containerDiskInGb: env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
-				gpuTypeIds: splitCsv(env.RUNPOD_LTX23_POD_GPU_TYPE_IDS),
 				imageName: env.RUNPOD_LTX23_POD_IMAGE_NAME,
-				networkVolumeId: env.RUNPOD_LTX23_POD_NETWORK_VOLUME_ID,
+				networkVolumes: ltx23NetworkVolumes.map((volume) => ({
+					gpuTypeIds: volume.gpus,
+					label: volume.label,
+					networkVolumeId: volume.id,
+				})),
 				templateId: runpodLtx23TemplateId,
 				timeoutMs: env.RUNPOD_LTX23_POD_TIMEOUT_MS,
 				volumeInGb: env.RUNPOD_LTX23_POD_VOLUME_GB,

@@ -111,8 +111,14 @@ function buildWorkflow(deps: { fetchBytes?: () => Promise<ArrayBuffer> } = {}) {
 	return createLtx23VideoWorkflow(
 		{
 			pod: {
-				gpuTypeIds: ["NVIDIA RTX A6000"],
 				imageName: "ls250824/run-comfyui-ltx:test",
+				networkVolumes: [
+					{
+						gpuTypeIds: ["NVIDIA RTX A6000"],
+						label: "test-dc",
+						networkVolumeId: "vol-test",
+					},
+				],
 				templateId: "p4f6rm9tb4",
 			},
 		},

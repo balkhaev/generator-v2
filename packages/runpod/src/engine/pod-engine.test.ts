@@ -42,9 +42,15 @@ const baseWorkflow: PodWorkflow<z.infer<typeof ltxInputSchema>, VideoOutput> = {
 	inputSchema: ltxInputSchema,
 	mode: "pod",
 	pod: {
-		gpuTypeIds: ["NVIDIA RTX A6000"],
 		imageName: "ls250824/run-comfyui-ltx:test",
 		namePrefix: "ltx23",
+		networkVolumes: [
+			{
+				gpuTypeIds: ["NVIDIA RTX A6000"],
+				label: "test-dc",
+				networkVolumeId: "vol-test",
+			},
+		],
 		templateId: "p4f6rm9tb4",
 	},
 	buildPrompt: () => ({ prompt: { "1": { class_type: "Foo", inputs: {} } } }),
@@ -157,6 +163,9 @@ describe("podJobId helpers", () => {
 	});
 });
 
+const NO_CAPACITY_ACROSS_VOLUMES_PATTERN =
+	/no capacity across 2 network volume/u;
+
 describe("PodEngine submit", () => {
 	it("creates a pod without dockerStartCmd and serialises input into env", async () => {
 		const create = mock((spec: { env: Record<string, string> }) => {
@@ -189,6 +198,123 @@ describe("PodEngine submit", () => {
 		expect(submission.jobId).toBe("pod-XYZ:req-fixed:fixed-password");
 		expect(submission.status).toBe("queued");
 		expect(create).toHaveBeenCalledTimes(1);
+	});
+
+	it("passes networkVolumeId and gpuTypeIds from the first volume to the API", async () => {
+		const seenPayloads: Array<{
+			gpuTypeIds: string[];
+			networkVolumeId?: string;
+		}> = [];
+		const create = mock(
+			(spec: { gpuTypeIds: string[]; networkVolumeId?: string }) => {
+				seenPayloads.push({
+					gpuTypeIds: spec.gpuTypeIds,
+					networkVolumeId: spec.networkVolumeId,
+				});
+				return Promise.resolve<PodSnapshot>({ id: "pod-multi" });
+			}
+		);
+		const engine = createPodEngine({
+			api: buildApi({ create }),
+			s3,
+			workflow: {
+				...baseWorkflow,
+				pod: {
+					...baseWorkflow.pod,
+					networkVolumes: [
+						{
+							gpuTypeIds: ["NVIDIA RTX A6000"],
+							label: "EU-RO-1",
+							networkVolumeId: "vol-eu",
+						},
+						{
+							gpuTypeIds: ["NVIDIA H100 80GB HBM3"],
+							label: "US-KS-2",
+							networkVolumeId: "vol-us",
+						},
+					],
+				},
+			},
+		});
+		await engine.submit({ prompt: "hi" });
+		expect(seenPayloads).toHaveLength(1);
+		expect(seenPayloads[0]?.networkVolumeId).toBe("vol-eu");
+		expect(seenPayloads[0]?.gpuTypeIds).toEqual(["NVIDIA RTX A6000"]);
+	});
+
+	it("falls back to the next volume when the first one has no capacity", async () => {
+		const seen: string[] = [];
+		const create = mock(
+			(spec: { gpuTypeIds: string[]; networkVolumeId?: string }) => {
+				seen.push(spec.networkVolumeId ?? "<none>");
+				if (spec.networkVolumeId === "vol-eu") {
+					return Promise.reject(
+						new Error(
+							"runpod /pods (create): no capacity for any of 1 gpu types"
+						)
+					);
+				}
+				return Promise.resolve<PodSnapshot>({ id: "pod-us" });
+			}
+		);
+		const engine = createPodEngine({
+			api: buildApi({ create }),
+			s3,
+			workflow: {
+				...baseWorkflow,
+				pod: {
+					...baseWorkflow.pod,
+					networkVolumes: [
+						{
+							gpuTypeIds: ["NVIDIA RTX A6000"],
+							label: "EU-RO-1",
+							networkVolumeId: "vol-eu",
+						},
+						{
+							gpuTypeIds: ["NVIDIA H100 80GB HBM3"],
+							label: "US-KS-2",
+							networkVolumeId: "vol-us",
+						},
+					],
+				},
+			},
+		});
+		const submission = await engine.submit({ prompt: "hi" });
+		expect(seen).toEqual(["vol-eu", "vol-us"]);
+		expect(submission.rawProviderJobReference).toBe("pod-us");
+	});
+
+	it("aggregates errors when every volume returns no-capacity", async () => {
+		const create = mock(() =>
+			Promise.reject(
+				new Error("runpod /pods (create): no capacity for any of 1 gpu types")
+			)
+		);
+		const engine = createPodEngine({
+			api: buildApi({ create }),
+			s3,
+			workflow: {
+				...baseWorkflow,
+				pod: {
+					...baseWorkflow.pod,
+					networkVolumes: [
+						{
+							gpuTypeIds: ["NVIDIA RTX A6000"],
+							label: "EU-RO-1",
+							networkVolumeId: "vol-eu",
+						},
+						{
+							gpuTypeIds: ["NVIDIA H100 80GB HBM3"],
+							label: "US-KS-2",
+							networkVolumeId: "vol-us",
+						},
+					],
+				},
+			},
+		});
+		await expect(engine.submit({ prompt: "hi" })).rejects.toThrow(
+			NO_CAPACITY_ACROSS_VOLUMES_PATTERN
+		);
 	});
 });
 

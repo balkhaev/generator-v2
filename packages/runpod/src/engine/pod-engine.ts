@@ -6,7 +6,7 @@ import {
 	uploadObjectToS3,
 } from "@generator/storage";
 
-import type { PodSnapshot, RunpodPodsApi } from "../api/pods";
+import type { CreatePodInput, PodSnapshot, RunpodPodsApi } from "../api/pods";
 import {
 	type ComfyUIArtifactRef,
 	type ComfyUIClient,
@@ -18,7 +18,12 @@ import type {
 	ComfyUIQueueItem,
 	ComfyUIQueueResponse,
 } from "../comfyui/types";
-import type { PodPrepareStatus, PodWorkflow } from "../workflow/definition";
+import { isNoCapacityError } from "../http/client";
+import type {
+	PodNetworkVolume,
+	PodPrepareStatus,
+	PodWorkflow,
+} from "../workflow/definition";
 import type { Engine, EngineJob, EngineSubmission } from "./engine";
 
 const POD_JOB_SEPARATOR = ":";
@@ -587,23 +592,28 @@ export function createPodEngine<TInput, TOutput>(
 					Math.ceil(workflow.pod.timeoutMs / 1000)
 				);
 			}
-			const pod = await api.create({
-				cloudType: workflow.pod.cloudType,
-				containerDiskInGb: workflow.pod.containerDiskInGb,
-				env,
-				gpuCount: workflow.pod.gpuCount ?? 1,
-				gpuTypeIds: workflow.pod.gpuTypeIds,
-				imageName: workflow.pod.imageName,
-				name: buildPodName(workflow.pod.namePrefix ?? workflow.id, requestId),
-				networkVolumeId: workflow.pod.networkVolumeId,
-				ports: [`${COMFYUI_PORT}/http`, "22/tcp"],
-				supportPublicIp: false,
-				templateId: workflow.pod.templateId,
-				volumeInGb: workflow.pod.volumeInGb,
-				volumeMountPath: "/workspace",
-			});
+			const { pod, networkVolumeId } = await createPodAcrossVolumes(
+				api,
+				{
+					cloudType: workflow.pod.cloudType,
+					containerDiskInGb: workflow.pod.containerDiskInGb,
+					env,
+					gpuCount: workflow.pod.gpuCount ?? 1,
+					imageName: workflow.pod.imageName,
+					name: buildPodName(workflow.pod.namePrefix ?? workflow.id, requestId),
+					ports: [`${COMFYUI_PORT}/http`, "22/tcp"],
+					supportPublicIp: false,
+					templateId: workflow.pod.templateId,
+					volumeInGb: workflow.pod.volumeInGb,
+					volumeMountPath: "/workspace",
+				},
+				workflow.pod.networkVolumes,
+				logger,
+				requestId,
+				workflow.id
+			);
 			logger?.info?.("runpod-pod.started", {
-				gpuTypeIds: workflow.pod.gpuTypeIds,
+				networkVolumeId,
 				podId: pod.id,
 				requestId,
 				templateId: workflow.pod.templateId,
@@ -619,6 +629,58 @@ export function createPodEngine<TInput, TOutput>(
 	} satisfies Engine<TInput, TOutput> & {
 		getStatus(jobId: string): Promise<EngineJob & { output: TOutput | null }>;
 	};
+}
+
+type PodLogger = PodEngineDeps["logger"];
+
+/**
+ * Создаёт под, перебирая network-volume'ы из workflow'а. Каждый volume привязан
+ * к одному RunPod DC и списку GPU-типов, доступных в этом DC. Если по
+ * текущему volume RunPod вернул `no capacity` для всех его GPU — пробуем
+ * следующий. Без volume вообще не работаем: смысл всей этой конструкции — не
+ * качать ~40 ГБ моделей на каждый cold start.
+ */
+export async function createPodAcrossVolumes(
+	api: RunpodPodsApi,
+	basePayload: Omit<CreatePodInput, "gpuTypeIds" | "networkVolumeId">,
+	volumes: readonly PodNetworkVolume[],
+	logger: PodLogger,
+	requestId: string,
+	workflowId: string
+): Promise<{ networkVolumeId: string; pod: PodSnapshot }> {
+	if (volumes.length === 0) {
+		throw new Error(
+			`runpod-pod (${workflowId}): no network volumes configured; cannot create pod`
+		);
+	}
+	const errors: string[] = [];
+	for (const volume of volumes) {
+		try {
+			const pod = await api.create({
+				...basePayload,
+				gpuTypeIds: volume.gpuTypeIds,
+				networkVolumeId: volume.networkVolumeId,
+			});
+			return { networkVolumeId: volume.networkVolumeId, pod };
+		} catch (error) {
+			if (!isNoCapacityError(error)) {
+				throw error;
+			}
+			const message = error instanceof Error ? error.message : String(error);
+			const label = volume.label ?? volume.networkVolumeId;
+			errors.push(`${label}: ${message}`);
+			logger?.warn?.("runpod-pod.network-volume-skip", {
+				label,
+				message,
+				networkVolumeId: volume.networkVolumeId,
+				requestId,
+				workflowId,
+			});
+		}
+	}
+	throw new Error(
+		`runpod-pod (${workflowId}): no capacity across ${volumes.length} network volume(s):\n  - ${errors.join("\n  - ")}`
+	);
 }
 
 function buildArtifactKey(

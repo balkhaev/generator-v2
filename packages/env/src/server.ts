@@ -221,10 +221,6 @@ const serverSchema = {
 		.min(1)
 		.default("ls250824/run-comfyui-ltx:28042026"),
 	RUNPOD_LTX23_POD_TEMPLATE_ID: z.string().min(1).default("p4f6rm9tb4"),
-	RUNPOD_LTX23_POD_GPU_TYPE_IDS: z
-		.string()
-		.min(1)
-		.default("NVIDIA RTX A6000,NVIDIA A40,NVIDIA H100 80GB HBM3"),
 	RUNPOD_LTX23_POD_CONTAINER_DISK_GB: z.coerce
 		.number()
 		.int()
@@ -239,7 +235,49 @@ const serverSchema = {
 		.int()
 		.positive()
 		.default(60 * 60 * 1000),
-	RUNPOD_LTX23_POD_NETWORK_VOLUME_ID: z.string().min(1).optional(),
+	/**
+	 * JSON-массив network-volume'ов с GPU-типами, доступными в DC volume'а.
+	 * `[{"id":"vol1","label":"EU-RO-1","gpus":["NVIDIA RTX A6000","NVIDIA B200"]}]`.
+	 * Каждый volume привязан к одному DC; engine перебирает их по очереди при
+	 * `no capacity`. Без volume'ов под не создаётся (на каждый cold start
+	 * пришлось бы качать ~40 ГБ моделей из HF).
+	 */
+	RUNPOD_LTX23_POD_NETWORK_VOLUMES: z
+		.string()
+		.optional()
+		.transform((raw, ctx) => {
+			if (!raw) {
+				return [];
+			}
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(raw);
+			} catch {
+				ctx.addIssue({
+					code: "custom",
+					message:
+						"RUNPOD_LTX23_POD_NETWORK_VOLUMES must be a JSON array of {id,gpus[,label]} objects",
+				});
+				return [];
+			}
+			const result = z
+				.array(
+					z.object({
+						gpus: z.array(z.string().min(1)).min(1),
+						id: z.string().min(1),
+						label: z.string().min(1).optional(),
+					})
+				)
+				.safeParse(parsed);
+			if (!result.success) {
+				ctx.addIssue({
+					code: "custom",
+					message: `RUNPOD_LTX23_POD_NETWORK_VOLUMES invalid: ${result.error.message}`,
+				});
+				return [];
+			}
+			return result.data;
+		}),
 
 	// Shared (применимо к обоим режимам).
 	RUNPOD_AI_TOOLKIT_TIMEOUT_MS: z.coerce

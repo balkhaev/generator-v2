@@ -107,8 +107,14 @@ describe("RunpodService routing", () => {
 			id: "ltx-2-3-video",
 			mode: "pod",
 			pod: {
-				gpuTypeIds: ["A6000"],
 				imageName: "img:latest",
+				networkVolumes: [
+					{
+						gpuTypeIds: ["A6000"],
+						label: "test-dc",
+						networkVolumeId: "vol-test",
+					},
+				],
 				templateId: "tpl-x",
 			},
 			inputSchema: z.object({ prompt: z.string() }),

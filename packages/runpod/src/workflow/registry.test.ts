@@ -17,8 +17,14 @@ const podWf: PodWorkflow<unknown, unknown> = {
 	id: "ltx-2-3-video",
 	mode: "pod",
 	pod: {
-		gpuTypeIds: ["A6000"],
 		imageName: "img:latest",
+		networkVolumes: [
+			{
+				gpuTypeIds: ["A6000"],
+				label: "test-dc",
+				networkVolumeId: "vol-test",
+			},
+		],
 		templateId: "tpl-x",
 	},
 	inputSchema: z.unknown() as z.ZodType<unknown>,
@@ -48,12 +54,29 @@ describe("WorkflowRegistry", () => {
 		).toThrow("not contain ':'");
 	});
 
-	it("rejects pod workflows without gpu types, image, or templateId", () => {
+	it("rejects pod workflows without network volumes, gpu types, image, or templateId", () => {
 		expect(() =>
 			createWorkflowRegistry([
 				{
 					...podWf,
-					pod: { ...podWf.pod, gpuTypeIds: [] },
+					pod: { ...podWf.pod, networkVolumes: [] },
+				},
+			])
+		).toThrow("at least one networkVolume");
+		expect(() =>
+			createWorkflowRegistry([
+				{
+					...podWf,
+					pod: {
+						...podWf.pod,
+						networkVolumes: [
+							{
+								gpuTypeIds: [],
+								label: "test-dc",
+								networkVolumeId: "vol-test",
+							},
+						],
+					},
 				},
 			])
 		).toThrow("no gpuTypeIds");

@@ -56,8 +56,22 @@ function validateWorkflow(workflow: AnyWorkflowDefinition): void {
 		}
 		return;
 	}
-	if (workflow.pod.gpuTypeIds.length === 0) {
-		throw new Error(`Pod workflow ${workflow.id} has no gpuTypeIds`);
+	if (workflow.pod.networkVolumes.length === 0) {
+		throw new Error(
+			`Pod workflow ${workflow.id} requires at least one networkVolume`
+		);
+	}
+	for (const [index, volume] of workflow.pod.networkVolumes.entries()) {
+		if (volume.gpuTypeIds.length === 0) {
+			throw new Error(
+				`Pod workflow ${workflow.id} networkVolumes[${index}] has no gpuTypeIds`
+			);
+		}
+		if (!volume.networkVolumeId) {
+			throw new Error(
+				`Pod workflow ${workflow.id} networkVolumes[${index}] requires networkVolumeId`
+			);
+		}
 	}
 	if (!workflow.pod.imageName) {
 		throw new Error(`Pod workflow ${workflow.id} requires pod.imageName`);

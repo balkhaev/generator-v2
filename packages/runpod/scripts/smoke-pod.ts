@@ -52,10 +52,51 @@ interface CliArgs {
 	gpuTypeIds?: string[];
 	imageUrl: string;
 	live: boolean;
+	networkVolumeId?: string;
 	pollIntervalMs: number;
 	prompt: string;
 	timeoutMs: number;
 }
+
+const ARG_HANDLERS: Record<
+	string,
+	(args: CliArgs, value: string | undefined) => void
+> = {
+	"dry-run": (args) => {
+		args.dryRun = true;
+	},
+	gpu: (args, value) => {
+		if (value) {
+			args.gpuTypeIds = value
+				.split(",")
+				.map((item) => item.trim())
+				.filter((item) => item.length > 0);
+		}
+	},
+	live: (args) => {
+		args.live = true;
+	},
+	"network-volume": (args, value) => {
+		if (value) {
+			args.networkVolumeId = value;
+		}
+	},
+	"poll-ms": (args, value) => {
+		if (value) {
+			args.pollIntervalMs = Number(value);
+		}
+	},
+	prompt: (args, value) => {
+		if (value) {
+			args.prompt = value;
+		}
+	},
+	"timeout-ms": (args, value) => {
+		if (value) {
+			args.timeoutMs = Number(value);
+		}
+	},
+};
 
 function parseArgs(argv: string[]): CliArgs {
 	const args: CliArgs = {
@@ -73,39 +114,7 @@ function parseArgs(argv: string[]): CliArgs {
 			continue;
 		}
 		const [key, value] = raw.slice(2).split("=", 2);
-		switch (key) {
-			case "dry-run":
-				args.dryRun = true;
-				break;
-			case "live":
-				args.live = true;
-				break;
-			case "prompt":
-				if (value) {
-					args.prompt = value;
-				}
-				break;
-			case "gpu":
-				if (value) {
-					args.gpuTypeIds = value
-						.split(",")
-						.map((item) => item.trim())
-						.filter((item) => item.length > 0);
-				}
-				break;
-			case "poll-ms":
-				if (value) {
-					args.pollIntervalMs = Number(value);
-				}
-				break;
-			case "timeout-ms":
-				if (value) {
-					args.timeoutMs = Number(value);
-				}
-				break;
-			default:
-				break;
-		}
+		ARG_HANDLERS[key]?.(args, value);
 	}
 	if (!(args.dryRun || args.live)) {
 		args.dryRun = true;
@@ -129,16 +138,17 @@ async function main(): Promise<void> {
 	const imageName =
 		process.env.RUNPOD_LTX23_POD_IMAGE_NAME ??
 		"ls250824/run-comfyui-ltx:28042026";
-	const gpuTypeIdsFromEnv = process.env.RUNPOD_LTX23_POD_GPU_TYPE_IDS?.split(
-		","
-	)
-		.map((item) => item.trim())
-		.filter((item) => item.length > 0);
-	const gpuTypeIds = args.gpuTypeIds ??
-		gpuTypeIdsFromEnv ?? ["NVIDIA RTX A6000"];
+	const gpuTypeIds = args.gpuTypeIds ?? ["NVIDIA RTX A6000"];
+	const networkVolumeId =
+		args.networkVolumeId ?? process.env.RUNPOD_LTX23_SMOKE_NETWORK_VOLUME_ID;
 
 	if (!apiKey) {
 		throw new Error("RUNPOD_API_KEY is required");
+	}
+	if (!networkVolumeId) {
+		throw new Error(
+			"smoke-pod requires --network-volume=<id> or RUNPOD_LTX23_SMOKE_NETWORK_VOLUME_ID"
+		);
 	}
 
 	const s3 = resolveS3StorageConfig();
@@ -146,8 +156,8 @@ async function main(): Promise<void> {
 		pod: {
 			cloudType: "SECURE",
 			containerDiskInGb: 15,
-			gpuTypeIds,
 			imageName,
+			networkVolumes: [{ gpuTypeIds, label: "smoke", networkVolumeId }],
 			templateId,
 			timeoutMs: 30 * 60 * 1000,
 			volumeInGb: 90,
@@ -159,6 +169,7 @@ async function main(): Promise<void> {
 		gpuTypeIds,
 		imageName,
 		live: args.live,
+		networkVolumeId,
 		templateId,
 	});
 

@@ -18,6 +18,21 @@ export interface EngineJob {
 }
 
 /**
+ * Sideband options passed to `submit`. The engine decides which fields it
+ * cares about; serverless engines currently ignore everything here, pod
+ * engines honour `stickyKey` to keep retries on the same network volume.
+ */
+export interface EngineSubmitOptions {
+	/**
+	 * Opaque identifier of the *logical* request (typically execution id).
+	 * Pod engine uses it to look up the last-successful network volume from
+	 * `StickyVolumeStore` and tries that volume first on submit, so retries
+	 * after a transient failure avoid re-downloading models on a cold NFS.
+	 */
+	stickyKey?: string;
+}
+
+/**
  * Контракт исполнения одного workflow, не зависящий от конкретного режима
  * (serverless/pod). На выходе у engine — нормализованный `InferenceStatus`,
  * сырые провайдерские строки уже не утекают наружу.
@@ -25,5 +40,8 @@ export interface EngineJob {
 export interface Engine<TInput, TOutput> {
 	cancel(jobId: string): Promise<void>;
 	getStatus(jobId: string): Promise<EngineJob & { output: TOutput | null }>;
-	submit(input: TInput): Promise<EngineSubmission>;
+	submit(
+		input: TInput,
+		options?: EngineSubmitOptions
+	): Promise<EngineSubmission>;
 }

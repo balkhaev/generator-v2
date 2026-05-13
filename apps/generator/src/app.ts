@@ -17,6 +17,7 @@ import {
 	createRunpodService,
 	type PodInputStore,
 	type RunpodService,
+	type StickyVolumeStore,
 	type WarmPodPool,
 } from "@generator/runpod";
 import {
@@ -39,6 +40,7 @@ import { createRunpodClient } from "@/providers/runpod";
 import {
 	createRedisActivePodRegistry,
 	createRedisPodInputStore,
+	createRedisStickyVolumeStore,
 	createRedisWarmPodPool,
 } from "@/providers/runpod-warm-pool";
 
@@ -150,6 +152,7 @@ function createConfiguredRunpodService(input: {
 	inputStore?: PodInputStore;
 	runpodApiKey?: string;
 	s3Config: S3StorageConfig | null;
+	stickyStore?: StickyVolumeStore;
 	warmPool?: WarmPodPool;
 }): RunpodService | null {
 	if (!(input.runpodApiKey && input.s3Config)) {
@@ -214,6 +217,7 @@ function createConfiguredRunpodService(input: {
 		podsBaseUrl: process.env.RUNPOD_REST_API_BASE_URL,
 		s3: input.s3Config,
 		serverlessBaseUrl: process.env.RUNPOD_API_BASE_URL,
+		stickyStore: input.stickyStore,
 		warmPool: input.warmPool,
 		workflows,
 	});
@@ -241,6 +245,7 @@ function buildRunpodClientForApp(input: {
 		inputStore: createRedisPodInputStore(redis),
 		runpodApiKey: input.runpodApiKey,
 		s3Config: input.s3Config,
+		stickyStore: createRedisStickyVolumeStore(redis),
 		warmPool: createRedisWarmPodPool(redis),
 	});
 	if (!service) {

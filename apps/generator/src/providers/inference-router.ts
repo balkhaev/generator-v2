@@ -81,8 +81,8 @@ export function createInferenceRouter(clients: {
 	}
 
 	return {
-		submit(payload): Promise<InferenceSubmission> {
-			return routeByPayload(payload).submit(payload);
+		submit(payload, options): Promise<InferenceSubmission> {
+			return routeByPayload(payload).submit(payload, options);
 		},
 
 		getStatus(jobId, endpointId): Promise<InferenceJob> {

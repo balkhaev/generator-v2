@@ -1,11 +1,18 @@
 import type { RunpodService } from "@generator/runpod";
-import { ENDPOINT_ID_PREFIX } from "@generator/runpod";
+import { ENDPOINT_ID_PREFIX, isNoCapacityError } from "@generator/runpod";
 
-import type {
-	InferenceClient,
-	InferenceJob,
-	InferenceSubmission,
+import {
+	type InferenceClient,
+	type InferenceJob,
+	type InferenceSubmission,
+	RetryableInferenceError,
 } from "./inference";
+
+// 90s — long enough for RunPod to release some inventory after a burst, short
+// enough that the user perceives "still queued" rather than "stuck". 20 min
+// matches the typical wait between capacity-throttle cycles we observed.
+const NO_CAPACITY_RETRY_DELAY_MS = 90 * 1000;
+const NO_CAPACITY_RETRY_WINDOW_MS = 20 * 60 * 1000;
 
 export const RUNPOD_WORKFLOW_PAYLOAD_KEY = "__runpodWorkflow";
 export const RUNPOD_LEGACY_ENDPOINT_PAYLOAD_KEY = "__runpodEndpoint";
@@ -51,9 +58,32 @@ export function createRunpodClient(service: RunpodService): InferenceClient {
 			};
 		},
 
-		async submit(payload): Promise<InferenceSubmission> {
+		async submit(payload, options): Promise<InferenceSubmission> {
 			const { workflowId, input } = resolveSubmission(payload, service);
-			const submission = await service.submit({ input, workflowId });
+			let submission: Awaited<ReturnType<typeof service.submit>>;
+			try {
+				submission = await service.submit({
+					input,
+					stickyKey: options?.stickyKey,
+					workflowId,
+				});
+			} catch (error) {
+				if (isNoCapacityError(error)) {
+					// All network volumes refused. This is the most common reason
+					// jobs were getting markFailed prematurely — promote it to a
+					// retryable signal so the worker re-queues with delay instead
+					// of burning attempts via exponential backoff.
+					throw new RetryableInferenceError(
+						error instanceof Error ? error.message : String(error),
+						{
+							cause: error,
+							delayMs: NO_CAPACITY_RETRY_DELAY_MS,
+							maxWindowMs: NO_CAPACITY_RETRY_WINDOW_MS,
+						}
+					);
+				}
+				throw error;
+			}
 			return {
 				endpointId: submission.endpointId,
 				jobId: submission.jobId,

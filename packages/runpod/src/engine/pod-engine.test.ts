@@ -17,10 +17,12 @@ import {
 	isComfyTransientProxyError,
 	isPodNotFoundError,
 	parsePodJobId,
+	reorderVolumesByPreferred,
 } from "./pod-engine";
 import {
 	createInMemoryActivePodRegistry,
 	createInMemoryPodInputStore,
+	createInMemoryStickyVolumeStore,
 	createInMemoryWarmPodPool,
 } from "./warm-pod-pool";
 
@@ -772,6 +774,147 @@ describe("PodEngine active-pod registry", () => {
 		// On successful completion, pod returns to warm-pool; registry cleared.
 		expect(await activeRegistry.list()).toEqual([]);
 		expect((await warmPool.list()).map((e) => e.podId)).toEqual(["pod-warm"]);
+	});
+});
+
+describe("reorderVolumesByPreferred", () => {
+	const volumes = [
+		{
+			gpuTypeIds: ["A6000"],
+			networkVolumeId: "vol-a",
+		},
+		{
+			gpuTypeIds: ["H100"],
+			networkVolumeId: "vol-b",
+		},
+		{
+			gpuTypeIds: ["B200"],
+			networkVolumeId: "vol-c",
+		},
+	];
+
+	it("moves the matching volume to the front, keeps others in order", () => {
+		const reordered = reorderVolumesByPreferred(volumes, "vol-c");
+		expect(reordered.map((v) => v.networkVolumeId)).toEqual([
+			"vol-c",
+			"vol-a",
+			"vol-b",
+		]);
+	});
+
+	it("returns input unchanged when preferred is already first", () => {
+		const reordered = reorderVolumesByPreferred(volumes, "vol-a");
+		expect(reordered).toBe(volumes);
+	});
+
+	it("returns input unchanged when preferred id is missing", () => {
+		const reordered = reorderVolumesByPreferred(volumes, "vol-missing");
+		expect(reordered).toBe(volumes);
+	});
+});
+
+describe("PodEngine sticky volume", () => {
+	const multiVolWorkflow: PodWorkflow<
+		z.infer<typeof ltxInputSchema>,
+		VideoOutput
+	> = {
+		...baseWorkflow,
+		pod: {
+			...baseWorkflow.pod,
+			networkVolumes: [
+				{
+					gpuTypeIds: ["NVIDIA RTX A6000"],
+					label: "dc-1",
+					networkVolumeId: "vol-1",
+				},
+				{
+					gpuTypeIds: ["NVIDIA H100 80GB HBM3"],
+					label: "dc-2",
+					networkVolumeId: "vol-2",
+				},
+				{
+					gpuTypeIds: ["NVIDIA B200"],
+					label: "dc-3",
+					networkVolumeId: "vol-3",
+				},
+			],
+		},
+	};
+
+	it("tries the sticky volume first on retry", async () => {
+		const stickyStore = createInMemoryStickyVolumeStore();
+		await stickyStore.set("exec-1", "vol-3", 60_000);
+		const seen: string[] = [];
+		const create = mock((input: { networkVolumeId: string }) => {
+			seen.push(input.networkVolumeId);
+			return Promise.resolve<PodSnapshot>({
+				desiredStatus: "RUNNING",
+				id: "pod-1",
+			});
+		});
+		const engine = createPodEngine({
+			api: buildApi({ create: create as never }),
+			randomPassword: () => "pwd",
+			randomRequestId: () => "req-1",
+			s3,
+			stickyStore,
+			workflow: multiVolWorkflow,
+		});
+		await engine.submit({ prompt: "x" }, { stickyKey: "exec-1" });
+		expect(seen[0]).toBe("vol-3");
+		expect(seen).toHaveLength(1);
+	});
+
+	it("falls through to the next volume when sticky is out of capacity", async () => {
+		const stickyStore = createInMemoryStickyVolumeStore();
+		await stickyStore.set("exec-2", "vol-2", 60_000);
+		const seen: string[] = [];
+		const create = mock((input: { networkVolumeId: string }) => {
+			seen.push(input.networkVolumeId);
+			if (input.networkVolumeId === "vol-2") {
+				return Promise.reject(
+					new Error("runpod /pods (create) failed (500): no capacity")
+				);
+			}
+			return Promise.resolve<PodSnapshot>({
+				desiredStatus: "RUNNING",
+				id: "pod-2",
+			});
+		});
+		const engine = createPodEngine({
+			api: buildApi({ create: create as never }),
+			randomPassword: () => "pwd",
+			randomRequestId: () => "req-2",
+			s3,
+			stickyStore,
+			workflow: multiVolWorkflow,
+		});
+		await engine.submit({ prompt: "y" }, { stickyKey: "exec-2" });
+		expect(seen[0]).toBe("vol-2");
+		// after no-capacity on vol-2 we try vol-1 (next after preferred move)
+		expect(seen[1]).toBe("vol-1");
+		expect(await stickyStore.get("exec-2")).toBe("vol-1");
+	});
+
+	it("writes sticky entry after a successful allocation without prior hint", async () => {
+		const stickyStore = createInMemoryStickyVolumeStore();
+		const create = mock(() =>
+			Promise.resolve<PodSnapshot>({
+				desiredStatus: "RUNNING",
+				id: "pod-3",
+			})
+		);
+		const engine = createPodEngine({
+			api: buildApi({ create }),
+			randomPassword: () => "pwd",
+			randomRequestId: () => "req-3",
+			s3,
+			stickyStore,
+			workflow: multiVolWorkflow,
+		});
+		await engine.submit({ prompt: "z" }, { stickyKey: "exec-3" });
+		// Default order means vol-1 wins on success.
+		expect(await stickyStore.get("exec-3")).toBe("vol-1");
 	});
 });
 

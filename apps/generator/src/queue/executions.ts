@@ -1,8 +1,11 @@
 import {
 	createQueueClient,
 	createQueueWorker,
+	DelayedError,
 	queueNames,
 } from "@generator/queue";
+
+import { isRetryableInferenceError } from "@/providers/inference";
 
 export interface GeneratorExecutionQueue {
 	enqueueSubmit(input: { executionId: string }): Promise<void>;
@@ -15,7 +18,7 @@ interface CreateGeneratorExecutionQueueOptions {
 		data: { executionId: string };
 		name: "submit" | "sync";
 	}) => Promise<void>;
-	logger?: Pick<Console, "error" | "info">;
+	logger?: Pick<Console, "error" | "info" | "warn">;
 	onJobExhausted?: (executionId: string, error: Error) => Promise<void>;
 	redisUrl: string;
 }
@@ -103,14 +106,48 @@ export function createGeneratorExecutionWorker(
 						});
 				}
 			},
-			processor: async (job) => {
+			processor: async (job, token) => {
 				if (job.name !== "submit" && job.name !== "sync") {
 					throw new Error(`Unsupported generator execution job: ${job.name}`);
 				}
-				await options.handler({
-					data: job.data,
-					name: job.name,
-				});
+				try {
+					await options.handler({
+						data: job.data,
+						name: job.name,
+					});
+				} catch (error) {
+					// Capacity-throttle is transient: provider just doesn't have GPUs
+					// right now, but the request itself is valid. Re-queue the job
+					// with delay without consuming a retry attempt, until total
+					// wall-clock since the original enqueue exceeds the window.
+					// This is the BullMQ "soft delay" pattern (moveToDelayed +
+					// DelayedError tells the worker to release the job without
+					// marking it as failed).
+					if (isRetryableInferenceError(error) && token) {
+						const elapsedMs = Date.now() - job.timestamp;
+						if (elapsedMs < error.maxWindowMs) {
+							logger.info("generator.execution-job.capacity-retry", {
+								attemptsMade: job.attemptsMade,
+								delayMs: error.delayMs,
+								elapsedMs,
+								executionId: job.data.executionId,
+								jobName: job.name,
+								maxWindowMs: error.maxWindowMs,
+								message: error.message,
+							});
+							await job.moveToDelayed(Date.now() + error.delayMs, token);
+							throw new DelayedError();
+						}
+						logger.warn("generator.execution-job.capacity-retry-exhausted", {
+							elapsedMs,
+							executionId: job.data.executionId,
+							jobName: job.name,
+							maxWindowMs: error.maxWindowMs,
+							message: error.message,
+						});
+					}
+					throw error;
+				}
 			},
 			redisUrl: options.redisUrl,
 		}

@@ -59,7 +59,9 @@ export function createServerlessEngine<TInput, TOutput>(
 			};
 		},
 
-		async submit(input): Promise<EngineSubmission> {
+		async submit(input, _options): Promise<EngineSubmission> {
+			// serverless engine doesn't allocate volumes itself, so stickyKey is
+			// accepted (for a uniform Engine contract) but ignored here.
 			const parsed = workflow.inputSchema.parse(input);
 			const submission = await api.submit({
 				endpointId: workflow.endpointId,

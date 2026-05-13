@@ -19,6 +19,7 @@ import {
 	createPodReaper,
 	createRedisActivePodRegistry,
 	createRedisPodInputStore,
+	createRedisStickyVolumeStore,
 	createRedisWarmPodPool,
 } from "@/providers/runpod-warm-pool";
 
@@ -110,6 +111,9 @@ const warmPool = runpodRedis ? createRedisWarmPodPool(runpodRedis) : null;
 const activeRegistry = runpodRedis
 	? createRedisActivePodRegistry(runpodRedis)
 	: null;
+const stickyStore = runpodRedis
+	? createRedisStickyVolumeStore(runpodRedis)
+	: null;
 const runpodService =
 	runpodApiKey && runpodWorkflows.length > 0 && runpodRedis && warmPool
 		? createRunpodService({
@@ -122,6 +126,7 @@ const runpodService =
 				podsBaseUrl: env.RUNPOD_REST_API_BASE_URL,
 				s3: s3Config,
 				serverlessBaseUrl: env.RUNPOD_API_BASE_URL,
+				stickyStore: stickyStore ?? undefined,
 				warmPool,
 				workflows: runpodWorkflows,
 			})

@@ -774,7 +774,8 @@ export class ExecutionService {
 		let submission: InferenceSubmission;
 		try {
 			submission = await this.inferenceClient.submit(
-				this.buildSubmissionPayload(execution, workflow)
+				this.buildSubmissionPayload(execution, workflow),
+				{ stickyKey: execution.id }
 			);
 		} catch (error) {
 			if (await this.failExecutionFromNonRetryableError(execution, error)) {
@@ -987,7 +988,8 @@ export class ExecutionService {
 			let resubmission: InferenceSubmission;
 			try {
 				resubmission = await this.inferenceClient.submit(
-					this.buildSubmissionPayload(execution, workflow)
+					this.buildSubmissionPayload(execution, workflow),
+					{ stickyKey: execution.id }
 				);
 			} catch (error) {
 				if (await this.failExecutionFromNonRetryableError(execution, error)) {

@@ -8,6 +8,10 @@ import type { S3StorageConfig } from "@generator/storage";
 import { z } from "zod";
 
 import {
+	isRetryableInferenceError,
+	RetryableInferenceError,
+} from "@/providers/inference";
+import {
 	createRunpodClient,
 	isRunpodEndpointId,
 	isRunpodPayload,
@@ -171,6 +175,35 @@ describe("RunPod adapter", () => {
 		await expect(adapter.submit({ prompt: "test" })).rejects.toThrow(
 			"RunPod payload requires"
 		);
+	});
+
+	it("translates RunPod no-capacity error into RetryableInferenceError", async () => {
+		const fetchImpl = mock(() =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						error: "There are no instances currently available",
+					}),
+					{ status: 500, headers: { "content-type": "application/json" } }
+				)
+			)
+		);
+		const adapter = createRunpodClient(buildService(fetchImpl));
+		let caught: unknown;
+		try {
+			await adapter.submit({
+				[RUNPOD_LEGACY_POD_PAYLOAD_KEY]: "ltx-2-3-video",
+				prompt: "test",
+			});
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeInstanceOf(RetryableInferenceError);
+		expect(isRetryableInferenceError(caught)).toBe(true);
+		if (isRetryableInferenceError(caught)) {
+			expect(caught.delayMs).toBeGreaterThan(0);
+			expect(caught.maxWindowMs).toBeGreaterThanOrEqual(caught.delayMs);
+		}
 	});
 });
 

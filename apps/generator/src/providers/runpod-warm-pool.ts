@@ -5,6 +5,7 @@ import type {
 	PodInputStore,
 	PodSnapshot,
 	RunpodPodsApi,
+	StickyVolumeStore,
 	WarmPodEntry,
 	WarmPodPool,
 } from "@generator/runpod";
@@ -12,6 +13,7 @@ import type {
 const WARM_POOL_KEY_PREFIX = "runpod:warm-pod:";
 const INPUT_STORE_KEY_PREFIX = "runpod:pod-input:";
 const ACTIVE_REGISTRY_KEY = "runpod:active-pods";
+const STICKY_VOLUME_KEY_PREFIX = "runpod:sticky-volume:";
 
 // Pop the smallest-score (closest to expiring) entry, but only if it isn't
 // already expired. Expired entries are purged inline so the next claim sees
@@ -460,6 +462,26 @@ export function createRedisPodInputStore(redis: Redis): PodInputStore {
 		},
 		async put<T>(requestId: string, input: T, ttlMs: number) {
 			await redis.set(inputKey(requestId), JSON.stringify(input), "PX", ttlMs);
+		},
+	};
+}
+
+function stickyKey(key: string): string {
+	return `${STICKY_VOLUME_KEY_PREFIX}${key}`;
+}
+
+/**
+ * Redis-backed sticky-volume store. Plain GET/SET with PX TTL — no
+ * structured payload because we only care about "for execution X, the
+ * last volume that worked was Y".
+ */
+export function createRedisStickyVolumeStore(redis: Redis): StickyVolumeStore {
+	return {
+		async get(key) {
+			return await redis.get(stickyKey(key));
+		},
+		async set(key, volumeId, ttlMs) {
+			await redis.set(stickyKey(key), volumeId, "PX", ttlMs);
 		},
 	};
 }

@@ -111,6 +111,35 @@ const NOOP_ACTIVE_REGISTRY: ActivePodRegistry = {
 	},
 };
 
+/**
+ * Per-execution cache of "which network volume served this request last
+ * time". On retry/resubmit of the same execution we prefer that volume so
+ * models (and ComfyUI workflow defs) stay warm in the NFS cache. Falling
+ * back to round-robin happens naturally inside `createPodAcrossVolumes` —
+ * if the sticky volume itself is out of capacity, we just continue down the
+ * volume list as before.
+ *
+ * Semantics:
+ * - `get` returns `null` for unknown / expired keys; missing keys are
+ *   never an error.
+ * - `set` overwrites with a fresh TTL on every call, so a chain of submits
+ *   for the same execution keeps the sticky alive even past the initial
+ *   TTL.
+ */
+export interface StickyVolumeStore {
+	get(key: string): Promise<string | null>;
+	set(key: string, volumeId: string, ttlMs: number): Promise<void>;
+}
+
+const NOOP_STICKY_STORE: StickyVolumeStore = {
+	get() {
+		return Promise.resolve(null);
+	},
+	set() {
+		return Promise.resolve();
+	},
+};
+
 const NOOP_WARM_POOL: WarmPodPool = {
 	claim() {
 		return Promise.resolve(null);
@@ -149,6 +178,36 @@ export function createNoopPodInputStore(): PodInputStore {
 
 export function createNoopActivePodRegistry(): ActivePodRegistry {
 	return NOOP_ACTIVE_REGISTRY;
+}
+
+export function createNoopStickyVolumeStore(): StickyVolumeStore {
+	return NOOP_STICKY_STORE;
+}
+
+/** In-memory sticky store. TTL is enforced lazily on `get`. */
+export function createInMemoryStickyVolumeStore(options?: {
+	now?: () => number;
+}): StickyVolumeStore {
+	const now = options?.now ?? Date.now;
+	const entries = new Map<string, { expiresAt: number; volumeId: string }>();
+
+	return {
+		get(key) {
+			const slot = entries.get(key);
+			if (!slot) {
+				return Promise.resolve(null);
+			}
+			if (slot.expiresAt <= now()) {
+				entries.delete(key);
+				return Promise.resolve(null);
+			}
+			return Promise.resolve(slot.volumeId);
+		},
+		set(key, volumeId, ttlMs) {
+			entries.set(key, { expiresAt: now() + ttlMs, volumeId });
+			return Promise.resolve();
+		},
+	};
 }
 
 /**

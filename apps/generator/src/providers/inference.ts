@@ -16,6 +16,38 @@ export function isNonRetryableInferenceError(
 	);
 }
 
+/**
+ * Provider asked us to wait and try again — capacity is temporarily exhausted
+ * but the request itself is valid. Worker should re-queue the job with
+ * `delayMs` delay (not counted as a retry attempt) until total wall-clock
+ * elapsed since the original enqueue exceeds `maxWindowMs`, then give up.
+ *
+ * `cause` preserves the underlying provider error for logs / debugging.
+ */
+export class RetryableInferenceError extends Error {
+	readonly delayMs: number;
+	readonly maxWindowMs: number;
+
+	constructor(
+		message: string,
+		options: { cause?: unknown; delayMs: number; maxWindowMs: number }
+	) {
+		super(message, options.cause ? { cause: options.cause } : undefined);
+		this.name = "RetryableInferenceError";
+		this.delayMs = options.delayMs;
+		this.maxWindowMs = options.maxWindowMs;
+	}
+}
+
+export function isRetryableInferenceError(
+	error: unknown
+): error is RetryableInferenceError {
+	return (
+		error instanceof RetryableInferenceError ||
+		(error instanceof Error && error.name === "RetryableInferenceError")
+	);
+}
+
 export interface InferenceSubmission {
 	endpointId: string;
 	jobId: string;
@@ -62,6 +94,19 @@ export interface InferenceStreamOptions {
 	signal?: AbortSignal;
 }
 
+/**
+ * Optional submit-side hints that the inference router/provider may honour.
+ * Adding a new field here is non-breaking: providers that don't care simply
+ * ignore the option.
+ */
+export interface InferenceSubmitOptions {
+	/**
+	 * Opaque execution identifier. RunPod pod provider uses it to keep
+	 * retries on the same network volume (sticky-volume cache).
+	 */
+	stickyKey?: string;
+}
+
 export interface InferenceClient {
 	cancel(jobId: string, endpointId?: string): Promise<void>;
 	getStatus(jobId: string, endpointId?: string): Promise<InferenceJob>;
@@ -73,5 +118,8 @@ export interface InferenceClient {
 	 * (после terminal event или из-за сетевой ошибки).
 	 */
 	streamStatus?: (options: InferenceStreamOptions) => InferenceStreamHandle;
-	submit(payload: Record<string, unknown>): Promise<InferenceSubmission>;
+	submit(
+		payload: Record<string, unknown>,
+		options?: InferenceSubmitOptions
+	): Promise<InferenceSubmission>;
 }

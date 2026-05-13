@@ -29,8 +29,10 @@ import {
 	type ActivePodRegistry,
 	createNoopActivePodRegistry,
 	createNoopPodInputStore,
+	createNoopStickyVolumeStore,
 	createNoopWarmPodPool,
 	type PodInputStore,
+	type StickyVolumeStore,
 	type WarmPodEntry,
 	type WarmPodPool,
 } from "./warm-pod-pool";
@@ -115,6 +117,12 @@ interface PodEngineDeps {
 	randomRequestId?: () => string;
 	s3: S3StorageConfig;
 	statObject?: typeof statS3Object;
+	/**
+	 * Per-execution mapping "stickyKey → networkVolumeId". On submit we try
+	 * the cached volume first so retries land on a node that already has the
+	 * model files warm in the NFS cache. Default = noop store (no stickiness).
+	 */
+	stickyStore?: StickyVolumeStore;
 	uploadObject?: typeof uploadObjectToS3;
 	/**
 	 * Warm-pod pool. When workflow declares `pod.keepAliveMs > 0`, successful
@@ -190,10 +198,15 @@ export function createPodEngine<TInput, TOutput>(
 		randomRequestId = () => crypto.randomUUID(),
 		s3,
 		statObject = statS3Object,
+		stickyStore = createNoopStickyVolumeStore(),
 		uploadObject = uploadObjectToS3,
 		warmPool = createNoopWarmPodPool(),
 		workflow,
 	} = options;
+	// Keep the sticky entry alive longer than a single submit so retries
+	// triggered by Phase 1 (capacity-throttle re-queue) and follow-up syncs
+	// stay on the same volume. 30 min is enough for most LTX-2.3 runs end-to-end.
+	const stickyVolumeTtlMs = 30 * 60 * 1000;
 	const keepAliveMs = workflow.pod.keepAliveMs ?? 0;
 	const reuseEnabled = keepAliveMs > 0;
 	const inputStoreTtlMs = Math.max(
@@ -827,9 +840,10 @@ export function createPodEngine<TInput, TOutput>(
 			});
 		},
 
-		async submit(input): Promise<EngineSubmission> {
+		async submit(input, submitOptions): Promise<EngineSubmission> {
 			const parsed = workflow.inputSchema.parse(input);
 			const requestId = randomRequestId();
+			const stickyKey = submitOptions?.stickyKey;
 			const reused = await tryReuseWarmPod(parsed, requestId);
 			if (reused) {
 				// Reused pod was protected by warm-pool entry; now it's serving an
@@ -838,6 +852,16 @@ export function createPodEngine<TInput, TOutput>(
 					networkVolumeId: reused.networkVolumeId,
 					podId: reused.podId,
 				});
+				// Reuse keeps us on the same volume as last time — refresh sticky
+				// TTL so a subsequent retry path still benefits.
+				if (stickyKey) {
+					await stickyStore
+						.set(stickyKey, reused.networkVolumeId, stickyVolumeTtlMs)
+						.catch(() => {
+							// Best-effort: missing sticky just means next submit
+							// picks a volume via round-robin again.
+						});
+				}
 				return {
 					jobId: formatPodJobId({
 						password: reused.password,
@@ -868,6 +892,17 @@ export function createPodEngine<TInput, TOutput>(
 					Math.ceil(workflow.pod.timeoutMs / 1000)
 				);
 			}
+			// Sticky volume preference: on retry of the same execution, try the
+			// volume that served us last time first. Models are already on the
+			// NFS cache there, so we skip the multi-minute "download to volume"
+			// step. Fallback is automatic — createPodAcrossVolumes walks the
+			// full list if sticky is itself out of capacity.
+			const stickyVolumeId = stickyKey
+				? await stickyStore.get(stickyKey).catch(() => null)
+				: null;
+			const orderedVolumes = stickyVolumeId
+				? reorderVolumesByPreferred(workflow.pod.networkVolumes, stickyVolumeId)
+				: workflow.pod.networkVolumes;
 			const { pod, networkVolumeId } = await createPodAcrossVolumes(
 				api,
 				(volume) => ({
@@ -886,7 +921,7 @@ export function createPodEngine<TInput, TOutput>(
 					volumeInGb: workflow.pod.volumeInGb,
 					volumeMountPath: "/workspace",
 				}),
-				workflow.pod.networkVolumes,
+				orderedVolumes,
 				logger,
 				requestId,
 				workflow.id
@@ -894,6 +929,17 @@ export function createPodEngine<TInput, TOutput>(
 			// Register *before* returning so any subsequent reaper tick already
 			// sees this pod as protected. inputStore put is async-ish but cheap.
 			await trackActivePod({ networkVolumeId, podId: pod.id });
+			if (stickyKey) {
+				await stickyStore
+					.set(stickyKey, networkVolumeId, stickyVolumeTtlMs)
+					.catch((error) => {
+						logger?.warn?.("runpod-pod.sticky-volume.set-failed", {
+							message: error instanceof Error ? error.message : "unknown",
+							networkVolumeId,
+							stickyKey,
+						});
+					});
+			}
 			if (reuseEnabled) {
 				// Mirror the new input into the side-channel so this exec and any
 				// subsequent reused exec follow the same lookup path.
@@ -976,6 +1022,27 @@ export async function createPodAcrossVolumes(
 	throw new Error(
 		`runpod-pod (${workflowId}): no capacity across ${volumes.length} network volume(s):\n  - ${errors.join("\n  - ")}`
 	);
+}
+
+/**
+ * Returns `volumes` with `preferredId` moved to the front while preserving
+ * the original relative order of the rest. If `preferredId` isn't part of
+ * `volumes`, returns the input unchanged — sticky entry referencing a
+ * removed/retired volume is treated as a cache miss, not an error.
+ */
+export function reorderVolumesByPreferred(
+	volumes: readonly PodNetworkVolume[],
+	preferredId: string
+): readonly PodNetworkVolume[] {
+	const idx = volumes.findIndex((v) => v.networkVolumeId === preferredId);
+	if (idx <= 0) {
+		return volumes;
+	}
+	const preferred = volumes[idx];
+	if (!preferred) {
+		return volumes;
+	}
+	return [preferred, ...volumes.slice(0, idx), ...volumes.slice(idx + 1)];
 }
 
 function buildArtifactKey(

@@ -8,6 +8,11 @@ import {
 } from "bullmq";
 import IORedis, { type Redis } from "ioredis";
 
+export type { Job } from "bullmq";
+// Re-export so callers don't need a direct bullmq dependency just to drive
+// the standard "re-queue with delay without consuming an attempt" pattern.
+// biome-ignore lint/performance/noBarrelFile: thin queue facade intentionally re-exports BullMQ's DelayedError
+export { DelayedError } from "bullmq";
 export type { Redis } from "ioredis";
 
 const RELEASE_LOCK_LUA = `

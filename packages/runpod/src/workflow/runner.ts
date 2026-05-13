@@ -12,6 +12,7 @@ import type { InferenceStatus } from "../engine/status";
 import type {
 	ActivePodRegistry,
 	PodInputStore,
+	StickyVolumeStore,
 	WarmPodPool,
 } from "../engine/warm-pod-pool";
 import {
@@ -68,6 +69,12 @@ export interface CreateRunpodServiceOptions {
 	podsBaseUrl?: string;
 	s3: S3StorageConfig;
 	serverlessBaseUrl?: string;
+	/**
+	 * Per-execution sticky volume store. Pod engine reads/writes through it
+	 * to keep retries of the same execution on a volume where models are
+	 * already warm in the NFS cache. Default = noop store.
+	 */
+	stickyStore?: StickyVolumeStore;
 	/** Warm-pod pool shared across worker processes (typically Redis-backed). */
 	warmPool?: WarmPodPool;
 	workflows: readonly AnyWorkflowDefinition[];
@@ -85,6 +92,12 @@ export interface RunpodService {
 	registry: WorkflowRegistry;
 	submit<TInput>(input: {
 		input: TInput;
+		/**
+		 * Opaque request identifier used by pod engines for sticky-volume
+		 * preference (typically execution id). Engines that don't allocate
+		 * volumes ignore the key.
+		 */
+		stickyKey?: string;
 		workflowId: string;
 	}): Promise<RunpodSubmission>;
 }
@@ -155,6 +168,7 @@ interface BuildEnginesContext {
 	podsApi: RunpodPodsApi;
 	s3: S3StorageConfig;
 	serverlessApi: RunpodServerlessApi;
+	stickyStore?: StickyVolumeStore;
 	warmPool?: WarmPodPool;
 }
 
@@ -176,6 +190,7 @@ function buildEngine(
 		inputStore: ctx.inputStore,
 		logger: ctx.logger,
 		s3: ctx.s3,
+		stickyStore: ctx.stickyStore,
 		warmPool: ctx.warmPool,
 		workflow: workflow as PodWorkflow<unknown, unknown>,
 	});
@@ -216,6 +231,7 @@ export function createRunpodService(
 			podsApi,
 			s3: options.s3,
 			serverlessApi,
+			stickyStore: options.stickyStore,
 			warmPool: options.warmPool,
 		});
 		engines.set(workflowId, engine);
@@ -270,10 +286,12 @@ export function createRunpodService(
 		podsApi,
 		registry,
 
-		async submit({ input, workflowId }): Promise<RunpodSubmission> {
+		async submit({ input, stickyKey, workflowId }): Promise<RunpodSubmission> {
 			const workflow = registry.get(workflowId);
 			const engine = engineFor(workflowId);
-			const submission: EngineSubmission = await engine.submit(input);
+			const submission: EngineSubmission = await engine.submit(input, {
+				stickyKey,
+			});
 			return {
 				endpointId: formatEndpointId(workflow),
 				jobId: submission.jobId,

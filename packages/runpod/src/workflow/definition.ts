@@ -50,6 +50,13 @@ export interface PodSpec {
 	containerDiskInGb?: number;
 	gpuCount?: number;
 	imageName: string;
+	/**
+	 * Сколько времени (мс) держать pod в warm-pool после успешного inference,
+	 * прежде чем reaper его уничтожит. Burst-запросы в этом окне переиспользуют
+	 * уже загруженного в VRAM ComfyUI вместо холодного бута + чтения 40 ГБ из
+	 * NFS. 0 / undefined = старое поведение (cleanup сразу после артефакта).
+	 */
+	keepAliveMs?: number;
 	namePrefix?: string;
 	networkVolumes: PodNetworkVolume[];
 	templateId?: string;

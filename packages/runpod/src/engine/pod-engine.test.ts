@@ -18,6 +18,10 @@ import {
 	isPodNotFoundError,
 	parsePodJobId,
 } from "./pod-engine";
+import {
+	createInMemoryPodInputStore,
+	createInMemoryWarmPodPool,
+} from "./warm-pod-pool";
 
 const s3: S3StorageConfig = {
 	accessKeyId: "access",
@@ -70,6 +74,7 @@ function buildApi(overrides: Partial<RunpodPodsApi> = {}): RunpodPodsApi {
 		get:
 			overrides.get ??
 			mock(() => Promise.resolve<PodSnapshot>({ id: "pod-1" })),
+		list: overrides.list ?? mock(() => Promise.resolve<PodSnapshot[]>([])),
 	};
 }
 
@@ -493,6 +498,160 @@ describe("PodEngine cancel", () => {
 		});
 		await engine.cancel("pod-A:req-2:pwd");
 		expect(deleteFn).toHaveBeenCalledWith("pod-A");
+	});
+});
+
+describe("PodEngine warm-pool reuse", () => {
+	const warmWorkflow: PodWorkflow<
+		z.infer<typeof ltxInputSchema>,
+		VideoOutput
+	> = {
+		...baseWorkflow,
+		pod: { ...baseWorkflow.pod, keepAliveMs: 60_000 },
+	};
+
+	it("releases the pod to the warm pool after a successful artifact upload", async () => {
+		const warmPool = createInMemoryWarmPodPool();
+		const inputStore = createInMemoryPodInputStore();
+		const deleteFn = mock(() => Promise.resolve());
+		let statCall = 0;
+		const statObject = mock((key: string) => {
+			statCall += 1;
+			if (statCall === 1) {
+				throw new Error("not found");
+			}
+			return Promise.resolve(makeStat(key, 16));
+		});
+		const engine = createPodEngine({
+			api: buildApi({
+				delete: deleteFn,
+				get: () =>
+					Promise.resolve({
+						desiredStatus: "RUNNING",
+						env: {
+							INFERENCE_INPUT_JSON_B64: encodeBase64Json({ prompt: "p" }),
+							INFERENCE_NETWORK_VOLUME_ID: "vol-test",
+						},
+						id: "pod-XYZ",
+					} as never),
+			}),
+			createClient: () =>
+				buildClientStub({
+					getHistory: () =>
+						Promise.resolve({
+							"p-1": {
+								outputs: {
+									"42": {
+										videos: [
+											{ filename: "out.mp4", subfolder: "", type: "output" },
+										],
+									},
+								},
+								prompt: [1, "p-1", {}, { client_id: "req-fixed" }, ["42"]],
+								status: { completed: true, status_str: "success" },
+							},
+						}),
+				}),
+			inputStore,
+			s3,
+			statObject: statObject as never,
+			uploadObject: mock(() =>
+				Promise.resolve({
+					key: "k",
+					sizeBytes: 8,
+					url: "https://assets.example.com/k",
+				})
+			) as never,
+			warmPool,
+			workflow: warmWorkflow,
+		});
+		const job = await engine.getStatus("pod-XYZ:req-fixed:pwd");
+		expect(job.status).toBe("succeeded");
+		expect(deleteFn).not.toHaveBeenCalled();
+		const live = await warmPool.list();
+		expect(live).toEqual([
+			{
+				networkVolumeId: "vol-test",
+				password: "pwd",
+				podId: "pod-XYZ",
+				workflowId: "ltx-2-3-video",
+			},
+		]);
+	});
+
+	it("submit reuses a warm pod without calling RunPod create", async () => {
+		const warmPool = createInMemoryWarmPodPool();
+		await warmPool.release(
+			"ltx-2-3-video",
+			{
+				networkVolumeId: "vol-test",
+				password: "pwd-reused",
+				podId: "pod-reused",
+			},
+			60_000
+		);
+		const create = mock(() =>
+			Promise.reject(new Error("create should not be called"))
+		);
+		const get = mock(() =>
+			Promise.resolve<PodSnapshot>({
+				desiredStatus: "RUNNING",
+				id: "pod-reused",
+			})
+		);
+		const inputStore = createInMemoryPodInputStore();
+		const engine = createPodEngine({
+			api: buildApi({ create, get }),
+			inputStore,
+			randomRequestId: () => "req-new",
+			s3,
+			warmPool,
+			workflow: warmWorkflow,
+		});
+		const submission = await engine.submit({ prompt: "hi" });
+		expect(create).not.toHaveBeenCalled();
+		expect(submission.rawProviderJobReference).toBe("pod-reused");
+		expect(submission.jobId).toBe("pod-reused:req-new:pwd-reused");
+		expect(await inputStore.get<{ prompt: string }>("req-new")).toEqual({
+			prompt: "hi",
+		});
+		expect(await warmPool.list()).toEqual([]);
+	});
+
+	it("submit drops a warm entry whose pod no longer exists and falls back to create", async () => {
+		const warmPool = createInMemoryWarmPodPool();
+		await warmPool.release(
+			"ltx-2-3-video",
+			{
+				networkVolumeId: "vol-test",
+				password: "pwd-stale",
+				podId: "pod-stale",
+			},
+			60_000
+		);
+		const create = mock(() =>
+			Promise.resolve<PodSnapshot>({
+				desiredStatus: "RUNNING",
+				id: "pod-fresh",
+			})
+		);
+		const get = mock(() =>
+			Promise.reject(
+				new Error("runpod /pods/pod-stale (get) failed (404): pod not found")
+			)
+		);
+		const engine = createPodEngine({
+			api: buildApi({ create, get }),
+			randomPassword: () => "pwd-fresh",
+			randomRequestId: () => "req-fresh",
+			s3,
+			warmPool,
+			workflow: warmWorkflow,
+		});
+		const submission = await engine.submit({ prompt: "hello" });
+		expect(submission.jobId).toBe("pod-fresh:req-fresh:pwd-fresh");
+		expect(create).toHaveBeenCalledTimes(1);
+		expect(await warmPool.list()).toEqual([]);
 	});
 });
 

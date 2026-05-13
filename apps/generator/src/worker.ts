@@ -1,5 +1,6 @@
 import { env, getKafkaEventBusConfig } from "@generator/env/server";
 import { createKafkaEventPublisher } from "@generator/events";
+import { createRedisConnection } from "@generator/queue";
 import {
 	type AnyWorkflowDefinition,
 	createFooocusSdxlWorkflow,
@@ -14,6 +15,15 @@ import { createFalClient } from "@/providers/fal";
 import { createInferenceRouter } from "@/providers/inference-router";
 import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
+import {
+	createPodReaper,
+	createRedisPodInputStore,
+	createRedisWarmPodPool,
+} from "@/providers/runpod-warm-pool";
+
+const LTX23_POD_NAME_PREFIX = "ltx23";
+const REAPER_INTERVAL_MS = 60_000;
+
 import {
 	createProviderArtifactDownloadOptions,
 	createStorageAdapter,
@@ -72,6 +82,8 @@ if (runpodLtx23TemplateId) {
 				cloudType: env.RUNPOD_LTX23_POD_CLOUD_TYPE,
 				containerDiskInGb: env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
 				imageName: env.RUNPOD_LTX23_POD_IMAGE_NAME,
+				keepAliveMs: env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS,
+				namePrefix: LTX23_POD_NAME_PREFIX,
 				networkVolumes: ltx23NetworkVolumes.map((volume) => ({
 					gpuTypeIds: volume.gpus,
 					label: volume.label,
@@ -85,19 +97,55 @@ if (runpodLtx23TemplateId) {
 	);
 }
 
-const runpodService =
+// Shared Redis connection for warm-pod pool + input-store. Separate from the
+// BullMQ connection so its `maxRetriesPerRequest: null` policy doesn't bleed
+// onto pool ops that need to fail fast on submit/getStatus paths.
+const runpodRedis =
 	runpodApiKey && runpodWorkflows.length > 0
+		? createRedisConnection(redisUrl)
+		: null;
+
+const warmPool = runpodRedis ? createRedisWarmPodPool(runpodRedis) : null;
+const runpodService =
+	runpodApiKey && runpodWorkflows.length > 0 && runpodRedis && warmPool
 		? createRunpodService({
 				apiKey: runpodApiKey,
 				civitaiApiKey,
 				hfToken: env.HF_TOKEN ?? env.HUGGINGFACE_TOKEN,
+				inputStore: createRedisPodInputStore(runpodRedis),
 				logger: console,
 				podsBaseUrl: env.RUNPOD_REST_API_BASE_URL,
 				s3: s3Config,
 				serverlessBaseUrl: env.RUNPOD_API_BASE_URL,
+				warmPool,
 				workflows: runpodWorkflows,
 			})
 		: null;
+
+// Reaper нужен только если warm-pool активирован: иначе никаких "выпавших из
+// пула" pod'ов не появляется, текущий disposable-flow убирает их сразу после
+// артефакта.
+const reaper =
+	runpodService && warmPool && env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS > 0
+		? createPodReaper({
+				api: runpodService.podsApi,
+				intervalMs: REAPER_INTERVAL_MS,
+				logger: console,
+				namePrefixes: [LTX23_POD_NAME_PREFIX],
+				// Pod может прожить max execution time + keep-alive окно, прежде чем
+				// reaper'у можно его трогать. Берём timeout пода + keepAlive с буфером.
+				safetyAgeMs:
+					env.RUNPOD_LTX23_POD_TIMEOUT_MS +
+					env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS +
+					5 * 60 * 1000,
+				warmPool,
+			})
+		: null;
+if (reaper) {
+	console.info("generator.worker.runpod-pod-reaper.enabled", {
+		intervalMs: REAPER_INTERVAL_MS,
+	});
+}
 
 const inferenceClient = createInferenceRouter({
 	civitai: civitaiApiKey
@@ -164,6 +212,7 @@ await new Promise<void>((resolve) => {
 		}
 
 		isShuttingDown = true;
+		reaper?.stop();
 		await worker.close();
 		await eventPublisher?.close();
 		resolve();

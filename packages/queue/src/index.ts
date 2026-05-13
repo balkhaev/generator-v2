@@ -8,6 +8,8 @@ import {
 } from "bullmq";
 import IORedis, { type Redis } from "ioredis";
 
+export type { Redis } from "ioredis";
+
 const RELEASE_LOCK_LUA = `
 if redis.call('get', KEYS[1]) == ARGV[1] then
 	return redis.call('del', KEYS[1])

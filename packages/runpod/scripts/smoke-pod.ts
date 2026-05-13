@@ -114,6 +114,9 @@ function parseArgs(argv: string[]): CliArgs {
 			continue;
 		}
 		const [key, value] = raw.slice(2).split("=", 2);
+		if (!key) {
+			continue;
+		}
 		ARG_HANDLERS[key]?.(args, value);
 	}
 	if (!(args.dryRun || args.live)) {

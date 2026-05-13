@@ -9,6 +9,7 @@ import type { Engine, EngineJob, EngineSubmission } from "../engine/engine";
 import { createPodEngine } from "../engine/pod-engine";
 import { createServerlessEngine } from "../engine/serverless-engine";
 import type { InferenceStatus } from "../engine/status";
+import type { PodInputStore, WarmPodPool } from "../engine/warm-pod-pool";
 import {
 	createRunpodHttpClient,
 	type RunpodFetch,
@@ -51,16 +52,26 @@ export interface CreateRunpodServiceOptions {
 	fetchImpl?: RunpodFetch;
 	hfToken?: string;
 	httpTimeoutMs?: number;
+	/** Cross-process per-request input cache for warm-pod reuse. */
+	inputStore?: PodInputStore;
 	logger?: Pick<Console, "info" | "warn">;
 	podsBaseUrl?: string;
 	s3: S3StorageConfig;
 	serverlessBaseUrl?: string;
+	/** Warm-pod pool shared across worker processes (typically Redis-backed). */
+	warmPool?: WarmPodPool;
 	workflows: readonly AnyWorkflowDefinition[];
 }
 
 export interface RunpodService {
 	cancel(input: { endpointId: string; jobId: string }): Promise<void>;
 	getStatus(input: { endpointId: string; jobId: string }): Promise<RunpodJob>;
+	/**
+	 * Низкоуровневый pods API — exposed for the reaper / debug tooling that
+	 * needs to list/terminate live RunPod inventory outside of the per-job
+	 * engine state machine.
+	 */
+	podsApi: RunpodPodsApi;
 	registry: WorkflowRegistry;
 	submit<TInput>(input: {
 		input: TInput;
@@ -128,10 +139,12 @@ export function parseEndpointId(
 interface BuildEnginesContext {
 	civitaiApiKey?: string;
 	hfToken?: string;
+	inputStore?: PodInputStore;
 	logger?: Pick<Console, "info" | "warn">;
 	podsApi: RunpodPodsApi;
 	s3: S3StorageConfig;
 	serverlessApi: RunpodServerlessApi;
+	warmPool?: WarmPodPool;
 }
 
 function buildEngine(
@@ -148,8 +161,10 @@ function buildEngine(
 		api: ctx.podsApi,
 		civitaiApiKey: ctx.civitaiApiKey,
 		hfToken: ctx.hfToken,
+		inputStore: ctx.inputStore,
 		logger: ctx.logger,
 		s3: ctx.s3,
+		warmPool: ctx.warmPool,
 		workflow: workflow as PodWorkflow<unknown, unknown>,
 	});
 }
@@ -183,10 +198,12 @@ export function createRunpodService(
 		const engine = buildEngine(workflow, {
 			civitaiApiKey: options.civitaiApiKey,
 			hfToken: options.hfToken,
+			inputStore: options.inputStore,
 			logger: options.logger,
 			podsApi,
 			s3: options.s3,
 			serverlessApi,
+			warmPool: options.warmPool,
 		});
 		engines.set(workflowId, engine);
 		return engine;
@@ -237,6 +254,7 @@ export function createRunpodService(
 			};
 		},
 
+		podsApi,
 		registry,
 
 		async submit({ input, workflowId }): Promise<RunpodSubmission> {

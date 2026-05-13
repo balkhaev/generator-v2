@@ -8,12 +8,15 @@ import {
 	GENERATOR_INTERNAL_TOKEN_HEADER,
 	resolveDebugCorrelationId,
 } from "@generator/http/shared";
+import { createRedisConnection } from "@generator/queue";
 import {
 	type AnyWorkflowDefinition,
 	createFooocusSdxlWorkflow,
 	createLtx23VideoWorkflow,
 	createRunpodService,
+	type PodInputStore,
 	type RunpodService,
+	type WarmPodPool,
 } from "@generator/runpod";
 import {
 	type S3StorageConfig,
@@ -32,6 +35,10 @@ import type { InferenceClient } from "@/providers/inference";
 import { createInferenceRouter } from "@/providers/inference-router";
 import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
+import {
+	createRedisPodInputStore,
+	createRedisWarmPodPool,
+} from "@/providers/runpod-warm-pool";
 
 function createStubInferenceClient(): InferenceClient {
 	const fail = (): never => {
@@ -50,6 +57,14 @@ function readPositiveIntegerEnv(
 ): number {
 	const parsed = Number(value);
 	return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+function readNonNegativeIntegerEnv(
+	value: string | undefined,
+	defaultValue: number
+): number {
+	const parsed = Number(value);
+	return Number.isInteger(parsed) && parsed >= 0 ? parsed : defaultValue;
 }
 
 interface Ltx23VolumeEnvEntry {
@@ -129,8 +144,10 @@ const isPublicApiPath = createPublicPathMatcher({
 
 function createConfiguredRunpodService(input: {
 	civitaiApiKey?: string;
+	inputStore?: PodInputStore;
 	runpodApiKey?: string;
 	s3Config: S3StorageConfig | null;
+	warmPool?: WarmPodPool;
 }): RunpodService | null {
 	if (!(input.runpodApiKey && input.s3Config)) {
 		return null;
@@ -162,6 +179,10 @@ function createConfiguredRunpodService(input: {
 					imageName:
 						process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
 						"ls250824/run-comfyui-ltx:28042026",
+					keepAliveMs: readNonNegativeIntegerEnv(
+						process.env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS,
+						10 * 60 * 1000
+					),
 					namePrefix: "ltx23",
 					networkVolumes: ltxNetworkVolumes,
 					templateId: ltxTemplateId,
@@ -185,11 +206,42 @@ function createConfiguredRunpodService(input: {
 		civitaiApiKey: input.civitaiApiKey,
 		hfToken:
 			process.env.HF_TOKEN?.trim() || process.env.HUGGINGFACE_TOKEN?.trim(),
+		inputStore: input.inputStore,
 		podsBaseUrl: process.env.RUNPOD_REST_API_BASE_URL,
 		s3: input.s3Config,
 		serverlessBaseUrl: process.env.RUNPOD_API_BASE_URL,
+		warmPool: input.warmPool,
 		workflows,
 	});
+}
+
+/**
+ * Wires the production RunPod client (with Redis-backed warm pool + input
+ * store) — kept as a helper so `createApp` itself stays under Biome's
+ * cognitive-complexity budget.
+ */
+function buildRunpodClientForApp(input: {
+	civitaiApiKey?: string;
+	hasInferenceOverride: boolean;
+	redisUrl: string;
+	runpodApiKey?: string;
+	s3Config: S3StorageConfig | null;
+}): ReturnType<typeof createRunpodClient> | undefined {
+	if (input.hasInferenceOverride || !(input.runpodApiKey && input.s3Config)) {
+		return;
+	}
+	const redis = createRedisConnection(input.redisUrl);
+	const service = createConfiguredRunpodService({
+		civitaiApiKey: input.civitaiApiKey,
+		inputStore: createRedisPodInputStore(redis),
+		runpodApiKey: input.runpodApiKey,
+		s3Config: input.s3Config,
+		warmPool: createRedisWarmPodPool(redis),
+	});
+	if (!service) {
+		return;
+	}
+	return createRunpodClient(service);
 }
 
 export function createApp(options: AppOptions) {
@@ -239,14 +291,15 @@ export function createApp(options: AppOptions) {
 				apiToken: replicateApiToken,
 			})
 		: undefined;
-	const runpodService = createConfiguredRunpodService({
+	const redisUrl =
+		options.redisUrl ?? process.env.REDIS_URL ?? "redis://localhost:6379";
+	const runpodClient = buildRunpodClientForApp({
 		civitaiApiKey,
+		hasInferenceOverride: Boolean(options.inferenceClient),
+		redisUrl,
 		runpodApiKey,
 		s3Config: resolvedS3Config,
 	});
-	const runpodClient = runpodService
-		? createRunpodClient(runpodService)
-		: undefined;
 
 	const inferenceClient =
 		options.inferenceClient ??
@@ -258,8 +311,6 @@ export function createApp(options: AppOptions) {
 					runpod: runpodClient,
 				})
 			: createStubInferenceClient());
-	const redisUrl =
-		options.redisUrl ?? process.env.REDIS_URL ?? "redis://localhost:6379";
 	const executionService = new ExecutionService(
 		options.executionRepository ?? createDrizzleExecutionRepository(),
 		options.executionQueue ?? createGeneratorExecutionQueueClient(redisUrl),

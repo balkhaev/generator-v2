@@ -63,6 +63,13 @@ export interface RunpodPodsApi {
 	create(input: CreatePodInput): Promise<PodSnapshot>;
 	delete(podId: string): Promise<void>;
 	get(podId: string): Promise<PodSnapshot>;
+	/**
+	 * Все pods, видимые под текущим RunPod API token'ом. Используется reaper'ом
+	 * для поиска осиротевших pods, выпавших из warm-pool. RunPod возвращает
+	 * массив `PodSnapshot`'ов в `{ data: PodSnapshot[] }` обёртке, что мы
+	 * разворачиваем здесь.
+	 */
+	list(): Promise<PodSnapshot[]>;
 }
 
 export function createPodsApi(http: RunpodHttpClient): RunpodPodsApi {
@@ -111,6 +118,26 @@ export function createPodsApi(http: RunpodHttpClient): RunpodPodsApi {
 				`runpod /pods/${podId} (get)`
 			);
 			return podSnapshotSchema.parse(response);
+		},
+
+		async list() {
+			const response = await http.get("/pods", "runpod /pods (list)");
+			// RunPod REST returns either `{ data: [...] }` (paginated future) or a
+			// bare array. Handle both — server-side shape evolved over time.
+			const rawList = Array.isArray(response)
+				? response
+				: (response as { data?: unknown[] }).data;
+			if (!Array.isArray(rawList)) {
+				return [];
+			}
+			const parsed: PodSnapshot[] = [];
+			for (const item of rawList) {
+				const result = podSnapshotSchema.safeParse(item);
+				if (result.success) {
+					parsed.push(result.data);
+				}
+			}
+			return parsed;
 		},
 	};
 }

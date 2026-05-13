@@ -40,6 +40,15 @@ export {
 	TERMINAL_STATUSES,
 } from "./engine/status";
 export {
+	createInMemoryPodInputStore,
+	createInMemoryWarmPodPool,
+	createNoopPodInputStore,
+	createNoopWarmPodPool,
+	type PodInputStore,
+	type WarmPodEntry,
+	type WarmPodPool,
+} from "./engine/warm-pod-pool";
+export {
 	createRunpodHttpClient,
 	isNoCapacityError,
 	type RunpodFetch,

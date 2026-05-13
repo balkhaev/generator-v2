@@ -25,6 +25,13 @@ import type {
 	PodWorkflow,
 } from "../workflow/definition";
 import type { Engine, EngineJob, EngineSubmission } from "./engine";
+import {
+	createNoopPodInputStore,
+	createNoopWarmPodPool,
+	type PodInputStore,
+	type WarmPodEntry,
+	type WarmPodPool,
+} from "./warm-pod-pool";
 
 const POD_JOB_SEPARATOR = ":";
 const ARTIFACT_KEY_PREFIX = "generator-artifacts/runpod-pod";
@@ -36,6 +43,8 @@ const COMFYUI_USERNAME = "agent";
 const COMFYUI_PORT = 8188;
 const POD_INPUT_ENV_KEY = "INFERENCE_INPUT_JSON_B64";
 const POD_TIMEOUT_ENV_KEY = "INFERENCE_TIMEOUT_S";
+const POD_NETWORK_VOLUME_ENV_KEY = "INFERENCE_NETWORK_VOLUME_ID";
+const INPUT_STORE_TTL_MS_DEFAULT = 6 * 60 * 60 * 1000;
 const PROGRESS_PCT_POD_BOOTING = 5;
 const PROGRESS_PCT_COMFY_PROVISIONING = 30;
 const PROGRESS_PCT_PREPARE = 60;
@@ -83,6 +92,12 @@ type PodCreateClient = (options: ComfyUIClientOptions) => ComfyUIClient;
 interface PodEngineDeps {
 	api: RunpodPodsApi;
 	createClient?: PodCreateClient;
+	/**
+	 * Cross-process cache for per-request input payloads. Required when
+	 * `keepAliveMs > 0` because reused pods cannot receive a fresh env. Default
+	 * is in-memory noop, which only works for disposable pods.
+	 */
+	inputStore?: PodInputStore;
 	logger?: Pick<Console, "info" | "warn">;
 	now?: () => Date;
 	randomPassword?: () => string;
@@ -90,6 +105,13 @@ interface PodEngineDeps {
 	s3: S3StorageConfig;
 	statObject?: typeof statS3Object;
 	uploadObject?: typeof uploadObjectToS3;
+	/**
+	 * Warm-pod pool. When workflow declares `pod.keepAliveMs > 0`, successful
+	 * exec'es return the pod here instead of terminating; subsequent submits
+	 * claim from the pool and skip ComfyUI cold boot entirely. Default = noop
+	 * (every submit creates a fresh pod, current behaviour).
+	 */
+	warmPool?: WarmPodPool;
 }
 
 interface PodEngineOptions<TInput, TOutput> extends PodEngineDeps {
@@ -150,16 +172,38 @@ export function createPodEngine<TInput, TOutput>(
 		civitaiApiKey,
 		createClient = createComfyUIClient,
 		hfToken,
+		inputStore = createNoopPodInputStore(),
 		logger,
 		randomPassword = generatePassword,
 		randomRequestId = () => crypto.randomUUID(),
 		s3,
 		statObject = statS3Object,
 		uploadObject = uploadObjectToS3,
+		warmPool = createNoopWarmPodPool(),
 		workflow,
 	} = options;
+	const keepAliveMs = workflow.pod.keepAliveMs ?? 0;
+	const reuseEnabled = keepAliveMs > 0;
+	const inputStoreTtlMs = Math.max(
+		keepAliveMs + 60_000,
+		INPUT_STORE_TTL_MS_DEFAULT
+	);
 
-	const cleanupPod = async (podId: string, reason: string) => {
+	const cleanupPod = async (
+		podId: string,
+		reason: string,
+		requestId?: string
+	) => {
+		if (reuseEnabled) {
+			await warmPool.forget(workflow.id, podId).catch(() => {
+				// Pool cleanup is best-effort. Reaper picks up orphans eventually.
+			});
+		}
+		if (requestId) {
+			await inputStore.delete(requestId).catch(() => {
+				// Best-effort; store entries expire on their own TTL anyway.
+			});
+		}
 		try {
 			await api.delete(podId);
 			logger?.info?.("runpod-pod.cleanup", { podId, reason });
@@ -169,6 +213,50 @@ export function createPodEngine<TInput, TOutput>(
 				podId,
 				reason,
 			});
+		}
+	};
+
+	const releaseOrCleanup = async (
+		ctx: {
+			networkVolumeId: string | undefined;
+			password: string;
+			podId: string;
+			requestId: string;
+		},
+		failureReason: string
+	): Promise<void> => {
+		if (!(reuseEnabled && ctx.networkVolumeId)) {
+			await cleanupPod(ctx.podId, failureReason, ctx.requestId);
+			return;
+		}
+		try {
+			await warmPool.release(
+				workflow.id,
+				{
+					networkVolumeId: ctx.networkVolumeId,
+					password: ctx.password,
+					podId: ctx.podId,
+				},
+				keepAliveMs
+			);
+			await inputStore.delete(ctx.requestId).catch(() => {
+				// Best-effort: input is per-request and TTLed in the store anyway.
+			});
+			logger?.info?.("runpod-pod.released-to-warm-pool", {
+				keepAliveMs,
+				networkVolumeId: ctx.networkVolumeId,
+				podId: ctx.podId,
+				requestId: ctx.requestId,
+				workflowId: workflow.id,
+			});
+		} catch (error) {
+			logger?.warn?.("runpod-pod.warm-pool-release-failed", {
+				message: error instanceof Error ? error.message : "unknown",
+				podId: ctx.podId,
+				requestId: ctx.requestId,
+				workflowId: workflow.id,
+			});
+			await cleanupPod(ctx.podId, "warm-pool-release-failed", ctx.requestId);
 		}
 	};
 
@@ -245,17 +333,31 @@ export function createPodEngine<TInput, TOutput>(
 		return checkArtifactStat(artifactKey);
 	};
 
-	const handleHistoryEntry = async (
-		jobId: string,
-		entry: ComfyUIHistoryItem,
-		client: ComfyUIClient,
-		podId: string,
-		requestId: string,
-		artifactKey: string
-	): Promise<EngineJob & { output: TOutput | null }> => {
+	const handleHistoryEntry = async (args: {
+		artifactKey: string;
+		client: ComfyUIClient;
+		entry: ComfyUIHistoryItem;
+		jobId: string;
+		networkVolumeId: string | undefined;
+		password: string;
+		podId: string;
+		requestId: string;
+	}): Promise<EngineJob & { output: TOutput | null }> => {
+		const {
+			artifactKey,
+			client,
+			entry,
+			jobId,
+			networkVolumeId,
+			password,
+			podId,
+			requestId,
+		} = args;
 		const status = entry.status;
 		if (status?.status_str === "error" || status?.status_str === "cancelled") {
-			await cleanupPod(podId, "comfyui-error");
+			// Pod state is suspect after workflow error — don't return to pool,
+			// always cleanup so the next exec gets a fresh boot.
+			await cleanupPod(podId, "comfyui-error", requestId);
 			return failedResult(
 				jobId,
 				`ComfyUI workflow ${status.status_str}: ${stringifyMessages(status.messages)}`
@@ -266,7 +368,7 @@ export function createPodEngine<TInput, TOutput>(
 			if (status?.completed) {
 				const outputsSummary = summarizeHistoryOutputs(entry.outputs);
 				const messagesSummary = stringifyMessages(status.messages);
-				await cleanupPod(podId, "completed-without-artifact");
+				await cleanupPod(podId, "completed-without-artifact", requestId);
 				return failedResult(
 					jobId,
 					`ComfyUI workflow completed but produced no artifact (outputs: ${outputsSummary}; status: ${messagesSummary})`
@@ -281,7 +383,10 @@ export function createPodEngine<TInput, TOutput>(
 				`Failed to verify uploaded artifact at S3 key ${artifactKey}`
 			);
 		}
-		await cleanupPod(podId, "artifact-uploaded");
+		await releaseOrCleanup(
+			{ networkVolumeId, password, podId, requestId },
+			"artifact-uploaded"
+		);
 		const artifactPublicUrl = buildPublicAssetUrl(s3, artifactKey);
 		const output = workflow.parseOutput({
 			artifactPublicUrl,
@@ -377,26 +482,52 @@ export function createPodEngine<TInput, TOutput>(
 		}
 	};
 
-	const decodeInputFromPod = (
+	const decodeInputForRequest = async (
 		jobId: string,
 		podId: string,
+		requestId: string,
 		encodedInput: string | undefined
-	):
-		| { kind: "ok"; input: TInput }
-		| { kind: "result"; value: EngineJob & { output: null } } => {
+	): Promise<
+		| { input: TInput; kind: "ok" }
+		| { kind: "result"; value: EngineJob & { output: null } }
+	> => {
+		// Reused pods carry env from their original submit, so prefer the
+		// per-request store. Fresh pods fall back to the env they were created
+		// with. Either path yields a Zod-validated input.
+		const fromStore = (await inputStore
+			.get<unknown>(requestId)
+			.catch(() => null)) as unknown;
+		if (fromStore !== null && fromStore !== undefined) {
+			try {
+				return {
+					input: workflow.inputSchema.parse(fromStore),
+					kind: "ok",
+				};
+			} catch (error) {
+				return {
+					kind: "result",
+					value: failedResult(
+						jobId,
+						`Failed to decode INFERENCE_INPUT from store: ${
+							error instanceof Error ? error.message : String(error)
+						}`
+					),
+				};
+			}
+		}
 		if (!encodedInput) {
 			return {
 				kind: "result",
 				value: failedResult(
 					jobId,
-					`Pod ${podId} env is missing ${POD_INPUT_ENV_KEY}`
+					`Pod ${podId} env is missing ${POD_INPUT_ENV_KEY} and no entry was found in the input store for request ${requestId}`
 				),
 			};
 		}
 		try {
 			return {
-				kind: "ok",
 				input: workflow.inputSchema.parse(decodeBase64Json(encodedInput)),
+				kind: "ok",
 			};
 		} catch (error) {
 			return {
@@ -431,7 +562,7 @@ export function createPodEngine<TInput, TOutput>(
 				requestId,
 			});
 		} catch (error) {
-			await cleanupPod(podId, "prepare-failed");
+			await cleanupPod(podId, "prepare-failed", requestId);
 			return failedResult(
 				jobId,
 				`workflow.prepare failed: ${
@@ -440,7 +571,7 @@ export function createPodEngine<TInput, TOutput>(
 			);
 		}
 		if (prepareStatus.errorSummary) {
-			await cleanupPod(podId, "prepare-error");
+			await cleanupPod(podId, "prepare-error", requestId);
 			return failedResult(jobId, prepareStatus.errorSummary);
 		}
 		if (!prepareStatus.ready) {
@@ -468,10 +599,21 @@ export function createPodEngine<TInput, TOutput>(
 		client: ComfyUIClient;
 		input: TInput;
 		jobId: string;
+		networkVolumeId: string | undefined;
+		password: string;
 		podId: string;
 		requestId: string;
 	}): Promise<EngineJob & { output: TOutput | null }> => {
-		const { artifactKey, client, input, jobId, podId, requestId } = args;
+		const {
+			artifactKey,
+			client,
+			input,
+			jobId,
+			networkVolumeId,
+			password,
+			podId,
+			requestId,
+		} = args;
 		try {
 			const prepareResult = await runPrepareStep(
 				jobId,
@@ -494,14 +636,16 @@ export function createPodEngine<TInput, TOutput>(
 			if (!entry) {
 				return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
 			}
-			return await handleHistoryEntry(
-				jobId,
-				entry,
+			return await handleHistoryEntry({
+				artifactKey,
 				client,
+				entry,
+				jobId,
+				networkVolumeId,
+				password,
 				podId,
 				requestId,
-				artifactKey
-			);
+			});
 		} catch (error) {
 			if (isComfyTransientProxyError(error)) {
 				logger?.warn?.("runpod-pod.comfyui-transient", {
@@ -515,10 +659,56 @@ export function createPodEngine<TInput, TOutput>(
 		}
 	};
 
+	const verifyWarmPodAlive = async (entry: WarmPodEntry): Promise<boolean> => {
+		try {
+			const snapshot = await api.get(entry.podId);
+			const desired = snapshot.desiredStatus ?? "RUNNING";
+			return desired !== "EXITED" && desired !== "TERMINATED";
+		} catch (error) {
+			logger?.warn?.("runpod-pod.warm-pool-verify-failed", {
+				message: error instanceof Error ? error.message : String(error),
+				podId: entry.podId,
+				workflowId: workflow.id,
+			});
+			return false;
+		}
+	};
+
+	const tryReuseWarmPod = async (
+		input: TInput,
+		requestId: string
+	): Promise<WarmPodEntry | null> => {
+		if (!reuseEnabled) {
+			return null;
+		}
+		// Loop because a stale entry may be claimed; we forget it and try the
+		// next one. Bounded by pool size — claim returns null when empty.
+		for (let attempt = 0; attempt < 5; attempt += 1) {
+			const candidate = await warmPool.claim(workflow.id);
+			if (!candidate) {
+				return null;
+			}
+			if (await verifyWarmPodAlive(candidate)) {
+				await inputStore.put(requestId, input, inputStoreTtlMs);
+				logger?.info?.("runpod-pod.reused-from-warm-pool", {
+					networkVolumeId: candidate.networkVolumeId,
+					podId: candidate.podId,
+					requestId,
+					workflowId: workflow.id,
+				});
+				return candidate;
+			}
+			await warmPool.forget(workflow.id, candidate.podId).catch(() => {
+				// Best-effort: the entry was already claimed-out anyway.
+			});
+		}
+		return null;
+	};
+
 	return {
 		async cancel(jobId) {
-			const { podId } = parsePodJobId(jobId);
-			await cleanupPod(podId, "cancelled");
+			const { podId, requestId } = parsePodJobId(jobId);
+			await cleanupPod(podId, "cancelled", requestId);
 		},
 
 		async getStatus(jobId) {
@@ -527,7 +717,15 @@ export function createPodEngine<TInput, TOutput>(
 
 			const existing = await checkArtifactStat(artifactKey);
 			if (existing) {
-				await cleanupPod(podId, "artifact-already-in-s3");
+				// Don't blindly cleanup — if reuse is on, the pod is probably already
+				// back in the pool serving the next exec. Just drop the input cache.
+				if (reuseEnabled) {
+					await inputStore.delete(requestId).catch(() => {
+						// Best-effort
+					});
+				} else {
+					await cleanupPod(podId, "artifact-already-in-s3", requestId);
+				}
 				const artifactPublicUrl = buildPublicAssetUrl(s3, artifactKey);
 				const output = workflow.parseOutput({
 					artifactPublicUrl,
@@ -544,19 +742,21 @@ export function createPodEngine<TInput, TOutput>(
 				return podSnapshot.value;
 			}
 			const { pod } = podSnapshot;
+			const networkVolumeId = pod.env?.[POD_NETWORK_VOLUME_ENV_KEY];
 
 			const client = buildClient(podId, password);
 			if (!(await tryComfyReady(client))) {
 				return runningResult(jobId, PROGRESS_PCT_POD_BOOTING);
 			}
 
-			const decoded = decodeInputFromPod(
+			const decoded = await decodeInputForRequest(
 				jobId,
 				podId,
+				requestId,
 				pod.env?.[POD_INPUT_ENV_KEY]
 			);
 			if (decoded.kind === "result") {
-				await cleanupPod(podId, "input-decode-failed");
+				await cleanupPod(podId, "input-decode-failed", requestId);
 				return decoded.value;
 			}
 
@@ -565,6 +765,8 @@ export function createPodEngine<TInput, TOutput>(
 				client,
 				input: decoded.input,
 				jobId,
+				networkVolumeId,
+				password,
 				podId,
 				requestId,
 			});
@@ -573,6 +775,19 @@ export function createPodEngine<TInput, TOutput>(
 		async submit(input): Promise<EngineSubmission> {
 			const parsed = workflow.inputSchema.parse(input);
 			const requestId = randomRequestId();
+			const reused = await tryReuseWarmPod(parsed, requestId);
+			if (reused) {
+				return {
+					jobId: formatPodJobId({
+						password: reused.password,
+						podId: reused.podId,
+						requestId,
+					}),
+					queuePosition: null,
+					rawProviderJobReference: reused.podId,
+					status: "queued",
+				};
+			}
 			const password = randomPassword();
 			const baseEnv = workflow.buildEnv?.(parsed) ?? {};
 			const env: Record<string, string> = {
@@ -594,10 +809,13 @@ export function createPodEngine<TInput, TOutput>(
 			}
 			const { pod, networkVolumeId } = await createPodAcrossVolumes(
 				api,
-				{
+				(volume) => ({
 					cloudType: workflow.pod.cloudType,
 					containerDiskInGb: workflow.pod.containerDiskInGb,
-					env,
+					env: {
+						...env,
+						[POD_NETWORK_VOLUME_ENV_KEY]: volume.networkVolumeId,
+					},
 					gpuCount: workflow.pod.gpuCount ?? 1,
 					imageName: workflow.pod.imageName,
 					name: buildPodName(workflow.pod.namePrefix ?? workflow.id, requestId),
@@ -606,12 +824,17 @@ export function createPodEngine<TInput, TOutput>(
 					templateId: workflow.pod.templateId,
 					volumeInGb: workflow.pod.volumeInGb,
 					volumeMountPath: "/workspace",
-				},
+				}),
 				workflow.pod.networkVolumes,
 				logger,
 				requestId,
 				workflow.id
 			);
+			if (reuseEnabled) {
+				// Mirror the new input into the side-channel so this exec and any
+				// subsequent reused exec follow the same lookup path.
+				await inputStore.put(requestId, parsed, inputStoreTtlMs);
+			}
 			logger?.info?.("runpod-pod.started", {
 				networkVolumeId,
 				podId: pod.id,
@@ -633,16 +856,24 @@ export function createPodEngine<TInput, TOutput>(
 
 type PodLogger = PodEngineDeps["logger"];
 
+export type PodCreatePayloadForVolume = (
+	volume: PodNetworkVolume
+) => Omit<CreatePodInput, "gpuTypeIds" | "networkVolumeId">;
+
 /**
  * Создаёт под, перебирая network-volume'ы из workflow'а. Каждый volume привязан
  * к одному RunPod DC и списку GPU-типов, доступных в этом DC. Если по
  * текущему volume RunPod вернул `no capacity` для всех его GPU — пробуем
  * следующий. Без volume вообще не работаем: смысл всей этой конструкции — не
  * качать ~40 ГБ моделей на каждый cold start.
+ *
+ * `payloadForVolume` строит payload per-volume — даёт возможность подставить
+ * id volume'а в env пода, чтобы getStatus мог восстановить его без отдельного
+ * persisted state.
  */
 export async function createPodAcrossVolumes(
 	api: RunpodPodsApi,
-	basePayload: Omit<CreatePodInput, "gpuTypeIds" | "networkVolumeId">,
+	payloadForVolume: PodCreatePayloadForVolume,
 	volumes: readonly PodNetworkVolume[],
 	logger: PodLogger,
 	requestId: string,
@@ -657,7 +888,7 @@ export async function createPodAcrossVolumes(
 	for (const volume of volumes) {
 		try {
 			const pod = await api.create({
-				...basePayload,
+				...payloadForVolume(volume),
 				gpuTypeIds: volume.gpuTypeIds,
 				networkVolumeId: volume.networkVolumeId,
 			});

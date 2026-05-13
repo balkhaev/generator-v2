@@ -236,6 +236,17 @@ const serverSchema = {
 		.positive()
 		.default(60 * 60 * 1000),
 	/**
+	 * Сколько секунд держать LTX 2.3 pod в warm-pool после успешного inference,
+	 * прежде чем reaper его уничтожит. 0 = старое поведение (cleanup сразу).
+	 * Burst-сабмиты в этом окне переиспользуют уже горячий ComfyUI/VRAM,
+	 * экономя ~30 минут на cold boot. Дефолт — 10 минут.
+	 */
+	RUNPOD_LTX23_POD_KEEP_ALIVE_MS: z.coerce
+		.number()
+		.int()
+		.min(0)
+		.default(10 * 60 * 1000),
+	/**
 	 * JSON-массив network-volume'ов с GPU-типами, доступными в DC volume'а.
 	 * `[{"id":"vol1","label":"EU-RO-1","gpus":["NVIDIA RTX A6000","NVIDIA B200"]}]`.
 	 * Каждый volume привязан к одному DC; engine перебирает их по очереди при

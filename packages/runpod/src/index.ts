@@ -40,8 +40,12 @@ export {
 	TERMINAL_STATUSES,
 } from "./engine/status";
 export {
+	type ActivePodEntry,
+	type ActivePodRegistry,
+	createInMemoryActivePodRegistry,
 	createInMemoryPodInputStore,
 	createInMemoryWarmPodPool,
+	createNoopActivePodRegistry,
 	createNoopPodInputStore,
 	createNoopWarmPodPool,
 	type PodInputStore,

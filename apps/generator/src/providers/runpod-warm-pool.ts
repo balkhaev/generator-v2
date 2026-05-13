@@ -1,5 +1,7 @@
 import type { Redis } from "@generator/queue";
 import type {
+	ActivePodEntry,
+	ActivePodRegistry,
 	PodInputStore,
 	PodSnapshot,
 	RunpodPodsApi,
@@ -9,6 +11,7 @@ import type {
 
 const WARM_POOL_KEY_PREFIX = "runpod:warm-pod:";
 const INPUT_STORE_KEY_PREFIX = "runpod:pod-input:";
+const ACTIVE_REGISTRY_KEY = "runpod:active-pods";
 
 // Pop the smallest-score (closest to expiring) entry, but only if it isn't
 // already expired. Expired entries are purged inline so the next claim sees
@@ -137,6 +140,13 @@ export function createRedisWarmPodPool(redis: Redis): WarmPodPool {
 }
 
 interface ReaperOptions {
+	/**
+	 * Активный registry pods, которые сейчас исполняют inference. Reaper
+	 * сливает его с `warmPool` в protectedIds — ничего из этого множества
+	 * убивать нельзя, независимо от возраста. Без registry приходится
+	 * полагаться на `safetyAgeMs`, что хрупко при длинных cold start'ах.
+	 */
+	activeRegistry?: ActivePodRegistry;
 	api: RunpodPodsApi;
 	intervalMs: number;
 	logger?: Pick<Console, "info" | "warn">;
@@ -147,10 +157,10 @@ interface ReaperOptions {
 	namePrefixes: readonly string[];
 	now?: () => number;
 	/**
-	 * Не убивать pods младше этого порога — даже если их нет в warm-pool. Это
-	 * защита от race'а "submit создал pod, ещё не передал в warmPool.release".
-	 * Должен быть больше max execution duration, чтобы reaper не пристрелил
-	 * pod в середине inference'а. Рекомендуется keepAliveMs + maxExecutionMs.
+	 * Не убивать pods младше этого порога — даже если их нет в warm-pool и
+	 * activeRegistry. Это safety net на случай race'ов и багов трекинга.
+	 * Должен быть больше max execution duration. Рекомендуется
+	 * keepAliveMs + maxExecutionMs + buffer.
 	 */
 	safetyAgeMs: number;
 	warmPool: WarmPodPool;
@@ -265,12 +275,24 @@ export function createPodReaper(options: ReaperOptions): PodReaper {
 	};
 
 	const runOnce = async (): Promise<{ kept: number; reaped: string[] }> => {
-		const liveSnapshots = await options.api.list();
-		const warmEntries = await options.warmPool.list();
+		// Pull live RunPod snapshot and the two protection sources in parallel —
+		// reaper does this every 30s, no reason to serialise three small reads.
+		const [liveSnapshots, warmEntries, activeEntries] = await Promise.all([
+			options.api.list(),
+			options.warmPool.list(),
+			options.activeRegistry?.list() ?? Promise.resolve([]),
+		]);
+		const protectedIds = new Set<string>();
+		for (const e of warmEntries) {
+			protectedIds.add(e.podId);
+		}
+		for (const e of activeEntries) {
+			protectedIds.add(e.podId);
+		}
 		const ctx = {
 			namePrefixes: options.namePrefixes,
 			now: now(),
-			protectedIds: new Set(warmEntries.map((e) => e.podId)),
+			protectedIds,
 			safetyAgeMs: options.safetyAgeMs,
 		};
 		const reaped: string[] = [];
@@ -287,8 +309,10 @@ export function createPodReaper(options: ReaperOptions): PodReaper {
 		}
 		if (reaped.length > 0 || kept > 0) {
 			log?.info?.("runpod-pod.reaper.tick", {
+				activeCount: activeEntries.length,
 				kept,
 				reapedCount: reaped.length,
+				warmCount: warmEntries.length,
 			});
 		}
 		return { kept, reaped };
@@ -326,6 +350,94 @@ export function createPodReaper(options: ReaperOptions): PodReaper {
 				clearInterval(timer);
 				timer = null;
 			}
+		},
+	};
+}
+
+const ACTIVE_REMOVE_LUA = `
+local target = ARGV[1]
+local members = redis.call('ZRANGE', KEYS[1], 0, -1)
+local removed = 0
+for _, m in ipairs(members) do
+  local ok, parsed = pcall(cjson.decode, m)
+  if ok and parsed and parsed.podId == target then
+    removed = removed + redis.call('ZREM', KEYS[1], m)
+  end
+end
+return removed
+`;
+
+function parseActiveEntry(raw: string): ActivePodEntry | null {
+	try {
+		const obj = JSON.parse(raw) as Partial<ActivePodEntry>;
+		if (
+			typeof obj.networkVolumeId !== "string" ||
+			typeof obj.podId !== "string" ||
+			typeof obj.workflowId !== "string"
+		) {
+			return null;
+		}
+		return {
+			networkVolumeId: obj.networkVolumeId,
+			podId: obj.podId,
+			registeredAt:
+				typeof obj.registeredAt === "string" ? obj.registeredAt : "",
+			workflowId: obj.workflowId,
+		};
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Redis-backed active-pod registry. Single global ZSET `runpod:active-pods`
+ * with score = expiresAt (ms). `add` removes any prior entry for the same
+ * podId before adding the fresh one so re-registration (e.g. warm pool reuse)
+ * just refreshes TTL. `list` lazily purges expired members; `remove` scans
+ * the set for the matching podId.
+ *
+ * One global key keeps reaper's `list()` O(N) without SCAN, which matters
+ * because reaper runs every 30s. Cardinality is bounded by max concurrent
+ * pods (~10–50 in practice), so a full ZSET read is cheap.
+ */
+export function createRedisActivePodRegistry(redis: Redis): ActivePodRegistry {
+	return {
+		async add(entry, ttlMs) {
+			const expiresAt = Date.now() + ttlMs;
+			const member = JSON.stringify({
+				networkVolumeId: entry.networkVolumeId,
+				podId: entry.podId,
+				registeredAt: entry.registeredAt,
+				workflowId: entry.workflowId,
+			});
+			// Remove any existing entry with same podId, then add fresh. Atomic
+			// via MULTI so reaper never sees a transient empty slot.
+			await redis.eval(ACTIVE_REMOVE_LUA, 1, ACTIVE_REGISTRY_KEY, entry.podId);
+			await redis
+				.multi()
+				.zadd(ACTIVE_REGISTRY_KEY, expiresAt, member)
+				.pexpire(ACTIVE_REGISTRY_KEY, ttlMs + 60_000)
+				.exec();
+		},
+		async list() {
+			const now = Date.now();
+			await redis.zremrangebyscore(ACTIVE_REGISTRY_KEY, "-inf", `(${now}`);
+			const members = await redis.zrangebyscore(
+				ACTIVE_REGISTRY_KEY,
+				now,
+				"+inf"
+			);
+			const out: ActivePodEntry[] = [];
+			for (const member of members) {
+				const parsed = parseActiveEntry(member);
+				if (parsed) {
+					out.push(parsed);
+				}
+			}
+			return out;
+		},
+		async remove(podId) {
+			await redis.eval(ACTIVE_REMOVE_LUA, 1, ACTIVE_REGISTRY_KEY, podId);
 		},
 	};
 }

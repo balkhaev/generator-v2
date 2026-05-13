@@ -17,6 +17,7 @@ import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
 import {
 	createPodReaper,
+	createRedisActivePodRegistry,
 	createRedisPodInputStore,
 	createRedisWarmPodPool,
 } from "@/providers/runpod-warm-pool";
@@ -106,9 +107,13 @@ const runpodRedis =
 		: null;
 
 const warmPool = runpodRedis ? createRedisWarmPodPool(runpodRedis) : null;
+const activeRegistry = runpodRedis
+	? createRedisActivePodRegistry(runpodRedis)
+	: null;
 const runpodService =
 	runpodApiKey && runpodWorkflows.length > 0 && runpodRedis && warmPool
 		? createRunpodService({
+				activeRegistry: activeRegistry ?? undefined,
 				apiKey: runpodApiKey,
 				civitaiApiKey,
 				hfToken: env.HF_TOKEN ?? env.HUGGINGFACE_TOKEN,
@@ -122,18 +127,23 @@ const runpodService =
 			})
 		: null;
 
-// Reaper нужен только если warm-pool активирован: иначе никаких "выпавших из
-// пула" pod'ов не появляется, текущий disposable-flow убирает их сразу после
-// артефакта.
+// Reaper protects: warm-pool entries + active registry (in-flight pods). Без
+// активного registry он смотрел бы только в warm-pool, что обрезало бы
+// защиту аж до safetyAgeMs — и убивало бы pods во время cold start'а или
+// длинного inference'а. Registry — это явная гарантия "пока worker
+// держит pod, reaper его не трогает".
 const reaper =
 	runpodService && warmPool && env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS > 0
 		? createPodReaper({
+				activeRegistry: activeRegistry ?? undefined,
 				api: runpodService.podsApi,
 				intervalMs: REAPER_INTERVAL_MS,
 				logger: console,
 				namePrefixes: [LTX23_POD_NAME_PREFIX],
-				// Pod может прожить max execution time + keep-alive окно, прежде чем
-				// reaper'у можно его трогать. Берём timeout пода + keepAlive с буфером.
+				// Active registry уже защищает pod пока worker помнит про него,
+				// поэтому safetyAgeMs здесь — backstop на случай worker-crash'а
+				// между api.create и registry.add. Запас должен быть > worst-case
+				// cold start + inference, но без registry он был бы критичен.
 				safetyAgeMs:
 					env.RUNPOD_LTX23_POD_TIMEOUT_MS +
 					env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS +

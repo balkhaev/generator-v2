@@ -26,6 +26,8 @@ import type {
 } from "../workflow/definition";
 import type { Engine, EngineJob, EngineSubmission } from "./engine";
 import {
+	type ActivePodRegistry,
+	createNoopActivePodRegistry,
 	createNoopPodInputStore,
 	createNoopWarmPodPool,
 	type PodInputStore,
@@ -90,6 +92,15 @@ export function isPodNotFoundError(error: unknown): boolean {
 type PodCreateClient = (options: ComfyUIClientOptions) => ComfyUIClient;
 
 interface PodEngineDeps {
+	/**
+	 * Tracks every pod the engine *owns* right now (created, not yet released
+	 * to warm-pool or cleaned up). Reaper merges this with `warmPool` to build
+	 * its protected set; pods present in either store are immune to age-based
+	 * reaping. Default = noop registry, which means reaper falls back to pure
+	 * `safetyAgeMs` heuristic — fine for single-process, fragile for
+	 * multi-replica or long cold starts.
+	 */
+	activeRegistry?: ActivePodRegistry;
 	api: RunpodPodsApi;
 	createClient?: PodCreateClient;
 	/**
@@ -168,6 +179,7 @@ export function createPodEngine<TInput, TOutput>(
 	options: PodEngineOptions<TInput, TOutput>
 ): Engine<TInput, TOutput> {
 	const {
+		activeRegistry = createNoopActivePodRegistry(),
 		api,
 		civitaiApiKey,
 		createClient = createComfyUIClient,
@@ -188,6 +200,42 @@ export function createPodEngine<TInput, TOutput>(
 		keepAliveMs + 60_000,
 		INPUT_STORE_TTL_MS_DEFAULT
 	);
+	// active registry entry should outlive the worst-case execution: pod timeout
+	// (if any) + a small buffer so worker crashes between create and finalize
+	// don't leak orphans into reap-eligible territory. When pod has no explicit
+	// timeout (legacy workflows) we fall back to a generous 2h default.
+	const activeRegistryTtlMs =
+		(workflow.pod.timeoutMs ?? 2 * 60 * 60 * 1000) + 5 * 60 * 1000;
+
+	const trackActivePod = async (entry: {
+		networkVolumeId: string;
+		podId: string;
+	}): Promise<void> => {
+		try {
+			await activeRegistry.add(
+				{
+					networkVolumeId: entry.networkVolumeId,
+					podId: entry.podId,
+					registeredAt: new Date().toISOString(),
+					workflowId: workflow.id,
+				},
+				activeRegistryTtlMs
+			);
+		} catch (error) {
+			logger?.warn?.("runpod-pod.active-registry.add-failed", {
+				message: error instanceof Error ? error.message : "unknown",
+				podId: entry.podId,
+			});
+		}
+	};
+
+	const untrackActivePod = async (podId: string): Promise<void> => {
+		try {
+			await activeRegistry.remove(podId);
+		} catch {
+			// Best-effort: stale entries expire on their own.
+		}
+	};
 
 	const cleanupPod = async (
 		podId: string,
@@ -204,6 +252,9 @@ export function createPodEngine<TInput, TOutput>(
 				// Best-effort; store entries expire on their own TTL anyway.
 			});
 		}
+		// Drop active-registry entry first so reaper never races a cleanup that
+		// also `api.delete`s the pod.
+		await untrackActivePod(podId);
 		try {
 			await api.delete(podId);
 			logger?.info?.("runpod-pod.cleanup", { podId, reason });
@@ -239,6 +290,10 @@ export function createPodEngine<TInput, TOutput>(
 				},
 				keepAliveMs
 			);
+			// Pod ownership transfers from "active" → "warm". Reaper now protects
+			// it via the warm-pool entry, so drop the active registry record to
+			// avoid double-counting/double-protecting beyond keepAliveMs.
+			await untrackActivePod(ctx.podId);
 			await inputStore.delete(ctx.requestId).catch(() => {
 				// Best-effort: input is per-request and TTLed in the store anyway.
 			});
@@ -777,6 +832,12 @@ export function createPodEngine<TInput, TOutput>(
 			const requestId = randomRequestId();
 			const reused = await tryReuseWarmPod(parsed, requestId);
 			if (reused) {
+				// Reused pod was protected by warm-pool entry; now it's serving an
+				// exec again, so it belongs to active registry until release.
+				await trackActivePod({
+					networkVolumeId: reused.networkVolumeId,
+					podId: reused.podId,
+				});
 				return {
 					jobId: formatPodJobId({
 						password: reused.password,
@@ -830,6 +891,9 @@ export function createPodEngine<TInput, TOutput>(
 				requestId,
 				workflow.id
 			);
+			// Register *before* returning so any subsequent reaper tick already
+			// sees this pod as protected. inputStore put is async-ish but cheap.
+			await trackActivePod({ networkVolumeId, podId: pod.id });
 			if (reuseEnabled) {
 				// Mirror the new input into the side-channel so this exec and any
 				// subsequent reused exec follow the same lookup path.

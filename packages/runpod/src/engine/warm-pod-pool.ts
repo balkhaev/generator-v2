@@ -65,6 +65,52 @@ export interface PodInputStore {
 	put<T>(requestId: string, input: T, ttlMs: number): Promise<void>;
 }
 
+/**
+ * Registry of pods currently *owned* by an in-flight execution. Reaper consults
+ * it together with `WarmPodPool` to build the protected-from-reap set: anything
+ * in the active registry must not be touched, regardless of age.
+ *
+ * Lifecycle:
+ * - pod-engine calls `add` immediately after `api.create` succeeds (or right
+ *   after claiming a warm pod for reuse), with a TTL slightly larger than the
+ *   workflow's max execution time;
+ * - pod-engine calls `remove` on success (after warm-pool release), on
+ *   cleanup (failure / cancel / artifact missing), and whenever the pod is
+ *   intentionally terminated;
+ * - if pod-engine crashes between `add` and `remove`, the entry expires on its
+ *   own and reaper takes over via `safetyAgeMs` as a real safety net.
+ *
+ * Without this registry reaper has no way to tell "newly-created pod still
+ * booting models for 30+ min" from "abandoned pod left running by a dead
+ * worker", so it must rely on a fragile age threshold. The registry promotes
+ * that threshold to a true backstop.
+ */
+export interface ActivePodEntry {
+	networkVolumeId: string;
+	podId: string;
+	/** ISO timestamp of registration; debugging only. */
+	registeredAt: string;
+	workflowId: string;
+}
+
+export interface ActivePodRegistry {
+	add(entry: ActivePodEntry, ttlMs: number): Promise<void>;
+	list(): Promise<ActivePodEntry[]>;
+	remove(podId: string): Promise<void>;
+}
+
+const NOOP_ACTIVE_REGISTRY: ActivePodRegistry = {
+	add() {
+		return Promise.resolve();
+	},
+	list() {
+		return Promise.resolve([]);
+	},
+	remove() {
+		return Promise.resolve();
+	},
+};
+
 const NOOP_WARM_POOL: WarmPodPool = {
 	claim() {
 		return Promise.resolve(null);
@@ -99,6 +145,48 @@ export function createNoopWarmPodPool(): WarmPodPool {
 
 export function createNoopPodInputStore(): PodInputStore {
 	return NOOP_INPUT_STORE;
+}
+
+export function createNoopActivePodRegistry(): ActivePodRegistry {
+	return NOOP_ACTIVE_REGISTRY;
+}
+
+/**
+ * In-memory active-pod registry. TTL is enforced lazily on `list`, mirroring
+ * the warm-pool semantics so tests can share `now()` injection.
+ */
+export function createInMemoryActivePodRegistry(options?: {
+	now?: () => number;
+}): ActivePodRegistry {
+	const now = options?.now ?? Date.now;
+	const entries = new Map<
+		string,
+		{ entry: ActivePodEntry; expiresAt: number }
+	>();
+
+	const purgeExpired = (): void => {
+		const ts = now();
+		for (const [id, slot] of entries) {
+			if (slot.expiresAt <= ts) {
+				entries.delete(id);
+			}
+		}
+	};
+
+	return {
+		add(entry, ttlMs) {
+			entries.set(entry.podId, { entry, expiresAt: now() + ttlMs });
+			return Promise.resolve();
+		},
+		list() {
+			purgeExpired();
+			return Promise.resolve(Array.from(entries.values(), (s) => s.entry));
+		},
+		remove(podId) {
+			entries.delete(podId);
+			return Promise.resolve();
+		},
+	};
 }
 
 /**

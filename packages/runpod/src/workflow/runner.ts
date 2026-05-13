@@ -9,7 +9,11 @@ import type { Engine, EngineJob, EngineSubmission } from "../engine/engine";
 import { createPodEngine } from "../engine/pod-engine";
 import { createServerlessEngine } from "../engine/serverless-engine";
 import type { InferenceStatus } from "../engine/status";
-import type { PodInputStore, WarmPodPool } from "../engine/warm-pod-pool";
+import type {
+	ActivePodRegistry,
+	PodInputStore,
+	WarmPodPool,
+} from "../engine/warm-pod-pool";
 import {
 	createRunpodHttpClient,
 	type RunpodFetch,
@@ -47,6 +51,12 @@ export interface RunpodJob<TOutput = unknown> {
 }
 
 export interface CreateRunpodServiceOptions {
+	/**
+	 * Cross-process registry of pods currently owned by an in-flight execution.
+	 * Reaper consults this alongside `warmPool` to protect active pods from
+	 * age-based termination. Default = noop (single-process behaviour).
+	 */
+	activeRegistry?: ActivePodRegistry;
 	apiKey: string;
 	civitaiApiKey?: string;
 	fetchImpl?: RunpodFetch;
@@ -137,6 +147,7 @@ export function parseEndpointId(
 }
 
 interface BuildEnginesContext {
+	activeRegistry?: ActivePodRegistry;
 	civitaiApiKey?: string;
 	hfToken?: string;
 	inputStore?: PodInputStore;
@@ -158,6 +169,7 @@ function buildEngine(
 		});
 	}
 	return createPodEngine({
+		activeRegistry: ctx.activeRegistry,
 		api: ctx.podsApi,
 		civitaiApiKey: ctx.civitaiApiKey,
 		hfToken: ctx.hfToken,
@@ -196,6 +208,7 @@ export function createRunpodService(
 		}
 		const workflow = registry.get(workflowId);
 		const engine = buildEngine(workflow, {
+			activeRegistry: options.activeRegistry,
 			civitaiApiKey: options.civitaiApiKey,
 			hfToken: options.hfToken,
 			inputStore: options.inputStore,

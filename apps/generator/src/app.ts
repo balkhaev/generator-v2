@@ -10,6 +10,7 @@ import {
 } from "@generator/http/shared";
 import { createRedisConnection } from "@generator/queue";
 import {
+	type ActivePodRegistry,
 	type AnyWorkflowDefinition,
 	createFooocusSdxlWorkflow,
 	createLtx23VideoWorkflow,
@@ -36,6 +37,7 @@ import { createInferenceRouter } from "@/providers/inference-router";
 import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
 import {
+	createRedisActivePodRegistry,
 	createRedisPodInputStore,
 	createRedisWarmPodPool,
 } from "@/providers/runpod-warm-pool";
@@ -143,6 +145,7 @@ const isPublicApiPath = createPublicPathMatcher({
 });
 
 function createConfiguredRunpodService(input: {
+	activeRegistry?: ActivePodRegistry;
 	civitaiApiKey?: string;
 	inputStore?: PodInputStore;
 	runpodApiKey?: string;
@@ -202,6 +205,7 @@ function createConfiguredRunpodService(input: {
 		return null;
 	}
 	return createRunpodService({
+		activeRegistry: input.activeRegistry,
 		apiKey: input.runpodApiKey,
 		civitaiApiKey: input.civitaiApiKey,
 		hfToken:
@@ -232,6 +236,7 @@ function buildRunpodClientForApp(input: {
 	}
 	const redis = createRedisConnection(input.redisUrl);
 	const service = createConfiguredRunpodService({
+		activeRegistry: createRedisActivePodRegistry(redis),
 		civitaiApiKey: input.civitaiApiKey,
 		inputStore: createRedisPodInputStore(redis),
 		runpodApiKey: input.runpodApiKey,

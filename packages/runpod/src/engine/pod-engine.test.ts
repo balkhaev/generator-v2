@@ -19,6 +19,7 @@ import {
 	parsePodJobId,
 } from "./pod-engine";
 import {
+	createInMemoryActivePodRegistry,
 	createInMemoryPodInputStore,
 	createInMemoryWarmPodPool,
 } from "./warm-pod-pool";
@@ -652,6 +653,125 @@ describe("PodEngine warm-pool reuse", () => {
 		expect(submission.jobId).toBe("pod-fresh:req-fresh:pwd-fresh");
 		expect(create).toHaveBeenCalledTimes(1);
 		expect(await warmPool.list()).toEqual([]);
+	});
+});
+
+describe("PodEngine active-pod registry", () => {
+	const warmWorkflow: PodWorkflow<
+		z.infer<typeof ltxInputSchema>,
+		VideoOutput
+	> = {
+		...baseWorkflow,
+		pod: {
+			...baseWorkflow.pod,
+			keepAliveMs: 60_000,
+			timeoutMs: 30 * 60 * 1000,
+		},
+	};
+
+	it("registers a freshly-created pod and clears the entry on cleanup", async () => {
+		const activeRegistry = createInMemoryActivePodRegistry();
+		const deleteFn = mock(() => Promise.resolve());
+		const engine = createPodEngine({
+			activeRegistry,
+			api: buildApi({
+				create: () =>
+					Promise.resolve<PodSnapshot>({
+						desiredStatus: "RUNNING",
+						id: "pod-active-1",
+					}),
+				delete: deleteFn,
+			}),
+			randomPassword: () => "pwd",
+			randomRequestId: () => "req-1",
+			s3,
+			workflow: baseWorkflow,
+		});
+		await engine.submit({ prompt: "hello" });
+		const tracked = await activeRegistry.list();
+		expect(tracked.map((e) => e.podId)).toEqual(["pod-active-1"]);
+		expect(tracked[0]?.workflowId).toBe("ltx-2-3-video");
+
+		await engine.cancel("pod-active-1:req-1:pwd");
+		expect(deleteFn).toHaveBeenCalledWith("pod-active-1");
+		expect(await activeRegistry.list()).toEqual([]);
+	});
+
+	it("registers reused warm pod and removes after release back to pool", async () => {
+		const warmPool = createInMemoryWarmPodPool();
+		const activeRegistry = createInMemoryActivePodRegistry();
+		const inputStore = createInMemoryPodInputStore();
+		await warmPool.release(
+			"ltx-2-3-video",
+			{
+				networkVolumeId: "vol-test",
+				password: "pwd-warm",
+				podId: "pod-warm",
+			},
+			60_000
+		);
+		let statCall = 0;
+		const statObject = mock((key: string) => {
+			statCall += 1;
+			if (statCall === 1) {
+				throw new Error("not found");
+			}
+			return Promise.resolve(makeStat(key, 16));
+		});
+		const engine = createPodEngine({
+			activeRegistry,
+			api: buildApi({
+				get: () =>
+					Promise.resolve({
+						desiredStatus: "RUNNING",
+						env: {
+							INFERENCE_INPUT_JSON_B64: encodeBase64Json({ prompt: "p" }),
+							INFERENCE_NETWORK_VOLUME_ID: "vol-test",
+						},
+						id: "pod-warm",
+					} as never),
+			}),
+			createClient: () =>
+				buildClientStub({
+					getHistory: () =>
+						Promise.resolve({
+							"p-1": {
+								outputs: {
+									"42": {
+										videos: [
+											{ filename: "out.mp4", subfolder: "", type: "output" },
+										],
+									},
+								},
+								prompt: [1, "p-1", {}, { client_id: "req-fixed" }, ["42"]],
+								status: { completed: true, status_str: "success" },
+							},
+						}),
+				}),
+			inputStore,
+			randomRequestId: () => "req-fixed",
+			s3,
+			statObject: statObject as never,
+			uploadObject: mock(() =>
+				Promise.resolve({
+					key: "k",
+					sizeBytes: 8,
+					url: "https://assets.example.com/k",
+				})
+			) as never,
+			warmPool,
+			workflow: warmWorkflow,
+		});
+		await engine.submit({ prompt: "hi" });
+		// After reuse, pod-warm is "active" again.
+		expect((await activeRegistry.list()).map((e) => e.podId)).toEqual([
+			"pod-warm",
+		]);
+		const job = await engine.getStatus("pod-warm:req-fixed:pwd-warm");
+		expect(job.status).toBe("succeeded");
+		// On successful completion, pod returns to warm-pool; registry cleared.
+		expect(await activeRegistry.list()).toEqual([]);
+		expect((await warmPool.list()).map((e) => e.podId)).toEqual(["pod-warm"]);
 	});
 });
 

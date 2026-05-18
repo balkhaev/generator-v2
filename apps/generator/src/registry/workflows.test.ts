@@ -179,6 +179,53 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("builds the replicate-flux-dev-lora payload with disable_safety_checker default", () => {
+		const workflow = getWorkflowDefinition("replicate-flux-dev-lora");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					imageSize: "portrait_16_9",
+					numInferenceSteps: 28,
+					guidanceScale: 3.5,
+				},
+				prompt: "a serene mountain lake at sunrise",
+			})
+		).toMatchObject({
+			__replicateVersion:
+				"ae0d7d645446924cf1871e3ca8796e8318f72465d2b5af9323a835df93bf0917",
+			aspect_ratio: "9:16",
+			disable_safety_checker: true,
+			go_fast: false,
+			guidance: 3.5,
+			num_inference_steps: 28,
+			num_outputs: 1,
+			prompt: "a serene mountain lake at sunrise",
+		});
+	});
+
+	it("builds the replicate-flux-dev-lora payload with a LoRA URL", () => {
+		const workflow = getWorkflowDefinition("replicate-flux-dev-lora");
+
+		expect(
+			workflow?.buildProviderInput({
+				params: {
+					imageSize: "portrait_16_9",
+					loraScale: 1,
+					loraUrl: "https://storage.example.com/flux-style.safetensors",
+				},
+				prompt: "portrait of my_character, painterly style",
+			})
+		).toMatchObject({
+			__replicateVersion:
+				"ae0d7d645446924cf1871e3ca8796e8318f72465d2b5af9323a835df93bf0917",
+			aspect_ratio: "9:16",
+			disable_safety_checker: true,
+			lora_scale: 1,
+			lora_weights: "https://storage.example.com/flux-style.safetensors",
+		});
+	});
+
 	it("builds the fal-fast-sdxl payload with optional LoRA", () => {
 		const workflow = getWorkflowDefinition("fal-fast-sdxl");
 

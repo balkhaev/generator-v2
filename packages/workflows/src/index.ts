@@ -81,6 +81,11 @@ const REPLICATE_WAN_22_I2V_FAST_VERSION =
 	"4eaf2b01d3bf70d8a2e00b219efeb7cb415855ad18b7dacdc4cae664a73a6eea";
 const REPLICATE_WAN_22_T2V_FAST_VERSION =
 	"c483b1f7b892065bc58ebadb6381abf557f6b1f517d2ff0febb3fb635cf49b4d";
+// black-forest-labs/flux-dev-lora — drop-in NSFW-friendly substitute for
+// fal-ai/flux-lora after fal started forcing output safety check on flux LoRA
+// (regression observed 2026-05-13). Replicate honours `disable_safety_checker`.
+const REPLICATE_FLUX_DEV_LORA_VERSION =
+	"ae0d7d645446924cf1871e3ca8796e8318f72465d2b5af9323a835df93bf0917";
 const FOOOCUS_ASPECT_RATIOS = {
 	landscape_4_3: "1152*896",
 	landscape_16_9: "1344*768",
@@ -88,6 +93,15 @@ const FOOOCUS_ASPECT_RATIOS = {
 	portrait_16_9: "768*1344",
 	square: "1024*1024",
 	square_hd: "1024*1024",
+} as const;
+// Replicate flux-dev-lora exposes `aspect_ratio` as a string, not a size preset.
+const REPLICATE_FLUX_DEV_LORA_ASPECT_RATIO = {
+	landscape_4_3: "4:3",
+	landscape_16_9: "16:9",
+	portrait_4_3: "3:4",
+	portrait_16_9: "9:16",
+	square: "1:1",
+	square_hd: "1:1",
 } as const;
 
 const booleanParamSchema = (defaultValue: boolean) =>
@@ -449,6 +463,38 @@ const falFluxDevParamsSchema = z.object({
 	enableSafetyChecker: z.boolean().default(false),
 	loraUrl: optionalUrlParamSchema,
 	loraScale: z.number().min(0).max(2).default(1),
+});
+
+// Mirrors the fal-flux-dev surface but routes to Replicate's official
+// black-forest-labs/flux-dev-lora. Same FLUX.1 [dev] base, same .safetensors
+// LoRA URLs, and `disable_safety_checker: true` is actually honoured —
+// validated against a live job on 2026-05-18. `goFast` defaults to bf16 for
+// quality parity with the pre-regression fal output; flip to true to opt into
+// the fp8 quantized fast path (note Replicate auto-applies a 1.5x multiplier
+// to lora_scale in that mode).
+const replicateFluxDevLoraParamsSchema = z.object({
+	imageSize: z
+		.enum([
+			"square_hd",
+			"square",
+			"landscape_4_3",
+			"landscape_16_9",
+			"portrait_4_3",
+			"portrait_16_9",
+		])
+		.default("landscape_4_3"),
+	numInferenceSteps: z.number().int().min(1).max(50).default(28),
+	guidanceScale: z.number().min(1).max(20).default(3.5),
+	numImages: z.number().int().min(1).max(4).default(1),
+	seed: z.number().int().nonnegative().optional(),
+	disableSafetyChecker: z.boolean().default(true),
+	goFast: z.boolean().default(false),
+	loraUrl: optionalUrlParamSchema,
+	loraScale: z.number().min(0).max(2).default(1),
+	extraLoraUrl: optionalUrlParamSchema,
+	extraLoraScale: z.number().min(0).max(2).default(0.5),
+	outputFormat: z.enum(["webp", "jpg", "png"]).default("jpg"),
+	megapixels: z.enum(["1", "0.25"]).default("1"),
 });
 
 // Z-Image Turbo always targets the `/turbo/lora` endpoint — LoRA is optional.
@@ -948,6 +994,8 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"runpod-ltx-2-3-image-to-video": 35 * MINUTE,
 	"runpod-ltx-2-3-synth-text-to-video": 35 * MINUTE,
 	"replicate-fooocus-sdxl": 15 * SECOND,
+	// bf16 inference измерено 9.7s на 1MP. Добавили буфер на queue + pickup.
+	"replicate-flux-dev-lora": 15 * SECOND,
 	"fal-zimage-turbo": 10 * SECOND,
 	"fal-zimage-turbo-image-to-image": 15 * SECOND,
 	// queue ~10s + inference ~75-90s (5s 720p video)
@@ -2114,6 +2162,129 @@ export const workflowRegistry = {
 			};
 		},
 		extractArtifactUrls: collectFalImageUrls,
+	},
+	"replicate-flux-dev-lora": {
+		baseModel: "flux",
+		key: "replicate-flux-dev-lora",
+		name: "Flux Dev LoRA (Replicate)",
+		description:
+			"FLUX.1 [dev] text-to-image on Replicate via black-forest-labs/flux-dev-lora. Same base model as fal-flux-dev with `disable_safety_checker: true` actually honoured, so NSFW LoRAs return real images instead of fal's blackout placeholder.",
+		requiresInputImage: false,
+		parameterSchema: replicateFluxDevLoraParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Output image size preset controlling aspect ratio. Mapped to Replicate's `aspect_ratio` (e.g. portrait_16_9 → 9:16).",
+				key: "imageSize",
+				label: "Image size",
+				type: "text",
+			},
+			{
+				description: "Number of denoising steps (28-50 recommended).",
+				key: "numInferenceSteps",
+				label: "Steps",
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "Guidance scale",
+				type: "number",
+			},
+			{
+				description: "Number of images per request.",
+				key: "numImages",
+				label: "Number of images",
+				type: "number",
+			},
+			{
+				description:
+					"Optional public URL pointing to FLUX-compatible LoRA weights. Replicate accepts arbitrary .safetensors URLs without extra auth.",
+				key: "loraUrl",
+				kind: "lora-url",
+				label: "LoRA URL",
+				type: "text",
+			},
+			{
+				description:
+					"Strength of the primary LoRA. Sane range 0-1. With go_fast=true Replicate auto-multiplies this by 1.5.",
+				key: "loraScale",
+				label: "LoRA scale",
+				type: "number",
+			},
+			{
+				description: "Optional second FLUX-compatible LoRA URL.",
+				key: "extraLoraUrl",
+				kind: "lora-url",
+				label: "Extra LoRA URL",
+				type: "text",
+			},
+			{
+				description: "Strength of the extra LoRA when provided.",
+				key: "extraLoraScale",
+				label: "Extra LoRA scale",
+				type: "number",
+			},
+			{
+				description: "Approximate output size in megapixels.",
+				enumValues: ["1", "0.25"],
+				key: "megapixels",
+				label: "Megapixels",
+				type: "text",
+			},
+			{
+				description:
+					"Run fp8-quantized fast path. Faster but applies a 1.5x lora_scale multiplier and outputs are non-deterministic even with a seed.",
+				enumValues: ["true", "false"],
+				key: "goFast",
+				label: "Go fast (fp8)",
+				type: "text",
+			},
+			{
+				description: "Output image format.",
+				enumValues: ["jpg", "png", "webp"],
+				key: "outputFormat",
+				label: "Output format",
+				type: "text",
+			},
+			{
+				description: "Optional deterministic seed (ignored in go_fast mode).",
+				key: "seed",
+				label: "Seed",
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = replicateFluxDevLoraParamsSchema.parse(params);
+			const aspectRatio =
+				REPLICATE_FLUX_DEV_LORA_ASPECT_RATIO[parsed.imageSize];
+			return {
+				__replicateVersion: REPLICATE_FLUX_DEV_LORA_VERSION,
+				prompt,
+				aspect_ratio: aspectRatio,
+				num_inference_steps: parsed.numInferenceSteps,
+				guidance: parsed.guidanceScale,
+				num_outputs: parsed.numImages,
+				go_fast: parsed.goFast,
+				disable_safety_checker: parsed.disableSafetyChecker,
+				output_format: parsed.outputFormat,
+				megapixels: parsed.megapixels,
+				...(parsed.loraUrl
+					? {
+							lora_weights: parsed.loraUrl,
+							lora_scale: parsed.loraScale,
+						}
+					: {}),
+				...(parsed.extraLoraUrl
+					? {
+							extra_lora: parsed.extraLoraUrl,
+							extra_lora_scale: parsed.extraLoraScale,
+						}
+					: {}),
+				...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+			};
+		},
+		extractArtifactUrls: collectArtifactUrls,
 	},
 	"fal-zimage-turbo": {
 		baseModel: "z-image-turbo",

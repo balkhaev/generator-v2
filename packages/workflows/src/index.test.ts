@@ -37,6 +37,24 @@ describe("workflow registry", () => {
 		});
 	});
 
+	it("resolves replicate-flux-dev-lora with correct defaults", () => {
+		const workflow = getWorkflowDefinition("replicate-flux-dev-lora");
+		expect(workflow).toBeDefined();
+		expect(workflow?.baseModel).toBe("flux");
+		expect(workflow?.parameterSchema.parse({})).toMatchObject({
+			disableSafetyChecker: true,
+			extraLoraScale: 0.5,
+			goFast: false,
+			guidanceScale: 3.5,
+			imageSize: "landscape_4_3",
+			loraScale: 1,
+			megapixels: "1",
+			numImages: 1,
+			numInferenceSteps: 28,
+			outputFormat: "jpg",
+		});
+	});
+
 	it("resolves fal-fast-sdxl with correct defaults", () => {
 		const workflow = getWorkflowDefinition("fal-fast-sdxl");
 		expect(workflow).toBeDefined();
@@ -451,6 +469,7 @@ describe("workflow registry", () => {
 			"runpod-fooocus-sdxl",
 			"replicate-fooocus-sdxl",
 			"fal-flux-dev",
+			"replicate-flux-dev-lora",
 			"fal-zimage-turbo",
 			"fal-zimage-turbo-image-to-image",
 		];
@@ -953,6 +972,69 @@ describe("workflow registry", () => {
 			performance_selection: "Quality",
 			use_default_loras: true,
 		});
+	});
+
+	it("builds replicate-flux-dev-lora payloads with optional LoRAs", () => {
+		const workflow = getWorkflowDefinition("replicate-flux-dev-lora");
+		const buildInput = (extra: Record<string, unknown> = {}) =>
+			workflow?.buildProviderInput({
+				params: extra,
+				prompt: "test",
+			}) as Record<string, unknown>;
+
+		expect(buildInput()).toMatchObject({
+			__replicateVersion:
+				"ae0d7d645446924cf1871e3ca8796e8318f72465d2b5af9323a835df93bf0917",
+			aspect_ratio: "4:3",
+			disable_safety_checker: true,
+			go_fast: false,
+			guidance: 3.5,
+			megapixels: "1",
+			num_inference_steps: 28,
+			num_outputs: 1,
+			output_format: "jpg",
+			prompt: "test",
+		});
+		expect(buildInput()).not.toHaveProperty("lora_weights");
+		expect(buildInput()).not.toHaveProperty("extra_lora");
+		expect(buildInput()).not.toHaveProperty("seed");
+
+		const withLora = buildInput({
+			extraLoraScale: 0.4,
+			extraLoraUrl: "https://example.com/extra-flux.safetensors",
+			goFast: true,
+			guidanceScale: 4,
+			imageSize: "portrait_16_9",
+			loraScale: 0.7,
+			loraUrl: "https://example.com/flux.safetensors",
+			seed: 42,
+		});
+		expect(withLora).toMatchObject({
+			aspect_ratio: "9:16",
+			extra_lora: "https://example.com/extra-flux.safetensors",
+			extra_lora_scale: 0.4,
+			go_fast: true,
+			guidance: 4,
+			lora_scale: 0.7,
+			lora_weights: "https://example.com/flux.safetensors",
+			seed: 42,
+		});
+	});
+
+	it("maps imageSize → aspect_ratio for replicate-flux-dev-lora", () => {
+		const workflow = getWorkflowDefinition("replicate-flux-dev-lora");
+		const buildInput = (imageSize: string) =>
+			workflow?.buildProviderInput({
+				params: { imageSize },
+				prompt: "test",
+			}) as Record<string, unknown>;
+
+		expect(buildInput("square_hd").aspect_ratio).toBe("1:1");
+		expect(buildInput("square").aspect_ratio).toBe("1:1");
+		expect(buildInput("landscape_4_3").aspect_ratio).toBe("4:3");
+		expect(buildInput("landscape_16_9").aspect_ratio).toBe("16:9");
+		expect(buildInput("portrait_4_3").aspect_ratio).toBe("3:4");
+		expect(buildInput("portrait_16_9").aspect_ratio).toBe("9:16");
 	});
 
 	it("builds replicate-wan-2-2 fast text-to-video payloads", () => {

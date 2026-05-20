@@ -69,6 +69,29 @@ function generateId(prefix: string): string {
 }
 
 /**
+ * PostgreSQL "undefined_table" SQLSTATE. Возникает когда generator стартует
+ * раньше чем db-migrate накатил миграцию 0016 (например после redeploy
+ * под нагрузкой, когда параллельные билды лезут в общий runner). Trat'им
+ * это как ожидаемое состояние: generator работает поверх env-defaults
+ * до следующего restart, чтобы upgrade order не блокировал прод.
+ */
+const PG_UNDEFINED_TABLE_CODE = "42P01";
+
+function isMissingTableError(error: unknown): boolean {
+	if (!error || typeof error !== "object") {
+		return false;
+	}
+	const candidate = error as { cause?: unknown; code?: unknown };
+	if (candidate.code === PG_UNDEFINED_TABLE_CODE) {
+		return true;
+	}
+	if (candidate.cause) {
+		return isMissingTableError(candidate.cause);
+	}
+	return false;
+}
+
+/**
  * One-shot seed admin-managed RunPod templates с env-конфига если БД пуста.
  *
  * Идемпотентен: если в `runpod_pod_template` уже есть хотя бы одна запись —
@@ -83,9 +106,21 @@ export async function seedRunpodTemplatesFromEnv(
 	const database = options.database ?? db;
 	const logger = options.logger ?? console;
 
-	const [{ count } = { count: 0 }] = (await database.execute(
-		sql`select count(*)::int as count from runpod_pod_template`
-	)) as unknown as { count: number }[];
+	let count = 0;
+	try {
+		const rows = (await database.execute(
+			sql`select count(*)::int as count from runpod_pod_template`
+		)) as unknown as { count: number }[];
+		count = rows[0]?.count ?? 0;
+	} catch (error) {
+		if (isMissingTableError(error)) {
+			logger.warn?.("generator.runpod.seed.skipped.migration-pending", {
+				message: "runpod_pod_template table is missing — skipping seed",
+			});
+			return null;
+		}
+		throw error;
+	}
 
 	if (count > 0) {
 		return null;

@@ -53,13 +53,41 @@ interface LoadedTemplate {
  *   по `created_at asc`; остальные логируем и пропускаем. Per-scenario
  *   маршрутизация — отдельная итерация.
  */
+/** PostgreSQL "undefined_table" — generator стартовал до db-migrate. */
+const PG_UNDEFINED_TABLE_CODE = "42P01";
+
+function isMissingTableError(error: unknown): boolean {
+	if (!error || typeof error !== "object") {
+		return false;
+	}
+	const candidate = error as { cause?: unknown; code?: unknown };
+	if (candidate.code === PG_UNDEFINED_TABLE_CODE) {
+		return true;
+	}
+	if (candidate.cause) {
+		return isMissingTableError(candidate.cause);
+	}
+	return false;
+}
+
 export async function loadRunpodWorkflowsFromDb(
 	options: { database?: Db; logger?: Pick<Console, "info" | "warn"> } = {}
 ): Promise<AnyWorkflowDefinition[]> {
 	const database = options.database ?? db;
 	const logger = options.logger ?? console;
 
-	const templates = await loadEnabledTemplates(database);
+	let templates: LoadedTemplate[];
+	try {
+		templates = await loadEnabledTemplates(database);
+	} catch (error) {
+		if (isMissingTableError(error)) {
+			logger.warn?.("generator.runpod.loader.skipped.migration-pending", {
+				message: "runpod tables are missing — falling back to env-defaults",
+			});
+			return [];
+		}
+		throw error;
+	}
 	if (templates.length === 0) {
 		return [];
 	}

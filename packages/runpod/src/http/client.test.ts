@@ -1,8 +1,18 @@
 import { describe, expect, it, mock } from "bun:test";
 
-import { createRunpodHttpClient, isNoCapacityError } from "./client";
+import {
+	createRunpodHttpClient,
+	isNoCapacityError,
+	isRetryableNetworkError,
+	isRetryableStatus,
+	type RunpodRetryEvent,
+} from "./client";
 
 const ABORT_PATTERN = /abort/i;
+
+function noopSleep(_ms: number): Promise<void> {
+	return Promise.resolve();
+}
 
 describe("RunpodHttpClient", () => {
 	it("strips trailing slashes from baseUrl and sends bearer auth", async () => {
@@ -44,6 +54,7 @@ describe("RunpodHttpClient", () => {
 			apiKey: "rpa_test",
 			baseUrl: "https://api.runpod.ai/v2",
 			fetchImpl,
+			sleep: noopSleep,
 		});
 
 		await expect(
@@ -79,6 +90,7 @@ describe("RunpodHttpClient", () => {
 			baseUrl: "https://api.runpod.ai/v2",
 			fetchImpl,
 			timeoutMs: 5,
+			retry: { maxAttempts: 1 },
 		});
 
 		await expect(client.get("/endpoint/health", "health")).rejects.toThrow(
@@ -93,5 +105,116 @@ describe("RunpodHttpClient", () => {
 		).toBe(true);
 		expect(isNoCapacityError(new Error("internal server error"))).toBe(false);
 		expect(isNoCapacityError("string error")).toBe(false);
+	});
+
+	it("retries 5xx responses up to maxAttempts and surfaces the final error", async () => {
+		let attempts = 0;
+		const fetchImpl = mock(() => {
+			attempts += 1;
+			return Promise.resolve(Response.json({ error: "boom" }, { status: 503 }));
+		});
+		const onRetry = mock((_event: RunpodRetryEvent) => undefined);
+		const client = createRunpodHttpClient({
+			apiKey: "rpa_test",
+			baseUrl: "https://api.runpod.ai/v2",
+			fetchImpl,
+			retry: { maxAttempts: 3, onRetry },
+			sleep: noopSleep,
+		});
+
+		await expect(
+			client.post("/endpoint/run", { input: {} }, "/run")
+		).rejects.toThrow("/run failed (503): boom");
+		expect(attempts).toBe(3);
+		expect(onRetry).toHaveBeenCalledTimes(2);
+	});
+
+	it("retries 429 with Retry-After header and ultimately succeeds", async () => {
+		let attempts = 0;
+		const fetchImpl = mock(() => {
+			attempts += 1;
+			if (attempts === 1) {
+				return Promise.resolve(
+					new Response("rate limited", {
+						status: 429,
+						headers: { "retry-after": "0.05" },
+					})
+				);
+			}
+			return Promise.resolve(
+				Response.json({ id: "job-2", status: "IN_QUEUE" })
+			);
+		});
+		const events: RunpodRetryEvent[] = [];
+		const client = createRunpodHttpClient({
+			apiKey: "rpa_test",
+			baseUrl: "https://api.runpod.ai/v2",
+			fetchImpl,
+			retry: { maxAttempts: 3, onRetry: (e) => events.push(e) },
+			sleep: noopSleep,
+		});
+
+		const body = await client.post("/x/run", { input: {} }, "/run");
+		expect(body).toEqual({ id: "job-2", status: "IN_QUEUE" });
+		expect(attempts).toBe(2);
+		expect(events[0]?.status).toBe(429);
+		expect(events[0]?.delayMs).toBe(50);
+	});
+
+	it("retries transient network errors (fetch failed)", async () => {
+		let attempts = 0;
+		const fetchImpl = mock(() => {
+			attempts += 1;
+			if (attempts === 1) {
+				return Promise.reject(new Error("fetch failed: ECONNRESET"));
+			}
+			return Promise.resolve(Response.json({ ok: true }));
+		});
+		const client = createRunpodHttpClient({
+			apiKey: "rpa_test",
+			baseUrl: "https://api.runpod.ai/v2",
+			fetchImpl,
+			retry: { maxAttempts: 2 },
+			sleep: noopSleep,
+		});
+
+		const result = await client.get("/x/status/y", "/status");
+		expect(result).toEqual({ ok: true });
+		expect(attempts).toBe(2);
+	});
+
+	it("does not retry 4xx (other than 429) — they are caller errors", async () => {
+		let attempts = 0;
+		const fetchImpl = mock(() => {
+			attempts += 1;
+			return Promise.resolve(
+				Response.json({ error: "bad request" }, { status: 400 })
+			);
+		});
+		const client = createRunpodHttpClient({
+			apiKey: "rpa_test",
+			baseUrl: "https://api.runpod.ai/v2",
+			fetchImpl,
+			retry: { maxAttempts: 5 },
+			sleep: noopSleep,
+		});
+
+		await expect(client.post("/x/run", undefined, "/run")).rejects.toThrow(
+			"/run failed (400): bad request"
+		);
+		expect(attempts).toBe(1);
+	});
+
+	it("classifies retry-eligible statuses and network errors", () => {
+		expect(isRetryableStatus(429)).toBe(true);
+		expect(isRetryableStatus(500)).toBe(true);
+		expect(isRetryableStatus(502)).toBe(true);
+		expect(isRetryableStatus(404)).toBe(false);
+		expect(isRetryableNetworkError(new Error("fetch failed"))).toBe(true);
+		expect(isRetryableNetworkError(new Error("ECONNRESET"))).toBe(true);
+		expect(
+			isRetryableNetworkError(new DOMException("aborted", "AbortError"))
+		).toBe(true);
+		expect(isRetryableNetworkError(new Error("bad input"))).toBe(false);
 	});
 });

@@ -7,9 +7,20 @@ export {
 export {
 	createServerlessApi,
 	type RunpodServerlessApi,
+	type ServerlessEndpointHealth,
 	type ServerlessJobStatus,
+	type ServerlessPurgeResult,
+	type ServerlessRunSyncInput,
 	type ServerlessSubmission,
+	type ServerlessSubmitInput,
 } from "./api/serverless";
+export {
+	parseReloadEvent,
+	RUNPOD_REGISTRY_RELOAD_CHANNEL,
+	type RunpodRegistryReloadEvent,
+	type RunpodRegistryReloadKind,
+	serializeReloadEvent,
+} from "./bus";
 export {
 	type ComfyUIClient,
 	createComfyUIClient,
@@ -33,7 +44,28 @@ export {
 	formatPodJobId,
 	parsePodJobId,
 } from "./engine/pod-engine";
-export { createServerlessEngine } from "./engine/serverless-engine";
+export {
+	createServerlessEngine,
+	type ServerlessCompletedEvent,
+	type ServerlessEngineObserver,
+	type ServerlessSubmittedEvent,
+} from "./engine/serverless-engine";
+export {
+	assessEndpointHealth,
+	type ServerlessHealthAssessment,
+	type ServerlessHealthCode,
+	type ServerlessHealthFinding,
+	type ServerlessHealthSeverity,
+} from "./engine/serverless-health";
+export {
+	createServerlessWarmupRunner,
+	type ServerlessWarmupEvent,
+	type ServerlessWarmupObserver,
+	type ServerlessWarmupOptions,
+	type ServerlessWarmupRunner,
+	type WarmupHandle,
+	type WarmupScheduler,
+} from "./engine/serverless-warmup";
 export {
 	type InferenceStatus,
 	normalizeServerlessStatus,
@@ -58,8 +90,13 @@ export {
 export {
 	createRunpodHttpClient,
 	isNoCapacityError,
+	isRetryableNetworkError,
+	isRetryableStatus,
 	type RunpodFetch,
 	type RunpodHttpClient,
+	type RunpodHttpClientOptions,
+	type RunpodRetryEvent,
+	type RunpodRetryPolicy,
 } from "./http/client";
 export type {
 	AnyWorkflowDefinition,
@@ -71,6 +108,7 @@ export type {
 	PodSuccessContext,
 	PodWorkflow,
 	RunpodPolicy,
+	ServerlessWarmup,
 	ServerlessWorkflow,
 	WorkflowDefinition,
 	WorkflowMode,

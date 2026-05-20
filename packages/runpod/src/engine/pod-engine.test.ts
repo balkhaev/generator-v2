@@ -376,6 +376,37 @@ describe("PodEngine getStatus", () => {
 		expect(deleteFn).toHaveBeenCalledTimes(1);
 	});
 
+	it("fails timed-out pods before the reaper reports them as vanished", async () => {
+		const deleteFn = mock(() => Promise.resolve());
+		const engine = createPodEngine({
+			api: buildApi({
+				delete: deleteFn,
+				get: () =>
+					Promise.resolve<PodSnapshot>({
+						desiredStatus: "RUNNING",
+						id: "pod-XYZ",
+						lastStatusChange: "2026-05-14T10:00:00.000Z",
+					}),
+			}),
+			createClient: () => buildClientStub(),
+			now: () => new Date("2026-05-14T10:10:01.000Z"),
+			s3,
+			statObject: (() => {
+				throw new Error("not found");
+			}) as never,
+			workflow: {
+				...baseWorkflow,
+				pod: { ...baseWorkflow.pod, timeoutMs: 10 * 60 * 1000 },
+			},
+		});
+		const job = await engine.getStatus(jobId);
+		expect(job.status).toBe("failed");
+		expect(job.errorSummary).toBe(
+			"RunPod pod pod-XYZ timed out after 600000ms without producing an artifact"
+		);
+		expect(deleteFn).toHaveBeenCalledWith("pod-XYZ");
+	});
+
 	it("returns running while ComfyUI is not ready yet", async () => {
 		const engine = createPodEngine({
 			api: buildApi({

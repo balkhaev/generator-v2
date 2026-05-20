@@ -15,6 +15,9 @@ import { createFalClient } from "@/providers/fal";
 import { createInferenceRouter } from "@/providers/inference-router";
 import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
+import { startRunpodRegistryReloadWatcher } from "@/providers/runpod-registry-reload-watcher";
+import { loadRunpodWorkflowsFromDb } from "@/providers/runpod-template-loader";
+import { seedRunpodTemplatesFromEnv } from "@/providers/runpod-template-seed";
 import {
 	createPodReaper,
 	createRedisActivePodRegistry,
@@ -65,38 +68,63 @@ const storageAdapter = createStorageAdapter({
 	logger: console,
 });
 
-const runpodWorkflows: AnyWorkflowDefinition[] = [];
-if (runpodFooocusEndpointId) {
-	runpodWorkflows.push(
-		createFooocusSdxlWorkflow({ endpointId: runpodFooocusEndpointId })
-	);
-}
-if (runpodLtx23TemplateId) {
-	const ltx23NetworkVolumes = env.RUNPOD_LTX23_POD_NETWORK_VOLUMES;
-	if (ltx23NetworkVolumes.length === 0) {
-		throw new Error(
-			"RUNPOD_LTX23_POD_NETWORK_VOLUMES is required when RUNPOD_LTX23_POD_TEMPLATE_ID is set"
+/**
+ * One-shot seed: env → БД при пустой таблице, чтобы worker сразу видел
+ * admin-managed template'ы без ручных миграций после rollout'а. На
+ * последующих стартах сидер выходит без действий.
+ */
+await seedRunpodTemplatesFromEnv({ logger: console });
+
+/**
+ * Сначала пытаемся собрать RunPod workflows из admin-managed pod template'ов
+ * в БД. Если таблица пуста — fallback на env-переменные (current behavior,
+ * для deploy без сидов). Single preload на старте процесса.
+ */
+const runpodWorkflowsFromDb = await loadRunpodWorkflowsFromDb({
+	logger: console,
+});
+
+const runpodWorkflows: AnyWorkflowDefinition[] =
+	runpodWorkflowsFromDb.length > 0 ? runpodWorkflowsFromDb : [];
+
+if (runpodWorkflows.length === 0) {
+	if (runpodFooocusEndpointId) {
+		runpodWorkflows.push(
+			createFooocusSdxlWorkflow({ endpointId: runpodFooocusEndpointId })
 		);
 	}
-	runpodWorkflows.push(
-		createLtx23VideoWorkflow({
-			pod: {
-				cloudType: env.RUNPOD_LTX23_POD_CLOUD_TYPE,
-				containerDiskInGb: env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
-				imageName: env.RUNPOD_LTX23_POD_IMAGE_NAME,
-				keepAliveMs: env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS,
-				namePrefix: LTX23_POD_NAME_PREFIX,
-				networkVolumes: ltx23NetworkVolumes.map((volume) => ({
-					gpuTypeIds: volume.gpus,
-					label: volume.label,
-					networkVolumeId: volume.id,
-				})),
-				templateId: runpodLtx23TemplateId,
-				timeoutMs: env.RUNPOD_LTX23_POD_TIMEOUT_MS,
-				volumeInGb: env.RUNPOD_LTX23_POD_VOLUME_GB,
-			},
-		})
-	);
+	if (runpodLtx23TemplateId) {
+		const ltx23NetworkVolumes = env.RUNPOD_LTX23_POD_NETWORK_VOLUMES;
+		if (ltx23NetworkVolumes.length === 0) {
+			throw new Error(
+				"RUNPOD_LTX23_POD_NETWORK_VOLUMES is required when RUNPOD_LTX23_POD_TEMPLATE_ID is set"
+			);
+		}
+		runpodWorkflows.push(
+			createLtx23VideoWorkflow({
+				pod: {
+					cloudType: env.RUNPOD_LTX23_POD_CLOUD_TYPE,
+					containerDiskInGb: env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
+					imageName: env.RUNPOD_LTX23_POD_IMAGE_NAME,
+					keepAliveMs: env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS,
+					namePrefix: LTX23_POD_NAME_PREFIX,
+					networkVolumes: ltx23NetworkVolumes.map((volume) => ({
+						gpuTypeIds: volume.gpus,
+						label: volume.label,
+						networkVolumeId: volume.id,
+					})),
+					templateId: runpodLtx23TemplateId,
+					timeoutMs: env.RUNPOD_LTX23_POD_TIMEOUT_MS,
+					volumeInGb: env.RUNPOD_LTX23_POD_VOLUME_GB,
+				},
+			})
+		);
+	}
+} else {
+	console.info("generator.worker.runpod.workflows-loaded-from-db", {
+		count: runpodWorkflows.length,
+		ids: runpodWorkflows.map((w) => w.id),
+	});
 }
 
 // Shared Redis connection for warm-pod pool + input-store. Separate from the
@@ -205,6 +233,17 @@ const worker = createGeneratorExecutionWorker({
 	redisUrl,
 });
 
+/**
+ * Hot-reload: подписываемся на тот же канал что и generator-api.
+ * При admin mutation worker делает graceful SIGTERM → orchestrator
+ * рестартит → новый процесс перечитывает admin-managed registry из БД.
+ */
+const runpodReloadWatcher = startRunpodRegistryReloadWatcher({
+	logger: console,
+	processLabel: "generator-worker",
+	redisUrl,
+});
+
 service
 	.resumeActiveExecutionStreams()
 	.then((count) => {
@@ -229,6 +268,7 @@ await new Promise<void>((resolve) => {
 		isShuttingDown = true;
 		reaper?.stop();
 		await worker.close();
+		await runpodReloadWatcher?.close();
 		await eventPublisher?.close();
 		resolve();
 	};

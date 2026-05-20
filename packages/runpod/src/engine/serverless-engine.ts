@@ -1,29 +1,164 @@
-import type { RunpodServerlessApi } from "../api/serverless";
-import type { ServerlessWorkflow } from "../workflow/definition";
+import type {
+	RunpodServerlessApi,
+	ServerlessJobStatus,
+	ServerlessSubmission,
+} from "../api/serverless";
+import type { RunpodPolicy, ServerlessWorkflow } from "../workflow/definition";
 import type { Engine, EngineJob, EngineSubmission } from "./engine";
 import { normalizeServerlessStatus } from "./status";
 
 const TERMINAL_PROGRESS_PCT = 100;
+const DEFAULT_RUN_SYNC_WAIT_MS = 90_000;
 
 interface ServerlessEngineOptions<TInput, TOutput> {
 	api: RunpodServerlessApi;
+	logger?: Pick<Console, "info" | "warn">;
+	/** Дополнительный наблюдатель за подаваемыми/завершёнными jobs (для метрик). */
+	observer?: ServerlessEngineObserver;
 	workflow: ServerlessWorkflow<TInput, TOutput>;
 }
+
+export interface ServerlessEngineObserver {
+	onCompleted?(event: ServerlessCompletedEvent): void;
+	onSubmitted?(event: ServerlessSubmittedEvent): void;
+}
+
+export interface ServerlessSubmittedEvent {
+	endpointId: string;
+	jobId: string;
+	mode: "run" | "runsync";
+	rawStatus: string;
+	workflowId: string;
+}
+
+export interface ServerlessCompletedEvent {
+	delayTimeMs: number | null;
+	endpointId: string;
+	executionTimeMs: number | null;
+	jobId: string;
+	retries: number | null;
+	status: "succeeded" | "failed";
+	workflowId: string;
+}
+
+type StatusLike = ServerlessJobStatus | ServerlessSubmission;
 
 /**
  * Движок поверх RunPod /v2 queue. Отвечает за:
  *
  * - валидацию input через `workflow.inputSchema`,
- * - сборку payload и опциональной policy,
- * - нормализацию статусов,
+ * - сборку payload и default-policy merging,
+ * - опциональный `/runsync` для коротких workflow (один round-trip),
+ * - нормализацию статусов (включая `RUNNING` который API иногда отдаёт
+ *   вместо `IN_PROGRESS`),
  * - конвертацию `base64` в data URL (Fooocus-style выходы),
- * - извлечение текста ошибки из `output.error` или поля `error`,
- * - вызов `workflow.parseOutput` на success.
+ * - извлечение текста ошибки из разнообразных handler-форматов
+ *   (`output.error`, `output.error_message`, `output.errorMessage`,
+ *   `output.traceback`, `error.{message,detail}`),
+ * - вызов `workflow.parseOutput` на success,
+ * - снимает `delayTime` / `executionTime` и пушит в observer (для метрик
+ *   cold-start vs throughput).
  */
 export function createServerlessEngine<TInput, TOutput>(
 	options: ServerlessEngineOptions<TInput, TOutput>
 ): Engine<TInput, TOutput> {
-	const { api, workflow } = options;
+	const { api, logger, observer, workflow } = options;
+
+	const mergedPolicy = mergePolicy(workflow.defaultPolicy, workflow.policy);
+
+	const emitCompleted = (
+		status: StatusLike,
+		fallbackJobId: string,
+		finalStatus: "succeeded" | "failed"
+	): void => {
+		observer?.onCompleted?.({
+			delayTimeMs: status.delayTimeMs,
+			endpointId: workflow.endpointId,
+			executionTimeMs: status.executionTimeMs,
+			jobId: fallbackJobId,
+			retries: extractRetries(status),
+			status: finalStatus,
+			workflowId: workflow.id,
+		});
+	};
+
+	const handleFailed = (
+		jobId: string,
+		status: StatusLike,
+		fallbackJobId: string
+	): EngineJob & { output: null } => {
+		emitCompleted(status, fallbackJobId, "failed");
+		return {
+			errorSummary: extractErrorSummary(status.error, status.output),
+			jobId,
+			output: null,
+			progressPct: null,
+			queuePosition: status.queuePosition,
+			status: "failed",
+		};
+	};
+
+	const handleSucceeded = (
+		jobId: string,
+		status: StatusLike,
+		fallbackJobId: string
+	): EngineJob & { output: TOutput | null } => {
+		const enriched = enrichBase64Output(status.output);
+		let parsed: TOutput;
+		try {
+			parsed = workflow.parseOutput(enriched);
+		} catch (error) {
+			logger?.warn?.("runpod-serverless.parseOutput-failed", {
+				endpointId: workflow.endpointId,
+				jobId: fallbackJobId,
+				message: error instanceof Error ? error.message : String(error),
+				workflowId: workflow.id,
+			});
+			emitCompleted(status, fallbackJobId, "failed");
+			return {
+				errorSummary: `Failed to parse worker output: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+				jobId,
+				output: null,
+				progressPct: null,
+				queuePosition: status.queuePosition,
+				status: "failed",
+			};
+		}
+		emitCompleted(status, fallbackJobId, "succeeded");
+		return {
+			errorSummary: null,
+			jobId,
+			output: parsed,
+			progressPct: TERMINAL_PROGRESS_PCT,
+			queuePosition: status.queuePosition,
+			status: "succeeded",
+		};
+	};
+
+	const buildStatusOutput = (
+		jobId: string,
+		status: StatusLike,
+		fallbackJobId: string
+	): EngineJob & { output: TOutput | null } => {
+		const baseStatus = normalizeServerlessStatus(status.rawStatus);
+		const finalStatus = computeFinalStatus(status, baseStatus);
+		if (finalStatus === "failed") {
+			return handleFailed(jobId, status, fallbackJobId);
+		}
+		if (finalStatus === "succeeded") {
+			return handleSucceeded(jobId, status, fallbackJobId);
+		}
+		return {
+			errorSummary: null,
+			jobId,
+			output: null,
+			progressPct: null,
+			queuePosition: status.queuePosition,
+			status: finalStatus,
+		};
+	};
 
 	return {
 		async cancel(jobId) {
@@ -35,42 +170,61 @@ export function createServerlessEngine<TInput, TOutput>(
 				endpointId: workflow.endpointId,
 				jobId,
 			});
-			const baseStatus = normalizeServerlessStatus(status.rawStatus);
-			const hasError = status.error !== null && status.error !== undefined;
-			const finalStatus = hasError ? "failed" : baseStatus;
-			const errorSummary =
-				finalStatus === "failed"
-					? extractErrorSummary(status.error, status.output)
-					: null;
-
-			let output: TOutput | null = null;
-			if (finalStatus === "succeeded") {
-				const enriched = enrichBase64Output(status.output);
-				output = workflow.parseOutput(enriched);
-			}
-
-			return {
-				errorSummary,
-				jobId,
-				output,
-				progressPct: finalStatus === "succeeded" ? TERMINAL_PROGRESS_PCT : null,
-				queuePosition: status.queuePosition,
-				status: finalStatus,
-			};
+			return buildStatusOutput(jobId, status, jobId);
 		},
 
 		async submit(input, _options): Promise<EngineSubmission> {
 			// serverless engine doesn't allocate volumes itself, so stickyKey is
 			// accepted (for a uniform Engine contract) but ignored here.
 			const parsed = workflow.inputSchema.parse(input);
+			const payload = workflow.buildPayload(parsed);
+			const policy = mergedPolicy
+				? (mergedPolicy as Record<string, unknown>)
+				: undefined;
+
+			if (workflow.runSync?.enabled) {
+				const waitMs = workflow.runSync.waitMs ?? DEFAULT_RUN_SYNC_WAIT_MS;
+				const submission = await api.runSync({
+					endpointId: workflow.endpointId,
+					input: payload,
+					policy,
+					waitMs,
+					webhook: workflow.webhookUrl,
+				});
+				observer?.onSubmitted?.({
+					endpointId: workflow.endpointId,
+					jobId: submission.jobId,
+					mode: "runsync",
+					rawStatus: submission.rawStatus,
+					workflowId: workflow.id,
+				});
+				// runSync уже возвращает терминальный статус если успел в waitMs;
+				// иначе клиент должен дополнительно поллить через getStatus.
+				return {
+					jobId: submission.jobId,
+					queuePosition: submission.queuePosition,
+					rawProviderJobReference: submission.jobId,
+					status: normalizeServerlessStatus(submission.rawStatus),
+				};
+			}
+
 			const submission = await api.submit({
 				endpointId: workflow.endpointId,
-				input: workflow.buildPayload(parsed),
-				policy: workflow.policy as Record<string, unknown> | undefined,
+				input: payload,
+				policy,
+				webhook: workflow.webhookUrl,
+			});
+			observer?.onSubmitted?.({
+				endpointId: workflow.endpointId,
+				jobId: submission.jobId,
+				mode: "run",
+				rawStatus: submission.rawStatus,
+				workflowId: workflow.id,
 			});
 			return {
 				jobId: submission.jobId,
 				queuePosition: submission.queuePosition,
+				rawProviderJobReference: submission.jobId,
 				status: normalizeServerlessStatus(submission.rawStatus),
 			};
 		},
@@ -79,34 +233,110 @@ export function createServerlessEngine<TInput, TOutput>(
 	};
 }
 
+function computeFinalStatus(
+	status: StatusLike,
+	baseStatus: ReturnType<typeof normalizeServerlessStatus>
+): ReturnType<typeof normalizeServerlessStatus> {
+	const hasTopLevelError = status.error !== null && status.error !== undefined;
+	const hasEmbedded =
+		!hasTopLevelError &&
+		status.output !== null &&
+		hasEmbeddedError(status.output);
+	return hasTopLevelError || hasEmbedded ? "failed" : baseStatus;
+}
+
+function extractRetries(status: StatusLike): number | null {
+	if ("retries" in status && typeof status.retries === "number") {
+		return status.retries;
+	}
+	return null;
+}
+
+function mergePolicy(
+	primary: RunpodPolicy | undefined,
+	fallback: RunpodPolicy | undefined
+): RunpodPolicy | undefined {
+	if (!(primary || fallback)) {
+		return;
+	}
+	return {
+		executionTimeout: primary?.executionTimeout ?? fallback?.executionTimeout,
+		lowPriority: primary?.lowPriority ?? fallback?.lowPriority,
+		ttl: primary?.ttl ?? fallback?.ttl,
+	};
+}
+
+const EMBEDDED_ERROR_KEYS = [
+	"error",
+	"error_message",
+	"errorMessage",
+	"traceback",
+	"errorTraceback",
+] as const;
+
+function hasEmbeddedError(output: unknown): boolean {
+	if (!output || typeof output !== "object") {
+		return false;
+	}
+	const record = output as Record<string, unknown>;
+	for (const key of EMBEDDED_ERROR_KEYS) {
+		const value = record[key];
+		if (typeof value === "string" && value.length > 0) {
+			return true;
+		}
+		if (value && typeof value === "object") {
+			return true;
+		}
+	}
+	return false;
+}
+
+const OUTPUT_ERROR_KEYS = [
+	"error",
+	"error_message",
+	"errorMessage",
+	"message",
+	"traceback",
+	"errorTraceback",
+	"detail",
+] as const;
+
 function extractErrorSummary(error: unknown, output: unknown): string {
 	const direct = stringifyError(error);
 	if (direct) {
 		return direct;
 	}
 	if (output && typeof output === "object") {
-		const message = (output as { error?: unknown; message?: unknown }).error;
-		const fromMessage = stringifyError(message);
-		if (fromMessage) {
-			return fromMessage;
-		}
-		const top = (output as { message?: unknown }).message;
-		const fromTop = stringifyError(top);
-		if (fromTop) {
-			return fromTop;
+		const record = output as Record<string, unknown>;
+		for (const key of OUTPUT_ERROR_KEYS) {
+			const value = record[key];
+			const fromKey = stringifyError(value);
+			if (fromKey) {
+				return fromKey;
+			}
 		}
 	}
 	return "RunPod serverless job failed without a message";
 }
+
+const NESTED_ERROR_KEYS = [
+	"message",
+	"detail",
+	"error",
+	"errorMessage",
+] as const;
 
 function stringifyError(value: unknown): string | null {
 	if (typeof value === "string" && value.length > 0) {
 		return value;
 	}
 	if (value && typeof value === "object") {
-		const message = (value as { message?: unknown }).message;
-		if (typeof message === "string" && message.length > 0) {
-			return message;
+		const record = value as Record<string, unknown>;
+		for (const key of NESTED_ERROR_KEYS) {
+			const nested = record[key];
+			if (typeof nested === "string" && nested.length > 0) {
+				return nested;
+			}
 		}
 		try {
 			return JSON.stringify(value);

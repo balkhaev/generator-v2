@@ -9,7 +9,9 @@
   "scripts": {
     "check-types": "tsc --noEmit",
     "smoke:serverless": "bun run scripts/smoke-serverless.ts",
-    "smoke:pod": "bun run scripts/smoke-pod.ts"
+    "smoke:pod": "bun run scripts/smoke-pod.ts",
+    "health:serverless": "bun run scripts/health-serverless.ts",
+    "warmup:serverless": "bun run scripts/warmup-serverless.ts"
   },
   "dependencies": {
     "@generator/storage": "workspace:*",

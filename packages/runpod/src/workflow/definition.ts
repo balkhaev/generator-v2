@@ -5,20 +5,79 @@ import type { ComfyUIClient, ComfyUINodeApiInput } from "../comfyui/client";
 
 export type WorkflowMode = "serverless" | "pod";
 
+/**
+ * `executionTimeout` (мс) — максимальное время активной обработки job'а
+ * worker'ом. RunPod default = 10 мин, что часто слишком мало для SDXL/video.
+ * `ttl` (мс) — полное время жизни job'а от submit до удаления (включая queue).
+ * Без явных значений RunPod использует 24h ttl, что прячет capacity-залипания.
+ *
+ * `lowPriority=true` запрещает scale-out по этому job'у — полезно для
+ * health-ping'ов чтобы они не поднимали лишние воркеры.
+ */
 export interface RunpodPolicy {
 	executionTimeout?: number;
 	lowPriority?: boolean;
 	ttl?: number;
 }
 
+/**
+ * Warm-up payload и расписание для конкретного workflow. WarmupRunner
+ * периодически шлёт его на endpoint чтобы держать хотя бы один worker idle.
+ * Цена: ~1 cold start в `intervalMs`, что в разы дешевле, чем активировать
+ * `min workers ≥ 1` в RunPod console (тот тарифицируется посекундно даже без
+ * нагрузки).
+ *
+ * Payload должен быть валидным input'ом workflow'а (worker отвечает что-то
+ * тривиальное, например health-ping mode). Если workflow не умеет в no-op,
+ * лучше использовать `min workers` в console.
+ */
+export interface ServerlessWarmup<TInput> {
+	/** Билдер payload'а — должен пройти `inputSchema.parse`. */
+	buildInput(): TInput;
+	/**
+	 * Дополнительная policy для warm-up job'а. По умолчанию engine выставляет
+	 * `lowPriority: true` чтобы warm-up не дёргал scale-out.
+	 */
+	policy?: RunpodPolicy;
+	/**
+	 * Опциональный фильтр: warm-up отправляется только если health показывает
+	 * idle === 0 (= worker'ов нет, следующий запрос придёт на cold start).
+	 * Default = true: экономим на пустых пингах.
+	 */
+	skipWhenWarmersAvailable?: boolean;
+	/** Сколько ждать /runsync ответа (мс). Default 15000. */
+	waitMs?: number;
+}
+
 export interface ServerlessWorkflow<TInput, TOutput> {
 	buildPayload(input: TInput): Record<string, unknown>;
+	/** Defaults применяются к каждому submit/runSync (можно переопределить per-call). */
+	defaultPolicy?: RunpodPolicy;
 	endpointId: string;
 	id: string;
 	inputSchema: z.ZodType<TInput>;
 	mode: "serverless";
 	parseOutput(raw: unknown): TOutput;
+	/** Legacy alias — оставлен для совместимости со старыми workflows. */
 	policy?: RunpodPolicy;
+	/**
+	 * Если задано, `submit()` будет использовать `/runsync?wait=…` — клиент
+	 * получит терминальный output в одном round-trip без поллинга.
+	 *
+	 * Применимо к коротким workflow (≤ 30 сек активной обработки), потому что
+	 * RunPod держит коннект максимум 300 секунд.
+	 */
+	runSync?: {
+		enabled: boolean;
+		waitMs?: number;
+	};
+	/** Декларация warm-up'а — используется `createServerlessWarmupRunner`. */
+	warmup?: ServerlessWarmup<TInput>;
+	/**
+	 * Webhook URL который RunPod дёрнет при завершении job'а. Поверх любого
+	 * webhook'а engine всё равно умеет поллить — это просто ускоряет реакцию.
+	 */
+	webhookUrl?: string;
 }
 
 /**

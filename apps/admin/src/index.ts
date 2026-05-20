@@ -12,6 +12,7 @@ import {
 	getStudioApiUrl,
 } from "@generator/env/server";
 import { createKafkaEventPublisher } from "@generator/events";
+import { createRedisPublisher } from "@generator/queue";
 import { tryResolveS3StorageConfig } from "@generator/storage";
 import { createApp } from "@/app";
 import { getAdminDashboardSnapshot } from "@/dashboard";
@@ -19,6 +20,8 @@ import { createRedisDatasetBuilderSettings } from "@/domain/dataset-builder-sett
 import { LoraRegistryService } from "@/domain/loras";
 import { PersonLoraTrainingControlService } from "@/domain/person-lora-training-control";
 import { createRedisPromptEnhanceSettings } from "@/domain/prompt-enhance-settings";
+import { createRunpodAdminService } from "@/domain/runpod-admin";
+import { createRedisRunpodRegistryReloadBus } from "@/domain/runpod-registry-reload-bus";
 import { resolveTrainingProviderAvailability } from "@/domain/training-provider-availability";
 import { createRedisTrainingProviderSettings } from "@/domain/training-provider-settings";
 import { UsersService } from "@/domain/users";
@@ -27,6 +30,11 @@ import { createCivitaiLtx23InferenceChecker } from "@/providers/civitai-ltx23-in
 import { createLoraSourceResolver } from "@/providers/lora-source-resolver";
 import { createPersonLoraTrainingQueueClient } from "@/queue/person-lora-training";
 import { createDrizzleLoraRepository } from "@/repositories/loras";
+import {
+	createDrizzleRunpodNetworkVolumeRepository,
+	createDrizzleRunpodPodTemplateRepository,
+} from "@/repositories/runpod-admin";
+import { createDrizzleScenarioRunpodBindingRepository } from "@/repositories/scenario-runpod-binding";
 import { createDrizzleUserRepository } from "@/repositories/users";
 import {
 	createRuntimeConfigSetup,
@@ -100,6 +108,40 @@ if (eventPublisher) {
 const usersService = new UsersService({
 	repository: createDrizzleUserRepository(),
 });
+
+/**
+ * Hot-reload bus: каждый mutation в RunPod admin (templates / volumes /
+ * scenario binding) публикует событие в Redis pub/sub. generator-api и
+ * generator-worker подписаны и делают graceful self-restart, чтобы
+ * перечитать registry из БД через loadRunpodWorkflowsFromDb. Это и есть
+ * "live" режим — оператор меняет config в UI и через 2-5 секунд новый
+ * процесс уже работает с обновлённой конфигурацией.
+ */
+const runpodRegistryReloadPublisher = createRedisPublisher(redisUrl);
+const runpodRegistryReloadBus = createRedisRunpodRegistryReloadBus({
+	logger: console,
+	publisher: runpodRegistryReloadPublisher,
+	source: "admin-api",
+});
+
+const runpodAdminService = createRunpodAdminService({
+	podTemplates: createDrizzleRunpodPodTemplateRepository(),
+	reloadBus: runpodRegistryReloadBus,
+	volumes: createDrizzleRunpodNetworkVolumeRepository(),
+});
+
+const scenarioRunpodBindingRepository =
+	createDrizzleScenarioRunpodBindingRepository();
+
+const shutdownReloadPublisher = () => {
+	runpodRegistryReloadPublisher.close().catch((error) => {
+		console.error("admin.runpod-registry-reload-publisher.shutdown.error", {
+			message: error instanceof Error ? error.message : "unknown",
+		});
+	});
+};
+process.on("SIGTERM", shutdownReloadPublisher);
+process.on("SIGINT", shutdownReloadPublisher);
 
 /**
  * Wraps the Redis-backed settings store so every successful write is mirrored
@@ -306,6 +348,9 @@ const app = createApp({
 		runtimeConfigSetup
 	),
 	openRouterModelsApiKey: env.OPENROUTER_API_KEY ?? null,
+	runpodAdminService,
+	runpodRegistryReloadBus,
+	scenarioRunpodBindingRepository,
 	runtimeConfig: runtimeConfigSetup
 		? {
 				deps: runtimeConfigSetup,

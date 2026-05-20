@@ -9,7 +9,8 @@
     "./generator": "./src/generator.ts",
     "./studio": "./src/studio.ts",
     "./persons": "./src/persons.ts",
-    "./loras": "./src/loras.ts"
+    "./loras": "./src/loras.ts",
+    "./runpod-admin": "./src/runpod-admin.ts"
   },
   "scripts": {
     "check-types": "tsc --noEmit"

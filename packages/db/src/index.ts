@@ -23,6 +23,15 @@ import {
 	personGenerationStatusEnum,
 	personRelations,
 } from "./schema/persons";
+import {
+	runpodNetworkVolume,
+	runpodNetworkVolumeRelations,
+	runpodPodTemplate,
+	runpodPodTemplateRelations,
+	runpodPodTemplateVolume,
+	runpodPodTemplateVolumeRelations,
+	runpodTemplateModeEnum,
+} from "./schema/runpod";
 import { integrationCredential, runtimeSetting } from "./schema/runtime-config";
 import {
 	studioArtifact,
@@ -50,6 +59,13 @@ const schema = {
 	personGenerationRelations,
 	personGenerationStatusEnum,
 	personRelations,
+	runpodNetworkVolume,
+	runpodNetworkVolumeRelations,
+	runpodPodTemplate,
+	runpodPodTemplateRelations,
+	runpodPodTemplateVolume,
+	runpodPodTemplateVolumeRelations,
+	runpodTemplateModeEnum,
 	runtimeSetting,
 	session,
 	sessionRelations,

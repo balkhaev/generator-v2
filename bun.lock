@@ -33,6 +33,7 @@
         "@generator/generator-client-server": "workspace:*",
         "@generator/http": "workspace:*",
         "@generator/queue": "workspace:*",
+        "@generator/runpod": "workspace:*",
         "@generator/runtime-config": "workspace:*",
         "@generator/storage": "workspace:*",
         "@generator/workflows": "workspace:*",

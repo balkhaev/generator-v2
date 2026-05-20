@@ -10,6 +10,8 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import { runpodPodTemplate } from "./runpod";
+
 export const studioRunStatusEnum = pgEnum("studio_run_status", [
 	"queued",
 	"running",
@@ -29,6 +31,16 @@ export const studioScenario = pgTable(
 			.$type<Record<string, unknown>>()
 			.notNull()
 			.default({}),
+		/**
+		 * Привязка к admin-managed RunPod pod-template. Если null — generator
+		 * падает на env-defaults (backward compatibility до полной миграции
+		 * LTX-конфига в БД). Onсе delete = set null, чтобы удаление template'а
+		 * не каскадно сносило пользовательские сценарии.
+		 */
+		runpodPodTemplateId: text("runpod_pod_template_id").references(
+			() => runpodPodTemplate.id,
+			{ onDelete: "set null" }
+		),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()
@@ -39,6 +51,9 @@ export const studioScenario = pgTable(
 		index("studio_scenario_workflow_key_idx").on(table.workflowKey),
 		index("studio_scenario_generator_scenario_id_idx").on(
 			table.generatorScenarioId
+		),
+		index("studio_scenario_runpod_pod_template_id_idx").on(
+			table.runpodPodTemplateId
 		),
 		uniqueIndex("studio_scenario_generator_scenario_uidx").on(
 			table.generatorScenarioId
@@ -130,8 +145,12 @@ export const studioArtifact = pgTable(
 
 export const studioScenarioRelations = relations(
 	studioScenario,
-	({ many }) => ({
+	({ many, one }) => ({
 		runs: many(studioRun),
+		runpodPodTemplate: one(runpodPodTemplate, {
+			fields: [studioScenario.runpodPodTemplateId],
+			references: [runpodPodTemplate.id],
+		}),
 	})
 );
 

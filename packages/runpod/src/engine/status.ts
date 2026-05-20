@@ -13,6 +13,9 @@ const SERVERLESS_STATUS_MAP: Record<ServerlessRawStatus, InferenceStatus> = {
 	ERROR: "failed",
 	FAILED: "failed",
 	IN_PROGRESS: "running",
+	// RunPod undocumented: некоторые SDK-handler'ы возвращают `RUNNING` в
+	// `/status` response вместо `IN_PROGRESS`. Маппим в тот же `running`.
+	RUNNING: "running",
 	IN_QUEUE: "queued",
 	TIMED_OUT: "failed",
 };

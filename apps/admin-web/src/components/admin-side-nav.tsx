@@ -12,6 +12,7 @@ import {
 	HardDrive,
 	ListTree,
 	type LucideIcon,
+	Server,
 	Settings,
 	Sparkles,
 	Tags,
@@ -71,6 +72,12 @@ const ITEMS: AdminSideNavItem[] = [
 		icon: HardDrive,
 		label: "Storage",
 		description: "S3 assets",
+	},
+	{
+		href: "/runpod" as Route,
+		icon: Server,
+		label: "RunPod",
+		description: "Pod templates and volumes",
 	},
 	{
 		href: "/users" as Route,

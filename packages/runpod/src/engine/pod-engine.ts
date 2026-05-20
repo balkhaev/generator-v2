@@ -194,6 +194,7 @@ export function createPodEngine<TInput, TOutput>(
 		hfToken,
 		inputStore = createNoopPodInputStore(),
 		logger,
+		now = () => new Date(),
 		randomPassword = generatePassword,
 		randomRequestId = () => crypto.randomUUID(),
 		s3,
@@ -550,6 +551,37 @@ export function createPodEngine<TInput, TOutput>(
 		}
 	};
 
+	const podAgeMs = (pod: PodSnapshot): number | null => {
+		if (!pod.lastStatusChange) {
+			return null;
+		}
+		const parsed = Date.parse(pod.lastStatusChange);
+		if (Number.isNaN(parsed)) {
+			return null;
+		}
+		return now().getTime() - parsed;
+	};
+
+	const failTimedOutPod = async (
+		jobId: string,
+		pod: PodSnapshot,
+		requestId: string
+	): Promise<(EngineJob & { output: null }) | null> => {
+		const timeoutMs = workflow.pod.timeoutMs;
+		if (!timeoutMs) {
+			return null;
+		}
+		const ageMs = podAgeMs(pod);
+		if (ageMs === null || ageMs < timeoutMs) {
+			return null;
+		}
+		await cleanupPod(pod.id, "timeout", requestId);
+		return failedResult(
+			jobId,
+			`RunPod pod ${pod.id} timed out after ${timeoutMs}ms without producing an artifact`
+		);
+	};
+
 	const decodeInputForRequest = async (
 		jobId: string,
 		podId: string,
@@ -810,6 +842,10 @@ export function createPodEngine<TInput, TOutput>(
 				return podSnapshot.value;
 			}
 			const { pod } = podSnapshot;
+			const timedOut = await failTimedOutPod(jobId, pod, requestId);
+			if (timedOut) {
+				return timedOut;
+			}
 			const networkVolumeId = pod.env?.[POD_NETWORK_VOLUME_ENV_KEY];
 
 			const client = buildClient(podId, password);

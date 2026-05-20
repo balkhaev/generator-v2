@@ -102,19 +102,53 @@ function normalizeOutput(raw: unknown): FooocusSdxlOutput {
 }
 
 export interface FooocusSdxlWorkflowConfig {
+	/**
+	 * Подключить fallback warm-up payload в `workflow.warmup`. Использовать
+	 * только если на endpoint'е не поднять `min workers ≥ 1` в RunPod console.
+	 * Правильный путь устранения cold-start'ов — active workers, не lazy
+	 * ping'и через WarmupRunner. Default = false.
+	 */
+	enableWarmup?: boolean;
 	endpointId: string;
 	id?: string;
+	/** Опциональный override webhook URL'a — пробрасывается в каждый submit. */
+	webhookUrl?: string;
 }
+
+const FOOOCUS_EXECUTION_TIMEOUT_MS = 5 * 60 * 1000;
+const FOOOCUS_TTL_MS = 30 * 60 * 1000;
 
 export function createFooocusSdxlWorkflow(
 	config: FooocusSdxlWorkflowConfig
 ): ServerlessWorkflow<FooocusSdxlInput, FooocusSdxlOutput> {
+	const enableWarmup = config.enableWarmup ?? false;
 	return {
 		id: config.id ?? "fooocus-sdxl",
 		mode: "serverless",
 		endpointId: config.endpointId,
 		inputSchema:
 			fooocusSdxlInputSchema as unknown as z.ZodType<FooocusSdxlInput>,
+		defaultPolicy: {
+			executionTimeout: FOOOCUS_EXECUTION_TIMEOUT_MS,
+			ttl: FOOOCUS_TTL_MS,
+		},
+		webhookUrl: config.webhookUrl,
+		warmup: enableWarmup
+			? {
+					buildInput() {
+						return {
+							api_name: "txt2img",
+							prompt: "warmup",
+							image_number: 1,
+							num_inference_steps: 1,
+							guidance_scale: 1,
+							require_base64: false,
+							enable_refiner: false,
+							output_format: "jpeg",
+						} satisfies FooocusSdxlInput;
+					},
+				}
+			: undefined,
 		buildPayload(input) {
 			return input as Record<string, unknown>;
 		},

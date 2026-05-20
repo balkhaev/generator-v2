@@ -1,0 +1,255 @@
+import { db } from "@generator/db";
+import { asc, eq, inArray } from "@generator/db/operators";
+import {
+	runpodNetworkVolume,
+	runpodPodTemplate,
+	runpodPodTemplateVolume,
+} from "@generator/db/schema/runpod";
+import {
+	type AnyWorkflowDefinition,
+	createFooocusSdxlWorkflow,
+	createLtx23VideoWorkflow,
+} from "@generator/runpod";
+
+type Db = typeof db;
+
+interface VolumeRow {
+	gpuTypeIds: string[];
+	id: string;
+	name: string;
+	priority: number;
+	runpodVolumeId: string;
+}
+
+interface LoadedTemplate {
+	cloudType: string | null;
+	containerDiskInGb: number | null;
+	gpuTypeIds: string[];
+	id: string;
+	imageName: string | null;
+	keepAliveMs: number | null;
+	mode: "pod" | "serverless";
+	name: string;
+	runpodEndpointId: string | null;
+	runpodTemplateId: string | null;
+	timeoutMs: number | null;
+	volumeInGb: number | null;
+	volumes: VolumeRow[];
+	workflowKey: string;
+}
+
+/**
+ * Generator на старте сборки `RunpodService` читает реестр admin-managed
+ * RunPod template'ов из БД и собирает массив `AnyWorkflowDefinition` для
+ * `createRunpodService`. Если БД пуста — fallback на env-defaults
+ * (см. `buildEnvDefaultWorkflows`), чтобы deploy без БД-сидов не сломался.
+ *
+ * Текущая семантика registry:
+ * - Один enabled template на `workflow_key` → instance id = workflow_key
+ *   (например, единственный LTX template регистрируется как
+ *   `ltx-2-3-video`, и Studio payload с `__runpodWorkflow="ltx-2-3-video"`
+ *   работает без изменений на стороне Studio).
+ * - Несколько enabled template'ов на тот же `workflow_key` — берём первый
+ *   по `created_at asc`; остальные логируем и пропускаем. Per-scenario
+ *   маршрутизация — отдельная итерация.
+ */
+export async function loadRunpodWorkflowsFromDb(
+	options: { database?: Db; logger?: Pick<Console, "info" | "warn"> } = {}
+): Promise<AnyWorkflowDefinition[]> {
+	const database = options.database ?? db;
+	const logger = options.logger ?? console;
+
+	const templates = await loadEnabledTemplates(database);
+	if (templates.length === 0) {
+		return [];
+	}
+
+	const firstPerKey = pickFirstPerWorkflowKey(templates, logger);
+	const workflows: AnyWorkflowDefinition[] = [];
+	for (const tpl of firstPerKey) {
+		const workflow = buildWorkflowFromTemplate(tpl, logger);
+		if (workflow) {
+			workflows.push(workflow);
+		}
+	}
+	return workflows;
+}
+
+async function loadEnabledTemplates(database: Db): Promise<LoadedTemplate[]> {
+	const rows = await database
+		.select()
+		.from(runpodPodTemplate)
+		.where(eq(runpodPodTemplate.enabled, "true"))
+		.orderBy(asc(runpodPodTemplate.createdAt));
+	if (rows.length === 0) {
+		return [];
+	}
+	const volumesByTemplate = await loadVolumesByTemplate(
+		database,
+		rows.map((row) => row.id)
+	);
+	return rows.map((row) => ({
+		cloudType: row.cloudType,
+		containerDiskInGb: row.containerDiskInGb,
+		gpuTypeIds: row.gpuTypeIds,
+		id: row.id,
+		imageName: row.imageName,
+		keepAliveMs: row.keepAliveMs,
+		mode: row.mode as "pod" | "serverless",
+		name: row.name,
+		runpodEndpointId: row.runpodEndpointId,
+		runpodTemplateId: row.runpodTemplateId,
+		timeoutMs: row.timeoutMs,
+		volumeInGb: row.volumeInGb,
+		volumes: volumesByTemplate.get(row.id) ?? [],
+		workflowKey: row.workflowKey,
+	}));
+}
+
+async function loadVolumesByTemplate(
+	database: Db,
+	templateIds: string[]
+): Promise<Map<string, VolumeRow[]>> {
+	if (templateIds.length === 0) {
+		return new Map();
+	}
+	const rows = await database
+		.select({
+			gpuTypeIds: runpodNetworkVolume.gpuTypeIds,
+			id: runpodNetworkVolume.id,
+			name: runpodNetworkVolume.name,
+			podTemplateId: runpodPodTemplateVolume.podTemplateId,
+			priority: runpodPodTemplateVolume.priority,
+			runpodVolumeId: runpodNetworkVolume.runpodVolumeId,
+		})
+		.from(runpodPodTemplateVolume)
+		.innerJoin(
+			runpodNetworkVolume,
+			eq(runpodNetworkVolume.id, runpodPodTemplateVolume.volumeId)
+		)
+		.where(inArray(runpodPodTemplateVolume.podTemplateId, templateIds))
+		.orderBy(asc(runpodPodTemplateVolume.priority));
+	const grouped = new Map<string, VolumeRow[]>();
+	for (const row of rows) {
+		const entry: VolumeRow = {
+			gpuTypeIds: row.gpuTypeIds,
+			id: row.id,
+			name: row.name,
+			priority: row.priority,
+			runpodVolumeId: row.runpodVolumeId,
+		};
+		const bucket = grouped.get(row.podTemplateId);
+		if (bucket) {
+			bucket.push(entry);
+		} else {
+			grouped.set(row.podTemplateId, [entry]);
+		}
+	}
+	return grouped;
+}
+
+function pickFirstPerWorkflowKey(
+	templates: LoadedTemplate[],
+	logger: Pick<Console, "info" | "warn">
+): LoadedTemplate[] {
+	const byKey = new Map<string, LoadedTemplate>();
+	for (const tpl of templates) {
+		const existing = byKey.get(tpl.workflowKey);
+		if (existing) {
+			logger.warn?.("runpod.template-loader.duplicate-workflow-key", {
+				ignoredTemplateId: tpl.id,
+				usedTemplateId: existing.id,
+				workflowKey: tpl.workflowKey,
+			});
+			continue;
+		}
+		byKey.set(tpl.workflowKey, tpl);
+	}
+	return Array.from(byKey.values());
+}
+
+function buildWorkflowFromTemplate(
+	tpl: LoadedTemplate,
+	logger: Pick<Console, "info" | "warn">
+): AnyWorkflowDefinition | null {
+	if (tpl.workflowKey === "fooocus-sdxl") {
+		return buildFooocusWorkflow(tpl, logger);
+	}
+	if (tpl.workflowKey === "ltx-2-3-video") {
+		return buildLtx23Workflow(tpl, logger);
+	}
+	logger.warn?.("runpod.template-loader.unknown-workflow-key", {
+		templateId: tpl.id,
+		workflowKey: tpl.workflowKey,
+	});
+	return null;
+}
+
+function buildFooocusWorkflow(
+	tpl: LoadedTemplate,
+	logger: Pick<Console, "info" | "warn">
+): AnyWorkflowDefinition | null {
+	if (tpl.mode !== "serverless") {
+		logger.warn?.("runpod.template-loader.fooocus-not-serverless", {
+			mode: tpl.mode,
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	if (!tpl.runpodEndpointId) {
+		logger.warn?.("runpod.template-loader.fooocus-missing-endpoint", {
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	return createFooocusSdxlWorkflow({
+		enableWarmup:
+			process.env.RUNPOD_FOOOCUS_ENABLE_WARMUP?.toLowerCase() === "true",
+		endpointId: tpl.runpodEndpointId,
+		id: "fooocus-sdxl",
+		webhookUrl: process.env.RUNPOD_FOOOCUS_WEBHOOK_URL?.trim() || undefined,
+	});
+}
+
+function buildLtx23Workflow(
+	tpl: LoadedTemplate,
+	logger: Pick<Console, "info" | "warn">
+): AnyWorkflowDefinition | null {
+	if (tpl.mode !== "pod") {
+		logger.warn?.("runpod.template-loader.ltx-not-pod", {
+			mode: tpl.mode,
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	if (!tpl.runpodTemplateId) {
+		logger.warn?.("runpod.template-loader.ltx-missing-template", {
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	if (tpl.volumes.length === 0) {
+		logger.warn?.("runpod.template-loader.ltx-missing-volumes", {
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	return createLtx23VideoWorkflow({
+		id: "ltx-2-3-video",
+		pod: {
+			cloudType: tpl.cloudType === "COMMUNITY" ? "COMMUNITY" : "SECURE",
+			containerDiskInGb: tpl.containerDiskInGb ?? 15,
+			imageName: tpl.imageName ?? "ls250824/run-comfyui-ltx:28042026",
+			keepAliveMs: tpl.keepAliveMs ?? 10 * 60 * 1000,
+			namePrefix: "ltx23",
+			networkVolumes: tpl.volumes.map((vol) => ({
+				gpuTypeIds: vol.gpuTypeIds,
+				label: vol.name,
+				networkVolumeId: vol.runpodVolumeId,
+			})),
+			templateId: tpl.runpodTemplateId,
+			timeoutMs: tpl.timeoutMs ?? 60 * 60 * 1000,
+			volumeInGb: tpl.volumeInGb ?? 90,
+		},
+	});
+}

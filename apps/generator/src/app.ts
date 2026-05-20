@@ -139,6 +139,13 @@ interface AppOptions {
 	inferenceClient?: InferenceClient;
 	loggerImpl?: Pick<Console, "info" | "error" | "warn">;
 	redisUrl?: string;
+	/**
+	 * Готовый список RunPod workflows, загруженный из БД (admin-managed
+	 * pod templates). Если массив непустой — используется вместо env-defaults.
+	 * Если undefined или пустой — `createConfiguredRunpodService` собирает
+	 * workflows из env-переменных (backward compat для deploy без сидов БД).
+	 */
+	runpodWorkflows?: AnyWorkflowDefinition[];
 	storageAdapter?: StorageAdapter;
 }
 
@@ -146,23 +153,17 @@ const isPublicApiPath = createPublicPathMatcher({
 	exact: ["/api/health", "/api/ready"],
 });
 
-function createConfiguredRunpodService(input: {
-	activeRegistry?: ActivePodRegistry;
-	civitaiApiKey?: string;
-	inputStore?: PodInputStore;
-	runpodApiKey?: string;
-	s3Config: S3StorageConfig | null;
-	stickyStore?: StickyVolumeStore;
-	warmPool?: WarmPodPool;
-}): RunpodService | null {
-	if (!(input.runpodApiKey && input.s3Config)) {
-		return null;
-	}
+function buildEnvDefaultWorkflows(): AnyWorkflowDefinition[] {
 	const workflows: AnyWorkflowDefinition[] = [];
 	const fooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID;
 	if (fooocusEndpointId) {
 		workflows.push(
-			createFooocusSdxlWorkflow({ endpointId: fooocusEndpointId })
+			createFooocusSdxlWorkflow({
+				endpointId: fooocusEndpointId,
+				enableWarmup:
+					process.env.RUNPOD_FOOOCUS_ENABLE_WARMUP?.toLowerCase() === "true",
+				webhookUrl: process.env.RUNPOD_FOOOCUS_WEBHOOK_URL?.trim() || undefined,
+			})
 		);
 	}
 	const ltxTemplateId =
@@ -204,6 +205,26 @@ function createConfiguredRunpodService(input: {
 			})
 		);
 	}
+	return workflows;
+}
+
+function createConfiguredRunpodService(input: {
+	activeRegistry?: ActivePodRegistry;
+	civitaiApiKey?: string;
+	inputStore?: PodInputStore;
+	prebuiltWorkflows?: AnyWorkflowDefinition[];
+	runpodApiKey?: string;
+	s3Config: S3StorageConfig | null;
+	stickyStore?: StickyVolumeStore;
+	warmPool?: WarmPodPool;
+}): RunpodService | null {
+	if (!(input.runpodApiKey && input.s3Config)) {
+		return null;
+	}
+	const workflows =
+		input.prebuiltWorkflows && input.prebuiltWorkflows.length > 0
+			? input.prebuiltWorkflows
+			: buildEnvDefaultWorkflows();
 	if (workflows.length === 0) {
 		return null;
 	}
@@ -231,6 +252,7 @@ function createConfiguredRunpodService(input: {
 function buildRunpodClientForApp(input: {
 	civitaiApiKey?: string;
 	hasInferenceOverride: boolean;
+	prebuiltWorkflows?: AnyWorkflowDefinition[];
 	redisUrl: string;
 	runpodApiKey?: string;
 	s3Config: S3StorageConfig | null;
@@ -243,6 +265,7 @@ function buildRunpodClientForApp(input: {
 		activeRegistry: createRedisActivePodRegistry(redis),
 		civitaiApiKey: input.civitaiApiKey,
 		inputStore: createRedisPodInputStore(redis),
+		prebuiltWorkflows: input.prebuiltWorkflows,
 		runpodApiKey: input.runpodApiKey,
 		s3Config: input.s3Config,
 		stickyStore: createRedisStickyVolumeStore(redis),
@@ -306,6 +329,7 @@ export function createApp(options: AppOptions) {
 	const runpodClient = buildRunpodClientForApp({
 		civitaiApiKey,
 		hasInferenceOverride: Boolean(options.inferenceClient),
+		prebuiltWorkflows: options.runpodWorkflows,
 		redisUrl,
 		runpodApiKey,
 		s3Config: resolvedS3Config,

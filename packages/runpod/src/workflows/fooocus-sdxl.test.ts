@@ -18,6 +18,29 @@ describe("fooocus-sdxl workflow", () => {
 		});
 	});
 
+	it("declares sensible default policy (executionTimeout/ttl)", () => {
+		expect(workflow.defaultPolicy).toMatchObject({
+			executionTimeout: 5 * 60 * 1000,
+			ttl: 30 * 60 * 1000,
+		});
+	});
+
+	it("does not declare warmup payload by default (rely on min workers >= 1)", () => {
+		expect(workflow.warmup).toBeUndefined();
+	});
+
+	it("warmup can be opted-in via enableWarmup: true and produces a schema-valid payload", () => {
+		const withWarmup = createFooocusSdxlWorkflow({
+			endpointId: "endpoint-x",
+			enableWarmup: true,
+		});
+		expect(withWarmup.warmup).toBeDefined();
+		const warmInput = withWarmup.warmup?.buildInput();
+		const parsed = withWarmup.inputSchema.parse(warmInput);
+		expect(parsed.prompt).toBe("warmup");
+		expect(parsed.num_inference_steps).toBe(1);
+	});
+
 	it("normalizes array outputs into images list", () => {
 		const output = workflow.parseOutput([
 			{ url: "https://x/y.png", finish_reason: "SUCCESS" },

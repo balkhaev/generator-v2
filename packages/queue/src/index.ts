@@ -154,6 +154,101 @@ export function createRedisConnection(redisUrl: string) {
 	});
 }
 
+export interface RedisPublisher {
+	close(): Promise<void>;
+	/**
+	 * Returns the number of Redis clients that received the message (raw
+	 * PUBLISH reply). 0 is common in horizontally scaled deployments where
+	 * a single instance only happens to talk to a different shard; callers
+	 * generally shouldn't act on this value.
+	 */
+	publish(channel: string, payload: string): Promise<number>;
+}
+
+/**
+ * Lightweight Redis publisher for fire-and-forget pub/sub events
+ * (e.g. config-change notifications consumed by other services).
+ *
+ * Uses bounded retries + offline-queue disabled so a flaky Redis cannot
+ * stall HTTP handlers that publish from a request hot path.
+ */
+export function createRedisPublisher(redisUrl: string): RedisPublisher {
+	const connection: Redis = new IORedis(redisUrl, {
+		commandTimeout: 1500,
+		connectTimeout: 2000,
+		enableOfflineQueue: false,
+		maxRetriesPerRequest: 2,
+	});
+	return {
+		async close() {
+			await connection.quit();
+		},
+		publish(channel, payload) {
+			return connection.publish(channel, payload);
+		},
+	};
+}
+
+export interface RedisSubscriber {
+	close(): Promise<void>;
+}
+
+export interface CreateRedisSubscriberOptions {
+	channel: string;
+	logger?: Pick<Console, "error" | "warn">;
+	onMessage(payload: string): void | Promise<void>;
+	redisUrl: string;
+}
+
+/**
+ * Subscribe to a single channel and invoke `onMessage` for each delivery.
+ *
+ * Notes:
+ * - Uses default `maxRetriesPerRequest: null` so reconnects keep the
+ *   subscription alive across Redis restarts/network blips.
+ * - `onMessage` exceptions are caught and logged so a single bad handler
+ *   doesn't tear down the subscriber.
+ */
+export function createRedisSubscriber(
+	options: CreateRedisSubscriberOptions
+): RedisSubscriber {
+	const connection: Redis = new IORedis(options.redisUrl, {
+		maxRetriesPerRequest: null,
+	});
+	connection.subscribe(options.channel).catch((error: unknown) =>
+		options.logger?.error?.("redis.subscribe.failed", {
+			channel: options.channel,
+			message: error instanceof Error ? error.message : "unknown",
+		})
+	);
+	connection.on("message", (incomingChannel: string, payload: string) => {
+		if (incomingChannel !== options.channel) {
+			return;
+		}
+		try {
+			const result = options.onMessage(payload);
+			if (result && typeof (result as Promise<void>).then === "function") {
+				(result as Promise<void>).catch((error: unknown) =>
+					options.logger?.error?.("redis.subscribe.handler.failed", {
+						channel: options.channel,
+						message: error instanceof Error ? error.message : "unknown",
+					})
+				);
+			}
+		} catch (error) {
+			options.logger?.error?.("redis.subscribe.handler.failed", {
+				channel: options.channel,
+				message: error instanceof Error ? error.message : "unknown",
+			});
+		}
+	});
+	return {
+		async close() {
+			await connection.quit();
+		},
+	};
+}
+
 export interface CreateAppRedisConnectionOptions {
 	/** ms; default 1500. Caps how long a single command may wait. */
 	commandTimeout?: number;

@@ -27,9 +27,12 @@ import type { DatasetBuilderSettings } from "@/domain/dataset-builder-settings";
 import type { LoraRegistryService } from "@/domain/loras";
 import type { PersonLoraTrainingControl } from "@/domain/person-lora-training-control";
 import type { PromptEnhanceSettings } from "@/domain/prompt-enhance-settings";
+import type { RunpodAdminService } from "@/domain/runpod-admin";
+import type { RunpodRegistryReloadBus } from "@/domain/runpod-registry-reload-bus";
 import type { TrainingProviderSettings } from "@/domain/training-provider-settings";
 import type { UsersService } from "@/domain/users";
 import type { WorkerSettingsReader } from "@/domain/worker-settings-store";
+import type { ScenarioRunpodBindingRepository } from "@/repositories/scenario-runpod-binding";
 import {
 	type AdminSettingsEnvResolver,
 	createAdminSettingsRoutes,
@@ -39,11 +42,13 @@ import { createInternalRoutes } from "@/routes/internal";
 import { createAdminLoraRoutes } from "@/routes/loras";
 import { createOpenRouterModelsRoutes } from "@/routes/openrouter-models";
 import { createPromptEnhanceProviderRoutes } from "@/routes/prompt-enhance-provider";
+import { createRunpodAdminRoutes } from "@/routes/runpod-admin";
 import {
 	createRuntimeConfigAdminRoutes,
 	createRuntimeConfigInternalRoutes,
 	type RuntimeConfigRoutesDeps,
 } from "@/routes/runtime-config";
+import { createScenarioRunpodBindingRoutes } from "@/routes/scenario-runpod-binding";
 import { createStorageRoutes } from "@/routes/storage";
 import {
 	createTrainingProviderRoutes,
@@ -83,12 +88,21 @@ interface AppOptions {
 		}
 	>;
 	promptEnhanceSettings?: PromptEnhanceSettings;
+	runpodAdminService?: RunpodAdminService;
+	/**
+	 * Optional. Когда задан — после успешных mutation по scenario-binding'у
+	 * админка публикует reload event, и generator-api/worker делают
+	 * graceful self-restart. RunpodAdminService получает тот же bus
+	 * напрямую (см. index.ts), отдельный проброс там не нужен.
+	 */
+	runpodRegistryReloadBus?: RunpodRegistryReloadBus;
 	runtimeConfig?: {
 		deps: RuntimeConfigRoutesDeps;
 		/** Token shared with consumer services for /api/internal/runtime-config. */
 		internalToken?: string;
 	};
 	s3Config?: S3StorageConfig;
+	scenarioRunpodBindingRepository?: ScenarioRunpodBindingRepository;
 	studioBaseUrl: string;
 	trainingProviderAvailability?: TrainingProviderAvailabilityResolver;
 	trainingProviderSettings?: TrainingProviderSettings;
@@ -309,6 +323,23 @@ export function createApp(options: AppOptions) {
 		app.route(
 			"/api/admin/loras",
 			createAdminLoraRoutes(options.loraRegistryService)
+		);
+	}
+
+	if (options.runpodAdminService) {
+		app.route(
+			"/api/admin/runpod",
+			createRunpodAdminRoutes(options.runpodAdminService)
+		);
+	}
+
+	if (options.scenarioRunpodBindingRepository) {
+		app.route(
+			"/api/admin/scenarios/runpod-binding",
+			createScenarioRunpodBindingRoutes({
+				reloadBus: options.runpodRegistryReloadBus,
+				repository: options.scenarioRunpodBindingRepository,
+			})
 		);
 	}
 

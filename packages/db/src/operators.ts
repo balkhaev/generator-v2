@@ -1,5 +1,6 @@
 import {
 	and as drizzleAnd,
+	asc as drizzleAsc,
 	desc as drizzleDesc,
 	eq as drizzleEq,
 	ilike as drizzleIlike,
@@ -10,6 +11,7 @@ import {
 } from "drizzle-orm";
 
 export const and = drizzleAnd;
+export const asc = drizzleAsc;
 export const desc = drizzleDesc;
 export const eq = drizzleEq;
 export const ilike = drizzleIlike;

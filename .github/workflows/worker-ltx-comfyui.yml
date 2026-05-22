@@ -63,3 +63,19 @@ jobs:
           echo "warning: could not mark ghcr package public; RunPod needs containerRegistryAuthId" >&2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wire RunPod ghcr registry auth
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: |
+          AUTH_ID=$(curl -fsSL -X POST "https://rest.runpod.io/v1/containerregistryauth" \
+            -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"ghcr-gha-${GITHUB_RUN_ID}\",\"username\":\"${{ github.actor }}\",\"password\":\"${GITHUB_TOKEN}\"}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          curl -fsSL -X POST "https://rest.runpod.io/v1/templates/esnxflkb5c/update" \
+            -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"imageName\":\"ghcr.io/balkhaev/worker-ltx-comfyui:v1\",\"containerRegistryAuthId\":\"${AUTH_ID}\",\"env\":{\"REFRESH_WORKER\":\"true\"}}"
+          echo "RunPod template wired with registry auth ${AUTH_ID}"

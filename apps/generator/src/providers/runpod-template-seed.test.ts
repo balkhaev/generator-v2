@@ -5,12 +5,16 @@ import { seedRunpodTemplatesFromEnv } from "@/providers/runpod-template-seed";
 describe("seedRunpodTemplatesFromEnv (resilience)", () => {
 	it("returns null when runpod_pod_template table is missing", async () => {
 		const fakeDb = {
-			execute() {
-				const error = new Error(
-					'relation "runpod_pod_template" does not exist'
-				);
-				(error as unknown as { code: string }).code = "42P01";
-				return Promise.reject(error);
+			select() {
+				return {
+					from() {
+						const error = new Error(
+							'relation "runpod_pod_template" does not exist'
+						);
+						(error as unknown as { code: string }).code = "42P01";
+						return Promise.reject(error);
+					},
+				};
 			},
 		};
 		const warns: unknown[] = [];
@@ -30,10 +34,14 @@ describe("seedRunpodTemplatesFromEnv (resilience)", () => {
 		expect(warns.length).toBeGreaterThan(0);
 	});
 
-	it("propagates unrelated execute errors", async () => {
+	it("propagates unrelated select errors", async () => {
 		const fakeDb = {
-			execute() {
-				return Promise.reject(new Error("connection refused"));
+			select() {
+				return {
+					from() {
+						return Promise.reject(new Error("connection refused"));
+					},
+				};
 			},
 		};
 		await expect(
@@ -46,8 +54,12 @@ describe("seedRunpodTemplatesFromEnv (resilience)", () => {
 
 	it("returns null when table is non-empty (idempotent)", async () => {
 		const fakeDb = {
-			execute() {
-				return Promise.resolve([{ count: 3 }]);
+			select() {
+				return {
+					from() {
+						return Promise.resolve([{ templateCount: 3 }]);
+					},
+				};
 			},
 		};
 		const result = await seedRunpodTemplatesFromEnv({

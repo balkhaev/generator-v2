@@ -1,10 +1,10 @@
 import { db } from "@generator/db";
-import { sql } from "@generator/db/operators";
 import {
 	runpodNetworkVolume,
 	runpodPodTemplate,
 	runpodPodTemplateVolume,
 } from "@generator/db/schema/runpod";
+import { count } from "drizzle-orm";
 
 type Db = typeof db;
 
@@ -91,50 +91,15 @@ function isMissingTableError(error: unknown): boolean {
 	return false;
 }
 
-/**
- * One-shot seed admin-managed RunPod templates с env-конфига если БД пуста.
- *
- * Идемпотентен: если в `runpod_pod_template` уже есть хотя бы одна запись —
- * сразу выходим. Это значит что после первого старта с env админка
- * становится source-of-truth, и удаление env-переменных не сломает кластер.
- *
- * Запускать на старте generator-процесса перед `loadRunpodWorkflowsFromDb`.
- */
-export async function seedRunpodTemplatesFromEnv(
-	options: { database?: Db; logger?: Pick<Console, "info" | "warn"> } = {}
-): Promise<SeedSummary | null> {
-	const database = options.database ?? db;
-	const logger = options.logger ?? console;
-
-	let count = 0;
-	try {
-		const rows = (await database.execute(
-			sql`select count(*)::int as count from runpod_pod_template`
-		)) as unknown as { count: number }[];
-		count = rows[0]?.count ?? 0;
-	} catch (error) {
-		if (isMissingTableError(error)) {
-			logger.warn?.("generator.runpod.seed.skipped.migration-pending", {
-				message: "runpod_pod_template table is missing — skipping seed",
-			});
-			return null;
-		}
-		throw error;
-	}
-
-	if (count > 0) {
-		return null;
-	}
-
-	const summary: SeedSummary = {
-		createdTemplates: [],
-		createdVolumes: [],
-	};
-
-	const fooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID?.trim();
-	if (fooocusEndpointId) {
-		const id = generateId("runpod_tpl");
-		await database.insert(runpodPodTemplate).values({
+async function seedFooocusTemplate(
+	database: Db,
+	summary: SeedSummary,
+	fooocusEndpointId: string
+): Promise<void> {
+	const id = generateId("runpod_tpl");
+	const inserted = await database
+		.insert(runpodPodTemplate)
+		.values({
 			defaultEnv: {},
 			description: "Seeded from RUNPOD_FOOOCUS_ENDPOINT_ID env",
 			enabled: "true",
@@ -144,18 +109,25 @@ export async function seedRunpodTemplatesFromEnv(
 			name: "Fooocus SDXL (env-seeded)",
 			runpodEndpointId: fooocusEndpointId,
 			workflowKey: "fooocus-sdxl",
-		});
-		summary.createdTemplates.push(id);
+		})
+		.onConflictDoNothing({ target: runpodPodTemplate.name })
+		.returning({ id: runpodPodTemplate.id });
+	if (inserted[0]) {
+		summary.createdTemplates.push(inserted[0].id);
 	}
+}
 
-	const ltxTemplateId =
-		process.env.RUNPOD_LTX23_POD_TEMPLATE_ID?.trim() || "p4f6rm9tb4";
-	const ltxVolumes = parseVolumesEnv(
-		process.env.RUNPOD_LTX23_POD_NETWORK_VOLUMES
-	);
-	if (ltxTemplateId && ltxVolumes.length > 0) {
-		const podTemplateId = generateId("runpod_tpl");
-		await database.insert(runpodPodTemplate).values({
+async function seedLtxPodTemplate(
+	database: Db,
+	logger: Pick<Console, "info" | "warn">,
+	summary: SeedSummary,
+	ltxTemplateId: string,
+	ltxVolumes: VolumeEnvEntry[]
+): Promise<boolean> {
+	const podTemplateId = generateId("runpod_tpl");
+	const inserted = await database
+		.insert(runpodPodTemplate)
+		.values({
 			cloudType:
 				process.env.RUNPOD_LTX23_POD_CLOUD_TYPE === "COMMUNITY"
 					? "COMMUNITY"
@@ -185,33 +157,106 @@ export async function seedRunpodTemplatesFromEnv(
 			),
 			volumeInGb: readPositiveInt(process.env.RUNPOD_LTX23_POD_VOLUME_GB, 90),
 			workflowKey: "ltx-2-3-video",
+		})
+		.onConflictDoNothing({ target: runpodPodTemplate.name })
+		.returning({ id: runpodPodTemplate.id });
+	if (!inserted[0]) {
+		logger.warn?.("generator.runpod.seed.ltx-template-already-exists", {
+			name: "LTX 2.3 video (env-seeded)",
 		});
-		summary.createdTemplates.push(podTemplateId);
+		return false;
+	}
+	const resolvedPodTemplateId = inserted[0].id;
+	summary.createdTemplates.push(resolvedPodTemplateId);
 
-		const volumeIds: string[] = [];
-		for (const [index, entry] of ltxVolumes.entries()) {
-			const id = generateId("runpod_vol");
-			await database.insert(runpodNetworkVolume).values({
-				datacenter: "unknown",
-				description: "Seeded from RUNPOD_LTX23_POD_NETWORK_VOLUMES env",
-				gpuTypeIds: entry.gpus,
-				id,
-				name:
-					entry.label?.trim() ||
-					`LTX volume ${index + 1} (${entry.id.slice(0, 8)})`,
-				runpodVolumeId: entry.id,
-				sizeGb: 0,
+	const volumeIds: string[] = [];
+	for (const [index, entry] of ltxVolumes.entries()) {
+		const id = generateId("runpod_vol");
+		await database.insert(runpodNetworkVolume).values({
+			datacenter: "unknown",
+			description: "Seeded from RUNPOD_LTX23_POD_NETWORK_VOLUMES env",
+			gpuTypeIds: entry.gpus,
+			id,
+			name:
+				entry.label?.trim() ||
+				`LTX volume ${index + 1} (${entry.id.slice(0, 8)})`,
+			runpodVolumeId: entry.id,
+			sizeGb: 0,
+		});
+		summary.createdVolumes.push(id);
+		volumeIds.push(id);
+	}
+	await database.insert(runpodPodTemplateVolume).values(
+		volumeIds.map((volumeId, index) => ({
+			podTemplateId: resolvedPodTemplateId,
+			priority: index,
+			volumeId,
+		}))
+	);
+	return true;
+}
+
+/**
+ * One-shot seed admin-managed RunPod templates с env-конфига если БД пуста.
+ *
+ * Идемпотентен: если в `runpod_pod_template` уже есть хотя бы одна запись —
+ * сразу выходим. Это значит что после первого старта с env админка
+ * становится source-of-truth, и удаление env-переменных не сломает кластер.
+ *
+ * Запускать на старте generator-процесса перед `loadRunpodWorkflowsFromDb`.
+ */
+export async function seedRunpodTemplatesFromEnv(
+	options: { database?: Db; logger?: Pick<Console, "info" | "warn"> } = {}
+): Promise<SeedSummary | null> {
+	const database = options.database ?? db;
+	const logger = options.logger ?? console;
+
+	let templateCount = 0;
+	try {
+		const rows = await database
+			.select({ templateCount: count() })
+			.from(runpodPodTemplate);
+		templateCount = rows[0]?.templateCount ?? 0;
+	} catch (error) {
+		if (isMissingTableError(error)) {
+			logger.warn?.("generator.runpod.seed.skipped.migration-pending", {
+				message: "runpod_pod_template table is missing — skipping seed",
 			});
-			summary.createdVolumes.push(id);
-			volumeIds.push(id);
+			return null;
 		}
-		await database.insert(runpodPodTemplateVolume).values(
-			volumeIds.map((volumeId, index) => ({
-				podTemplateId,
-				priority: index,
-				volumeId,
-			}))
+		throw error;
+	}
+
+	if (templateCount > 0) {
+		return null;
+	}
+
+	const summary: SeedSummary = {
+		createdTemplates: [],
+		createdVolumes: [],
+	};
+
+	const fooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID?.trim();
+	if (fooocusEndpointId) {
+		await seedFooocusTemplate(database, summary, fooocusEndpointId);
+	}
+
+	const ltxTemplateId =
+		process.env.RUNPOD_LTX23_POD_TEMPLATE_ID?.trim() || "p4f6rm9tb4";
+	const ltxVolumes = parseVolumesEnv(
+		process.env.RUNPOD_LTX23_POD_NETWORK_VOLUMES
+	);
+	if (ltxTemplateId && ltxVolumes.length > 0) {
+		const seeded = await seedLtxPodTemplate(
+			database,
+			logger,
+			summary,
+			ltxTemplateId,
+			ltxVolumes
 		);
+		if (!seeded && summary.createdTemplates.length === 0) {
+			return null;
+		}
 	}
 
 	if (summary.createdTemplates.length === 0) {

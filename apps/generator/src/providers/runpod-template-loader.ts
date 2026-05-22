@@ -8,6 +8,7 @@ import {
 import {
 	type AnyWorkflowDefinition,
 	createFooocusSdxlWorkflow,
+	createLtx23VideoServerlessWorkflow,
 	createLtx23VideoWorkflow,
 } from "@generator/runpod";
 
@@ -243,12 +244,8 @@ function buildLtx23Workflow(
 	tpl: LoadedTemplate,
 	logger: Pick<Console, "info" | "warn">
 ): AnyWorkflowDefinition | null {
-	if (tpl.mode !== "pod") {
-		logger.warn?.("runpod.template-loader.ltx-not-pod", {
-			mode: tpl.mode,
-			templateId: tpl.id,
-		});
-		return null;
+	if (tpl.mode === "serverless") {
+		return buildLtx23ServerlessWorkflow(tpl, logger);
 	}
 	if (!tpl.runpodTemplateId) {
 		logger.warn?.("runpod.template-loader.ltx-missing-template", {
@@ -279,5 +276,26 @@ function buildLtx23Workflow(
 			timeoutMs: tpl.timeoutMs ?? 60 * 60 * 1000,
 			volumeInGb: tpl.volumeInGb ?? 90,
 		},
+	});
+}
+
+function buildLtx23ServerlessWorkflow(
+	tpl: LoadedTemplate,
+	logger: Pick<Console, "info" | "warn">
+): AnyWorkflowDefinition | null {
+	if (!tpl.runpodEndpointId) {
+		logger.warn?.("runpod.template-loader.ltx-serverless-missing-endpoint", {
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	return createLtx23VideoServerlessWorkflow({
+		baseModelFilename:
+			process.env.RUNPOD_LTX23_SERVERLESS_BASE_MODEL?.trim() || undefined,
+		distillLoraFilename:
+			process.env.RUNPOD_LTX23_SERVERLESS_DISTILL_LORA?.trim() || undefined,
+		endpointId: tpl.runpodEndpointId,
+		id: "ltx-2-3-video",
+		webhookUrl: process.env.RUNPOD_LTX23_WEBHOOK_URL?.trim() || undefined,
 	});
 }

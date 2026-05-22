@@ -1,0 +1,150 @@
+import { describe, expect, it } from "bun:test";
+import { createLtx23VideoServerlessWorkflow } from "./ltx-2-3-video-serverless";
+
+const PNG_1X1_BASE64 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+const VALIDATION_ERROR_PATTERN = /validation failed/u;
+const NO_OUTPUT_IMAGES_PATTERN = /no output images/u;
+
+function buildFakeImageResponse(): Response {
+	const bytes = Uint8Array.from(atob(PNG_1X1_BASE64), (c) => c.charCodeAt(0));
+	const arrayBuffer = bytes.buffer.slice(
+		bytes.byteOffset,
+		bytes.byteOffset + bytes.byteLength
+	);
+	return new Response(arrayBuffer, {
+		headers: { "content-type": "image/png" },
+		status: 200,
+	});
+}
+
+describe("createLtx23VideoServerlessWorkflow", () => {
+	it("declares serverless mode + carries our default policy", () => {
+		const wf = createLtx23VideoServerlessWorkflow({
+			endpointId: "ep-test",
+		});
+		expect(wf.mode).toBe("serverless");
+		expect(wf.endpointId).toBe("ep-test");
+		expect(wf.id).toBe("ltx-2-3-video-serverless");
+		expect(wf.defaultPolicy?.executionTimeout).toBeGreaterThan(60_000);
+		expect(wf.defaultPolicy?.ttl).toBeGreaterThan(
+			wf.defaultPolicy?.executionTimeout ?? 0
+		);
+	});
+
+	it("builds RunPod payload: ComfyUI graph + inline base64 input image", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			buildFakeImageResponse()) as unknown as typeof fetch;
+		try {
+			const wf = createLtx23VideoServerlessWorkflow({
+				endpointId: "ep-test",
+			});
+			const payload = await wf.buildPayload(
+				{
+					inputImageUrl: "https://example.test/cat.png",
+					negativePrompt: "blurry",
+					numFrames: 24,
+					prompt: "cinematic shot of a cat",
+					seed: 1234,
+				},
+				{ requestId: "req-42" }
+			);
+			expect(payload.workflow).toBeDefined();
+			expect(payload.images).toEqual([
+				{
+					image: `data:image/png;base64,${PNG_1X1_BASE64}`,
+					name: "req-req-42.png",
+				},
+			]);
+			const graph = payload.workflow as Record<
+				string,
+				{ inputs: Record<string, unknown> }
+			>;
+			expect(graph["352"]?.inputs?.value).toBe("cinematic shot of a cat");
+			expect(graph["110"]?.inputs?.text).toBe("blurry");
+			expect(graph["115"]?.inputs?.noise_seed).toBe(1234);
+			expect(graph["167"]?.inputs?.image).toBe("req-req-42.png");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("applies custom base + distill filenames from config", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			buildFakeImageResponse()) as unknown as typeof fetch;
+		try {
+			const wf = createLtx23VideoServerlessWorkflow({
+				baseModelFilename: "diffusion_models/sulphur_dev_fp8mixed.safetensors",
+				distillLoraFilename: "loras/sulphur_distil_lora.safetensors",
+				endpointId: "ep-test",
+			});
+			const payload = await wf.buildPayload(
+				{
+					inputImageUrl: "https://example.test/cat.png",
+					prompt: "any",
+				},
+				{ requestId: "req-x" }
+			);
+			const graph = payload.workflow as Record<
+				string,
+				{ inputs: Record<string, unknown> }
+			>;
+			expect(graph["329"]?.inputs?.unet_name).toBe(
+				"diffusion_models/sulphur_dev_fp8mixed.safetensors"
+			);
+			expect(graph["134"]?.inputs?.lora_name).toBe(
+				"loras/sulphur_distil_lora.safetensors"
+			);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("parses serverless worker output (s3_url variant)", () => {
+		const wf = createLtx23VideoServerlessWorkflow({ endpointId: "ep" });
+		const output = wf.parseOutput({
+			images: [
+				{
+					data: "https://s3.test/out.mp4",
+					filename: "ComfyUI_00001_.mp4",
+					type: "s3_url",
+				},
+			],
+		});
+		expect(output.videoUrl).toBe("https://s3.test/out.mp4");
+	});
+
+	it("parses serverless worker output (base64 variant) into data URL", () => {
+		const wf = createLtx23VideoServerlessWorkflow({ endpointId: "ep" });
+		const output = wf.parseOutput({
+			images: [
+				{
+					data: "AAAA",
+					filename: "out.mp4",
+					type: "base64",
+				},
+			],
+		});
+		expect(output.videoUrl).toBe("data:video/mp4;base64,AAAA");
+	});
+
+	it("throws when worker returns explicit errors", () => {
+		const wf = createLtx23VideoServerlessWorkflow({ endpointId: "ep" });
+		expect(() =>
+			wf.parseOutput({
+				errors: ["ComfyUI graph validation failed"],
+				images: [],
+			})
+		).toThrow(VALIDATION_ERROR_PATTERN);
+	});
+
+	it("throws when worker returns no images", () => {
+		const wf = createLtx23VideoServerlessWorkflow({ endpointId: "ep" });
+		expect(() => wf.parseOutput({ images: [] })).toThrow(
+			NO_OUTPUT_IMAGES_PATTERN
+		);
+	});
+});

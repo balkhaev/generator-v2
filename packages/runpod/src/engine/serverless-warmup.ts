@@ -136,7 +136,9 @@ export function createServerlessWarmupRunner<TInput, TOutput>(
 
 		const input = warmup.buildInput();
 		const parsed = workflow.inputSchema.parse(input);
-		const payload = workflow.buildPayload(parsed);
+		const payload = await workflow.buildPayload(parsed, {
+			requestId: `warmup-${Date.now().toString(36)}`,
+		});
 		try {
 			const submission = await api.runSync({
 				endpointId: workflow.endpointId,

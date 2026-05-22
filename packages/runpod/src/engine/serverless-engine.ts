@@ -173,11 +173,14 @@ export function createServerlessEngine<TInput, TOutput>(
 			return buildStatusOutput(jobId, status, jobId);
 		},
 
-		async submit(input, _options): Promise<EngineSubmission> {
-			// serverless engine doesn't allocate volumes itself, so stickyKey is
-			// accepted (for a uniform Engine contract) but ignored here.
+		async submit(input, options): Promise<EngineSubmission> {
+			// stickyKey is reused as opaque requestId for the workflow's
+			// buildPayload context: pod engine maps it to a network volume,
+			// serverless engine just forwards it so payload builders can stamp
+			// stable filenames (`req-{id}.png`) for inline image uploads.
 			const parsed = workflow.inputSchema.parse(input);
-			const payload = workflow.buildPayload(parsed);
+			const requestId = options?.stickyKey ?? crypto.randomUUID();
+			const payload = await workflow.buildPayload(parsed, { requestId });
 			const policy = mergedPolicy
 				? (mergedPolicy as Record<string, unknown>)
 				: undefined;

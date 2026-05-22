@@ -1,0 +1,57 @@
+# ComfyUI extra_model_paths — мапит модели на network volume
+# (`/runpod-volume`) в стандартные ключи ComfyUI loaders'ов.
+#
+# Наши volumes имеют унаследованную от pod-mode структуру
+# `/workspace/ComfyUI/models/...`, поэтому base_path = /runpod-volume/workspace.
+# Если volume пустой / без `workspace/` — ComfyUI просто не найдёт модели,
+# и worker сразу ответит `validation` ошибкой при первом /prompt
+# (см. NETWORK_VOLUME_DEBUG=true для подсказок в логах).
+#
+# RunPod volumes for LTX 2.3 заполняются через
+# `packages/runpod/scripts/warmup-volumes.ts` (LTX base) и
+# `packages/runpod/scripts/seed-sulphur-volumes.ts` (Sulphur base).
+
+ltx_volume:
+  base_path: /runpod-volume/workspace/ComfyUI
+
+  checkpoints: models/checkpoints/
+  clip: models/clip/
+  clip_vision: models/clip_vision/
+  configs: models/configs/
+  controlnet: models/controlnet/
+  diffusers: models/diffusers/
+  diffusion_models: models/diffusion_models/
+  embeddings: models/embeddings/
+  hypernetworks: models/hypernetworks/
+  loras: models/loras/
+  style_models: models/style_models/
+  text_encoders: models/text_encoders/
+  unet: models/unet/
+  upscale_models: models/upscale_models/
+  vae: models/vae/
+  vae_approx: models/vae_approx/
+  custom_nodes: custom_nodes/
+
+# Дополнительный fallback на случай если volume организован "плоско"
+# (модели прямо в /runpod-volume/models/...). Это нативный layout
+# worker-comfyui — используется если кто-то заливал модели через
+# RunPod S3 API или fresh volumes без pod-mode prehistory.
+ltx_volume_flat:
+  base_path: /runpod-volume
+
+  checkpoints: models/checkpoints/
+  clip: models/clip/
+  clip_vision: models/clip_vision/
+  configs: models/configs/
+  controlnet: models/controlnet/
+  diffusers: models/diffusers/
+  diffusion_models: models/diffusion_models/
+  embeddings: models/embeddings/
+  hypernetworks: models/hypernetworks/
+  loras: models/loras/
+  style_models: models/style_models/
+  text_encoders: models/text_encoders/
+  unet: models/unet/
+  upscale_models: models/upscale_models/
+  vae: models/vae/
+  vae_approx: models/vae_approx/

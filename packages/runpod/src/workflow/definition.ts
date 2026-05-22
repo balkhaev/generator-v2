@@ -49,8 +49,28 @@ export interface ServerlessWarmup<TInput> {
 	waitMs?: number;
 }
 
+export interface ServerlessPayloadContext {
+	/**
+	 * Opaque request id (= executionId на стороне generator-worker), стабильный
+	 * между retry'ями одной задачи. Workflow'ы используют его как seed для
+	 * детерминированных имён файлов (например `req-{id}.png` для аплоада
+	 * входной картинки), чтобы worker мог matchи'ть payload'у `images[]`
+	 * со ссылками внутри ComfyUI graph'а.
+	 */
+	requestId: string;
+}
+
 export interface ServerlessWorkflow<TInput, TOutput> {
-	buildPayload(input: TInput): Record<string, unknown>;
+	/**
+	 * Билдит RunPod `input` payload. Может быть async — например, скачивание
+	 * входной картинки + base64-encoding для voiceover/video workflow'ов,
+	 * где worker'у нужно отдать данные inline (без HTTP listener'а у serverless
+	 * worker'а нет API подгрузки файлов после старта job'а).
+	 */
+	buildPayload(
+		input: TInput,
+		ctx?: ServerlessPayloadContext
+	): Record<string, unknown> | Promise<Record<string, unknown>>;
 	/** Defaults применяются к каждому submit/runSync (можно переопределить per-call). */
 	defaultPolicy?: RunpodPolicy;
 	endpointId: string;

@@ -108,6 +108,7 @@ export type {
 	PodSuccessContext,
 	PodWorkflow,
 	RunpodPolicy,
+	ServerlessPayloadContext,
 	ServerlessWarmup,
 	ServerlessWorkflow,
 	WorkflowDefinition,
@@ -144,3 +145,7 @@ export {
 	type Ltx23WorkflowConfig,
 	ltx23InputSchema,
 } from "./workflows/ltx-2-3-video";
+export {
+	createLtx23VideoServerlessWorkflow,
+	type Ltx23ServerlessWorkflowConfig,
+} from "./workflows/ltx-2-3-video-serverless";

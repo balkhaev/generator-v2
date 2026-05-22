@@ -107,7 +107,9 @@ async function main(): Promise<void> {
 	if (!workflow.warmup) {
 		throw new Error("fooocus workflow has no warmup configuration");
 	}
-	const payload = workflow.buildPayload(workflow.warmup.buildInput());
+	const payload = await workflow.buildPayload(workflow.warmup.buildInput(), {
+		requestId: `health-${Date.now().toString(36)}`,
+	});
 	console.log(`[${tsLabel()}] ping.start`, { waitMs: args.waitMs });
 	const startedAt = Date.now();
 	const result = await api.runSync({

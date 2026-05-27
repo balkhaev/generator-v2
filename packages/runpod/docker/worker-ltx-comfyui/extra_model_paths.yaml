@@ -1,16 +1,20 @@
 # ComfyUI extra_model_paths — мапит модели на network volume
 # (`/runpod-volume`) в стандартные ключи ComfyUI loaders'ов.
 #
-# Наши volumes имеют унаследованную от pod-mode структуру
-# `/workspace/ComfyUI/models/...`, поэтому base_path = /runpod-volume/workspace.
-# Если volume пустой / без `workspace/` — ComfyUI просто не найдёт модели,
-# и worker сразу ответит `validation` ошибкой при первом /prompt
+# Структура volume унаследована от pod-mode (`volumeMountPath: /workspace`
+# в `seed-sulphur-volumes.ts`). В pod'е seeder делает `mkdir
+# /workspace/ComfyUI/models/...`, что физически создаёт на volume
+# `/ComfyUI/models/...` (от корня volume). В serverless этот же volume
+# монтируется в `/runpod-volume`, поэтому полный путь становится
+# `/runpod-volume/ComfyUI/models/...` — БЕЗ префикса `workspace/`.
+#
+# Если volume пустой / без `ComfyUI/models` — ComfyUI просто не найдёт
+# модели, и worker сразу ответит `validation` ошибкой при первом /prompt
 # (см. NETWORK_VOLUME_DEBUG=true для подсказок в логах).
 #
 # RunPod volumes for LTX 2.3 заполняются через
 # `packages/runpod/scripts/warmup-volumes.ts` (LTX base) и
 # `packages/runpod/scripts/seed-sulphur-volumes.ts` (Sulphur base).
-
 #
 # IMPORTANT: НЕ маппим `custom_nodes` с volume. На исторических volumes
 # (унаследованных от pod-mode `ls250824/run-comfyui-ltx`) лежат старые
@@ -19,7 +23,7 @@
 # worker-comfyui:5.8.5-base). Custom nodes ставим только из image
 # (`comfy-node-install` в Dockerfile).
 ltx_volume:
-  base_path: /runpod-volume/workspace/ComfyUI
+  base_path: /runpod-volume/ComfyUI
 
   checkpoints: models/checkpoints/
   clip: models/clip/

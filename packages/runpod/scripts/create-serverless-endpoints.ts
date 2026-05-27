@@ -39,9 +39,17 @@ const RUNPOD_BASE_URL = "https://rest.runpod.io/v1";
 
 const TEMPLATE_NAME = "ltx-2-3-video-serverless";
 const ENDPOINT_NAME = "ltx-2-3-video-serverless";
+// Always-warm defaults. `WORKERS_MIN=1` гарантирует, что хотя бы один worker
+// инициализирован 24/7 — это убирает 60-180с cold-start LTX volume mount +
+// ComfyUI boot. Биллится посекундно за idle worker. Дороже, чем стандартный
+// `WORKERS_MIN=0`, но нужный для интерактивного Studio UX.
+//
+// `IDLE_TIMEOUT_SEC=300` — worker остаётся warm 5 мин после job вместо 120с,
+// что в комбинации с FlashBoot (`flashboot:true`) даёт sub-second pickup для
+// burst-нагрузки.
 const DEFAULT_WORKERS_MAX = 5;
-const DEFAULT_WORKERS_MIN = 0;
-const DEFAULT_IDLE_TIMEOUT_SEC = 120;
+const DEFAULT_WORKERS_MIN = 1;
+const DEFAULT_IDLE_TIMEOUT_SEC = 300;
 const DEFAULT_EXEC_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_CONTAINER_DISK_GB = 20;
 const DEFAULT_GPU_PRIORITY = [

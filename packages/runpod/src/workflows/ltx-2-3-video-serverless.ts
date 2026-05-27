@@ -27,6 +27,12 @@ const MIN_OUTPUT_EDGE_PX = 256;
 const RANDOM_SEED_BITS = 24;
 const SERVERLESS_EXECUTION_TIMEOUT_MS = 15 * 60 * 1000;
 const SERVERLESS_TTL_MS = 60 * 60 * 1000;
+/** Trusted S3 sample — тот же URL, что в smoke-ltx-serverless.ts. */
+const WARMUP_INPUT_IMAGE_URL =
+	"https://hel1.your-objectstorage.com/generator/studio-inputs/smoke/sample.png";
+const WARMUP_FRAMES = 17;
+const WARMUP_EXECUTION_TIMEOUT_MS = 12 * 60 * 1000;
+const WARMUP_TTL_MS = 15 * 60 * 1000;
 const NEGATIVE_PROMPT_DEFAULT =
 	"blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud";
 
@@ -68,6 +74,12 @@ export interface Ltx23ServerlessWorkflowConfig {
 	 * исполнение = дешевле serverless).
 	 */
 	distillLoraFilename?: string;
+	/**
+	 * Периодический warm-up ping через `createServerlessWarmupRunner`.
+	 * Основной путь без cold start — `workersMin ≥ 1` на endpoint'е; warmup
+	 * подстраховывает, если idle worker умер (crash / redeploy image).
+	 */
+	enableWarmup?: boolean;
 	endpointId: string;
 	id?: string;
 	webhookUrl?: string;
@@ -76,6 +88,7 @@ export interface Ltx23ServerlessWorkflowConfig {
 export function createLtx23VideoServerlessWorkflow(
 	config: Ltx23ServerlessWorkflowConfig
 ): ServerlessWorkflow<Ltx23Input, Ltx23Output> {
+	const enableWarmup = config.enableWarmup ?? false;
 	const baseModelFilename =
 		config.baseModelFilename ?? DEFAULT_BASE_MODEL_FILENAME;
 	const distillLoraFilename =
@@ -113,6 +126,30 @@ export function createLtx23VideoServerlessWorkflow(
 		parseOutput(raw: unknown): Ltx23Output {
 			return parseServerlessOutput(raw);
 		},
+		warmup: enableWarmup
+			? {
+					buildInput() {
+						return {
+							cfgScale: 1,
+							fps: 8,
+							height: 512,
+							inputImageUrl: WARMUP_INPUT_IMAGE_URL,
+							negativePrompt: "",
+							numFrames: WARMUP_FRAMES,
+							prompt: "warmup",
+							steps: 1,
+							width: 512,
+						} satisfies Ltx23Input;
+					},
+					policy: {
+						executionTimeout: WARMUP_EXECUTION_TIMEOUT_MS,
+						lowPriority: true,
+						ttl: WARMUP_TTL_MS,
+					},
+					skipWhenWarmersAvailable: true,
+					waitMs: 30_000,
+				}
+			: undefined,
 		webhookUrl: config.webhookUrl,
 	};
 }

@@ -26,12 +26,25 @@ describe("createLtx23VideoServerlessWorkflow", () => {
 			endpointId: "ep-test",
 		});
 		expect(wf.mode).toBe("serverless");
+		expect(wf.warmup).toBeUndefined();
 		expect(wf.endpointId).toBe("ep-test");
 		expect(wf.id).toBe("ltx-2-3-video-serverless");
 		expect(wf.defaultPolicy?.executionTimeout).toBeGreaterThan(60_000);
 		expect(wf.defaultPolicy?.ttl).toBeGreaterThan(
 			wf.defaultPolicy?.executionTimeout ?? 0
 		);
+	});
+
+	it("declares warmup payload when enableWarmup is true", () => {
+		const wf = createLtx23VideoServerlessWorkflow({
+			enableWarmup: true,
+			endpointId: "ep-test",
+		});
+		expect(wf.warmup).toBeDefined();
+		const input = wf.warmup?.buildInput();
+		expect(input?.prompt).toBe("warmup");
+		expect(input?.steps).toBe(1);
+		expect(input?.numFrames).toBe(17);
 	});
 
 	it("builds RunPod payload: ComfyUI graph + inline base64 input image", async () => {

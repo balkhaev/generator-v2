@@ -79,5 +79,5 @@ jobs:
           curl -fsSL -X POST "https://rest.runpod.io/v1/endpoints/hr1a398xx75thx/update" \
             -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d '{"templateId":"esnxflkb5c","flashboot":true,"workersMin":0,"workersMax":2}'
-          echo "RunPod template wired with public image"
+            -d '{"templateId":"esnxflkb5c","flashboot":true,"workersMin":1,"workersMax":2,"idleTimeout":300,"scalerType":"QUEUE_DELAY","scalerValue":4}'
+          echo "RunPod template wired with public image (always-warm: min=1, idle=300s)"

@@ -294,6 +294,7 @@ function buildLtx23ServerlessWorkflow(
 			process.env.RUNPOD_LTX23_SERVERLESS_BASE_MODEL?.trim() || undefined,
 		distillLoraFilename:
 			process.env.RUNPOD_LTX23_SERVERLESS_DISTILL_LORA?.trim() || undefined,
+		enableWarmup: process.env.RUNPOD_LTX23_ENABLE_WARMUP !== "false",
 		endpointId: tpl.runpodEndpointId,
 		id: "ltx-2-3-video",
 		webhookUrl: process.env.RUNPOD_LTX23_WEBHOOK_URL?.trim() || undefined,

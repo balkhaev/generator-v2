@@ -21,6 +21,7 @@ import { createServerlessApi } from "../src/api/serverless";
 import { createServerlessWarmupRunner } from "../src/engine/serverless-warmup";
 import { createRunpodHttpClient } from "../src/http/client";
 import { createFooocusSdxlWorkflow } from "../src/workflows/fooocus-sdxl";
+import { createLtx23VideoServerlessWorkflow } from "../src/workflows/ltx-2-3-video-serverless";
 
 interface CliArgs {
 	endpointId?: string;
@@ -67,11 +68,13 @@ async function main(): Promise<void> {
 	if (!apiKey) {
 		throw new Error("RUNPOD_API_KEY is required");
 	}
+	const ltxEndpointId = process.env.RUNPOD_LTX23_SERVERLESS_ENDPOINT_ID?.trim();
+	const fooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID?.trim();
 	const endpointId =
-		args.endpointId ?? process.env.RUNPOD_FOOOCUS_ENDPOINT_ID ?? null;
+		args.endpointId ?? ltxEndpointId ?? fooocusEndpointId ?? null;
 	if (!endpointId) {
 		throw new Error(
-			"--endpoint=<id> or RUNPOD_FOOOCUS_ENDPOINT_ID env var is required"
+			"--endpoint=<id> or RUNPOD_LTX23_SERVERLESS_ENDPOINT_ID / RUNPOD_FOOOCUS_ENDPOINT_ID is required"
 		);
 	}
 
@@ -81,10 +84,16 @@ async function main(): Promise<void> {
 		retry: { maxAttempts: 5 },
 	});
 	const api = createServerlessApi(http);
-	const workflow = createFooocusSdxlWorkflow({
-		endpointId,
-		enableWarmup: true,
-	});
+	const workflow =
+		endpointId === ltxEndpointId
+			? createLtx23VideoServerlessWorkflow({
+					enableWarmup: true,
+					endpointId,
+				})
+			: createFooocusSdxlWorkflow({
+					enableWarmup: true,
+					endpointId,
+				});
 
 	const runner = createServerlessWarmupRunner({
 		api,

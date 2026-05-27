@@ -16,6 +16,10 @@ import { createInferenceRouter } from "@/providers/inference-router";
 import { createReplicateClient } from "@/providers/replicate";
 import { createRunpodClient } from "@/providers/runpod";
 import { startRunpodRegistryReloadWatcher } from "@/providers/runpod-registry-reload-watcher";
+import {
+	startRunpodServerlessWarmupRunners,
+	stopRunpodServerlessWarmupRunners,
+} from "@/providers/runpod-serverless-warmup";
 import { loadRunpodWorkflowsFromDb } from "@/providers/runpod-template-loader";
 import { seedRunpodTemplatesFromEnv } from "@/providers/runpod-template-seed";
 import {
@@ -190,6 +194,16 @@ if (reaper) {
 	});
 }
 
+const runpodWarmupRunners =
+	runpodApiKey && runpodWorkflows.length > 0
+		? startRunpodServerlessWarmupRunners({
+				apiKey: runpodApiKey,
+				baseUrl: env.RUNPOD_API_BASE_URL,
+				logger: console,
+				workflows: runpodWorkflows,
+			})
+		: [];
+
 const inferenceClient = createInferenceRouter({
 	civitai: civitaiApiKey
 		? createCivitaiClient({
@@ -267,6 +281,7 @@ await new Promise<void>((resolve) => {
 
 		isShuttingDown = true;
 		reaper?.stop();
+		await stopRunpodServerlessWarmupRunners(runpodWarmupRunners);
 		await worker.close();
 		await runpodReloadWatcher?.close();
 		await eventPublisher?.close();

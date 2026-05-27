@@ -61,8 +61,8 @@ jobs:
               const query = `
                 query($owner: String!, $repo: String!) {
                   repository(owner: $owner, name: $repo) {
-                    packages(first: 50, packageType: CONTAINER) {
-                      nodes { id name }
+                    packages(first: 50) {
+                      nodes { id name packageType }
                     }
                   }
                 }`;
@@ -74,8 +74,8 @@ jobs:
               const query = `
                 query {
                   viewer {
-                    packages(first: 50, packageType: CONTAINER) {
-                      nodes { id name }
+                    packages(first: 50) {
+                      nodes { id name packageType }
                     }
                   }
                 }`;

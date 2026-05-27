@@ -47,26 +47,70 @@ jobs:
             ghcr.io/balkhaev/worker-ltx-comfyui:latest
 
       - name: Publish ghcr package
-        run: |
-          for pkg in worker-ltx-comfyui generator-v2/worker-ltx-comfyui; do
-            encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${pkg}', safe=''))")
-            if curl -fsSL -X PATCH \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/user/packages/container/${encoded}/visibility" \
-              -d '{"visibility":"public"}'; then
-              echo "public: ${pkg}"
-              exit 0
-            fi
-          done
-          echo "warning: could not mark ghcr package public; RunPod needs containerRegistryAuthId" >&2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const targetNames = new Set([
+              "worker-ltx-comfyui",
+              `${repo}/worker-ltx-comfyui`,
+            ]);
+
+            async function listRepoPackages() {
+              const query = `
+                query($owner: String!, $repo: String!) {
+                  repository(owner: $owner, name: $repo) {
+                    packages(first: 50, packageType: CONTAINER) {
+                      nodes { id name }
+                    }
+                  }
+                }`;
+              const data = await github.graphql(query, { owner, repo });
+              return data.repository.packages.nodes;
+            }
+
+            async function listUserPackages() {
+              const query = `
+                query {
+                  viewer {
+                    packages(first: 50, packageType: CONTAINER) {
+                      nodes { id name }
+                    }
+                  }
+                }`;
+              const data = await github.graphql(query);
+              return data.viewer.packages.nodes;
+            }
+
+            const candidates = [
+              ...(await listRepoPackages()),
+              ...(await listUserPackages()),
+            ];
+            const match = candidates.find((pkg) =>
+              [...targetNames].some(
+                (name) => pkg.name === name || pkg.name.endsWith("/worker-ltx-comfyui")
+              )
+            );
+            if (!match) {
+              core.warning("worker-ltx-comfyui package not found; skipping visibility update");
+              return;
+            }
+
+            const mutation = `
+              mutation($packageId: ID!) {
+                updatePackage(input: { packageId: $packageId, visibility: PUBLIC }) {
+                  package { id name visibility }
+                }
+              }`;
+            const result = await github.graphql(mutation, { packageId: match.id });
+            core.info(
+              `public: ${result.updatePackage.package.name} -> ${result.updatePackage.package.visibility}`
+            );
 
       - name: Wire RunPod ghcr registry auth
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
         run: |
           AUTH_ID=$(curl -fsSL -X POST "https://rest.runpod.io/v1/containerregistryauth" \
@@ -78,4 +122,8 @@ jobs:
             -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "{\"imageName\":\"ghcr.io/balkhaev/worker-ltx-comfyui:v1\",\"containerRegistryAuthId\":\"${AUTH_ID}\",\"env\":{\"REFRESH_WORKER\":\"true\"}}"
+          curl -fsSL -X POST "https://rest.runpod.io/v1/endpoints/hr1a398xx75thx/update" \
+            -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"templateId\":\"esnxflkb5c\",\"flashboot\":false,\"workersMin\":0,\"workersMax\":1}"
           echo "RunPod template wired with registry auth ${AUTH_ID}"

@@ -46,6 +46,13 @@ const NODE_LORA_LOADER = "366";
 // загрузчики этих типов в шаблоне, поэтому маппинг однозначный.
 const NODE_UNET_LOADER = "329";
 const NODE_DISTILL_LORA = "134";
+// VAEDecode → IMAGE батч из всех кадров. На этот же узел смотрит и
+// VHS_VideoCombine (mp4), и наш fallback SaveImage (PNG frames).
+const NODE_VAE_DECODE_IMAGES = "364";
+// Уникальный id для injected стокового SaveImage. Берём заведомо свободный
+// диапазон (> 1000), чтобы гарантированно не конфликтовать с ручными правками
+// LVRAM-шаблона.
+const NODE_FALLBACK_SAVE_IMAGE = "9001";
 
 export interface Ltx23ServerlessWorkflowConfig {
 	/**
@@ -170,6 +177,13 @@ async function buildPayloadInternal(
 			parsed.loraScale
 		);
 	}
+	// Fallback стоковый SaveImage. Если custom `VHS_VideoCombine` по какой-то
+	// причине не загрузился в worker'е (несовпадение версий ComfyUI ↔
+	// `comfyui-videohelpersuite`, упавший import и т.п.), ComfyUI выкинет всю
+	// audio/video-ветку и отдаст `prompt_no_outputs`. Стоковый SaveImage
+	// гарантирует, что в графе всегда есть хотя бы один OUTPUT_NODE и worker
+	// вернёт base64-кадры даже в деградированном режиме.
+	ensureFallbackSaveImage(graph);
 	return {
 		images: [
 			{
@@ -203,22 +217,45 @@ function parseServerlessOutput(raw: unknown): Ltx23Output {
 			`worker-comfyui returned errors: ${parsed.errors.join("; ")}`
 		);
 	}
-	const first = parsed.images?.[0];
-	if (!first) {
+	if (!parsed.images || parsed.images.length === 0) {
 		throw new Error(
 			"worker-comfyui returned no output images — workflow probably failed silently"
 		);
 	}
-	const videoUrl =
-		first.type === "s3_url"
-			? first.data
-			: `data:video/mp4;base64,${first.data}`;
-	return {
-		podConsoleUrl: "",
-		podId: "",
-		requestId: "",
-		videoUrl,
-	};
+	// Предпочитаем mp4 от VHS_VideoCombine; PNG-frames от fallback SaveImage
+	// допускаем только если ничего видео-форматного нет (деградированный
+	// режим — VHS не загрузился). Это не валидный UI-результат, но он даёт
+	// внятную ошибку с конкретным filename вместо пустого ответа.
+	const video = parsed.images.find((item) => isVideoOutput(item));
+	if (video) {
+		return {
+			podConsoleUrl: "",
+			podId: "",
+			requestId: "",
+			videoUrl:
+				video.type === "s3_url"
+					? video.data
+					: `data:video/mp4;base64,${video.data}`,
+		};
+	}
+	const firstFilename = parsed.images[0]?.filename ?? "<no-filename>";
+	throw new Error(
+		`worker-comfyui returned only image outputs (e.g. ${firstFilename}); ` +
+			"VHS_VideoCombine likely failed to register in this ComfyUI build"
+	);
+}
+
+const VIDEO_FILENAME_RE = /\.(mp4|webm|mov|mkv|gif)$/i;
+
+function isVideoOutput(item: { data: string; filename?: string }): boolean {
+	const filename = item.filename ?? "";
+	if (VIDEO_FILENAME_RE.test(filename)) {
+		return true;
+	}
+	if (item.data.startsWith("data:video/")) {
+		return true;
+	}
+	return false;
 }
 
 function buildInputImageFilename(requestId: string): string {
@@ -236,6 +273,25 @@ function patchNodeInputs(
 		return;
 	}
 	node.inputs = { ...node.inputs, ...patch };
+}
+
+function ensureFallbackSaveImage(
+	graph: Record<string, ComfyUINodeApiInput>
+): void {
+	if (graph[NODE_FALLBACK_SAVE_IMAGE]) {
+		return;
+	}
+	if (!graph[NODE_VAE_DECODE_IMAGES]) {
+		return;
+	}
+	graph[NODE_FALLBACK_SAVE_IMAGE] = {
+		_meta: { title: "Fallback SaveImage" },
+		class_type: "SaveImage",
+		inputs: {
+			filename_prefix: "ltx-23-frames",
+			images: [NODE_VAE_DECODE_IMAGES, 0],
+		},
+	};
 }
 
 function replaceLoraManagerWithStandardLoader(

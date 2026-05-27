@@ -6,6 +6,7 @@ const PNG_1X1_BASE64 =
 
 const VALIDATION_ERROR_PATTERN = /validation failed/u;
 const NO_OUTPUT_IMAGES_PATTERN = /no output images/u;
+const ONLY_IMAGE_OUTPUTS_PATTERN = /only image outputs/u;
 
 function buildFakeImageResponse(): Response {
 	const bytes = Uint8Array.from(atob(PNG_1X1_BASE64), (c) => c.charCodeAt(0));
@@ -66,6 +67,14 @@ describe("createLtx23VideoServerlessWorkflow", () => {
 			expect(graph["110"]?.inputs?.text).toBe("blurry");
 			expect(graph["115"]?.inputs?.noise_seed).toBe(1234);
 			expect(graph["167"]?.inputs?.image).toBe("req-req-42.png");
+			// Fallback стоковый SaveImage инжектится поверх VAEDecode (node 364),
+			// чтобы ComfyUI не выдавал prompt_no_outputs, даже если кастомный
+			// VHS_VideoCombine не зарегистрирован в worker'е.
+			expect(graph["9001"]).toBeDefined();
+			expect(
+				(graph["9001"] as unknown as { class_type: string }).class_type
+			).toBe("SaveImage");
+			expect(graph["9001"]?.inputs?.images).toEqual(["364", 0]);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
@@ -146,5 +155,39 @@ describe("createLtx23VideoServerlessWorkflow", () => {
 		expect(() => wf.parseOutput({ images: [] })).toThrow(
 			NO_OUTPUT_IMAGES_PATTERN
 		);
+	});
+
+	it("prefers video output over fallback PNG frames", () => {
+		const wf = createLtx23VideoServerlessWorkflow({ endpointId: "ep" });
+		const output = wf.parseOutput({
+			images: [
+				{
+					data: "iVBORw0KGgo=",
+					filename: "ltx-23-frames_00001_.png",
+					type: "base64",
+				},
+				{
+					data: "https://s3.test/out.mp4",
+					filename: "LTX-23-i2v_00001_.mp4",
+					type: "s3_url",
+				},
+			],
+		});
+		expect(output.videoUrl).toBe("https://s3.test/out.mp4");
+	});
+
+	it("throws when worker only returned PNG frames (VHS_VideoCombine missing)", () => {
+		const wf = createLtx23VideoServerlessWorkflow({ endpointId: "ep" });
+		expect(() =>
+			wf.parseOutput({
+				images: [
+					{
+						data: "iVBORw0KGgo=",
+						filename: "ltx-23-frames_00001_.png",
+						type: "base64",
+					},
+				],
+			})
+		).toThrow(ONLY_IMAGE_OUTPUTS_PATTERN);
 	});
 });

@@ -641,7 +641,7 @@ describe("generator api", () => {
 				return Promise.resolve({
 					artifacts: [],
 					callback: null,
-					createdAt: new Date(Date.now() - 5 * 60_000),
+					createdAt: new Date(Date.now() - 10 * 60_000),
 					errorSummary: null,
 					id: staleExecutionId,
 					inputImageUrl: null,
@@ -653,7 +653,7 @@ describe("generator api", () => {
 					prompt: "portrait photo of a woman",
 					queuePosition: null,
 					status: "queued" as const,
-					updatedAt: new Date(Date.now() - 3 * 60_000),
+					updatedAt: new Date(Date.now() - 7 * 60_000),
 					workflowKey: "fal-zimage-turbo",
 				} satisfies ExecutionEntity);
 			},
@@ -661,7 +661,7 @@ describe("generator api", () => {
 				return Promise.resolve({
 					artifacts: [],
 					callback: null,
-					createdAt: new Date(Date.now() - 5 * 60_000),
+					createdAt: new Date(Date.now() - 10 * 60_000),
 					errorSummary: input.errorSummary ?? null,
 					id: staleExecutionId,
 					inputImageUrl: null,
@@ -739,7 +739,7 @@ describe("generator api", () => {
 				return Promise.resolve({
 					artifacts: [],
 					callback: null,
-					createdAt: new Date(Date.now() - 20 * 60_000),
+					createdAt: new Date(Date.now() - 25 * 60_000),
 					errorSummary: null,
 					id: staleExecutionId,
 					inputImageUrl: null,
@@ -751,7 +751,7 @@ describe("generator api", () => {
 					prompt: "portrait photo of a woman",
 					queuePosition: null,
 					status: "queued" as const,
-					updatedAt: new Date(Date.now() - 3 * 60_000),
+					updatedAt: new Date(Date.now() - 8 * 60_000),
 					workflowKey: "fal-zimage-turbo",
 				} satisfies ExecutionEntity);
 			},
@@ -760,7 +760,7 @@ describe("generator api", () => {
 				return Promise.resolve({
 					artifacts: [],
 					callback: null,
-					createdAt: new Date(Date.now() - 20 * 60_000),
+					createdAt: new Date(Date.now() - 25 * 60_000),
 					errorSummary: input.errorSummary ?? null,
 					id: staleExecutionId,
 					inputImageUrl: null,

@@ -50,8 +50,31 @@ interface ExecutionContext {
 	debugCorrelationId?: string;
 }
 
-const STUCK_QUEUE_RESUBMIT_AFTER_MS = 2 * 60_000;
-const STUCK_QUEUE_FAIL_AFTER_MS = 15 * 60_000;
+// Заметка: для RunPod serverless с большими volume-моделями (LTX) cold-start
+// pickup может быть 60-180с даже с flashboot. Слишком агрессивный resubmit
+// сваливает execution в бесконечный cancel→resubmit loop, пока не упрётся в
+// STUCK_QUEUE_FAIL_AFTER_MS. Поэтому держим 6 мин по умолчанию и даём
+// возможность переопределить через env для тонкой настройки в проде.
+function readEnvMs(name: string, fallback: number): number {
+	const raw = process.env[name];
+	if (!raw) {
+		return fallback;
+	}
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		return fallback;
+	}
+	return parsed;
+}
+
+const STUCK_QUEUE_RESUBMIT_AFTER_MS = readEnvMs(
+	"GENERATOR_STUCK_QUEUE_RESUBMIT_AFTER_MS",
+	6 * 60_000
+);
+const STUCK_QUEUE_FAIL_AFTER_MS = readEnvMs(
+	"GENERATOR_STUCK_QUEUE_FAIL_AFTER_MS",
+	20 * 60_000
+);
 // Live-апдейты приходят через SSE-стрим (см. subscribeToExecutionStream).
 // Polling здесь — safety net на случай разрыва стрима, поэтому интервалы
 // растянуты: для running ждём 30с, для queued — 20-60с в зависимости от

@@ -52,6 +52,27 @@ RUN comfy-node-install \
     comfyui-videohelpersuite \
     comfyui_essentials
 
+# LTX 2.3 audio VAE имеет обновлённые layer names — стандартный
+# VAELoader и устаревший VAELoaderKJ возвращают `None` (issue Kijai
+# #608, HF discussion 5). Lifecycle:
+#   1) Обновляем ComfyUI core до master — после Kijai's fix стандартный
+#      VAELoader умеет audio VAE.
+#   2) Обновляем comfyui-kjnodes до master — там лежит fixed VAELoaderKJ
+#      и LTX2 nodes, которые знают новый layer naming.
+#   3) Pip install requirements: KJNodes ввёл новые runtime deps
+#      (например diffusers >=0.30 для AudioVAE class).
+#
+# Делаем shallow clone, чтобы не раздувать image, и `|| true` на pip,
+# чтобы duplicate-requirement warnings не валили build.
+RUN set -eux; \
+    cd /comfyui && git fetch --depth 50 origin master && \
+    git checkout master && git reset --hard origin/master && \
+    pip install --no-cache-dir -r requirements.txt; \
+    cd /comfyui/custom_nodes && \
+    rm -rf ComfyUI-KJNodes comfyui-kjnodes && \
+    git clone --depth 1 https://github.com/kijai/ComfyUI-KJNodes.git && \
+    pip install --no-cache-dir -r ComfyUI-KJNodes/requirements.txt || true
+
 # `extra_model_paths.yaml` копируется в стандартный ComfyUI location —
 # `/comfyui/extra_model_paths.yaml`. ComfyUI парсит его при старте и
 # присоединяет указанные директории к pool'у моделей. Наши volume'ы

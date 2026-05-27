@@ -45,3 +45,12 @@ if ("140" in wf2) {
 	console.log("node 140 class:", n.class_type);
 	console.log("node 140 inputs:", JSON.stringify(n.inputs, null, 2));
 }
+for (const id of ["196", "199", "201"]) {
+	if (id in wf2) {
+		const n = wf2[id] as { class_type: string; inputs: unknown };
+		console.log(`node ${id} class:`, n.class_type);
+		console.log(`node ${id} inputs:`, JSON.stringify(n.inputs));
+	} else {
+		console.log(`node ${id}: DELETED`);
+	}
+}

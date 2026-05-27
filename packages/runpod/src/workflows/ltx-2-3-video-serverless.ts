@@ -515,23 +515,32 @@ function bypassTextGenerateLtx2Prompt(
 }
 
 function bypassAudioBranch(graph: Record<string, ComfyUINodeApiInput>): void {
-	// Custom VAELoaderKJ из comfyui-kjnodes падает с "VAE is invalid: None"
-	// — переключаем на стандартный VAELoader (ему нужен только vae_name).
-	// LTX2 sampler требует валидный audio latent (5D AV tensor), полностью
-	// отрезать audio chain нельзя без переписывания LTXVConcatAVLatent.
+	// Audio chain (196 VAELoaderKJ → 199 LTXVEmptyLatentAudio → 109
+	// LTXVConcatAVLatent.audio_latent) необходима для LTX2 sampler — без
+	// валидного audio latent KSampler падает с "too many values to
+	// unpack" (5D AV tensor invariant).
+	//
+	// На volume лежит правильный bf16 audio VAE
+	// (Kijai/LTX2.3_comfy/vae/LTX23_audio_vae_bf16.safetensors, 365 MB,
+	// см. sentinel в response). Файл скачан bootstrap'ом в
+	// /runpod-volume/ComfyUI/models/vae/, поэтому относительный путь
+	// должен быть БЕЗ префикса `vae/` — иначе VAELoaderKJ ищет в
+	// `models/vae/vae/...` и возвращает None. Standard VAELoader (как у
+	// 184 для video VAE) прощает префикс, custom Kijai loader строже.
+	//
+	// Поэтому: оставляем 196 как VAELoaderKJ, нормализуем vae_name,
+	// чистим обвес audio-decode'а (201 → 140.audio) и audio VAE второго
+	// pass'а (тоже 201, уже удалён в bypassSpatialUpscale).
 	const audioVaeLoader = graph[NODE_AUDIO_VAE_LOADER];
-	if (audioVaeLoader && audioVaeLoader.class_type === "VAELoaderKJ") {
-		const vaeName = audioVaeLoader.inputs?.vae_name;
-		graph[NODE_AUDIO_VAE_LOADER] = {
-			_meta: { title: "Load VAE (audio VAE, std)" },
-			class_type: "VAELoader",
-			inputs: {
-				vae_name: typeof vaeName === "string" ? vaeName : "",
-			},
-		};
+	if (audioVaeLoader?.inputs) {
+		// Нормализуем vae_name (убираем дублирующий префикс `vae/`,
+		// чтобы loader искал в корне VAE search path: см. обсуждение
+		// HF Kijai/LTX2.3_comfy discussion 5).
+		const vaeName = audioVaeLoader.inputs.vae_name;
+		if (typeof vaeName === "string" && vaeName.startsWith("vae/")) {
+			audioVaeLoader.inputs.vae_name = vaeName.slice("vae/".length);
+		}
 	}
-	// 201 (LTXVAudioVAEDecode) удалён в bypassSpatialUpscale, дублируем
-	// чтобы порядок вызова bypass'ов не имел значения.
 	delete graph[NODE_SECOND_PASS_AUDIO_VAE];
 }
 

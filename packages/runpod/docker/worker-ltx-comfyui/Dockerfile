@@ -27,13 +27,30 @@ FROM runpod/worker-comfyui:${WORKER_COMFYUI_VERSION}-base
 # обёртка над comfy-cli, отличающаяся тем, что non-zero exit при ошибке
 # установки; comfy-cli silent-skips, что прячет упавшие nodes).
 # Имена сверяются с Comfy Registry (https://registry.comfy.org).
+#
+# Минимальный набор для `templates/api/ltx-2-3-i2v-lvram.json`:
+#   - comfyui-ltxvideo:        LTXV* nodes (LTXVBaseSampler, LTXVConditioning,
+#                              LTXVScheduler, LTXVImgToVideoInplace и др.)
+#   - comfyui-kjnodes:         LTX2* nodes (LTX2SamplingPreviewOverride,
+#                              LTX2_NAG, LoraManager-фолбэки), ManualSigmas,
+#                              ImageResizeKJv2, SimpleCalculatorKJ, VAELoaderKJ,
+#                              GetImageSize, ResizeImagesByLongerEdge, PreviewAny.
+#   - comfyui-videohelpersuite: VHS_VideoCombine (mp4 output).
+#   - comfyui_essentials:      ResizeImageMaskNode и др. вспомогалки.
+#
+# Намеренно НЕ ставим:
+#   - comfyui-frame-interpolation (тянет cupy-cuda12x, ~3GB) — i2v graph его
+#     не использует.
+#   - rgthree-comfy — UX-пакет для редактирования графа в Web UI, в API-mode
+#     серверлесса не нужен.
+#   - comfyui-lora-manager — кастомный `Lora Loader (LoraManager)` (node 366)
+#     мы переписываем на стороне `buildPayload` в стандартный LoraLoaderModelOnly
+#     либо вообще удаляем (см. `ltx-2-3-video-serverless.ts`).
 RUN comfy-node-install \
     comfyui-ltxvideo \
     comfyui-kjnodes \
     comfyui-videohelpersuite \
-    comfyui_essentials \
-    comfyui-frame-interpolation \
-    rgthree-comfy
+    comfyui_essentials
 
 # `extra_model_paths.yaml` копируется в стандартный ComfyUI location —
 # `/comfyui/extra_model_paths.yaml`. ComfyUI парсит его при старте и

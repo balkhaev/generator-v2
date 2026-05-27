@@ -710,6 +710,24 @@ const toolDefinitions = [
 		},
 		name: "runpod_template_patch",
 	},
+	{
+		description:
+			"Issue an authenticated request to the admin service using TRAINING_CONTROL_TOKEN as Bearer. Use for /api/admin/* endpoints (runpod templates, scenario-runpod bindings, etc.). Same shape as service_request but pre-attaches the admin internal token.",
+		inputSchema: {
+			properties: {
+				body: { type: "object" },
+				headers: {
+					additionalProperties: { type: "string" },
+					type: "object",
+				},
+				method: { type: "string" },
+				path: { type: "string" },
+			},
+			required: ["path"],
+			type: "object",
+		},
+		name: "admin_request",
+	},
 ] as const;
 
 function createToolResult(payload: unknown, isError = false) {
@@ -2205,6 +2223,42 @@ async function handleGeneratorExecutionToolCall(
 	);
 }
 
+async function handleAdminRequestToolCall(
+	_name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const path = parseOptionalString(argumentsPayload.path);
+	if (!path) {
+		return createErrorResponse(id, "path is required");
+	}
+	const { error, token } = requireTrainingControlToken(id);
+	if (error) {
+		return error;
+	}
+	const method = parseOptionalString(argumentsPayload.method) ?? "GET";
+	const extraHeaders = parseHeaders(argumentsPayload.headers) ?? {};
+	const body = argumentsPayload.body;
+	const hasBody = body !== undefined;
+	const headers: Record<string, string> = {
+		authorization: `Bearer ${token}`,
+		...extraHeaders,
+	};
+	if (hasBody) {
+		headers["content-type"] = headers["content-type"] ?? "application/json";
+	}
+	return createOkResponse(
+		id,
+		createToolResult(
+			await fetchServiceSnapshot("admin", path, {
+				body: hasBody ? JSON.stringify(body) : undefined,
+				headers,
+				method,
+			})
+		)
+	);
+}
+
 function addRowsById<T extends { id: string }>(
 	target: Map<string, T>,
 	rows: T[]
@@ -2824,6 +2878,7 @@ type ToolHandler = (
 
 const toolHandlers: Record<string, ToolHandler> = {
 	admin_lora_training_queue_snapshot: handleAdminLoraTrainingQueueToolCall,
+	admin_request: handleAdminRequestToolCall,
 	admin_settings_get: handleTrainingProviderToolCall,
 	generator_execution_submit: handleGeneratorExecutionToolCall,
 	generator_execution_sync: handleGeneratorExecutionToolCall,

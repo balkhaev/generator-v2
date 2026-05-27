@@ -55,10 +55,55 @@ const NODE_DISTILL_LORA = "134";
 // VAEDecode → IMAGE батч из всех кадров. На этот же узел смотрит и
 // VHS_VideoCombine (mp4), и наш fallback SaveImage (PNG frames).
 const NODE_VAE_DECODE_IMAGES = "364";
+// Цепочка второго (upscale) pass'а: 161 → 109 → 113 → 116 → 118 (upscaler) →
+// 160 → 117 → 119 → 125 → 364. Spatial upscaler требует модели
+// `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`, которой пока нет на network
+// volume (см. TODO: seed upscaler model). До тех пор мы обходим второй pass
+// и подаём samples первого pass'а напрямую в VAEDecode.
+const NODE_FIRST_PASS_SEPARATE_AV = "116";
+const NODE_LATENT_UPSCALER = "118";
+const NODE_LATENT_UPSCALER_MODEL_LOADER = "189";
+const NODE_SECOND_PASS_IMG2VIDEO = "160";
+const NODE_SECOND_PASS_CONCAT_AV = "117";
+const NODE_SECOND_PASS_SAMPLER = "119";
+const NODE_SECOND_PASS_SEPARATE_AV = "125";
+const NODE_SECOND_PASS_AUDIO_VAE = "201";
+// Audio chain: 196 (VAELoaderKJ для audio VAE), 199 (EmptyLatentAudio),
+// 201 (AudioVAEDecode), 109/117 (ConcatAVLatent — соединяет video и audio
+// latents). В текущем worker'е VAELoaderKJ падает с "VAE is invalid: None"
+// (audio-vae файл отсутствует/несовместим). Для базовой генерации mp4 без
+// звука audio-ветка не нужна — bypass'ем её: ConcatAVLatent будет получать
+// audio_latent == video_latent (пустой пасс-thru хак), audio VAE+EmptyAudio
+// удаляются.
+const NODE_AUDIO_VAE_LOADER = "196";
 // Уникальный id для injected стокового SaveImage. Берём заведомо свободный
 // диапазон (> 1000), чтобы гарантированно не конфликтовать с ручными правками
 // LVRAM-шаблона.
 const NODE_FALLBACK_SAVE_IMAGE = "9001";
+// Дополнительный fallback — стоковый `SaveAnimatedWEBP` (built-in ComfyUI).
+// Worker-comfyui handler.py читает output key `images`, в которое
+// SaveAnimatedWEBP пишет анимированный webp. VHS_VideoCombine пишет в
+// `gifs`/`videos`, которые handler НЕ обрабатывает (см. processing-loop
+// в handler.py), поэтому webp — единственный надёжный способ получить
+// анимированный артефакт через текущий runpod-workers/worker-comfyui образ.
+const NODE_FALLBACK_SAVE_WEBP = "9002";
+// positive CLIPTextEncode (узел 121) в исходном шаблоне берёт text от
+// `TextGenerateLTX2Prompt` (349) — LLM-обогатителя. Этот узел требует
+// отдельной LLM (Qwen) внутри ComfyUI, которая (а) грузится 60-180с при
+// первом вызове и (б) может зависнуть при отсутствии модели на network
+// volume. Без неё positive ветка ломается → CFGGuider → KSampler → VAEDecode
+// не выполняются → handler возвращает `success_no_images`.
+// Поэтому в serverless mode мы bypass'аем 349 и заставляем 121 брать text
+// напрямую из raw user prompt (352).
+const NODE_POSITIVE_CLIP_ENCODE = "121";
+const NODE_TEXT_GENERATE_LTX2 = "349";
+const NODE_PROMPT_INSTRUCT_PRIMITIVE = "350";
+const NODE_PROMPT_CONCATENATE = "347";
+// PreviewAny — единственный output node, который успешно выполнялся в
+// сломанном графе (он не зависит от модели). После bypass его роль
+// диагностическая → можем удалить, чтобы worker-comfyui handler сразу
+// видел только реальные image-outputs.
+const NODE_PREVIEW_ANY = "361";
 
 export interface Ltx23ServerlessWorkflowConfig {
 	/**
@@ -218,13 +263,26 @@ async function buildPayloadInternal(
 	} else {
 		bypassLoraManagerNode(graph, NODE_LORA_LOADER);
 	}
-	// Fallback стоковый SaveImage. Если custom `VHS_VideoCombine` по какой-то
-	// причине не загрузился в worker'е (несовпадение версий ComfyUI ↔
-	// `comfyui-videohelpersuite`, упавший import и т.п.), ComfyUI выкинет всю
-	// audio/video-ветку и отдаст `prompt_no_outputs`. Стоковый SaveImage
-	// гарантирует, что в графе всегда есть хотя бы один OUTPUT_NODE и worker
-	// вернёт base64-кадры даже в деградированном режиме.
+	// Bypass LLM-обогатителя prompt'а: positive CLIPTextEncode (121) должен
+	// брать text напрямую из `352` (raw user prompt), а не из 349
+	// (TextGenerateLTX2Prompt). См. подробности в комментариях к
+	// NODE_POSITIVE_CLIP_ENCODE / NODE_TEXT_GENERATE_LTX2 выше.
+	bypassTextGenerateLtx2Prompt(graph);
+	// Bypass второго (spatial upscale) pass'а — нужная модель отсутствует
+	// на network volume. VAEDecode переключаем на output первого sampler'а.
+	bypassSpatialUpscale(graph);
+	// Bypass audio VAE: для генерации видео без звука audio chain не нужен,
+	// а соответствующий VAE отсутствует/несовместим в текущем worker'е.
+	bypassAudioBranch(graph);
+	// Fallback output nodes. Если custom `VHS_VideoCombine` не работает (а
+	// он почти гарантированно не работает в текущем runpod-workers/worker-comfyui
+	// 5.8.5 handler.py — тот читает только output key `images`, а VHS пишет в
+	// `gifs`/`videos`), оба этих стоковых узла обеспечат получение артефактов:
+	//   - SaveAnimatedWEBP даст один анимированный webp файл с reall видео
+	//     (handler.py его подхватит как s3_url image)
+	//   - SaveImage даст N png-frames на случай, если webp encoder упадёт.
 	ensureFallbackSaveImage(graph);
+	ensureFallbackSaveAnimatedWebp(graph, parsed.fps);
 	return {
 		images: [
 			{
@@ -263,12 +321,16 @@ function parseServerlessOutput(raw: unknown): Ltx23Output {
 			"worker-comfyui returned no output images — workflow probably failed silently"
 		);
 	}
-	// Предпочитаем mp4 от VHS_VideoCombine; PNG-frames от fallback SaveImage
-	// допускаем только если ничего видео-форматного нет (деградированный
-	// режим — VHS не загрузился). Это не валидный UI-результат, но он даёт
-	// внятную ошибку с конкретным filename вместо пустого ответа.
+	// Приоритет вывода:
+	//   1) mp4/webm/mov/mkv/gif от VHS_VideoCombine (если ComfyUI handler
+	//      когда-нибудь начнёт их подхватывать)
+	//   2) webp от SaveAnimatedWEBP — реальное анимированное видео, которое
+	//      все плееры умеют (включая Studio)
+	//   3) png-frame от SaveImage — деградированный режим, отдаём как ошибку
+	//      потому что UI ожидает видео.
 	const video = parsed.images.find((item) => isVideoOutput(item));
 	if (video) {
+		const mime = guessVideoMime(video.filename);
 		return {
 			podConsoleUrl: "",
 			podId: "",
@@ -276,27 +338,54 @@ function parseServerlessOutput(raw: unknown): Ltx23Output {
 			videoUrl:
 				video.type === "s3_url"
 					? video.data
-					: `data:video/mp4;base64,${video.data}`,
+					: `data:${mime};base64,${video.data}`,
 		};
 	}
 	const firstFilename = parsed.images[0]?.filename ?? "<no-filename>";
 	throw new Error(
-		`worker-comfyui returned only image outputs (e.g. ${firstFilename}); ` +
-			"VHS_VideoCombine likely failed to register in this ComfyUI build"
+		`worker-comfyui returned only static image outputs (e.g. ${firstFilename}); ` +
+			"SaveAnimatedWEBP/VHS_VideoCombine likely failed to register in this ComfyUI build"
 	);
 }
 
-const VIDEO_FILENAME_RE = /\.(mp4|webm|mov|mkv|gif)$/i;
+const VIDEO_FILENAME_RE = /\.(mp4|webm|mov|mkv|gif|webp)$/i;
 
 function isVideoOutput(item: { data: string; filename?: string }): boolean {
 	const filename = item.filename ?? "";
 	if (VIDEO_FILENAME_RE.test(filename)) {
 		return true;
 	}
-	if (item.data.startsWith("data:video/")) {
+	if (
+		item.data.startsWith("data:video/") ||
+		item.data.startsWith("data:image/webp") ||
+		item.data.startsWith("data:image/gif")
+	) {
 		return true;
 	}
 	return false;
+}
+
+function guessVideoMime(filename?: string): string {
+	if (!filename) {
+		return "video/mp4";
+	}
+	const lower = filename.toLowerCase();
+	if (lower.endsWith(".webp")) {
+		return "image/webp";
+	}
+	if (lower.endsWith(".gif")) {
+		return "image/gif";
+	}
+	if (lower.endsWith(".webm")) {
+		return "video/webm";
+	}
+	if (lower.endsWith(".mov")) {
+		return "video/quicktime";
+	}
+	if (lower.endsWith(".mkv")) {
+		return "video/x-matroska";
+	}
+	return "video/mp4";
 }
 
 function buildInputImageFilename(requestId: string): string {
@@ -333,6 +422,107 @@ function ensureFallbackSaveImage(
 			images: [NODE_VAE_DECODE_IMAGES, 0],
 		},
 	};
+}
+
+function ensureFallbackSaveAnimatedWebp(
+	graph: Record<string, ComfyUINodeApiInput>,
+	fps: number
+): void {
+	if (graph[NODE_FALLBACK_SAVE_WEBP]) {
+		return;
+	}
+	if (!graph[NODE_VAE_DECODE_IMAGES]) {
+		return;
+	}
+	graph[NODE_FALLBACK_SAVE_WEBP] = {
+		_meta: { title: "Fallback SaveAnimatedWEBP" },
+		class_type: "SaveAnimatedWEBP",
+		inputs: {
+			filename_prefix: "ltx-23-anim",
+			fps,
+			images: [NODE_VAE_DECODE_IMAGES, 0],
+			lossless: false,
+			method: "default",
+			quality: 90,
+		},
+	};
+}
+
+function bypassTextGenerateLtx2Prompt(
+	graph: Record<string, ComfyUINodeApiInput>
+): void {
+	const positive = graph[NODE_POSITIVE_CLIP_ENCODE];
+	if (positive?.inputs) {
+		const currentText = positive.inputs.text;
+		if (
+			Array.isArray(currentText) &&
+			currentText.length === 2 &&
+			currentText[0] === NODE_TEXT_GENERATE_LTX2
+		) {
+			positive.inputs.text = [NODE_PROMPT, 0];
+		}
+	}
+	delete graph[NODE_TEXT_GENERATE_LTX2];
+	delete graph[NODE_PROMPT_INSTRUCT_PRIMITIVE];
+	delete graph[NODE_PROMPT_CONCATENATE];
+	delete graph[NODE_PREVIEW_ANY];
+}
+
+function bypassAudioBranch(graph: Record<string, ComfyUINodeApiInput>): void {
+	// Custom VAELoaderKJ из comfyui-kjnodes падает с "VAE is invalid: None"
+	// — переключаем на стандартный VAELoader (ему нужен только vae_name).
+	// LTX2 sampler требует валидный audio latent (5D AV tensor), полностью
+	// отрезать audio chain нельзя без переписывания LTXVConcatAVLatent.
+	const audioVaeLoader = graph[NODE_AUDIO_VAE_LOADER];
+	if (audioVaeLoader && audioVaeLoader.class_type === "VAELoaderKJ") {
+		const vaeName = audioVaeLoader.inputs?.vae_name;
+		graph[NODE_AUDIO_VAE_LOADER] = {
+			_meta: { title: "Load VAE (audio VAE, std)" },
+			class_type: "VAELoader",
+			inputs: {
+				vae_name: typeof vaeName === "string" ? vaeName : "",
+			},
+		};
+	}
+	// 201 (LTXVAudioVAEDecode) удалён в bypassSpatialUpscale, дублируем
+	// чтобы порядок вызова bypass'ов не имел значения.
+	delete graph[NODE_SECOND_PASS_AUDIO_VAE];
+}
+
+function bypassSpatialUpscale(
+	graph: Record<string, ComfyUINodeApiInput>
+): void {
+	const vaeDecode = graph[NODE_VAE_DECODE_IMAGES];
+	if (vaeDecode?.inputs) {
+		const samples = vaeDecode.inputs.samples;
+		if (
+			Array.isArray(samples) &&
+			samples.length === 2 &&
+			samples[0] === NODE_SECOND_PASS_SEPARATE_AV
+		) {
+			vaeDecode.inputs.samples = [NODE_FIRST_PASS_SEPARATE_AV, 0];
+		}
+	}
+	// Audio VAE декодер во втором pass'е тоже завязан на second pass sampler;
+	// направляем его на first pass, чтобы аудио ветка (если активна) не
+	// ломалась — впрочем для текущей задачи (mp4 без звука) это не критично.
+	const audioVae = graph[NODE_SECOND_PASS_AUDIO_VAE];
+	if (audioVae?.inputs) {
+		const samples = audioVae.inputs.samples;
+		if (
+			Array.isArray(samples) &&
+			samples.length === 2 &&
+			samples[0] === NODE_SECOND_PASS_SEPARATE_AV
+		) {
+			audioVae.inputs.samples = [NODE_FIRST_PASS_SEPARATE_AV, 1];
+		}
+	}
+	delete graph[NODE_LATENT_UPSCALER];
+	delete graph[NODE_LATENT_UPSCALER_MODEL_LOADER];
+	delete graph[NODE_SECOND_PASS_IMG2VIDEO];
+	delete graph[NODE_SECOND_PASS_CONCAT_AV];
+	delete graph[NODE_SECOND_PASS_SAMPLER];
+	delete graph[NODE_SECOND_PASS_SEPARATE_AV];
 }
 
 function replaceLoraManagerWithStandardLoader(

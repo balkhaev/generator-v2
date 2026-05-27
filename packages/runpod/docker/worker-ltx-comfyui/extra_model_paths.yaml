@@ -34,6 +34,10 @@ ltx_volume:
   diffusion_models: models/diffusion_models/
   embeddings: models/embeddings/
   hypernetworks: models/hypernetworks/
+  # `latent_upscale_models` — нестандартный ключ comfyui-ltxvideo для
+  # LatentUpscaleModelLoader (spatial upscaler x2/x1.5). Файлы лежат в
+  # `models/latent_upscale_models/`.
+  latent_upscale_models: models/latent_upscale_models/
   loras: models/loras/
   style_models: models/style_models/
   text_encoders: models/text_encoders/
@@ -58,6 +62,7 @@ ltx_volume_flat:
   diffusion_models: models/diffusion_models/
   embeddings: models/embeddings/
   hypernetworks: models/hypernetworks/
+  latent_upscale_models: models/latent_upscale_models/
   loras: models/loras/
   style_models: models/style_models/
   text_encoders: models/text_encoders/

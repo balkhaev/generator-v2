@@ -20,7 +20,7 @@
 #     packages/runpod/docker/worker-ltx-comfyui
 #   docker push <docker-hub-user>/worker-ltx-comfyui:<tag>
 
-ARG WORKER_COMFYUI_VERSION=5.5.0
+ARG WORKER_COMFYUI_VERSION=5.8.5
 FROM runpod/worker-comfyui:${WORKER_COMFYUI_VERSION}-base
 
 # Custom nodes для LTX 2.3 graph — install через comfy-node-install (CLI

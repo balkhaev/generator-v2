@@ -578,6 +578,138 @@ const toolDefinitions = [
 		},
 		name: "studio_scenario_update",
 	},
+	{
+		description:
+			"Get RunPod serverless endpoint health (jobs counters + worker states). Uses RUNPOD_API_KEY from env. endpointId is the serverless endpoint id (e.g. hr1a398xx75thx).",
+		inputSchema: {
+			properties: {
+				endpointId: { type: "string" },
+			},
+			required: ["endpointId"],
+			type: "object",
+		},
+		name: "runpod_serverless_health",
+	},
+	{
+		description:
+			"Get status of a serverless request. Returns the same payload as GET /v2/{endpointId}/status/{requestId}, including output/error blobs for COMPLETED/FAILED requests.",
+		inputSchema: {
+			properties: {
+				endpointId: { type: "string" },
+				requestId: { type: "string" },
+			},
+			required: ["endpointId", "requestId"],
+			type: "object",
+		},
+		name: "runpod_serverless_status",
+	},
+	{
+		description:
+			"Cancel a serverless request (POST /v2/{endpointId}/cancel/{requestId}).",
+		inputSchema: {
+			properties: {
+				endpointId: { type: "string" },
+				requestId: { type: "string" },
+			},
+			required: ["endpointId", "requestId"],
+			type: "object",
+		},
+		name: "runpod_serverless_cancel",
+	},
+	{
+		description:
+			"List recent serverless requests (GET /v2/{endpointId}/requests).",
+		inputSchema: {
+			properties: {
+				endpointId: { type: "string" },
+				lastId: { type: "string" },
+			},
+			required: ["endpointId"],
+			type: "object",
+		},
+		name: "runpod_serverless_requests",
+	},
+	{
+		description:
+			"Purge the serverless queue (POST /v2/{endpointId}/purge-queue). Cancels every IN_QUEUE job for this endpoint.",
+		inputSchema: {
+			properties: {
+				endpointId: { type: "string" },
+			},
+			required: ["endpointId"],
+			type: "object",
+		},
+		name: "runpod_serverless_purge_queue",
+	},
+	{
+		description:
+			"Submit a job to a serverless endpoint (POST /v2/{endpointId}/run). Body is wrapped as {input}. Set sync=true to use /runsync (blocks up to 60s). Optional policy object overrides retry/ttl.",
+		inputSchema: {
+			properties: {
+				endpointId: { type: "string" },
+				input: {
+					description: "Arbitrary input payload (will be wrapped as {input}).",
+					type: "object",
+				},
+				policy: { type: "object" },
+				sync: { type: "boolean" },
+				webhook: { type: "string" },
+			},
+			required: ["endpointId", "input"],
+			type: "object",
+		},
+		name: "runpod_serverless_run",
+	},
+	{
+		description:
+			"GET a serverless endpoint config via REST (https://rest.runpod.io/v1/endpoints/{id}). Shows imageName via embedded template, worker counts, network volumes, scaler.",
+		inputSchema: {
+			properties: {
+				endpointId: { type: "string" },
+			},
+			required: ["endpointId"],
+			type: "object",
+		},
+		name: "runpod_endpoint_get",
+	},
+	{
+		description:
+			"PATCH a serverless endpoint config (PATCH https://rest.runpod.io/v1/endpoints/{id}). Useful keys: workersMax, workersMin, flashboot, idleTimeout, scalerType, scalerValue, networkVolumeIds, gpuTypeIds.",
+		inputSchema: {
+			properties: {
+				body: { type: "object" },
+				endpointId: { type: "string" },
+			},
+			required: ["endpointId", "body"],
+			type: "object",
+		},
+		name: "runpod_endpoint_patch",
+	},
+	{
+		description:
+			"GET a RunPod template by id (https://rest.runpod.io/v1/templates/{id}). Returns imageName, containerRegistryAuthId, env, mountPath.",
+		inputSchema: {
+			properties: {
+				templateId: { type: "string" },
+			},
+			required: ["templateId"],
+			type: "object",
+		},
+		name: "runpod_template_get",
+	},
+	{
+		description:
+			"PATCH a RunPod template (PATCH https://rest.runpod.io/v1/templates/{id}). Useful keys: imageName, containerRegistryAuthId, env, containerDiskInGb.",
+		inputSchema: {
+			properties: {
+				body: { type: "object" },
+				templateId: { type: "string" },
+			},
+			required: ["templateId", "body"],
+			type: "object",
+		},
+		name: "runpod_template_patch",
+	},
 ] as const;
 
 function createToolResult(payload: unknown, isError = false) {
@@ -2474,6 +2606,216 @@ async function handleStudioScenarioUpdateToolCall(
 	);
 }
 
+const RUNPOD_PUBLIC_BASE = "https://api.runpod.ai/v2";
+const RUNPOD_REST_BASE = "https://rest.runpod.io/v1";
+
+function getRunpodApiKey(): string | null {
+	return process.env.RUNPOD_API_KEY ?? null;
+}
+
+interface RunpodFetchResult {
+	body: unknown;
+	ok: boolean;
+	status: number;
+}
+
+async function runpodFetch(
+	url: string,
+	init: RequestInit = {}
+): Promise<RunpodFetchResult> {
+	const apiKey = getRunpodApiKey();
+	if (!apiKey) {
+		throw new Error("RUNPOD_API_KEY is not configured on the MCP server");
+	}
+	const headers: Record<string, string> = {
+		Authorization: `Bearer ${apiKey}`,
+		...((init.headers as Record<string, string> | undefined) ?? {}),
+	};
+	if (init.body && !headers["Content-Type"]) {
+		headers["Content-Type"] = "application/json";
+	}
+	const response = await fetch(url, { ...init, headers });
+	const text = await response.text();
+	let parsed: unknown = text;
+	if (text) {
+		try {
+			parsed = JSON.parse(text);
+		} catch {
+			// keep raw text
+		}
+	}
+	return { body: parsed, ok: response.ok, status: response.status };
+}
+
+function runpodResult(
+	id: JsonRpcResponse["id"],
+	result: RunpodFetchResult
+): JsonRpcResponse {
+	return createOkResponse(id, createToolResult(result, !result.ok));
+}
+
+async function runRunpodServerlessRequestAction(
+	name: "runpod_serverless_status" | "runpod_serverless_cancel",
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+): Promise<JsonRpcResponse> {
+	const endpointId = parseOptionalString(argumentsPayload.endpointId);
+	const requestId = parseOptionalString(argumentsPayload.requestId);
+	if (!(endpointId && requestId)) {
+		return createErrorResponse(id, "endpointId and requestId are required");
+	}
+	const verb = name === "runpod_serverless_cancel" ? "cancel" : "status";
+	const init: RequestInit =
+		name === "runpod_serverless_cancel" ? { method: "POST" } : {};
+	return runpodResult(
+		id,
+		await runpodFetch(
+			`${RUNPOD_PUBLIC_BASE}/${endpointId}/${verb}/${requestId}`,
+			init
+		)
+	);
+}
+
+async function runRunpodServerlessEndpointAction(
+	name:
+		| "runpod_serverless_health"
+		| "runpod_serverless_requests"
+		| "runpod_serverless_purge_queue",
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+): Promise<JsonRpcResponse> {
+	const endpointId = parseOptionalString(argumentsPayload.endpointId);
+	if (!endpointId) {
+		return createErrorResponse(id, "endpointId is required");
+	}
+	if (name === "runpod_serverless_health") {
+		return runpodResult(
+			id,
+			await runpodFetch(`${RUNPOD_PUBLIC_BASE}/${endpointId}/health`)
+		);
+	}
+	if (name === "runpod_serverless_purge_queue") {
+		return runpodResult(
+			id,
+			await runpodFetch(`${RUNPOD_PUBLIC_BASE}/${endpointId}/purge-queue`, {
+				method: "POST",
+			})
+		);
+	}
+	const lastId = parseOptionalString(argumentsPayload.lastId);
+	const url = new URL(`${RUNPOD_PUBLIC_BASE}/${endpointId}/requests`);
+	if (lastId) {
+		url.searchParams.set("lastId", lastId);
+	}
+	return runpodResult(id, await runpodFetch(url.toString()));
+}
+
+async function runRunpodServerlessRunAction(
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+): Promise<JsonRpcResponse> {
+	const endpointId = parseOptionalString(argumentsPayload.endpointId);
+	if (!endpointId) {
+		return createErrorResponse(id, "endpointId is required");
+	}
+	const input = argumentsPayload.input;
+	if (!input || typeof input !== "object" || Array.isArray(input)) {
+		return createErrorResponse(id, "input must be an object");
+	}
+	const sync = parseOptionalBoolean(argumentsPayload.sync) === true;
+	const route = sync ? "runsync" : "run";
+	const payload: Record<string, unknown> = { input };
+	if (
+		argumentsPayload.policy &&
+		typeof argumentsPayload.policy === "object" &&
+		!Array.isArray(argumentsPayload.policy)
+	) {
+		payload.policy = argumentsPayload.policy;
+	}
+	const webhook = parseOptionalString(argumentsPayload.webhook);
+	if (webhook) {
+		payload.webhook = webhook;
+	}
+	return runpodResult(
+		id,
+		await runpodFetch(`${RUNPOD_PUBLIC_BASE}/${endpointId}/${route}`, {
+			body: JSON.stringify(payload),
+			method: "POST",
+		})
+	);
+}
+
+async function runRunpodRestAction(
+	name:
+		| "runpod_endpoint_get"
+		| "runpod_endpoint_patch"
+		| "runpod_template_get"
+		| "runpod_template_patch",
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+): Promise<JsonRpcResponse> {
+	const isEndpoint = name.startsWith("runpod_endpoint_");
+	const resource = isEndpoint ? "endpoints" : "templates";
+	const idKey = isEndpoint ? "endpointId" : "templateId";
+	const resourceId = parseOptionalString(argumentsPayload[idKey]);
+	if (!resourceId) {
+		return createErrorResponse(id, `${idKey} is required`);
+	}
+	const url = `${RUNPOD_REST_BASE}/${resource}/${resourceId}`;
+	if (name === "runpod_endpoint_get" || name === "runpod_template_get") {
+		return runpodResult(id, await runpodFetch(url));
+	}
+	const body = argumentsPayload.body;
+	if (!body || typeof body !== "object" || Array.isArray(body)) {
+		return createErrorResponse(id, "body must be an object");
+	}
+	return runpodResult(
+		id,
+		await runpodFetch(url, { body: JSON.stringify(body), method: "PATCH" })
+	);
+}
+
+async function handleRunpodToolCall(
+	name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+): Promise<JsonRpcResponse> {
+	try {
+		if (
+			name === "runpod_serverless_status" ||
+			name === "runpod_serverless_cancel"
+		) {
+			return await runRunpodServerlessRequestAction(name, argumentsPayload, id);
+		}
+		if (
+			name === "runpod_serverless_health" ||
+			name === "runpod_serverless_requests" ||
+			name === "runpod_serverless_purge_queue"
+		) {
+			return await runRunpodServerlessEndpointAction(
+				name,
+				argumentsPayload,
+				id
+			);
+		}
+		if (name === "runpod_serverless_run") {
+			return await runRunpodServerlessRunAction(argumentsPayload, id);
+		}
+		if (
+			name === "runpod_endpoint_get" ||
+			name === "runpod_endpoint_patch" ||
+			name === "runpod_template_get" ||
+			name === "runpod_template_patch"
+		) {
+			return await runRunpodRestAction(name, argumentsPayload, id);
+		}
+		return createErrorResponse(id, `Unknown runpod tool: ${name}`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return createErrorResponse(id, `runpod tool failure: ${message}`);
+	}
+}
+
 type ToolHandler = (
 	name: string,
 	argumentsPayload: Record<string, unknown>,
@@ -2502,6 +2844,9 @@ function resolveToolHandler(name: string): ToolHandler | null {
 	}
 	if (name.startsWith("persons_")) {
 		return handlePersonsToolCall;
+	}
+	if (name.startsWith("runpod_")) {
+		return handleRunpodToolCall;
 	}
 	return toolHandlers[name] ?? null;
 }

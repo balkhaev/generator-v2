@@ -2,6 +2,11 @@ name: wire-runpod-ghcr
 
 on:
   workflow_dispatch:
+  schedule:
+    # GITHUB_TOKEN package scope lives ~1 hour. Refresh hourly so RunPod
+    # can always pull ghcr.io/balkhaev/worker-ltx-comfyui:v1 on cold start
+    # even when the underlying ghcr package stays private.
+    - cron: "0 * * * *"
 
 permissions:
   packages: read

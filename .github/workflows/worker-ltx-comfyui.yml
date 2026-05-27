@@ -42,50 +42,46 @@ jobs:
           push: true
           provenance: false
           sbom: false
+          # Push to the public mirror namespace (worker-ltx-comfyui-public is the
+          # only package the owner flipped to public). Keep legacy tags too for
+          # back-compat with anything still pinned to the old path.
           tags: |
+            ghcr.io/balkhaev/worker-ltx-comfyui-public:v1
+            ghcr.io/balkhaev/worker-ltx-comfyui-public:latest
             ghcr.io/balkhaev/worker-ltx-comfyui:v1
             ghcr.io/balkhaev/worker-ltx-comfyui:latest
 
-      - name: Make ghcr package public (REST)
+      - name: Ensure ghcr packages are public
         env:
-          # GHCR_PAT must have admin:packages scope to flip visibility.
-          # If absent we fall back to GITHUB_TOKEN, which usually has only
-          # write:packages — visibility flip will return 403 and we log it.
           GH_PACKAGES_TOKEN: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           OWNER="${{ github.repository_owner }}"
-          PKG="worker-ltx-comfyui"
-          echo "Flipping ${OWNER}/${PKG} visibility -> public"
-          RESP=$(curl -sS -o /tmp/vis.json -w "%{http_code}" \
-            -X PATCH "https://api.github.com/users/${OWNER}/packages/container/${PKG}/visibility" \
-            -H "Authorization: Bearer ${GH_PACKAGES_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            -d '{"visibility":"public"}')
-          echo "status=$RESP body=$(cat /tmp/vis.json | head -c 400)"
-          # 204 = ok, 403 = token lacks admin:packages, 404 = wrong path
-          if [ "$RESP" = "204" ]; then echo "public ok"; else
-            echo "::warning::visibility flip failed (status=$RESP); set secrets.GHCR_PAT with admin:packages"
-          fi
+          for PKG in worker-ltx-comfyui-public worker-ltx-comfyui; do
+            echo "Flipping ${OWNER}/${PKG} visibility -> public"
+            RESP=$(curl -sS -o /tmp/vis.json -w "%{http_code}" \
+              -X PATCH "https://api.github.com/users/${OWNER}/packages/container/${PKG}/visibility" \
+              -H "Authorization: Bearer ${GH_PACKAGES_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -d '{"visibility":"public"}')
+            echo "  ${PKG}: status=$RESP body=$(cat /tmp/vis.json | head -c 200)"
+            if [ "$RESP" = "204" ]; then echo "  ${PKG}: public ok"; else
+              echo "::warning::${PKG} visibility flip failed (status=$RESP)"
+            fi
+          done
 
-      - name: Wire RunPod ghcr registry auth
+      - name: Point RunPod template at public image (no auth needed)
         env:
-          GITHUB_TOKEN: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
         run: |
-          AUTH_ID=$(curl -fsSL -X POST "https://rest.runpod.io/v1/containerregistryauth" \
-            -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"name\":\"ghcr-gha-${GITHUB_RUN_ID}\",\"username\":\"${{ github.actor }}\",\"password\":\"${GITHUB_TOKEN}\"}" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-          # Touch image + auth only; env/runtime knobs belong to wire-runpod-ghcr.yml
+          # Public ghcr image — no containerRegistryAuthId required.
           curl -fsSL -X POST "https://rest.runpod.io/v1/templates/esnxflkb5c/update" \
             -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{\"imageName\":\"ghcr.io/balkhaev/worker-ltx-comfyui:v1\",\"containerRegistryAuthId\":\"${AUTH_ID}\"}"
+            -d '{"imageName":"ghcr.io/balkhaev/worker-ltx-comfyui-public:v1","containerRegistryAuthId":""}'
           curl -fsSL -X POST "https://rest.runpod.io/v1/endpoints/hr1a398xx75thx/update" \
             -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{\"templateId\":\"esnxflkb5c\",\"flashboot\":true,\"workersMin\":0,\"workersMax\":2}"
-          echo "RunPod template wired with registry auth ${AUTH_ID}"
+            -d '{"templateId":"esnxflkb5c","flashboot":true,"workersMin":0,"workersMax":2}'
+          echo "RunPod template pointing at public mirror"

@@ -52,6 +52,61 @@ const DEFAULT_GPU_PRIORITY = [
 	"NVIDIA L4",
 ];
 
+/** RunPod serverless REST API rejects DC ids outside this enum (2026-05). */
+const SERVERLESS_SUPPORTED_DATACENTERS = new Set([
+	"EU-RO-1",
+	"CA-MTL-1",
+	"EU-SE-1",
+	"US-IL-1",
+	"EUR-IS-1",
+	"EU-CZ-1",
+	"US-TX-3",
+	"EUR-IS-2",
+	"US-KS-2",
+	"US-GA-2",
+	"US-WA-1",
+	"US-TX-1",
+	"CA-MTL-3",
+	"EU-NL-1",
+	"US-TX-4",
+	"US-CA-2",
+	"US-NC-1",
+	"OC-AU-1",
+	"US-DE-1",
+	"EUR-IS-3",
+	"CA-MTL-2",
+	"AP-JP-1",
+	"EUR-NO-1",
+	"EU-FR-1",
+	"US-KS-3",
+	"US-GA-1",
+	"AP-IN-1",
+	"US-MD-1",
+]);
+
+function filterServerlessVolumes(volumes: VolumeInfo[]): VolumeInfo[] {
+	const supported = volumes.filter((volume) =>
+		SERVERLESS_SUPPORTED_DATACENTERS.has(volume.dataCenterId)
+	);
+	const skipped = volumes.filter(
+		(volume) => !SERVERLESS_SUPPORTED_DATACENTERS.has(volume.dataCenterId)
+	);
+	if (skipped.length > 0) {
+		log("volumes.skipped.unsupported-datacenter", {
+			count: skipped.length,
+			volumes: skipped.map((volume) => ({
+				dataCenterId: volume.dataCenterId,
+				id: volume.id,
+				name: volume.name,
+			})),
+		});
+	}
+	if (supported.length === 0) {
+		throw new Error("No ltx23 volumes in serverless-supported datacenters");
+	}
+	return supported;
+}
+
 interface RunpodApiCtx {
 	apiKey: string;
 }
@@ -188,10 +243,22 @@ async function ensureTemplate(
 }
 
 function buildTemplateEnv(): Record<string, string> {
-	const env: Record<string, string> = {
-		NETWORK_VOLUME_DEBUG: "true",
-		REFRESH_WORKER: "false",
-	};
+	// REFRESH_WORKER intentionally omitted (defaults to false in worker-comfyui):
+	// keeping a warm pod across jobs is critical for sub-second latency.
+	// NETWORK_VOLUME_DEBUG is opt-in via env; otherwise it spams logs and
+	// slows down boot.
+	const env: Record<string, string> = {};
+	const region = process.env.S3_REGION ?? process.env.AWS_REGION;
+	if (region) {
+		// runpod-python rp_upload constructs presigned URLs via boto3, which
+		// signs with us-east-1 unless AWS_REGION/AWS_DEFAULT_REGION is set.
+		// Hetzner Object Storage rejects mismatched-region signatures.
+		env.AWS_REGION = region;
+		env.AWS_DEFAULT_REGION = region;
+	}
+	if (process.env.NETWORK_VOLUME_DEBUG === "true") {
+		env.NETWORK_VOLUME_DEBUG = "true";
+	}
 	const civitai = process.env.CIVITAI_API_KEY;
 	if (civitai) {
 		env.CIVITAI_API_KEY = civitai;
@@ -224,6 +291,7 @@ async function ensureEndpoint(
 	templateId: string,
 	volumes: VolumeInfo[]
 ): Promise<EndpointInfo> {
+	const serverlessVolumes = filterServerlessVolumes(volumes);
 	const existing = (await listEndpoints(ctx)).find(
 		(e) => e.name === ENDPOINT_NAME
 	);
@@ -231,9 +299,11 @@ async function ensureEndpoint(
 		process.env.GPU_PRIORITY?.split(",")
 			.map((s) => s.trim())
 			.filter(Boolean) ?? DEFAULT_GPU_PRIORITY;
-	const dataCenterIds = Array.from(new Set(volumes.map((v) => v.dataCenterId)));
+	const dataCenterIds = Array.from(
+		new Set(serverlessVolumes.map((v) => v.dataCenterId))
+	);
+	const allVolumeIds = serverlessVolumes.map((v) => v.id);
 	const payload = {
-		dataCenterIds,
 		executionTimeoutMs: Number(
 			process.env.EXEC_TIMEOUT_MS ?? DEFAULT_EXEC_TIMEOUT_MS
 		),
@@ -244,7 +314,10 @@ async function ensureEndpoint(
 			process.env.IDLE_TIMEOUT_SEC ?? DEFAULT_IDLE_TIMEOUT_SEC
 		),
 		name: ENDPOINT_NAME,
-		networkVolumeIds: volumes.map((v) => v.id),
+		// RunPod REST create rejects `networkVolumeIds[]` (GraphQL expects
+		// objects) but accepts singular `networkVolumeId`. Multi-volume attach
+		// works via POST /endpoints/{id}/update with string ids.
+		networkVolumeId: allVolumeIds[0],
 		scalerType: "QUEUE_DELAY" as const,
 		scalerValue: 4,
 		templateId,
@@ -263,7 +336,7 @@ async function ensureEndpoint(
 				flashboot: true,
 				gpuTypeIds: gpuPriority,
 				idleTimeout: payload.idleTimeout,
-				networkVolumeIds: payload.networkVolumeIds,
+				networkVolumeIds: allVolumeIds,
 				scalerType: payload.scalerType,
 				scalerValue: payload.scalerValue,
 				templateId,
@@ -276,7 +349,10 @@ async function ensureEndpoint(
 				`update endpoint failed (${patch.status}): ${await patch.text()}`
 			);
 		}
-		log("endpoint.updated", { id: existing.id });
+		log("endpoint.updated", {
+			id: existing.id,
+			volumeCount: allVolumeIds.length,
+		});
 		return existing;
 	}
 	const response = await runpodRequest(ctx, "POST", "/endpoints", payload);
@@ -285,6 +361,27 @@ async function ensureEndpoint(
 		throw new Error(`POST /endpoints failed (${response.status}): ${text}`);
 	}
 	const ep = JSON.parse(text) as EndpointInfo;
+	if (allVolumeIds.length > 1) {
+		const attach = await runpodRequest(
+			ctx,
+			"POST",
+			`/endpoints/${ep.id}/update`,
+			{
+				dataCenterIds,
+				networkVolumeIds: allVolumeIds,
+			}
+		);
+		if (!attach.ok) {
+			throw new Error(
+				`attach volumes failed (${attach.status}): ${await attach.text()}`
+			);
+		}
+		log("endpoint.volumes.attached", {
+			count: allVolumeIds.length,
+			dataCenterIds,
+			id: ep.id,
+		});
+	}
 	log("endpoint.created", { id: ep.id });
 	return ep;
 }

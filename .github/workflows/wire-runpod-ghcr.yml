@@ -35,11 +35,13 @@ jobs:
           curl -fsSL -X POST "https://rest.runpod.io/v1/templates/${RUNPOD_TEMPLATE_ID}/update" \
             -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{\"imageName\":\"${WORKER_IMAGE}\",\"containerRegistryAuthId\":\"${AUTH_ID}\",\"env\":{\"BUCKET_ACCESS_KEY_ID\":\"C4BECUQ0RQ257E4Y6WUF\",\"BUCKET_ENDPOINT_URL\":\"https://hel1.your-objectstorage.com\",\"BUCKET_NAME\":\"generator\",\"BUCKET_SECRET_ACCESS_KEY\":\"8OSguPKCYjkYPc9OdDew2WIhH9UBmkP0IJFJ53Nl\",\"CIVITAI_API_KEY\":\"9c8719b645932b56ea8f32ff9a9e9714\",\"NETWORK_VOLUME_DEBUG\":\"true\",\"REFRESH_WORKER\":\"true\"}}"
+            -d "{\"imageName\":\"${WORKER_IMAGE}\",\"containerRegistryAuthId\":\"${AUTH_ID}\",\"env\":{\"BUCKET_ACCESS_KEY_ID\":\"C4BECUQ0RQ257E4Y6WUF\",\"BUCKET_ENDPOINT_URL\":\"https://hel1.your-objectstorage.com\",\"BUCKET_NAME\":\"generator\",\"BUCKET_SECRET_ACCESS_KEY\":\"8OSguPKCYjkYPc9OdDew2WIhH9UBmkP0IJFJ53Nl\",\"CIVITAI_API_KEY\":\"9c8719b645932b56ea8f32ff9a9e9714\"}}"
 
+          # flashboot=true → cold-starts share container snapshot, ~10-20s vs 90-180s
+          # REFRESH_WORKER removed → worker stays warm until idleTimeout, no per-job teardown
           curl -fsSL -X POST "https://rest.runpod.io/v1/endpoints/${RUNPOD_ENDPOINT_ID}/update" \
             -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{\"templateId\":\"${RUNPOD_TEMPLATE_ID}\",\"flashboot\":false,\"workersMin\":0,\"workersMax\":1}"
+            -d "{\"templateId\":\"${RUNPOD_TEMPLATE_ID}\",\"flashboot\":true,\"workersMin\":0,\"workersMax\":2}"
 
           echo "RunPod template wired with registry auth ${AUTH_ID} and endpoint rolling release triggered"

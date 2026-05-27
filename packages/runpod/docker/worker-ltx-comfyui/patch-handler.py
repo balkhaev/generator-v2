@@ -36,6 +36,33 @@ ANCHOR = '            # Check for other output types\n            other_keys = [
 # обрабатываем каждый файл как handler делает с `images`, затем
 # восстанавливаем оригинальный other_keys warning, но исключая уже
 # обработанные video-ключи (чтобы не мусорить warning'ами).
+SENTINEL_ANCHOR = "    print(f\"worker-comfyui - Job completed. Returning {len(output_data)} image(s).\")\n    return final_result"
+
+SENTINEL_REPLACEMENT = """    print(f\"worker-comfyui - Job completed. Returning {len(output_data)} image(s).\")
+    # >>> ltx-worker: bootstrap sentinel
+    try:
+        import json as _json
+        for _candidate in (
+            "/runpod-volume/ComfyUI/models/_bootstrap_aux_status.json",
+            "/runpod-volume/models/_bootstrap_aux_status.json",
+            "/workspace/ComfyUI/models/_bootstrap_aux_status.json",
+        ):
+            try:
+                with open(_candidate) as _fh:
+                    final_result[\"_bootstrap_sentinel\"] = _json.load(_fh)
+                    break
+            except FileNotFoundError:
+                continue
+            except Exception as _e:
+                final_result[\"_bootstrap_sentinel\"] = {\"error\": str(_e), \"path\": _candidate}
+                break
+        else:
+            final_result[\"_bootstrap_sentinel\"] = {\"status\": \"sentinel-missing\"}
+    except Exception as _outer:
+        final_result[\"_bootstrap_sentinel_error\"] = str(_outer)
+    # <<< ltx-worker: bootstrap sentinel
+    return final_result"""
+
 REPLACEMENT = f"""            {PATCH_MARKER}
             # VHS_VideoCombine кладёт mp4/webm в key `gifs`, SaveVideo —
             # в `videos`. Логика обработки идентична `images`.
@@ -145,8 +172,15 @@ def main() -> int:
 	if patched == original:
 		print("[patch-handler] FATAL: replacement did not change content", file=sys.stderr)
 		return 3
+	if SENTINEL_ANCHOR not in patched:
+		print(
+			"[patch-handler] WARNING: sentinel anchor not found — sentinel debug not injected",
+			file=sys.stderr,
+		)
+	else:
+		patched = patched.replace(SENTINEL_ANCHOR, SENTINEL_REPLACEMENT, 1)
 	HANDLER_PATH.write_text(patched)
-	print("[patch-handler] applied video output patch v1")
+	print("[patch-handler] applied video output patch v1 (+sentinel)")
 	return 0
 
 

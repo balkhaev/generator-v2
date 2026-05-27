@@ -20,9 +20,10 @@
 
 set -u
 
+# Globals переопределяются в main()/resolve_volume_base.
 VOLUME_BASE="${LTX_AUX_VOLUME_BASE:-/runpod-volume/ComfyUI/models}"
-AUDIO_VAE_DIR="${VOLUME_BASE}/vae"
-UPSCALER_DIR="${VOLUME_BASE}/latent_upscale_models"
+AUDIO_VAE_DIR=""
+UPSCALER_DIR=""
 
 AUDIO_VAE_FILE="LTX23_audio_vae_bf16.safetensors"
 AUDIO_VAE_URL="https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/${AUDIO_VAE_FILE}"
@@ -100,25 +101,78 @@ ensure_file() {
 	return 1
 }
 
+resolve_volume_base() {
+	# Возвращает первый существующий variant ComfyUI models layout:
+	#   1. /runpod-volume/ComfyUI/models                 (наш standard)
+	#   2. /runpod-volume/models                          (flat)
+	#   3. /workspace/ComfyUI/models                      (legacy pod-mode)
+	# Если override задан через env — используем его без проверки (debug).
+	if [ -n "${LTX_AUX_VOLUME_BASE_OVERRIDE:-}" ]; then
+		echo "${LTX_AUX_VOLUME_BASE_OVERRIDE}"
+		return
+	fi
+	for candidate in \
+		"/runpod-volume/ComfyUI/models" \
+		"/runpod-volume/models" \
+		"/workspace/ComfyUI/models"; do
+		if [ -d "${candidate}" ] || [ -d "$(dirname "${candidate}")" ]; then
+			echo "${candidate}"
+			return
+		fi
+	done
+	# default — даже если volume не смонтирован, попробуем создать
+	echo "/runpod-volume/ComfyUI/models"
+}
+
+write_sentinel() {
+	local status="$1"
+	local base="$2"
+	local sentinel="${base}/_bootstrap_aux_status.json"
+	mkdir -p "${base}" 2>/dev/null || true
+	cat >"${sentinel}" <<EOF
+{
+  "status": "${status}",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "image_digest": "${IMAGE_DIGEST:-unknown}",
+  "volume_base": "${base}",
+  "audio_vae": "$(ls -la "${base}/vae/${AUDIO_VAE_FILE}" 2>/dev/null || echo missing)",
+  "upscaler": "$(ls -la "${base}/latent_upscale_models/${UPSCALER_FILE}" 2>/dev/null || echo missing)"
+}
+EOF
+	log "sentinel written to ${sentinel}: ${status}"
+}
+
 main() {
 	if [ "${LTX_AUX_BOOTSTRAP_DISABLED:-false}" = "true" ]; then
 		log "disabled via LTX_AUX_BOOTSTRAP_DISABLED"
 		return 0
 	fi
-	if [ ! -d "$(dirname "${VOLUME_BASE}")" ]; then
-		log "volume base directory missing: $(dirname "${VOLUME_BASE}") — skipping bootstrap"
-		return 0
-	fi
-	log "ensuring aux models present under ${VOLUME_BASE}"
+	VOLUME_BASE="$(resolve_volume_base)"
+	AUDIO_VAE_DIR="${VOLUME_BASE}/vae"
+	UPSCALER_DIR="${VOLUME_BASE}/latent_upscale_models"
+	log "resolved volume base: ${VOLUME_BASE}"
+	log "host info: $(uname -a)"
+	log "mounts: $(mount | grep -E 'runpod|workspace' || echo none)"
+	log "ls /runpod-volume: $(ls -la /runpod-volume 2>/dev/null | head -10 || echo missing)"
+	log "ls VOLUME_BASE: $(ls -la ${VOLUME_BASE} 2>/dev/null | head -10 || echo missing)"
+
 	command -v curl >/dev/null 2>&1 || {
-		log "curl not in PATH; falling back to no-op (worker base image должен иметь curl)"
+		log "FATAL: curl not in PATH"
+		write_sentinel "no-curl" "${VOLUME_BASE}"
 		return 0
 	}
-	ensure_file "${AUDIO_VAE_DIR}" "${AUDIO_VAE_FILE}" "${AUDIO_VAE_URL}" "${AUDIO_VAE_MIN_BYTES}" || true
-	ensure_file "${UPSCALER_DIR}" "${UPSCALER_FILE}" "${UPSCALER_URL}" "${UPSCALER_MIN_BYTES}" || true
-	log "summary: $(ls -la ${VOLUME_BASE}/vae 2>/dev/null | head -20)"
-	log "summary: $(ls -la ${VOLUME_BASE}/latent_upscale_models 2>/dev/null | head -20)"
-	log "done"
+	log "ensuring aux models present under ${VOLUME_BASE}"
+	local rc_audio=0 rc_upscaler=0
+	ensure_file "${AUDIO_VAE_DIR}" "${AUDIO_VAE_FILE}" "${AUDIO_VAE_URL}" "${AUDIO_VAE_MIN_BYTES}" || rc_audio=$?
+	ensure_file "${UPSCALER_DIR}" "${UPSCALER_FILE}" "${UPSCALER_URL}" "${UPSCALER_MIN_BYTES}" || rc_upscaler=$?
+	log "summary vae dir: $(ls -la ${AUDIO_VAE_DIR} 2>/dev/null | head -20 || echo missing)"
+	log "summary upscaler dir: $(ls -la ${UPSCALER_DIR} 2>/dev/null | head -20 || echo missing)"
+	local status="ok"
+	if [ "${rc_audio}" -ne 0 ] || [ "${rc_upscaler}" -ne 0 ]; then
+		status="partial(audio=${rc_audio},upscaler=${rc_upscaler})"
+	fi
+	write_sentinel "${status}" "${VOLUME_BASE}"
+	log "done with status: ${status}"
 }
 
 main

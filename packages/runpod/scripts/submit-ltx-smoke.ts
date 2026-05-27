@@ -44,7 +44,10 @@ if (!submitJson.id) {
 }
 const jobId = submitJson.id;
 
-const deadline = Date.now() + 12 * 60 * 1000;
+// Первый запуск нового image: ~120s docker pull + ~60s aux model wget (1.4GB)
+// + ~80s LTX cold sampling. Итого ≤ 5-6 минут до COMPLETED. Поэтому держим
+// большой deadline для smoke.
+const deadline = Date.now() + 20 * 60 * 1000;
 let last = "";
 while (Date.now() < deadline) {
 	await new Promise((r) => setTimeout(r, 5000));

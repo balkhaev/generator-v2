@@ -11,13 +11,12 @@
 #   - LTX23_audio_vae_bf16.safetensors      (365 MB, Kijai/LTX2.3_comfy)
 #   - ltx-2.3-spatial-upscaler-x2-1.1.safetensors (996 MB, Lightricks/LTX-2.3)
 #
-# Размер ~1.4 GB; на HF Xet ~30-60s при good network. После первого
-# успешного скачивания файлы остаются на volume и shared между всеми
-# worker'ами этого endpoint'а — следующие cold start'ы не качают.
+# Используется curl -fL (fail on HTTP error, follow redirects). HF Xet
+# redirect'ы вынуждают разворачивать ответ через -L. Проверка
+# content-length против sanity threshold отсеивает HTML error pages.
 #
-# Errors не блокируют запуск worker'а: если HF недоступен или volume RO —
-# просто пишем warning и продолжаем (workflow всё равно упадёт с явной
-# ошибкой про missing file, что лучше чем silent hang).
+# После первого успешного скачивания файлы остаются на network volume и
+# shared между всеми worker'ами endpoint'а.
 
 set -u
 
@@ -27,14 +26,33 @@ UPSCALER_DIR="${VOLUME_BASE}/latent_upscale_models"
 
 AUDIO_VAE_FILE="LTX23_audio_vae_bf16.safetensors"
 AUDIO_VAE_URL="https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/${AUDIO_VAE_FILE}"
-AUDIO_VAE_MIN_BYTES=$((350 * 1024 * 1024)) # 350 MB sanity threshold
+AUDIO_VAE_MIN_BYTES=$((350 * 1024 * 1024))
 
 UPSCALER_FILE="ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
 UPSCALER_URL="https://huggingface.co/Lightricks/LTX-2.3/resolve/main/${UPSCALER_FILE}"
-UPSCALER_MIN_BYTES=$((950 * 1024 * 1024)) # 950 MB sanity threshold
+UPSCALER_MIN_BYTES=$((950 * 1024 * 1024))
 
 log() {
 	echo "[bootstrap-aux] $(date -u +%Y-%m-%dT%H:%M:%SZ) $1"
+}
+
+is_valid_safetensors() {
+	# Минимальная sanity: файл начинается с 8-byte LE header (header_len) и
+	# первые ~16 байт ASCII-print/JSON braces. Не валидируем содержимое.
+	local path="$1"
+	if [ ! -s "${path}" ]; then
+		return 1
+	fi
+	local size
+	size=$(stat -c %s "${path}" 2>/dev/null || echo 0)
+	if [ "${size}" -lt 1024 ]; then
+		return 1
+	fi
+	# Detect HTML error responses (e.g. HF rate-limit / unauthorized).
+	if head -c 64 "${path}" | grep -q -i -e '<html' -e '<!doctype' -e '<head'; then
+		return 1
+	fi
+	return 0
 }
 
 ensure_file() {
@@ -46,11 +64,11 @@ ensure_file() {
 	if [ -f "${dest_path}" ]; then
 		local size
 		size=$(stat -c %s "${dest_path}" 2>/dev/null || echo 0)
-		if [ "${size}" -ge "${min_bytes}" ]; then
-			log "${file}: present (${size} bytes), skip"
+		if [ "${size}" -ge "${min_bytes}" ] && is_valid_safetensors "${dest_path}"; then
+			log "${file}: present and valid (${size} bytes), skip"
 			return 0
 		fi
-		log "${file}: present but truncated (${size} bytes < ${min_bytes}), re-download"
+		log "${file}: present but invalid or truncated (${size} bytes), re-download"
 		rm -f "${dest_path}"
 	fi
 	mkdir -p "${dest_dir}" || {
@@ -58,17 +76,27 @@ ensure_file() {
 		return 1
 	}
 	log "${file}: downloading from ${url}"
-	# --continue: resume after partial download (e.g. worker recycled mid-pull)
-	# --tries: retry on transient HF rate-limit / network blips
-	# --timeout: per-request timeout (HF Xet redirects can be slow)
-	if wget --continue --tries=10 --waitretry=10 --timeout=120 \
-		--no-verbose -O "${dest_path}" "${url}"; then
-		local final_size
-		final_size=$(stat -c %s "${dest_path}" 2>/dev/null || echo 0)
-		log "${file}: downloaded (${final_size} bytes)"
-		return 0
-	fi
-	log "${file}: ERROR download failed; leaving partial file for next resume"
+	local attempt
+	for attempt in 1 2 3 4 5; do
+		# -f: fail on HTTP >=400; -L: follow HF Xet redirects;
+		# -C -: resume from any partial; --retry: in-curl retries for blips.
+		if curl -fL --retry 8 --retry-delay 5 --retry-max-time 0 \
+			--connect-timeout 30 -C - -o "${dest_path}.partial" "${url}"; then
+			mv "${dest_path}.partial" "${dest_path}"
+			local final_size
+			final_size=$(stat -c %s "${dest_path}" 2>/dev/null || echo 0)
+			if [ "${final_size}" -ge "${min_bytes}" ] && is_valid_safetensors "${dest_path}"; then
+				log "${file}: downloaded ok (${final_size} bytes)"
+				return 0
+			fi
+			log "${file}: post-download validation failed (${final_size} bytes), retry"
+			rm -f "${dest_path}"
+		else
+			log "${file}: curl exit non-zero on attempt ${attempt}; partial kept for resume"
+		fi
+		sleep 10
+	done
+	log "${file}: ERROR exhausted retries"
 	return 1
 }
 
@@ -82,8 +110,14 @@ main() {
 		return 0
 	fi
 	log "ensuring aux models present under ${VOLUME_BASE}"
+	command -v curl >/dev/null 2>&1 || {
+		log "curl not in PATH; falling back to no-op (worker base image должен иметь curl)"
+		return 0
+	}
 	ensure_file "${AUDIO_VAE_DIR}" "${AUDIO_VAE_FILE}" "${AUDIO_VAE_URL}" "${AUDIO_VAE_MIN_BYTES}" || true
 	ensure_file "${UPSCALER_DIR}" "${UPSCALER_FILE}" "${UPSCALER_URL}" "${UPSCALER_MIN_BYTES}" || true
+	log "summary: $(ls -la ${VOLUME_BASE}/vae 2>/dev/null | head -20)"
+	log "summary: $(ls -la ${VOLUME_BASE}/latent_upscale_models 2>/dev/null | head -20)"
 	log "done"
 }
 

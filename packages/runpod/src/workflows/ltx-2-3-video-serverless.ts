@@ -162,12 +162,14 @@ async function buildPayloadInternal(
 	patchNodeInputs(graph, NODE_DISTILL_LORA, {
 		lora_name: args.distillLoraFilename,
 	});
-	// Civitai LoRA pre-installed on volume via warmup script — здесь мы не можем
-	// тянуть LoRA на лету (нет HTTP listener'a у worker'а). Если в input заданы
-	// civitai-параметры, заменяем custom LoraManager-ноду на стандартный
-	// LoraLoaderModelOnly с локальным filename, ожидая что warmup-скрипт
-	// предварительно положил файл на volume по пути
-	// `loras/civitai-<modelId>-<versionId>.safetensors`.
+	// Узел `366 — Lora Loader (LoraManager)` принадлежит custom node
+	// `willmiao/ComfyUI-Lora-Manager`, который НЕ установлен в нашем
+	// `worker-ltx-comfyui` image. Если оставить его как есть, ComfyUI отрежет
+	// узел при валидации (как unknown class) → вся цепочка LoRA → KSampler →
+	// VAEDecode → VHS_VideoCombine отвалится → ответ `prompt_no_outputs`.
+	// Поэтому всегда переписываем 366: либо подставляем стандартный
+	// `LoraLoaderModelOnly` с civitai LoRA, либо удаляем узел и
+	// перенаправляем его consumers напрямую на distill LoRA (`134`).
 	if (parsed.loraCivitaiModelId && parsed.loraCivitaiVersionId) {
 		const filename = `civitai-${parsed.loraCivitaiModelId}-${parsed.loraCivitaiVersionId}.safetensors`;
 		replaceLoraManagerWithStandardLoader(
@@ -176,6 +178,8 @@ async function buildPayloadInternal(
 			filename,
 			parsed.loraScale
 		);
+	} else {
+		bypassLoraManagerNode(graph, NODE_LORA_LOADER);
 	}
 	// Fallback стоковый SaveImage. Если custom `VHS_VideoCombine` по какой-то
 	// причине не загрузился в worker'е (несовпадение версий ComfyUI ↔
@@ -317,6 +321,35 @@ function replaceLoraManagerWithStandardLoader(
 			strength_model: strength,
 		},
 	};
+}
+
+function bypassLoraManagerNode(
+	graph: Record<string, ComfyUINodeApiInput>,
+	nodeId: string
+): void {
+	const node = graph[nodeId];
+	if (!node) {
+		return;
+	}
+	const upstreamModel = node.inputs?.model;
+	if (!Array.isArray(upstreamModel)) {
+		return;
+	}
+	// Перенаправляем всех consumers, ссылавшихся на nodeId, напрямую на
+	// upstream model — узел LoraManager у нас всегда passthrough (нулевой
+	// массив loras), так что результат эквивалентен.
+	for (const consumer of Object.values(graph)) {
+		const inputs = consumer.inputs;
+		if (!inputs) {
+			continue;
+		}
+		for (const [key, value] of Object.entries(inputs)) {
+			if (Array.isArray(value) && value.length === 2 && value[0] === nodeId) {
+				inputs[key] = upstreamModel;
+			}
+		}
+	}
+	delete graph[nodeId];
 }
 
 function deepCloneJson<T>(value: T): T {

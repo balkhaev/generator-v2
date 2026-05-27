@@ -80,6 +80,70 @@ describe("createLtx23VideoServerlessWorkflow", () => {
 		}
 	});
 
+	it("bypasses the unknown LoraManager node when no civitai LoRA is provided", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			buildFakeImageResponse()) as unknown as typeof fetch;
+		try {
+			const wf = createLtx23VideoServerlessWorkflow({
+				endpointId: "ep-test",
+			});
+			const payload = await wf.buildPayload(
+				{
+					inputImageUrl: "https://example.test/cat.png",
+					prompt: "noop",
+				},
+				{ requestId: "req-bypass" }
+			);
+			const graph = payload.workflow as Record<
+				string,
+				{ class_type: string; inputs: Record<string, unknown> }
+			>;
+			// Узел Lora Manager (366) полностью удалён, чтобы ComfyUI не падал
+			// на unknown class.
+			expect(graph["366"]).toBeUndefined();
+			// Consumer LTX2SamplingPreviewOverride (337) теперь указывает прямо
+			// на distill LoRA (134), а не на 366.
+			expect(graph["337"]?.inputs?.model).toEqual(["134", 0]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("substitutes the LoraManager node with LoraLoaderModelOnly when civitai LoRA is set", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			buildFakeImageResponse()) as unknown as typeof fetch;
+		try {
+			const wf = createLtx23VideoServerlessWorkflow({
+				endpointId: "ep-test",
+			});
+			const payload = await wf.buildPayload(
+				{
+					inputImageUrl: "https://example.test/cat.png",
+					loraCivitaiModelId: 12_345,
+					loraCivitaiVersionId: 67_890,
+					loraScale: 0.85,
+					prompt: "with civitai lora",
+				},
+				{ requestId: "req-civitai" }
+			);
+			const graph = payload.workflow as Record<
+				string,
+				{ class_type: string; inputs: Record<string, unknown> }
+			>;
+			expect(graph["366"]?.class_type).toBe("LoraLoaderModelOnly");
+			expect(graph["366"]?.inputs?.lora_name).toBe(
+				"civitai-12345-67890.safetensors"
+			);
+			expect(graph["366"]?.inputs?.strength_model).toBe(0.85);
+			// Consumer всё ещё ссылается на 366 (но теперь это валидный node).
+			expect(graph["337"]?.inputs?.model).toEqual(["366", 0]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	it("applies custom base + distill filenames from config", async () => {
 		const originalFetch = globalThis.fetch;
 		globalThis.fetch = (async () =>

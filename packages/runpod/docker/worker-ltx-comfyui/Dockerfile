@@ -60,6 +60,17 @@ RUN comfy-node-install \
 # мапим эти исходные пути в стандартные ComfyUI ключи.
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
 
+# Bootstrap скрипт для аудио VAE и spatial upscaler на network volume.
+# Запускается перед оригинальным /start.sh (CMD override ниже).
+COPY bootstrap-aux-models.sh /usr/local/bin/bootstrap-aux-models.sh
+RUN chmod +x /usr/local/bin/bootstrap-aux-models.sh
+
+# Переопределяем CMD от base image (worker-comfyui:5.8.5-base ставит
+# CMD ["/start.sh"]). Сперва скачиваем aux модели если их нет на volume,
+# потом передаём управление оригинальному /start.sh — он уже сам
+# поднимает ComfyUI + RunPod handler.
+CMD ["/bin/bash", "-c", "/usr/local/bin/bootstrap-aux-models.sh && exec /start.sh"]
+
 # Health/debug hint в логах при старте контейнера, чтобы быстрее ловить
 # проблемы с моунтом volume / отсутствующими файлами.
 ENV NETWORK_VOLUME_DEBUG=true

@@ -11,6 +11,13 @@
 # `packages/runpod/scripts/warmup-volumes.ts` (LTX base) и
 # `packages/runpod/scripts/seed-sulphur-volumes.ts` (Sulphur base).
 
+#
+# IMPORTANT: НЕ маппим `custom_nodes` с volume. На исторических volumes
+# (унаследованных от pod-mode `ls250824/run-comfyui-ltx`) лежат старые
+# custom_nodes (lora-manager, frame-interpolation, rgthree и проч.),
+# которые крашат ComfyUI на старте (несовместимые зависимости с
+# worker-comfyui:5.8.5-base). Custom nodes ставим только из image
+# (`comfy-node-install` в Dockerfile).
 ltx_volume:
   base_path: /runpod-volume/workspace/ComfyUI
 
@@ -30,7 +37,6 @@ ltx_volume:
   upscale_models: models/upscale_models/
   vae: models/vae/
   vae_approx: models/vae_approx/
-  custom_nodes: custom_nodes/
 
 # Дополнительный fallback на случай если volume организован "плоско"
 # (модели прямо в /runpod-volume/models/...). Это нативный layout

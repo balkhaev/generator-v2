@@ -83,10 +83,20 @@ const NODE_FALLBACK_SAVE_IMAGE = "9001";
 // Дополнительный fallback — стоковый `SaveAnimatedWEBP` (built-in ComfyUI).
 // Worker-comfyui handler.py читает output key `images`, в которое
 // SaveAnimatedWEBP пишет анимированный webp. VHS_VideoCombine пишет в
-// `gifs`/`videos`, которые handler НЕ обрабатывает (см. processing-loop
-// в handler.py), поэтому webp — единственный надёжный способ получить
-// анимированный артефакт через текущий runpod-workers/worker-comfyui образ.
+// `gifs`/`videos`, которые без `patch-handler.py` handler НЕ обрабатывает.
+// Webp оставляем как safety net на случай, если custom-нода VHS упадёт.
 const NODE_FALLBACK_SAVE_WEBP = "9002";
+// VHS_VideoCombine (comfyui-videohelpersuite) — даёт реальный h264 mp4.
+// В worker-image встроен patch-handler.py, который поднимает output key
+// `gifs` (там VHS публикует mp4-файлы). Без патча ключ игнорируется.
+// Используем уже существующий в LVRAM-шаблоне узел 140 (VHS_VideoCombine),
+// но: (1) принудительно отвязываем audio input (исходный 201 удалён
+// bypassSpatialUpscale, без audio mp4 пишется только с видео-треком),
+// (2) переключаем images-source на NODE_VAE_DECODE_IMAGES (на случай
+// если шаблон обновится и индекс собьётся), (3) ставим pix_fmt yuv420p
+// для Safari/iOS-совместимости и crf=19 (визуально lossless для
+// постпродакшна, файл ~1-3MB на 5-секундное 720p).
+const NODE_VHS_MP4 = "140";
 // positive CLIPTextEncode (узел 121) в исходном шаблоне берёт text от
 // `TextGenerateLTX2Prompt` (349) — LLM-обогатителя. Этот узел требует
 // отдельной LLM (Qwen) внутри ComfyUI, которая (а) грузится 60-180с при
@@ -283,6 +293,7 @@ async function buildPayloadInternal(
 	//   - SaveImage даст N png-frames на случай, если webp encoder упадёт.
 	ensureFallbackSaveImage(graph);
 	ensureFallbackSaveAnimatedWebp(graph, parsed.fps);
+	repairVhsMp4(graph, parsed.fps);
 	return {
 		images: [
 			{
@@ -321,24 +332,27 @@ function parseServerlessOutput(raw: unknown): Ltx23Output {
 			"worker-comfyui returned no output images — workflow probably failed silently"
 		);
 	}
-	// Приоритет вывода:
-	//   1) mp4/webm/mov/mkv/gif от VHS_VideoCombine (если ComfyUI handler
-	//      когда-нибудь начнёт их подхватывать)
-	//   2) webp от SaveAnimatedWEBP — реальное анимированное видео, которое
-	//      все плееры умеют (включая Studio)
-	//   3) png-frame от SaveImage — деградированный режим, отдаём как ошибку
-	//      потому что UI ожидает видео.
-	const video = parsed.images.find((item) => isVideoOutput(item));
-	if (video) {
-		const mime = guessVideoMime(video.filename);
+	// Приоритет вывода (см. ensureFallback* функции):
+	//   1) mp4 / webm / mov / mkv от VHS_VideoCombine (preferred — реальный
+	//      h264 видеоконтейнер с правильным fps, плеер-агностик)
+	//   2) gif от VHS — fallback на legacy формат
+	//   3) webp от SaveAnimatedWEBP — анимированное изображение, играет
+	//      во всех современных плеерах но без частоты кадров в headers
+	//   4) png-frame от SaveImage — деградированный режим, отдаём как
+	//      ошибку т.к. UI ожидает video stream.
+	const ranked = [...parsed.images]
+		.map((item) => ({ item, rank: videoRank(item) }))
+		.filter((entry) => entry.rank > 0)
+		.sort((a, b) => b.rank - a.rank);
+	const best = ranked[0]?.item;
+	if (best) {
+		const mime = guessVideoMime(best.filename);
 		return {
 			podConsoleUrl: "",
 			podId: "",
 			requestId: "",
 			videoUrl:
-				video.type === "s3_url"
-					? video.data
-					: `data:${mime};base64,${video.data}`,
+				best.type === "s3_url" ? best.data : `data:${mime};base64,${best.data}`,
 		};
 	}
 	const firstFilename = parsed.images[0]?.filename ?? "<no-filename>";
@@ -348,21 +362,26 @@ function parseServerlessOutput(raw: unknown): Ltx23Output {
 	);
 }
 
-const VIDEO_FILENAME_RE = /\.(mp4|webm|mov|mkv|gif|webp)$/i;
-
-function isVideoOutput(item: { data: string; filename?: string }): boolean {
-	const filename = item.filename ?? "";
-	if (VIDEO_FILENAME_RE.test(filename)) {
-		return true;
-	}
+function videoRank(item: { data: string; filename?: string }): number {
+	const filename = (item.filename ?? "").toLowerCase();
 	if (
-		item.data.startsWith("data:video/") ||
-		item.data.startsWith("data:image/webp") ||
-		item.data.startsWith("data:image/gif")
+		filename.endsWith(".mp4") ||
+		filename.endsWith(".mov") ||
+		filename.endsWith(".mkv") ||
+		item.data.startsWith("data:video/mp4")
 	) {
-		return true;
+		return 100;
 	}
-	return false;
+	if (filename.endsWith(".webm") || item.data.startsWith("data:video/webm")) {
+		return 80;
+	}
+	if (filename.endsWith(".gif") || item.data.startsWith("data:image/gif")) {
+		return 40;
+	}
+	if (filename.endsWith(".webp") || item.data.startsWith("data:image/webp")) {
+		return 20;
+	}
+	return 0;
 }
 
 function guessVideoMime(filename?: string): string {
@@ -446,6 +465,33 @@ function ensureFallbackSaveAnimatedWebp(
 			quality: 90,
 		},
 	};
+}
+
+function repairVhsMp4(
+	graph: Record<string, ComfyUINodeApiInput>,
+	fps: number
+): void {
+	const node = graph[NODE_VHS_MP4];
+	if (!node || node.class_type !== "VHS_VideoCombine") {
+		return;
+	}
+	if (!graph[NODE_VAE_DECODE_IMAGES]) {
+		return;
+	}
+	node._meta = { title: "VHS_VideoCombine (h264 mp4, no audio)" };
+	const cleanedInputs: Record<string, unknown> = {
+		crf: 19,
+		filename_prefix: "ltx-23-mp4",
+		format: "video/h264-mp4",
+		frame_rate: fps,
+		images: [NODE_VAE_DECODE_IMAGES, 0],
+		loop_count: 0,
+		pingpong: false,
+		pix_fmt: "yuv420p",
+		save_metadata: false,
+		save_output: true,
+	};
+	node.inputs = cleanedInputs;
 }
 
 function bypassTextGenerateLtx2Prompt(

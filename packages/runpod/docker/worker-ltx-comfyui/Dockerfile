@@ -65,6 +65,13 @@ COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
 COPY bootstrap-aux-models.sh /usr/local/bin/bootstrap-aux-models.sh
 RUN chmod +x /usr/local/bin/bootstrap-aux-models.sh
 
+# Patch /handler.py чтобы он обрабатывал не только output key `images`,
+# но и `gifs`/`videos` (которые пишет VHS_VideoCombine). Без патча mp4
+# никогда не доходит до serverless response — handler помечает ключ как
+# unhandled и теряет файл. Подробности в patch-handler.py.
+COPY patch-handler.py /usr/local/bin/patch-handler.py
+RUN python3 /usr/local/bin/patch-handler.py
+
 # Переопределяем CMD от base image (worker-comfyui:5.8.5-base ставит
 # CMD ["/start.sh"]). Сперва скачиваем aux модели если их нет на volume,
 # потом передаём управление оригинальному /start.sh — он уже сам

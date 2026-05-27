@@ -36,32 +36,58 @@ ANCHOR = '            # Check for other output types\n            other_keys = [
 # обрабатываем каждый файл как handler делает с `images`, затем
 # восстанавливаем оригинальный other_keys warning, но исключая уже
 # обработанные video-ключи (чтобы не мусорить warning'ами).
-SENTINEL_ANCHOR = "    print(f\"worker-comfyui - Job completed. Returning {len(output_data)} image(s).\")\n    return final_result"
+SENTINEL_SUFFIX = """
 
-SENTINEL_REPLACEMENT = """    print(f\"worker-comfyui - Job completed. Returning {len(output_data)} image(s).\")
-    # >>> ltx-worker: bootstrap sentinel
-    try:
-        import json as _json
-        for _candidate in (
-            "/runpod-volume/ComfyUI/models/_bootstrap_aux_status.json",
-            "/runpod-volume/models/_bootstrap_aux_status.json",
-            "/workspace/ComfyUI/models/_bootstrap_aux_status.json",
-        ):
-            try:
-                with open(_candidate) as _fh:
-                    final_result[\"_bootstrap_sentinel\"] = _json.load(_fh)
-                    break
-            except FileNotFoundError:
-                continue
-            except Exception as _e:
-                final_result[\"_bootstrap_sentinel\"] = {\"error\": str(_e), \"path\": _candidate}
-                break
-        else:
-            final_result[\"_bootstrap_sentinel\"] = {\"status\": \"sentinel-missing\"}
-    except Exception as _outer:
-        final_result[\"_bootstrap_sentinel_error\"] = str(_outer)
-    # <<< ltx-worker: bootstrap sentinel
-    return final_result"""
+# >>> ltx-worker: bootstrap sentinel wrapper
+import json as _ltx_json
+import os as _ltx_os
+
+
+def _ltx_read_sentinel():
+\tfor _candidate in (
+\t\t"/runpod-volume/ComfyUI/models/_bootstrap_aux_status.json",
+\t\t"/runpod-volume/models/_bootstrap_aux_status.json",
+\t\t"/workspace/ComfyUI/models/_bootstrap_aux_status.json",
+\t):
+\t\ttry:
+\t\t\twith open(_candidate) as _fh:
+\t\t\t\treturn _ltx_json.load(_fh)
+\t\texcept FileNotFoundError:
+\t\t\tcontinue
+\t\texcept Exception as _e:
+\t\t\treturn {"_sentinel_error": str(_e), "path": _candidate}
+\treturn {
+\t\t"status": "sentinel-missing",
+\t\t"runpod_volume_listing": _ltx_safe_ls("/runpod-volume"),
+\t\t"runpod_volume_comfyui_listing": _ltx_safe_ls("/runpod-volume/ComfyUI"),
+\t\t"runpod_volume_models_listing": _ltx_safe_ls("/runpod-volume/models"),
+\t}
+
+
+def _ltx_safe_ls(path):
+\ttry:
+\t\treturn sorted(_ltx_os.listdir(path))[:40]
+\texcept Exception as _e:
+\t\treturn f"err: {_e}"
+
+
+_ltx_orig_handler = handler
+
+
+def handler(job):
+\ttry:
+\t\tresult = _ltx_orig_handler(job)
+\texcept Exception as _e:
+\t\tresult = {"error": f"handler raised: {_e}"}
+\ttry:
+\t\tif isinstance(result, dict):
+\t\t\tresult["_bootstrap_sentinel"] = _ltx_read_sentinel()
+\texcept Exception as _e:
+\t\tif isinstance(result, dict):
+\t\t\tresult["_bootstrap_sentinel_error"] = str(_e)
+\treturn result
+# <<< ltx-worker: bootstrap sentinel wrapper
+"""
 
 REPLACEMENT = f"""            {PATCH_MARKER}
             # VHS_VideoCombine кладёт mp4/webm в key `gifs`, SaveVideo —
@@ -172,15 +198,21 @@ def main() -> int:
 	if patched == original:
 		print("[patch-handler] FATAL: replacement did not change content", file=sys.stderr)
 		return 3
-	if SENTINEL_ANCHOR not in patched:
+	# Append sentinel wrapper в конец handler.py — после оригинального
+	# `if __name__ == "__main__": runpod.serverless.start(...)`. Wrapper
+	# заменит глобальный `handler` symbol до того, как runpod подхватит его.
+	# Чтобы это работало даже если patch выполняется при build (когда
+	# runpod ещё не импортирован), кладём wrapper ДО main-guard'а.
+	main_anchor = 'if __name__ == "__main__":'
+	if main_anchor not in patched:
 		print(
-			"[patch-handler] WARNING: sentinel anchor not found — sentinel debug not injected",
+			"[patch-handler] FATAL: main guard not found, cannot inject sentinel wrapper",
 			file=sys.stderr,
 		)
-	else:
-		patched = patched.replace(SENTINEL_ANCHOR, SENTINEL_REPLACEMENT, 1)
+		return 4
+	patched = patched.replace(main_anchor, SENTINEL_SUFFIX + "\n" + main_anchor, 1)
 	HANDLER_PATH.write_text(patched)
-	print("[patch-handler] applied video output patch v1 (+sentinel)")
+	print("[patch-handler] applied video output patch v1 + sentinel wrapper")
 	return 0
 
 

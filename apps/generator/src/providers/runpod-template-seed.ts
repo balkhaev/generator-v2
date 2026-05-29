@@ -254,6 +254,66 @@ async function seedWanServerlessTemplate(
 	);
 }
 
+async function seedFluxServerlessTemplate(
+	database: Db,
+	summary: SeedSummary,
+	endpointId: string,
+	volumes: VolumeEnvEntry[]
+): Promise<void> {
+	const podTemplateId = generateId("runpod_tpl");
+	const inserted = await database
+		.insert(runpodPodTemplate)
+		.values({
+			defaultEnv: {},
+			description: "Seeded from RUNPOD_FLUX_DEV_SERVERLESS_* env",
+			enabled: "true",
+			gpuTypeIds: [],
+			id: podTemplateId,
+			imageName:
+				process.env.RUNPOD_FLUX_DEV_SERVERLESS_IMAGE?.trim() ||
+				process.env.RUNPOD_WAN22_SERVERLESS_IMAGE?.trim() ||
+				process.env.RUNPOD_LTX23_SERVERLESS_IMAGE?.trim() ||
+				undefined,
+			mode: "serverless",
+			name: "Flux.1-dev T2I serverless (env-seeded)",
+			runpodEndpointId: endpointId,
+			workflowKey: "flux-dev-image",
+		})
+		.onConflictDoNothing({ target: runpodPodTemplate.name })
+		.returning({ id: runpodPodTemplate.id });
+	const templateRowId = inserted[0]?.id;
+	if (!templateRowId) {
+		return;
+	}
+	summary.createdTemplates.push(templateRowId);
+	const volumeIds: string[] = [];
+	for (const [index, entry] of volumes.entries()) {
+		const id = generateId("runpod_vol");
+		await database.insert(runpodNetworkVolume).values({
+			datacenter: "unknown",
+			description: "Seeded from RUNPOD_FLUX_DEV_NETWORK_VOLUMES env",
+			gpuTypeIds: entry.gpus,
+			id,
+			name:
+				entry.label?.trim() ||
+				`Flux volume ${index + 1} (${entry.id.slice(0, 8)})`,
+			runpodVolumeId: entry.id,
+			sizeGb: 0,
+		});
+		summary.createdVolumes.push(id);
+		volumeIds.push(id);
+	}
+	if (volumeIds.length > 0) {
+		await database.insert(runpodPodTemplateVolume).values(
+			volumeIds.map((volumeId, index) => ({
+				podTemplateId: templateRowId,
+				priority: index,
+				volumeId,
+			}))
+		);
+	}
+}
+
 /**
  * One-shot seed admin-managed RunPod templates с env-конфига если БД пуста.
  *
@@ -327,6 +387,20 @@ export async function seedRunpodTemplatesFromEnv(
 			wanEndpointId,
 			wanTemplateId,
 			wanVolumes
+		);
+	}
+
+	const fluxEndpointId =
+		process.env.RUNPOD_FLUX_DEV_SERVERLESS_ENDPOINT_ID?.trim();
+	const fluxVolumes = parseVolumesEnv(
+		process.env.RUNPOD_FLUX_DEV_NETWORK_VOLUMES
+	);
+	if (fluxEndpointId) {
+		await seedFluxServerlessTemplate(
+			database,
+			summary,
+			fluxEndpointId,
+			fluxVolumes
 		);
 	}
 

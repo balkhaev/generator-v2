@@ -7,6 +7,7 @@ import {
 } from "@generator/db/schema/runpod";
 import {
 	type AnyWorkflowDefinition,
+	createFluxDevImageServerlessWorkflow,
 	createFooocusSdxlWorkflow,
 	createLtx23VideoServerlessWorkflow,
 	createLtx23VideoWorkflow,
@@ -211,6 +212,9 @@ function buildWorkflowFromTemplate(
 	if (tpl.workflowKey === "wan-2-2-video") {
 		return buildWan22ServerlessWorkflow(tpl, logger);
 	}
+	if (tpl.workflowKey === "flux-dev-image") {
+		return buildFluxDevImageServerlessWorkflow(tpl, logger);
+	}
 	logger.warn?.("runpod.template-loader.unknown-workflow-key", {
 		templateId: tpl.id,
 		workflowKey: tpl.workflowKey,
@@ -298,6 +302,11 @@ function buildLtx23ServerlessWorkflow(
 			process.env.RUNPOD_LTX23_SERVERLESS_BASE_MODEL?.trim() || undefined,
 		distillLoraFilename:
 			process.env.RUNPOD_LTX23_SERVERLESS_DISTILL_LORA?.trim() || undefined,
+		// Второй (spatial upscale) pass включён по умолчанию — нужен апскейлер
+		// на volume (seed-ltx-aux-models.ts). Выключить аварийно:
+		// RUNPOD_LTX23_DISABLE_SPATIAL_UPSCALE=true.
+		enableSpatialUpscale:
+			process.env.RUNPOD_LTX23_DISABLE_SPATIAL_UPSCALE !== "true",
 		enableWarmup: process.env.RUNPOD_LTX23_ENABLE_WARMUP !== "false",
 		endpointId: tpl.runpodEndpointId,
 		id: "ltx-2-3-video",
@@ -338,5 +347,32 @@ function buildWan22ServerlessWorkflow(
 			process.env.RUNPOD_WAN22_TEXT_ENCODER?.trim() || undefined,
 		vaeFilename: process.env.RUNPOD_WAN22_VAE?.trim() || undefined,
 		webhookUrl: process.env.RUNPOD_WAN22_WEBHOOK_URL?.trim() || undefined,
+	});
+}
+
+function buildFluxDevImageServerlessWorkflow(
+	tpl: LoadedTemplate,
+	logger: Pick<Console, "info" | "warn">
+): AnyWorkflowDefinition | null {
+	if (tpl.mode !== "serverless") {
+		logger.warn?.("runpod.template-loader.flux-not-serverless", {
+			mode: tpl.mode,
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	if (!tpl.runpodEndpointId) {
+		logger.warn?.("runpod.template-loader.flux-serverless-missing-endpoint", {
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	return createFluxDevImageServerlessWorkflow({
+		checkpointFilename:
+			process.env.RUNPOD_FLUX_DEV_CHECKPOINT?.trim() || undefined,
+		enableWarmup: process.env.RUNPOD_FLUX_DEV_ENABLE_WARMUP === "true",
+		endpointId: tpl.runpodEndpointId,
+		id: "flux-dev-image",
+		webhookUrl: process.env.RUNPOD_FLUX_DEV_WEBHOOK_URL?.trim() || undefined,
 	});
 }

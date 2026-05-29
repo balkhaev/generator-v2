@@ -1,0 +1,74 @@
+{
+  "1": {
+    "_meta": { "title": "Load Checkpoint (Flux dev fp8)" },
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "flux1-dev-fp8.safetensors"
+    }
+  },
+  "20": {
+    "_meta": { "title": "CLIP Text Encode (Positive)" },
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "text": "a photo"
+    }
+  },
+  "21": {
+    "_meta": { "title": "CLIP Text Encode (Negative)" },
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "text": ""
+    }
+  },
+  "22": {
+    "_meta": { "title": "FluxGuidance" },
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": ["20", 0],
+      "guidance": 3.5
+    }
+  },
+  "30": {
+    "_meta": { "title": "Empty Latent (Flux/SD3)" },
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "height": 1152,
+      "width": 896
+    }
+  },
+  "40": {
+    "_meta": { "title": "KSampler" },
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": ["30", 0],
+      "model": ["1", 0],
+      "negative": ["21", 0],
+      "positive": ["22", 0],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 0,
+      "steps": 28
+    }
+  },
+  "60": {
+    "_meta": { "title": "VAE Decode" },
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["40", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "70": {
+    "_meta": { "title": "Save Image" },
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "flux-dev",
+      "images": ["60", 0]
+    }
+  }
+}

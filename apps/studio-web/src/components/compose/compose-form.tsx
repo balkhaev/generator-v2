@@ -50,6 +50,11 @@ import CivitaiLtx23Setup, {
 import LoraStack from "./lora-stack";
 import ParameterField from "./parameter-field";
 import {
+	createRunpodFluxNoisifyFormState,
+	isRunpodFluxNoisifyWorkflow,
+	RunpodFluxNoisifyFields,
+} from "./runpod-flux-dev-noisify-form";
+import {
 	isRunpodWan22PussyWorkflow,
 	RunpodWan22PussyFields,
 } from "./runpod-wan22-pussy-form";
@@ -121,6 +126,9 @@ export function createComposeScenarioFormState(
 ): ScenarioFormState {
 	if (isCivitaiLtx23Workflow(workflow)) {
 		return createCivitaiLtx23FormState(workflow);
+	}
+	if (isRunpodFluxNoisifyWorkflow(workflow)) {
+		return createRunpodFluxNoisifyFormState(workflow);
 	}
 	const form = createScenarioFormState(workflow);
 	const params = { ...form.params };
@@ -928,6 +936,14 @@ function SettingsSection({
 		if (isRunpodWan22PussyWorkflow(selectedWorkflow)) {
 			parameterSection = (
 				<RunpodWan22PussyFields
+					form={form}
+					onParamChange={onParamChange}
+					workflow={selectedWorkflow}
+				/>
+			);
+		} else if (isRunpodFluxNoisifyWorkflow(selectedWorkflow)) {
+			parameterSection = (
+				<RunpodFluxNoisifyFields
 					form={form}
 					onParamChange={onParamChange}
 					workflow={selectedWorkflow}

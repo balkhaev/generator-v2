@@ -131,6 +131,13 @@ export {
 	type RunpodSubmission,
 } from "./workflow/runner";
 export {
+	createFluxDevImageServerlessWorkflow,
+	type FluxImageInput,
+	type FluxImageOutput,
+	type FluxImageServerlessWorkflowConfig,
+	fluxImageInputSchema,
+} from "./workflows/flux-dev-image-serverless";
+export {
 	createFooocusSdxlWorkflow,
 	type FooocusSdxlImage,
 	type FooocusSdxlInput,

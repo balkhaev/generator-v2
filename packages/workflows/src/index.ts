@@ -85,6 +85,15 @@ export const RUNPOD_WAN22_PUSSY_LORA_HIGH_FILENAME =
 	"wan22-pussy-high_noise.safetensors";
 export const RUNPOD_WAN22_PUSSY_LORA_LOW_FILENAME =
 	"wan22-pussy-low_noise.safetensors";
+const RUNPOD_FLUX_DEV_IMAGE_KEY = "flux-dev-image";
+/**
+ * «Noisify» — Flux.1-dev LoRA (raw grainy snapshot aesthetic), хостится на
+ * нашем S3. Файл pre-provisioned на network volume Flux endpoint'а под именем
+ * ниже. Источник — внешний LoRA, ранее использовался на fal-flux-dev.
+ */
+export const RUNPOD_FLUX_NOISIFY_LORA_FILENAME = "noisify.safetensors";
+export const RUNPOD_FLUX_NOISIFY_LORA_SOURCE_URL =
+	"https://hel1.your-objectstorage.com/generator/loras/external/external-7919a4063730eca7.safetensors";
 const REPLICATE_FOOOCUS_API_VERSION =
 	"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c";
 const REPLICATE_WAN_22_I2V_FAST_VERSION =
@@ -236,7 +245,9 @@ const runpodLtx23ParamsSchema = z.object({
 	seed: z.number().int().nonnegative().optional(),
 	loraCivitaiModelId: z.coerce.number().int().positive().optional(),
 	loraCivitaiVersionId: z.coerce.number().int().positive().optional(),
-	loraScale: z.number().min(0).max(2).default(1),
+	// Concept-LoRA поверх distill-LoRA на 1.0 «плавит» лица; 0.7 — безопасный
+	// дефолт, сохраняющий концепт без деградации лица.
+	loraScale: z.number().min(0).max(2).default(0.7),
 });
 
 // Wan 2.2 latent patchify требует кратность 16 по обеим осям; длина — 4n+1.
@@ -281,6 +292,35 @@ const runpodWan22ParamsSchema = z.object({
 	loraCivitaiVersionId: z.coerce.number().int().positive().optional(),
 	loraHighFilename: z.string().min(1).optional(),
 	loraLowFilename: z.string().min(1).optional(),
+	loraScale: z.number().min(0).max(2).default(1),
+});
+
+// Flux latent: /8 downscale + 2×2 patchify ⇒ обе оси должны быть кратны 16.
+const fluxDimensionSchema = z
+	.number()
+	.int()
+	.min(256)
+	.max(1536)
+	.refine((value) => value % 16 === 0, {
+		message: "Flux width/height must be divisible by 16",
+	});
+
+/**
+ * Параметры RunPod Flux.1-dev text-to-image serverless workflow. Endpoint
+ * переиспользует worker-comfyui образ (Flux-ноды есть в ComfyUI core),
+ * all-in-one fp8-чекпоинт + LoRA лежат на network volume. Граф патчится в
+ * `flux-dev-image-serverless.ts`. LoRA («Noisify» и пр.) опциональна и
+ * задаётся через `loraFilename` (файл pre-provisioned на volume).
+ */
+const runpodFluxDevParamsSchema = z.object({
+	width: fluxDimensionSchema.default(896),
+	height: fluxDimensionSchema.default(1152),
+	steps: z.number().int().min(1).max(60).default(28),
+	guidance: z.number().min(0).max(20).default(3.5),
+	numImages: z.number().int().min(1).max(4).default(1),
+	negativePrompt: z.string().default(""),
+	seed: z.number().int().nonnegative().optional(),
+	loraFilename: z.string().min(1).optional(),
 	loraScale: z.number().min(0).max(2).default(1),
 });
 
@@ -818,6 +858,31 @@ function buildRunpodFooocusLoraUrls(
 type RunpodFooocusSdxlParams = z.infer<typeof runpodFooocusSdxlParamsSchema>;
 type RunpodLtx23Params = z.infer<typeof runpodLtx23ParamsSchema>;
 type RunpodWan22Params = z.infer<typeof runpodWan22ParamsSchema>;
+type RunpodFluxDevParams = z.infer<typeof runpodFluxDevParamsSchema>;
+
+function buildRunpodFluxDevInput({
+	parsed,
+	prompt,
+}: {
+	parsed: RunpodFluxDevParams;
+	prompt: string;
+}): Record<string, unknown> {
+	const lora = parsed.loraFilename
+		? { loraFilename: parsed.loraFilename, loraScale: parsed.loraScale }
+		: {};
+	return {
+		__runpodWorkflow: RUNPOD_FLUX_DEV_IMAGE_KEY,
+		prompt,
+		negativePrompt: parsed.negativePrompt,
+		width: parsed.width,
+		height: parsed.height,
+		steps: parsed.steps,
+		guidance: parsed.guidance,
+		numImages: parsed.numImages,
+		...lora,
+		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+	};
+}
 
 function buildRunpodFooocusSdxlInput({
 	parsed,
@@ -1349,6 +1414,86 @@ const runpodWan22ParameterFields: readonly WorkflowField[] = [
 	},
 ];
 
+const runpodFluxDevParameterFields: readonly WorkflowField[] = [
+	{
+		description: "Output image width in pixels. Must be divisible by 16.",
+		key: "width",
+		label: "Width",
+		max: 1536,
+		min: 256,
+		step: 16,
+		type: "number",
+	},
+	{
+		description: "Output image height in pixels. Must be divisible by 16.",
+		key: "height",
+		label: "Height",
+		max: 1536,
+		min: 256,
+		step: 16,
+		type: "number",
+	},
+	{
+		description: "Total denoising steps.",
+		key: "steps",
+		label: "Steps",
+		max: 60,
+		min: 1,
+		step: 1,
+		unit: "steps",
+		type: "number",
+	},
+	{
+		description: "Flux guidance (distilled CFG). Recommended 2.5–4.0.",
+		key: "guidance",
+		label: "Guidance",
+		max: 20,
+		min: 0,
+		step: 0.1,
+		type: "number",
+	},
+	{
+		description: "Number of images to generate in one batch.",
+		key: "numImages",
+		label: "Images",
+		max: 4,
+		min: 1,
+		step: 1,
+		type: "number",
+	},
+	{
+		description: "Negative prompt to discourage unwanted content.",
+		key: "negativePrompt",
+		label: "Negative prompt",
+		optional: true,
+		type: "text",
+	},
+	{
+		description:
+			"Pre-provisioned LoRA filename under models/loras on the volume (optional).",
+		key: "loraFilename",
+		label: "LoRA filename",
+		optional: true,
+		type: "text",
+	},
+	{
+		description: "Strength of the optional LoRA.",
+		key: "loraScale",
+		label: "LoRA scale",
+		max: 2,
+		min: 0,
+		step: 0.05,
+		type: "number",
+	},
+	{
+		description: "Optional deterministic seed.",
+		key: "seed",
+		label: "Seed",
+		optional: true,
+		type: "number",
+	},
+];
+
 export const workflowRegistry = {
 	"fal-flux-schnell": {
 		baseModel: "flux",
@@ -1745,6 +1890,21 @@ export const workflowRegistry = {
 			return buildRunpodWan22Input({ inputImageUrl, parsed, prompt });
 		},
 		extractArtifactUrls: collectRunpodPodVideoUrls,
+	},
+	"runpod-flux-dev-image": {
+		baseModel: "flux",
+		key: "runpod-flux-dev-image",
+		name: "Flux.1-dev (RunPod)",
+		description:
+			"Flux.1-dev text-to-image на RunPod serverless (ComfyUI + worker-comfyui). All-in-one fp8-чекпоинт на network volume, LoRA («Noisify» и др.) — через loraFilename на volume. Без цензуры (self-hosted).",
+		requiresInputImage: false,
+		parameterSchema: runpodFluxDevParamsSchema,
+		parameterFields: runpodFluxDevParameterFields,
+		buildProviderInput: ({ params, prompt }) => {
+			const parsed = runpodFluxDevParamsSchema.parse(params);
+			return buildRunpodFluxDevInput({ parsed, prompt });
+		},
+		extractArtifactUrls: collectArtifactUrls,
 	},
 	// Legacy ключи: оставляем функционирующими, но скрываем из списка — старая
 	// архитектура (text-to-video на bootstrap pod) не поддерживается template

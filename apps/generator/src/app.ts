@@ -12,6 +12,7 @@ import { createRedisConnection } from "@generator/queue";
 import {
 	type ActivePodRegistry,
 	type AnyWorkflowDefinition,
+	createFluxDevImageServerlessWorkflow,
 	createFooocusSdxlWorkflow,
 	createLtx23VideoWorkflow,
 	createRunpodService,
@@ -190,6 +191,20 @@ function buildEnvDefaultWorkflows(): AnyWorkflowDefinition[] {
 					process.env.RUNPOD_WAN22_TEXT_ENCODER?.trim() || undefined,
 				vaeFilename: process.env.RUNPOD_WAN22_VAE?.trim() || undefined,
 				webhookUrl: process.env.RUNPOD_WAN22_WEBHOOK_URL?.trim() || undefined,
+			})
+		);
+	}
+	const fluxEndpointId =
+		process.env.RUNPOD_FLUX_DEV_SERVERLESS_ENDPOINT_ID?.trim();
+	if (fluxEndpointId) {
+		workflows.push(
+			createFluxDevImageServerlessWorkflow({
+				checkpointFilename:
+					process.env.RUNPOD_FLUX_DEV_CHECKPOINT?.trim() || undefined,
+				enableWarmup: process.env.RUNPOD_FLUX_DEV_ENABLE_WARMUP === "true",
+				endpointId: fluxEndpointId,
+				webhookUrl:
+					process.env.RUNPOD_FLUX_DEV_WEBHOOK_URL?.trim() || undefined,
 			})
 		);
 	}

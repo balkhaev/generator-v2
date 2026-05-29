@@ -1409,6 +1409,7 @@ function summarizeStudioExecution(row: GeneratorExecutionRow) {
 		errorSummary: row.errorSummary,
 		id: row.id,
 		inputImageUrl: row.inputImageUrl,
+		lastLogLine: row.lastLogLine,
 		loraParams: pickLoraParams(params),
 		params,
 		progressPct: row.progressPct,

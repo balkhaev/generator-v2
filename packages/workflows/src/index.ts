@@ -990,9 +990,14 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"civitai-ltx-2-3-synth-text-to-video": 2 * MINUTE,
 	"civitai-ltx-2-3-synth-image-to-video": 2 * MINUTE,
 	"runpod-fooocus-sdxl": 90 * SECOND,
-	"runpod-ltx-2-3-text-to-video": 35 * MINUTE,
-	"runpod-ltx-2-3-image-to-video": 35 * MINUTE,
-	"runpod-ltx-2-3-synth-text-to-video": 35 * MINUTE,
+	// Always-warm serverless (workersMin=1, flashboot): cold start'ов нет.
+	// Измерено на тёплом воркере: delay ~10s + render ~9.2min ≈ 9.5min
+	// (512x896, 5s/97 кадров, 8 шагов). Берём 10min с небольшим буфером —
+	// soft-progress кепится 90%, недолёт лучше перелёта (бар сидит на 90%,
+	// а не ползёт у floor). Редкий cold 2-й воркер просто дольше у 90%.
+	"runpod-ltx-2-3-text-to-video": 10 * MINUTE,
+	"runpod-ltx-2-3-image-to-video": 10 * MINUTE,
+	"runpod-ltx-2-3-synth-text-to-video": 10 * MINUTE,
 	"replicate-fooocus-sdxl": 15 * SECOND,
 	// bf16 inference измерено 9.7s на 1MP. Добавили буфер на queue + pickup.
 	"replicate-flux-dev-lora": 15 * SECOND,

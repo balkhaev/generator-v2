@@ -130,7 +130,7 @@ describe("workflow registry", () => {
 			durationSeconds: 10,
 			fps: 24,
 			height: 1280,
-			loraScale: 1,
+			loraScale: 0.7,
 			steps: 8,
 			width: 896,
 		});

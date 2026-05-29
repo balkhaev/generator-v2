@@ -27,7 +27,23 @@ const DEFAULT_FRAMES = 121;
 const DEFAULT_FPS = 24;
 const DEFAULT_STEPS = 8;
 const DEFAULT_CFG_SCALE = 1;
-const DEFAULT_LORA_SCALE = 1;
+// Concept-LoRA поверх distill-LoRA (0.6) на силе 1.0 пересушивает анатомию
+// и «плавит» лица. 0.7 сохраняет узнаваемость концепта без деградации лица.
+const DEFAULT_LORA_SCALE = 0.7;
+// Эталонные расписания сигм, экспортированные из живого шаблона
+// (ноды 359 — первый pass, 360 — refine pass). Реальное число шагов задают
+// ИМЕННО они (через ManualSigmas), а LTXVScheduler (206) в графе ни к чему
+// не подключён. Поэтому `steps` мы транслируем в пересэмпленный по форме
+// этой кривой список: при steps === нативного количества возвращаем эталон
+// без изменений, иначе сгущаем/разрежаем, сохраняя форму распада.
+const FIRST_PASS_SIGMAS_REF = [
+	1.0, 0.993_75, 0.9875, 0.981_25, 0.975, 0.909_375, 0.725, 0.421_875, 0.0,
+] as const;
+const REFINE_PASS_SIGMAS_REF = [0.85, 0.725, 0.4219, 0.0] as const;
+// Второй (refine) pass после ×2 spatial-апскейла: 3 шага не успевают
+// восстановить детали лица. Расширяем до 6, сохраняя форму кривой.
+const REFINE_PASS_STEPS = 6;
+const SIGMA_ROUND = 1e6;
 const COMPLETE_PROGRESS_THRESHOLD = 99.9;
 const RANDOM_SEED_BITS = 24;
 // LTX 2.3 spatial requirements + practical VRAM budget on the template GPU.
@@ -49,7 +65,9 @@ const NODE_WIDTH = "292"; // INTConstant
 const NODE_HEIGHT = "293"; // INTConstant
 const NODE_LENGTH_SECONDS = "291"; // INTConstant
 const NODE_FPS = "285"; // PrimitiveFloat
-const NODE_LTXV_SCHEDULER = "206"; // LTXVScheduler.steps
+const NODE_LTXV_SCHEDULER = "206"; // LTXVScheduler (disconnected — удаляем)
+const NODE_SIGMAS_FIRST = "359"; // ManualSigmas (первый pass — реальные шаги)
+const NODE_SIGMAS_REFINE = "360"; // ManualSigmas (refine pass)
 const NODE_LOAD_IMAGE = "167"; // LoadImage
 const NODE_LORA_LOADER = "366"; // Lora Loader (LoraManager)
 
@@ -157,7 +175,16 @@ export function createLtx23VideoWorkflow(
 				),
 			});
 			patchNodeInputs(graph, NODE_FPS, { value: parsed.fps });
-			patchNodeInputs(graph, NODE_LTXV_SCHEDULER, { steps: parsed.steps });
+			// `steps` управляет первым (основным) pass'ом через его ManualSigmas
+			// (359), а не через disconnected LTXVScheduler (206). Refine pass
+			// (360) расширяем до фиксированного REFINE_PASS_STEPS для лица.
+			patchNodeInputs(graph, NODE_SIGMAS_FIRST, {
+				sigmas: buildSigmaSchedule(FIRST_PASS_SIGMAS_REF, parsed.steps),
+			});
+			patchNodeInputs(graph, NODE_SIGMAS_REFINE, {
+				sigmas: buildSigmaSchedule(REFINE_PASS_SIGMAS_REF, REFINE_PASS_STEPS),
+			});
+			delete graph[NODE_LTXV_SCHEDULER];
 			patchNodeInputs(graph, NODE_LOAD_IMAGE, {
 				image: buildInputImageFilename(ctx.requestId),
 			});
@@ -631,6 +658,45 @@ function deepCloneJson<T>(value: T): T {
 	return JSON.parse(JSON.stringify(value)) as T;
 }
 
+/**
+ * Пересэмплирует эталонную кривую сигм под `steps` шагов, сохраняя её форму.
+ * Возвращает строку для `ManualSigmas.sigmas` (`"1.0, …, 0.0"`).
+ *
+ * - `steps + 1` точек на выходе (ManualSigmas трактует N сигм как N-1 шагов).
+ * - При `steps + 1 === reference.length` отдаём эталон без изменений.
+ * - Иначе — кусочно-линейная интерполяция по нормализованному индексу
+ *   эталона: концы (1.0 и 0.0) сохраняются, монотонность не нарушается.
+ */
+export function buildSigmaSchedule(
+	reference: readonly number[],
+	steps: number
+): string {
+	const points = Math.max(1, Math.floor(steps)) + 1;
+	if (points === reference.length) {
+		return reference.join(", ");
+	}
+	const last = reference.length - 1;
+	const out: number[] = [];
+	for (let i = 0; i < points; i += 1) {
+		const t = points === 1 ? 0 : i / (points - 1);
+		const pos = t * last;
+		const lo = Math.floor(pos);
+		const hi = Math.min(last, Math.ceil(pos));
+		const frac = pos - lo;
+		const value =
+			(reference[lo] as number) +
+			((reference[hi] as number) - (reference[lo] as number)) * frac;
+		out.push(Math.round(value * SIGMA_ROUND) / SIGMA_ROUND);
+	}
+	return out.join(", ");
+}
+
+export const LTX_23_SIGMA_REFS = {
+	FIRST_PASS_SIGMAS_REF,
+	REFINE_PASS_SIGMAS_REF,
+	REFINE_PASS_STEPS,
+} as const;
+
 function randomSeed(): number {
 	const bytes = new Uint8Array(4);
 	crypto.getRandomValues(bytes);
@@ -772,5 +838,7 @@ export const LTX_23_I2V_NODE_IDS = {
 	NODE_NOISE_FIRST,
 	NODE_NOISE_SECOND,
 	NODE_PROMPT,
+	NODE_SIGMAS_FIRST,
+	NODE_SIGMAS_REFINE,
 	NODE_WIDTH,
 } as const;

@@ -8,7 +8,9 @@ import type {
 	ServerlessWorkflow,
 } from "../workflow/definition";
 import {
+	buildSigmaSchedule,
 	deriveOutputDimensionsFromImage,
+	LTX_23_SIGMA_REFS,
 	type Ltx23Input,
 	type Ltx23Output,
 	ltx23InputSchema,
@@ -44,7 +46,9 @@ const NODE_WIDTH = "292";
 const NODE_HEIGHT = "293";
 const NODE_LENGTH_SECONDS = "291";
 const NODE_FPS = "285";
-const NODE_LTXV_SCHEDULER = "206";
+const NODE_LTXV_SCHEDULER = "206"; // disconnected — удаляем
+const NODE_SIGMAS_FIRST = "359"; // ManualSigmas первого pass'а (реальные шаги)
+const NODE_SIGMAS_REFINE = "360"; // ManualSigmas refine pass'а
 const NODE_LOAD_IMAGE = "167";
 const NODE_LORA_LOADER = "366";
 // Node ids verified via `cat ltx-2-3-i2v-lvram.json | jq` filter by class_type.
@@ -130,6 +134,18 @@ export interface Ltx23ServerlessWorkflowConfig {
 	 */
 	distillLoraFilename?: string;
 	/**
+	 * Включает второй (spatial upscale ×2 + refine) pass графа. Без него
+	 * видео генерится только первым pass'ом на ПОЛОВИННОМ разрешении
+	 * (нода 164 = ×0.5) и сразу декодится — отсюда «плывущие» лица.
+	 *
+	 * Требует наличия `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` в
+	 * `models/latent_upscale_models/` на network volume — заливается через
+	 * `scripts/seed-ltx-aux-models.ts`. По умолчанию включено; выключить
+	 * можно через `RUNPOD_LTX23_DISABLE_SPATIAL_UPSCALE=true`, если модель
+	 * на volume ещё не засеяна (иначе ComfyUI вернёт validation error).
+	 */
+	enableSpatialUpscale?: boolean;
+	/**
 	 * Периодический warm-up ping через `createServerlessWarmupRunner`.
 	 * Основной путь без cold start — `workersMin ≥ 1` на endpoint'е; warmup
 	 * подстраховывает, если idle worker умер (crash / redeploy image).
@@ -144,6 +160,7 @@ export function createLtx23VideoServerlessWorkflow(
 	config: Ltx23ServerlessWorkflowConfig
 ): ServerlessWorkflow<Ltx23Input, Ltx23Output> {
 	const enableWarmup = config.enableWarmup ?? false;
+	const enableSpatialUpscale = config.enableSpatialUpscale ?? true;
 	const baseModelFilename =
 		config.baseModelFilename ?? DEFAULT_BASE_MODEL_FILENAME;
 	const distillLoraFilename =
@@ -165,6 +182,7 @@ export function createLtx23VideoServerlessWorkflow(
 			return await buildPayloadInternal({
 				baseModelFilename,
 				distillLoraFilename,
+				enableSpatialUpscale,
 				fetchBytes,
 				input,
 				requestId: ctx.requestId,
@@ -212,6 +230,7 @@ export function createLtx23VideoServerlessWorkflow(
 interface BuildPayloadInternalArgs {
 	baseModelFilename: string;
 	distillLoraFilename: string;
+	enableSpatialUpscale: boolean;
 	fetchBytes: (url: string) => Promise<ArrayBuffer>;
 	input: Ltx23Input;
 	requestId: string;
@@ -244,7 +263,15 @@ async function buildPayloadInternal(
 		value: Math.max(1, Math.ceil(parsed.numFrames / Math.max(1, parsed.fps))),
 	});
 	patchNodeInputs(graph, NODE_FPS, { value: parsed.fps });
-	patchNodeInputs(graph, NODE_LTXV_SCHEDULER, { steps: parsed.steps });
+	// `steps` управляет первым pass'ом через его ManualSigmas (359), а не
+	// через disconnected LTXVScheduler (206) — последний удаляем.
+	patchNodeInputs(graph, NODE_SIGMAS_FIRST, {
+		sigmas: buildSigmaSchedule(
+			LTX_23_SIGMA_REFS.FIRST_PASS_SIGMAS_REF,
+			parsed.steps
+		),
+	});
+	delete graph[NODE_LTXV_SCHEDULER];
 	patchNodeInputs(graph, NODE_LOAD_IMAGE, {
 		image: buildInputImageFilename(args.requestId),
 	});
@@ -278,9 +305,21 @@ async function buildPayloadInternal(
 	// (TextGenerateLTX2Prompt). См. подробности в комментариях к
 	// NODE_POSITIVE_CLIP_ENCODE / NODE_TEXT_GENERATE_LTX2 выше.
 	bypassTextGenerateLtx2Prompt(graph);
-	// Bypass второго (spatial upscale) pass'а — нужная модель отсутствует
-	// на network volume. VAEDecode переключаем на output первого sampler'а.
-	bypassSpatialUpscale(graph);
+	// Второй (spatial upscale ×2 + refine) pass. Когда модель апскейлера
+	// засеяна на volume (см. enableSpatialUpscale), оставляем его и расширяем
+	// refine-сигмы (360) для детализации лица. Иначе — bypass: первый pass
+	// идёт на половинном разрешении и сразу декодится (легаси-поведение, пока
+	// модель не засеяна).
+	if (args.enableSpatialUpscale) {
+		patchNodeInputs(graph, NODE_SIGMAS_REFINE, {
+			sigmas: buildSigmaSchedule(
+				LTX_23_SIGMA_REFS.REFINE_PASS_SIGMAS_REF,
+				LTX_23_SIGMA_REFS.REFINE_PASS_STEPS
+			),
+		});
+	} else {
+		bypassSpatialUpscale(graph);
+	}
 	// Bypass audio VAE: для генерации видео без звука audio chain не нужен,
 	// а соответствующий VAE отсутствует/несовместим в текущем worker'е.
 	bypassAudioBranch(graph);

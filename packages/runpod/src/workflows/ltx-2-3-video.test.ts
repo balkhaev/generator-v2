@@ -3,9 +3,11 @@ import { describe, expect, it, mock } from "bun:test";
 import type { ComfyUIClient, ComfyUIObjectInfoEntry } from "../comfyui/client";
 import type { PodSubmitContext } from "../workflow/definition";
 import {
+	buildSigmaSchedule,
 	createLtx23VideoWorkflow,
 	deriveOutputDimensionsFromImage,
 	LTX_23_I2V_NODE_IDS,
+	LTX_23_SIGMA_REFS,
 	probeImageDimensions,
 } from "./ltx-2-3-video";
 
@@ -600,5 +602,38 @@ describe("ltx 2.3 dimension helpers", () => {
 			height: 1280,
 			width: 1280,
 		});
+	});
+});
+
+describe("buildSigmaSchedule", () => {
+	it("returns the reference curve unchanged at its native step count", () => {
+		const ref = LTX_23_SIGMA_REFS.FIRST_PASS_SIGMAS_REF;
+		expect(buildSigmaSchedule(ref, ref.length - 1)).toBe(ref.join(", "));
+	});
+
+	it("resamples to steps+1 points, preserving endpoints and monotonicity", () => {
+		const values = buildSigmaSchedule(
+			LTX_23_SIGMA_REFS.FIRST_PASS_SIGMAS_REF,
+			4
+		)
+			.split(", ")
+			.map(Number);
+		expect(values).toHaveLength(5);
+		expect(values[0]).toBe(1);
+		expect(values.at(-1)).toBe(0);
+		for (let i = 1; i < values.length; i += 1) {
+			expect(values[i]).toBeLessThanOrEqual(values[i - 1] as number);
+		}
+	});
+
+	it("expands the refine curve to the configured refine step count", () => {
+		const values = buildSigmaSchedule(
+			LTX_23_SIGMA_REFS.REFINE_PASS_SIGMAS_REF,
+			LTX_23_SIGMA_REFS.REFINE_PASS_STEPS
+		)
+			.split(", ")
+			.map(Number);
+		expect(values).toHaveLength(LTX_23_SIGMA_REFS.REFINE_PASS_STEPS + 1);
+		expect(values.at(-1)).toBe(0);
 	});
 });

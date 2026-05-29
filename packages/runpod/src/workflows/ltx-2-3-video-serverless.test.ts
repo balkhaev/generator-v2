@@ -93,6 +93,64 @@ describe("createLtx23VideoServerlessWorkflow", () => {
 		}
 	});
 
+	it("keeps the spatial upscale pass and removes the dead LTXVScheduler by default", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			buildFakeImageResponse()) as unknown as typeof fetch;
+		try {
+			const wf = createLtx23VideoServerlessWorkflow({ endpointId: "ep-test" });
+			const payload = await wf.buildPayload(
+				{ inputImageUrl: "https://example.test/cat.png", prompt: "cat" },
+				{ requestId: "req-upscale" }
+			);
+			const graph = payload.workflow as Record<
+				string,
+				{ inputs: Record<string, unknown> }
+			>;
+			// Мёртвый LTXVScheduler (206) удалён — он ни к чему не подключён.
+			expect(graph["206"]).toBeUndefined();
+			// Второй (spatial upscale) pass сохранён: апскейлер (118) и его
+			// sampler (119) на месте, декодер берёт latent второго pass'а (125).
+			expect(graph["118"]).toBeDefined();
+			expect(graph["119"]).toBeDefined();
+			expect(graph["364"]?.inputs?.samples).toEqual(["125", 0]);
+			// `steps` транслируется в реальные сигмы первого pass'а (359).
+			expect(typeof graph["359"]?.inputs?.sigmas).toBe("string");
+			expect(graph["359"]?.inputs?.sigmas as string).toContain(", ");
+			// Refine-сигмы (360) расширены до конфигурируемого числа шагов.
+			expect(graph["360"]?.inputs?.sigmas as string).toContain(", ");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("bypasses the spatial upscale pass when explicitly disabled", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			buildFakeImageResponse()) as unknown as typeof fetch;
+		try {
+			const wf = createLtx23VideoServerlessWorkflow({
+				enableSpatialUpscale: false,
+				endpointId: "ep-test",
+			});
+			const payload = await wf.buildPayload(
+				{ inputImageUrl: "https://example.test/cat.png", prompt: "cat" },
+				{ requestId: "req-no-upscale" }
+			);
+			const graph = payload.workflow as Record<
+				string,
+				{ inputs: Record<string, unknown> }
+			>;
+			// Второй pass вырезан: апскейлер и его sampler удалены, декодер
+			// переключён на latent первого pass'а (116).
+			expect(graph["118"]).toBeUndefined();
+			expect(graph["119"]).toBeUndefined();
+			expect(graph["364"]?.inputs?.samples).toEqual(["116", 0]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	it("bypasses the unknown LoraManager node when no civitai LoRA is provided", async () => {
 		const originalFetch = globalThis.fetch;
 		globalThis.fetch = (async () =>

@@ -49,6 +49,10 @@ import CivitaiLtx23Setup, {
 } from "./civitai-ltx23-form";
 import LoraStack from "./lora-stack";
 import ParameterField from "./parameter-field";
+import {
+	isRunpodWan22PussyWorkflow,
+	RunpodWan22PussyFields,
+} from "./runpod-wan22-pussy-form";
 import WorkflowGrid from "./workflow-grid";
 import {
 	type Approach,
@@ -919,6 +923,28 @@ function SettingsSection({
 	showLoraSection,
 	workflows,
 }: SettingsSectionProps) {
+	let parameterSection: ReactNode = null;
+	if (!isCivitaiLtx23) {
+		if (isRunpodWan22PussyWorkflow(selectedWorkflow)) {
+			parameterSection = (
+				<RunpodWan22PussyFields
+					form={form}
+					onParamChange={onParamChange}
+					workflow={selectedWorkflow}
+				/>
+			);
+		} else {
+			parameterSection = (
+				<DefaultParameterSections
+					form={form}
+					isImageToVideo={isImageToVideo}
+					onParamChange={onParamChange}
+					partitioned={partitioned}
+				/>
+			);
+		}
+	}
+
 	return (
 		<>
 			<WorkflowSetupSection
@@ -950,14 +976,7 @@ function SettingsSection({
 				/>
 			) : null}
 
-			{isCivitaiLtx23 ? null : (
-				<DefaultParameterSections
-					form={form}
-					isImageToVideo={isImageToVideo}
-					onParamChange={onParamChange}
-					partitioned={partitioned}
-				/>
-			)}
+			{parameterSection}
 		</>
 	);
 }
@@ -1035,8 +1054,13 @@ export default function ComposeForm({
 	}, [workflowPool, selectedClassification]);
 
 	const loraSlots = selectedWorkflow ? getLoraSlots(selectedWorkflow) : [];
+	const isRunpodWan22Pussy = selectedWorkflow
+		? isRunpodWan22PussyWorkflow(selectedWorkflow)
+		: false;
 	const showLoraSection = Boolean(
-		!isCivitaiLtx23 && selectedClassification?.hasLora && loraSlots.length > 0
+		!(isCivitaiLtx23 || isRunpodWan22Pussy) &&
+			selectedClassification?.hasLora &&
+			loraSlots.length > 0
 	);
 
 	const isImageToVideo = Boolean(

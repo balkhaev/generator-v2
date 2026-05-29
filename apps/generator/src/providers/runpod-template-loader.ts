@@ -10,6 +10,7 @@ import {
 	createFooocusSdxlWorkflow,
 	createLtx23VideoServerlessWorkflow,
 	createLtx23VideoWorkflow,
+	createWanVideoServerlessWorkflow,
 } from "@generator/runpod";
 
 type Db = typeof db;
@@ -207,6 +208,9 @@ function buildWorkflowFromTemplate(
 	if (tpl.workflowKey === "ltx-2-3-video") {
 		return buildLtx23Workflow(tpl, logger);
 	}
+	if (tpl.workflowKey === "wan-2-2-video") {
+		return buildWan22ServerlessWorkflow(tpl, logger);
+	}
 	logger.warn?.("runpod.template-loader.unknown-workflow-key", {
 		templateId: tpl.id,
 		workflowKey: tpl.workflowKey,
@@ -298,5 +302,41 @@ function buildLtx23ServerlessWorkflow(
 		endpointId: tpl.runpodEndpointId,
 		id: "ltx-2-3-video",
 		webhookUrl: process.env.RUNPOD_LTX23_WEBHOOK_URL?.trim() || undefined,
+	});
+}
+
+function buildWan22ServerlessWorkflow(
+	tpl: LoadedTemplate,
+	logger: Pick<Console, "info" | "warn">
+): AnyWorkflowDefinition | null {
+	if (tpl.mode !== "serverless") {
+		logger.warn?.("runpod.template-loader.wan-not-serverless", {
+			mode: tpl.mode,
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	if (!tpl.runpodEndpointId) {
+		logger.warn?.("runpod.template-loader.wan-serverless-missing-endpoint", {
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	return createWanVideoServerlessWorkflow({
+		accelLoraHighFilename:
+			process.env.RUNPOD_WAN22_ACCEL_LORA_HIGH?.trim() || undefined,
+		accelLoraLowFilename:
+			process.env.RUNPOD_WAN22_ACCEL_LORA_LOW?.trim() || undefined,
+		enableWarmup: process.env.RUNPOD_WAN22_ENABLE_WARMUP !== "false",
+		endpointId: tpl.runpodEndpointId,
+		highNoiseModelFilename:
+			process.env.RUNPOD_WAN22_HIGH_NOISE_MODEL?.trim() || undefined,
+		id: "wan-2-2-video",
+		lowNoiseModelFilename:
+			process.env.RUNPOD_WAN22_LOW_NOISE_MODEL?.trim() || undefined,
+		textEncoderFilename:
+			process.env.RUNPOD_WAN22_TEXT_ENCODER?.trim() || undefined,
+		vaeFilename: process.env.RUNPOD_WAN22_VAE?.trim() || undefined,
+		webhookUrl: process.env.RUNPOD_WAN22_WEBHOOK_URL?.trim() || undefined,
 	});
 }

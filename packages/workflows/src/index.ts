@@ -75,6 +75,16 @@ const CIVITAI_LTX23_SYNTH_LORA_URN =
 	"urn:air:ltxv23:lora:civitai:2509189@2820451";
 const CIVITAI_LTX23_SYNTH_ENDPOINT_PREFIX = "ltx2.3:synth-lora";
 const RUNPOD_LTX23_POD_KEY = "ltx-2-3-video";
+const RUNPOD_WAN22_VIDEO_KEY = "wan-2-2-video";
+/** Civitai «Wan2.2 - Pussy (T2V/I2V)» — dual high/low noise LoRA (zip on volume). */
+export const CIVITAI_WAN22_PUSSY_MODEL_ID = 1_895_314;
+export const CIVITAI_WAN22_PUSSY_VERSION_ID = 2_145_434;
+export const CIVITAI_WAN22_PUSSY_SOURCE_URL =
+	"https://civitai.com/models/1895314/wan22-pussy-t2vi2v?modelVersionId=2145434";
+export const RUNPOD_WAN22_PUSSY_LORA_HIGH_FILENAME =
+	"wan22-pussy-high_noise.safetensors";
+export const RUNPOD_WAN22_PUSSY_LORA_LOW_FILENAME =
+	"wan22-pussy-low_noise.safetensors";
 const REPLICATE_FOOOCUS_API_VERSION =
 	"bd7d45104209dc3e1e2765d364697f1393a92a210a0e47fdf943afbd2271a48c";
 const REPLICATE_WAN_22_I2V_FAST_VERSION =
@@ -226,6 +236,51 @@ const runpodLtx23ParamsSchema = z.object({
 	seed: z.number().int().nonnegative().optional(),
 	loraCivitaiModelId: z.coerce.number().int().positive().optional(),
 	loraCivitaiVersionId: z.coerce.number().int().positive().optional(),
+	loraScale: z.number().min(0).max(2).default(1),
+});
+
+// Wan 2.2 latent patchify требует кратность 16 по обеим осям; длина — 4n+1.
+const wan22DimensionSchema = z
+	.number()
+	.int()
+	.min(256)
+	.max(1280)
+	.refine((value) => value % 16 === 0, {
+		message: "Wan 2.2 width/height must be divisible by 16",
+	});
+
+const wan22FrameCountSchema = z
+	.number()
+	.int()
+	.min(17)
+	.max(121)
+	.refine((value) => (value - 1) % 4 === 0, {
+		message: "Wan 2.2 frame count must be 4n + 1",
+	});
+
+/**
+ * Параметры RunPod Wan 2.2 image-to-video serverless workflow. Endpoint
+ * переиспользует worker-comfyui образ (Wan-ноды есть в ComfyUI core), модели
+ * Wan 2.2 лежат на network volume. Граф патчится в
+ * `wan-2-2-video-serverless.ts`. LoRA («Wan Pussy» и пр.) опциональна и
+ * задаётся через Civitai model id + version id — файл должен быть
+ * pre-provisioned на volume: либо `loraHighFilename` + `loraLowFilename` (dual-expert,
+ * например Wan Pussy), либо legacy `civitai-{modelId}-{versionId}.safetensors`.
+ */
+const runpodWan22ParamsSchema = z.object({
+	width: wan22DimensionSchema.default(480),
+	height: wan22DimensionSchema.default(832),
+	durationSeconds: z.number().min(1).max(8).default(5),
+	numFrames: wan22FrameCountSchema.optional(),
+	fps: z.number().int().min(8).max(30).default(16),
+	steps: z.number().int().min(1).max(40).default(20),
+	cfgScale: z.number().min(0).max(20).default(3.5),
+	negativePrompt: z.string().default(""),
+	seed: z.number().int().nonnegative().optional(),
+	loraCivitaiModelId: z.coerce.number().int().positive().optional(),
+	loraCivitaiVersionId: z.coerce.number().int().positive().optional(),
+	loraHighFilename: z.string().min(1).optional(),
+	loraLowFilename: z.string().min(1).optional(),
 	loraScale: z.number().min(0).max(2).default(1),
 });
 
@@ -762,6 +817,7 @@ function buildRunpodFooocusLoraUrls(
 
 type RunpodFooocusSdxlParams = z.infer<typeof runpodFooocusSdxlParamsSchema>;
 type RunpodLtx23Params = z.infer<typeof runpodLtx23ParamsSchema>;
+type RunpodWan22Params = z.infer<typeof runpodWan22ParamsSchema>;
 
 function buildRunpodFooocusSdxlInput({
 	parsed,
@@ -846,6 +902,61 @@ function buildRunpodLtx23Input({
 		steps: parsed.steps,
 		cfgScale: parsed.cfgScale,
 		...lora,
+		...(inputImageUrl === undefined ? {} : { inputImageUrl }),
+		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+	};
+}
+
+function normalizeWan22FrameCount(
+	durationSeconds: number,
+	fps: number
+): number {
+	const rawFrames = Math.round(durationSeconds * fps);
+	const normalized = Math.round((rawFrames - 1) / 4) * 4 + 1;
+	return Math.min(121, Math.max(17, normalized));
+}
+
+function buildRunpodWan22Input({
+	inputImageUrl,
+	parsed,
+	prompt,
+}: {
+	inputImageUrl?: string;
+	parsed: RunpodWan22Params;
+	prompt: string;
+}): Record<string, unknown> {
+	const numFrames =
+		parsed.numFrames ??
+		normalizeWan22FrameCount(parsed.durationSeconds, parsed.fps);
+	const loraFromFilenames =
+		parsed.loraHighFilename && parsed.loraLowFilename
+			? {
+					loraHighFilename: parsed.loraHighFilename,
+					loraLowFilename: parsed.loraLowFilename,
+					loraScale: parsed.loraScale,
+				}
+			: {};
+	const loraFromCivitai =
+		parsed.loraCivitaiModelId !== undefined &&
+		parsed.loraCivitaiVersionId !== undefined
+			? {
+					loraCivitaiModelId: parsed.loraCivitaiModelId,
+					loraCivitaiVersionId: parsed.loraCivitaiVersionId,
+					loraScale: parsed.loraScale,
+				}
+			: {};
+	return {
+		__runpodWorkflow: RUNPOD_WAN22_VIDEO_KEY,
+		prompt,
+		negativePrompt: parsed.negativePrompt,
+		width: parsed.width,
+		height: parsed.height,
+		numFrames,
+		fps: parsed.fps,
+		steps: parsed.steps,
+		cfgScale: parsed.cfgScale,
+		...loraFromFilenames,
+		...loraFromCivitai,
 		...(inputImageUrl === undefined ? {} : { inputImageUrl }),
 		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 	};
@@ -998,6 +1109,9 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"runpod-ltx-2-3-text-to-video": 10 * MINUTE,
 	"runpod-ltx-2-3-image-to-video": 10 * MINUTE,
 	"runpod-ltx-2-3-synth-text-to-video": 10 * MINUTE,
+	// Always-warm serverless Wan 2.2 14B I2V (dual-expert, ~20 steps split).
+	// Уточнить по живым трейсам после первого прода; стартовый буфер 5 мин.
+	"runpod-wan-2-2-image-to-video": 5 * MINUTE,
 	"replicate-fooocus-sdxl": 15 * SECOND,
 	// bf16 inference измерено 9.7s на 1MP. Добавили буфер на queue + pickup.
 	"replicate-flux-dev-lora": 15 * SECOND,
@@ -1095,6 +1209,116 @@ const runpodLtx23ParameterFields: readonly WorkflowField[] = [
 	{
 		description:
 			"Civitai model id для LoRA, которую Lora Manager скачает в pod (необязательно).",
+		key: "loraCivitaiModelId",
+		label: "Civitai model id",
+		optional: true,
+		type: "number",
+	},
+	{
+		description: "Civitai model version id для LoRA (необязательно).",
+		key: "loraCivitaiVersionId",
+		label: "Civitai version id",
+		optional: true,
+		type: "number",
+	},
+	{
+		description: "Strength of the optional LoRA when Civitai ids are provided.",
+		key: "loraScale",
+		label: "LoRA scale",
+		max: 2,
+		min: 0,
+		step: 0.05,
+		type: "number",
+	},
+	{
+		description: "Optional deterministic seed.",
+		key: "seed",
+		label: "Seed",
+		optional: true,
+		type: "number",
+	},
+];
+
+const runpodWan22ParameterFields: readonly WorkflowField[] = [
+	{
+		description: "Output video width in pixels. Must be divisible by 16.",
+		key: "width",
+		label: "Width",
+		max: 1280,
+		min: 256,
+		step: 16,
+		type: "number",
+	},
+	{
+		description: "Output video height in pixels. Must be divisible by 16.",
+		key: "height",
+		label: "Height",
+		max: 1280,
+		min: 256,
+		step: 16,
+		type: "number",
+	},
+	{
+		description:
+			"Target duration in seconds. Converted to a Wan-valid 4n+1 frame count.",
+		key: "durationSeconds",
+		label: "Duration",
+		max: 8,
+		min: 1,
+		step: 0.5,
+		unit: "s",
+		type: "number",
+	},
+	{
+		description:
+			"Explicit frame count override. Must be 4n+1, for example 81 or 121.",
+		key: "numFrames",
+		label: "Frames",
+		max: 121,
+		min: 17,
+		optional: true,
+		step: 4,
+		unit: "frames",
+		type: "number",
+	},
+	{
+		description: "Output frames per second.",
+		key: "fps",
+		label: "FPS",
+		max: 30,
+		min: 8,
+		step: 1,
+		type: "number",
+	},
+	{
+		description: "Total denoising steps (split between high/low experts).",
+		key: "steps",
+		label: "Steps",
+		max: 40,
+		min: 1,
+		step: 1,
+		unit: "steps",
+		type: "number",
+	},
+	{
+		description: "Classifier-free guidance scale.",
+		key: "cfgScale",
+		label: "CFG scale",
+		max: 20,
+		min: 0,
+		step: 0.1,
+		type: "number",
+	},
+	{
+		description: "Negative prompt to discourage unwanted content.",
+		key: "negativePrompt",
+		label: "Negative prompt",
+		optional: true,
+		type: "text",
+	},
+	{
+		description:
+			"Civitai model id для LoRA. Файл должен быть pre-provisioned на network volume (необязательно).",
 		key: "loraCivitaiModelId",
 		label: "Civitai model id",
 		optional: true,
@@ -1504,6 +1728,21 @@ export const workflowRegistry = {
 		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
 			const parsed = runpodLtx23ParamsSchema.parse(params);
 			return buildRunpodLtx23Input({ inputImageUrl, parsed, prompt });
+		},
+		extractArtifactUrls: collectRunpodPodVideoUrls,
+	},
+	"runpod-wan-2-2-image-to-video": {
+		baseModel: "wan-2-2",
+		key: "runpod-wan-2-2-image-to-video",
+		name: "Wan 2.2 I2V (RunPod)",
+		description:
+			"Wan 2.2 14B image-to-video на RunPod serverless (ComfyUI + worker-comfyui). Двухэкспертный high/low-noise пайплайн, модели на network volume. LoRA («Wan Pussy» и др.) — через loraHighFilename/loraLowFilename на volume или legacy Civitai id.",
+		requiresInputImage: true,
+		parameterSchema: runpodWan22ParamsSchema,
+		parameterFields: runpodWan22ParameterFields,
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = runpodWan22ParamsSchema.parse(params);
+			return buildRunpodWan22Input({ inputImageUrl, parsed, prompt });
 		},
 		extractArtifactUrls: collectRunpodPodVideoUrls,
 	},

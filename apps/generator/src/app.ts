@@ -15,6 +15,7 @@ import {
 	createFooocusSdxlWorkflow,
 	createLtx23VideoWorkflow,
 	createRunpodService,
+	createWanVideoServerlessWorkflow,
 	type PodInputStore,
 	type RunpodService,
 	type StickyVolumeStore,
@@ -171,6 +172,27 @@ function buildEnvDefaultWorkflows(): AnyWorkflowDefinition[] {
 	const ltxNetworkVolumes = parseLtx23NetworkVolumesEnv(
 		process.env.RUNPOD_LTX23_POD_NETWORK_VOLUMES
 	);
+	const wanEndpointId = process.env.RUNPOD_WAN22_SERVERLESS_ENDPOINT_ID?.trim();
+	if (wanEndpointId) {
+		workflows.push(
+			createWanVideoServerlessWorkflow({
+				accelLoraHighFilename:
+					process.env.RUNPOD_WAN22_ACCEL_LORA_HIGH?.trim() || undefined,
+				accelLoraLowFilename:
+					process.env.RUNPOD_WAN22_ACCEL_LORA_LOW?.trim() || undefined,
+				enableWarmup: process.env.RUNPOD_WAN22_ENABLE_WARMUP !== "false",
+				endpointId: wanEndpointId,
+				highNoiseModelFilename:
+					process.env.RUNPOD_WAN22_HIGH_NOISE_MODEL?.trim() || undefined,
+				lowNoiseModelFilename:
+					process.env.RUNPOD_WAN22_LOW_NOISE_MODEL?.trim() || undefined,
+				textEncoderFilename:
+					process.env.RUNPOD_WAN22_TEXT_ENCODER?.trim() || undefined,
+				vaeFilename: process.env.RUNPOD_WAN22_VAE?.trim() || undefined,
+				webhookUrl: process.env.RUNPOD_WAN22_WEBHOOK_URL?.trim() || undefined,
+			})
+		);
+	}
 	if (ltxTemplateId && ltxNetworkVolumes.length > 0) {
 		workflows.push(
 			createLtx23VideoWorkflow({

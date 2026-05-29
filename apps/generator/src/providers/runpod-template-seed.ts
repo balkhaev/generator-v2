@@ -196,6 +196,64 @@ async function seedLtxPodTemplate(
 	return true;
 }
 
+async function seedWanServerlessTemplate(
+	database: Db,
+	summary: SeedSummary,
+	endpointId: string,
+	runpodTemplateId: string,
+	volumes: VolumeEnvEntry[]
+): Promise<void> {
+	const podTemplateId = generateId("runpod_tpl");
+	const inserted = await database
+		.insert(runpodPodTemplate)
+		.values({
+			defaultEnv: {},
+			description: "Seeded from RUNPOD_WAN22_SERVERLESS_* env",
+			enabled: "true",
+			gpuTypeIds: [],
+			id: podTemplateId,
+			imageName:
+				process.env.RUNPOD_WAN22_SERVERLESS_IMAGE?.trim() ||
+				process.env.RUNPOD_LTX23_SERVERLESS_IMAGE?.trim() ||
+				undefined,
+			mode: "serverless",
+			name: "Wan 2.2 I2V serverless (env-seeded)",
+			runpodEndpointId: endpointId,
+			runpodTemplateId,
+			workflowKey: "wan-2-2-video",
+		})
+		.onConflictDoNothing({ target: runpodPodTemplate.name })
+		.returning({ id: runpodPodTemplate.id });
+	if (!inserted[0]) {
+		return;
+	}
+	summary.createdTemplates.push(inserted[0].id);
+	const volumeIds: string[] = [];
+	for (const [index, entry] of volumes.entries()) {
+		const id = generateId("runpod_vol");
+		await database.insert(runpodNetworkVolume).values({
+			datacenter: "unknown",
+			description: "Seeded from RUNPOD_WAN22_NETWORK_VOLUMES env",
+			gpuTypeIds: entry.gpus,
+			id,
+			name:
+				entry.label?.trim() ||
+				`Wan volume ${index + 1} (${entry.id.slice(0, 8)})`,
+			runpodVolumeId: entry.id,
+			sizeGb: 0,
+		});
+		summary.createdVolumes.push(id);
+		volumeIds.push(id);
+	}
+	await database.insert(runpodPodTemplateVolume).values(
+		volumeIds.map((volumeId, index) => ({
+			podTemplateId: inserted[0].id,
+			priority: index,
+			volumeId,
+		}))
+	);
+}
+
 /**
  * One-shot seed admin-managed RunPod templates с env-конфига если БД пуста.
  *
@@ -257,6 +315,19 @@ export async function seedRunpodTemplatesFromEnv(
 		if (!seeded && summary.createdTemplates.length === 0) {
 			return null;
 		}
+	}
+
+	const wanEndpointId = process.env.RUNPOD_WAN22_SERVERLESS_ENDPOINT_ID?.trim();
+	const wanTemplateId = process.env.RUNPOD_WAN22_SERVERLESS_TEMPLATE_ID?.trim();
+	const wanVolumes = parseVolumesEnv(process.env.RUNPOD_WAN22_NETWORK_VOLUMES);
+	if (wanEndpointId && wanTemplateId && wanVolumes.length > 0) {
+		await seedWanServerlessTemplate(
+			database,
+			summary,
+			wanEndpointId,
+			wanTemplateId,
+			wanVolumes
+		);
 	}
 
 	if (summary.createdTemplates.length === 0) {

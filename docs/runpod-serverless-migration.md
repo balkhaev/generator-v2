@@ -15,7 +15,7 @@ pod-runtime на RunPod serverless. После миграции LTX и Sulphur-2
 | Network volumes | 10 наших существующих `ltx23-*` volumes (по 100 GB в разных DC). Дописываем на них Sulphur fp8 (29 GB) + distill LoRA (660 MB) скриптом `seed-sulphur-volumes.ts`. |
 | Workflow | `packages/runpod/src/workflows/ltx-2-3-video-serverless.ts` — ComfyUI graph (тот же что в pod-mode) + base64 input image inline. Output — MP4 (base64 или S3 URL если на endpoint настроены `BUCKET_*` env). |
 | Admin DB | `runpod_pod_template` с `mode=serverless`, `runpodEndpointId`, привязан к 10 `runpod_network_volume` записям. После записи hot-reload bus пушит `pod-template-created`, generator перезапускается и подхватывает workflow. |
-| Studio scenario | Привязка `studio_scenario.runpodPodTemplateId` → новая запись. Сценарий `151d1452-bb0b-40a8-b491-14f8a085e003` (`ltx synth pussy`) переподключается через UI `/runpod → Scenario bindings`. |
+| Studio scenario | Привязка `studio_scenario.runpodPodTemplateId` → новая запись. Сценарий `151d1452-bb0b-40a8-b491-14f8a085e003` (`LTX Synth Pussy (Serverless)`) переподключается через UI `/runpod → Scenario bindings`. |
 
 ## Шаг-за-шагом — чеклист миграции
 
@@ -116,7 +116,7 @@ matchи'нге workflow registry возьмёт только serverless вари
 
 ### 6. Привязка сценариев
 
-Сценарий `151d1452-bb0b-40a8-b491-14f8a085e003` (`ltx synth pussy`) и
+Сценарий `151d1452-bb0b-40a8-b491-14f8a085e003` (`LTX Synth Pussy (Serverless)`) и
 другие LTX-сценарии должны указывать на новый pod template:
 
 1. `/runpod → Scenario bindings` в admin-web.

@@ -70,7 +70,7 @@ RUNPOD_WAN22_ENABLE_WARMUP=true
 
 ### 7. Studio scenario
 
-1. Создать сценарий с workflow **Wan 2.2 I2V (RunPod)**.
+1. Создать сценарий с workflow **Wan 2.2 I2V (RunPod Serverless)**.
 2. Admin → Scenario bindings → привязать serverless pod template.
 3. Запуск с input image; LoRA high/low подставляются формой автоматически.
 

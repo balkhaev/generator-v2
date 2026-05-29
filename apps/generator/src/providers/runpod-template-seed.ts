@@ -106,7 +106,7 @@ async function seedFooocusTemplate(
 			gpuTypeIds: [],
 			id,
 			mode: "serverless",
-			name: "Fooocus SDXL (env-seeded)",
+			name: "Fooocus SDXL serverless (env-seeded)",
 			runpodEndpointId: fooocusEndpointId,
 			workflowKey: "fooocus-sdxl",
 		})

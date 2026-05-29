@@ -120,6 +120,13 @@
       "when": 1779291202196,
       "tag": "0016_freezing_ma_gnuci",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779384000000,
+      "tag": "0017_rename_runpod_serverless_scenarios",
+      "breakpoints": true
     }
   ]
 }

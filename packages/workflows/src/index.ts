@@ -1753,7 +1753,7 @@ export const workflowRegistry = {
 	"runpod-fooocus-sdxl": {
 		baseModel: "sdxl",
 		key: "runpod-fooocus-sdxl",
-		name: "Fooocus SDXL (RunPod)",
+		name: "Fooocus SDXL (RunPod Serverless)",
 		description:
 			"Fooocus SDXL text-to-image generation on a custom RunPod Serverless endpoint. Supports SDXL LoRA URLs.",
 		requiresInputImage: false,
@@ -1864,9 +1864,9 @@ export const workflowRegistry = {
 	"runpod-ltx-2-3-image-to-video": {
 		baseModel: "ltx-2-3",
 		key: "runpod-ltx-2-3-image-to-video",
-		name: "LTX 2.3 I2V (RunPod)",
+		name: "LTX 2.3 I2V (RunPod Serverless)",
 		description:
-			"LTX 2.3 image-to-video поверх pre-provisioned RunPod template (ComfyUI + Lora Manager). LoRA опциональна — задаётся через Civitai model id + version id, скачивается уже внутри pod'а.",
+			"LTX 2.3 image-to-video на RunPod serverless (ComfyUI + worker-comfyui). LoRA опциональна — через Civitai id (pre-provisioned на volume как civitai-{modelId}-{versionId}.safetensors) или без LoRA.",
 		requiresInputImage: true,
 		parameterSchema: runpodLtx23ParamsSchema,
 		parameterFields: runpodLtx23ParameterFields,
@@ -1879,7 +1879,7 @@ export const workflowRegistry = {
 	"runpod-wan-2-2-image-to-video": {
 		baseModel: "wan-2-2",
 		key: "runpod-wan-2-2-image-to-video",
-		name: "Wan 2.2 I2V (RunPod)",
+		name: "Wan 2.2 I2V (RunPod Serverless)",
 		description:
 			"Wan 2.2 14B image-to-video на RunPod serverless (ComfyUI + worker-comfyui). Двухэкспертный high/low-noise пайплайн, модели на network volume. LoRA («Wan Pussy» и др.) — через loraHighFilename/loraLowFilename на volume или legacy Civitai id.",
 		requiresInputImage: true,
@@ -1894,7 +1894,7 @@ export const workflowRegistry = {
 	"runpod-flux-dev-image": {
 		baseModel: "flux",
 		key: "runpod-flux-dev-image",
-		name: "Flux.1-dev (RunPod)",
+		name: "Flux.1-dev (RunPod Serverless)",
 		description:
 			"Flux.1-dev text-to-image на RunPod serverless (ComfyUI + worker-comfyui). All-in-one fp8-чекпоинт на network volume, LoRA («Noisify» и др.) — через loraFilename на volume. Без цензуры (self-hosted).",
 		requiresInputImage: false,
@@ -1913,9 +1913,9 @@ export const workflowRegistry = {
 		baseModel: "ltx-2-3",
 		hiddenFromList: true,
 		key: "runpod-ltx-2-3-text-to-video",
-		name: "LTX 2.3 (RunPod, legacy)",
+		name: "LTX 2.3 (RunPod Serverless, legacy)",
 		description:
-			"Legacy LTX 2.3 text-to-video RunPod workflow. Новая архитектура поддерживает только i2v через template — этот ключ оставлен для обратной совместимости existing scenarios.",
+			"Legacy LTX 2.3 text-to-video RunPod workflow. Новая архитектура — serverless i2v через runpod-ltx-2-3-image-to-video; ключ оставлен для обратной совместимости existing scenarios.",
 		requiresInputImage: true,
 		parameterSchema: runpodLtx23ParamsSchema,
 		parameterFields: runpodLtx23ParameterFields,
@@ -1929,7 +1929,7 @@ export const workflowRegistry = {
 		baseModel: "ltx-2-3",
 		hiddenFromList: true,
 		key: "runpod-ltx-2-3-synth-text-to-video",
-		name: "LTX 2.3 Synth LoRA (RunPod, legacy)",
+		name: "LTX 2.3 Synth LoRA (RunPod Serverless, legacy)",
 		description:
 			"Legacy ключ Synth Pussy text-to-video. Скрыт; existing scenarios должны мигрировать на runpod-ltx-2-3-image-to-video с inputImageUrl.",
 		requiresInputImage: true,

@@ -11,6 +11,8 @@ export interface EngineSubmission {
 export interface EngineJob {
 	errorSummary: string | null;
 	jobId: string;
+	/** Текстовая метка текущего шага (нода/шаг сэмплера), если провайдер шлёт. */
+	lastLogLine: string | null;
 	output: unknown;
 	progressPct: number | null;
 	queuePosition: number | null;

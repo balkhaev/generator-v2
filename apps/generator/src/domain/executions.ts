@@ -191,7 +191,13 @@ export function derivePhaseAndProgress(
 	const progressPct = Math.min(PROGRESS_CAP_PCT, computed);
 
 	let etaMs: number | null = null;
-	if (expectedMs) {
+	if (realProgress !== null && realProgress > 0 && expectedMs) {
+		// Есть реальный прогресс от воркера → ETA = оставшаяся доля ×
+		// ожидаемая длительность. Стабильнее, чем expected − elapsed, и не
+		// зависит от того, как часто бьётся updatedAt.
+		const cappedReal = Math.min(99, realProgress);
+		etaMs = Math.round(expectedMs * (1 - cappedReal / 100));
+	} else if (expectedMs) {
 		etaMs = Math.max(0, expectedMs - elapsedMs);
 	}
 

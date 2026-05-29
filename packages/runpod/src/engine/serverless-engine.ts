@@ -9,6 +9,11 @@ import { normalizeServerlessStatus } from "./status";
 
 const TERMINAL_PROGRESS_PCT = 100;
 const DEFAULT_RUN_SYNC_WAIT_MS = 90_000;
+// Пока job IN_PROGRESS, RunPod возвращает последний `progress_update` payload в
+// поле `output`. Никогда не отдаём 100% во время running — финал ставит
+// handleSucceeded. Метку шага обрезаем, чтобы не раздувать БД/лог.
+const RUNNING_PROGRESS_MAX_PCT = 99;
+const MAX_LOG_LINE_LENGTH = 200;
 
 interface ServerlessEngineOptions<TInput, TOutput> {
 	api: RunpodServerlessApi;
@@ -91,6 +96,7 @@ export function createServerlessEngine<TInput, TOutput>(
 		return {
 			errorSummary: extractErrorSummary(status.error, status.output),
 			jobId,
+			lastLogLine: null,
 			output: null,
 			progressPct: null,
 			queuePosition: status.queuePosition,
@@ -120,6 +126,7 @@ export function createServerlessEngine<TInput, TOutput>(
 					error instanceof Error ? error.message : String(error)
 				}`,
 				jobId,
+				lastLogLine: null,
 				output: null,
 				progressPct: null,
 				queuePosition: status.queuePosition,
@@ -130,6 +137,7 @@ export function createServerlessEngine<TInput, TOutput>(
 		return {
 			errorSummary: null,
 			jobId,
+			lastLogLine: null,
 			output: parsed,
 			progressPct: TERMINAL_PROGRESS_PCT,
 			queuePosition: status.queuePosition,
@@ -150,11 +158,14 @@ export function createServerlessEngine<TInput, TOutput>(
 		if (finalStatus === "succeeded") {
 			return handleSucceeded(jobId, status, fallbackJobId);
 		}
+		// running/queued: RunPod кладёт последний progress_update в `output`.
+		const progress = parseRunningProgress(status.output);
 		return {
 			errorSummary: null,
 			jobId,
+			lastLogLine: progress.lastLogLine,
 			output: null,
-			progressPct: null,
+			progressPct: progress.progressPct,
 			queuePosition: status.queuePosition,
 			status: finalStatus,
 		};
@@ -371,4 +382,65 @@ function enrichBase64Output(output: unknown): unknown {
 		enriched.dataUrl = `data:image/png;base64,${base64}`;
 	}
 	return enriched;
+}
+
+interface RunningProgress {
+	lastLogLine: string | null;
+	progressPct: number | null;
+}
+
+/**
+ * Достаёт реальный прогресс из `progress_update` payload'а, который RunPod
+ * возвращает в `output` пока job IN_PROGRESS. Воркер шлёт объект вида
+ * `{ progress: 0-100, message: "KSampler 5/8", phase, step, steps }`, но мы
+ * толерантны и к строке, и к долям (0..1), и к отсутствию полей.
+ */
+function parseRunningProgress(output: unknown): RunningProgress {
+	if (!output) {
+		return { lastLogLine: null, progressPct: null };
+	}
+	let record: Record<string, unknown> | null = null;
+	if (typeof output === "string") {
+		try {
+			const parsed: unknown = JSON.parse(output);
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+				record = parsed as Record<string, unknown>;
+			}
+		} catch {
+			return { lastLogLine: truncateLogLine(output), progressPct: null };
+		}
+	} else if (typeof output === "object" && !Array.isArray(output)) {
+		record = output as Record<string, unknown>;
+	}
+	if (!record) {
+		return { lastLogLine: null, progressPct: null };
+	}
+	return {
+		lastLogLine: extractLogLine(record),
+		progressPct: extractProgressPct(record),
+	};
+}
+
+function extractProgressPct(record: Record<string, unknown>): number | null {
+	const raw = record.progress ?? record.progressPct ?? record.percent;
+	if (typeof raw !== "number" || !Number.isFinite(raw)) {
+		return null;
+	}
+	const asPct = raw > 0 && raw <= 1 ? raw * 100 : raw;
+	return Math.max(0, Math.min(RUNNING_PROGRESS_MAX_PCT, asPct));
+}
+
+function extractLogLine(record: Record<string, unknown>): string | null {
+	const candidate = record.message ?? record.node ?? record.phase;
+	return typeof candidate === "string" ? truncateLogLine(candidate) : null;
+}
+
+function truncateLogLine(value: string): string | null {
+	const trimmed = value.trim();
+	if (trimmed.length === 0) {
+		return null;
+	}
+	return trimmed.length > MAX_LOG_LINE_LENGTH
+		? trimmed.slice(0, MAX_LOG_LINE_LENGTH)
+		: trimmed;
 }

@@ -353,6 +353,7 @@ export function createPodEngine<TInput, TOutput>(
 	): EngineJob & { output: TOutput } => ({
 		errorSummary: null,
 		jobId,
+		lastLogLine: null,
 		output,
 		progressPct: 100,
 		queuePosition: null,
@@ -365,6 +366,7 @@ export function createPodEngine<TInput, TOutput>(
 	): EngineJob & { output: null } => ({
 		errorSummary,
 		jobId,
+		lastLogLine: null,
 		output: null,
 		progressPct: null,
 		queuePosition: null,
@@ -377,6 +379,7 @@ export function createPodEngine<TInput, TOutput>(
 	): EngineJob & { output: null } => ({
 		errorSummary: null,
 		jobId,
+		lastLogLine: null,
 		output: null,
 		progressPct,
 		queuePosition: null,

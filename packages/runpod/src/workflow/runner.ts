@@ -44,6 +44,8 @@ export interface RunpodJob<TOutput = unknown> {
 	endpointId: string;
 	errorSummary: string | null;
 	jobId: string;
+	/** Текстовая метка текущего шага (нода/шаг сэмплера), если есть. */
+	lastLogLine: string | null;
 	output: TOutput | null;
 	progressPct: number | null;
 	queuePosition: number | null;
@@ -275,6 +277,7 @@ export function createRunpodService(
 				endpointId: formatEndpointId(registry.get(workflowId)),
 				errorSummary: job.errorSummary,
 				jobId: job.jobId,
+				lastLogLine: job.lastLogLine,
 				output: job.output,
 				progressPct: job.progressPct,
 				queuePosition: job.queuePosition,

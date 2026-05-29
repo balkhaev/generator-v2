@@ -278,6 +278,59 @@ describe("ServerlessEngine", () => {
 		expect(job.status).toBe("running");
 	});
 
+	it("extracts real progress + step label from the progress_update payload while running", async () => {
+		const getStatus = mock(() =>
+			Promise.resolve<ServerlessJobStatus>({
+				delayTimeMs: null,
+				error: null,
+				executionTimeMs: null,
+				jobId: "job-1",
+				output: {
+					message: "KSampler 5/8",
+					phase: "sampling",
+					progress: 47.5,
+					step: 5,
+					steps: 8,
+				},
+				queuePosition: null,
+				rawStatus: "IN_PROGRESS",
+				retries: null,
+			})
+		);
+		const engine = createServerlessEngine({
+			api: buildApi({ getStatus }),
+			workflow: fooocusWorkflow,
+		});
+		const job = await engine.getStatus("job-1");
+		expect(job.status).toBe("running");
+		expect(job.progressPct).toBe(47.5);
+		expect(job.lastLogLine).toBe("KSampler 5/8");
+	});
+
+	it("never reports 100% while running and tolerates fractional progress", async () => {
+		const getStatus = mock(() =>
+			Promise.resolve<ServerlessJobStatus>({
+				delayTimeMs: null,
+				error: null,
+				executionTimeMs: null,
+				jobId: "job-1",
+				// fraction 0..1 + over-cap value must clamp to <=99
+				output: { progress: 1, message: "Finalizing" },
+				queuePosition: null,
+				rawStatus: "IN_PROGRESS",
+				retries: null,
+			})
+		);
+		const engine = createServerlessEngine({
+			api: buildApi({ getStatus }),
+			workflow: fooocusWorkflow,
+		});
+		const job = await engine.getStatus("job-1");
+		// progress=1 is treated as 100% fraction → 100, then clamped to 99.
+		expect(job.progressPct).toBe(99);
+		expect(job.lastLogLine).toBe("Finalizing");
+	});
+
 	it("converts base64 outputs into data URLs before parseOutput", async () => {
 		const getStatus = mock(() =>
 			Promise.resolve<ServerlessJobStatus>({

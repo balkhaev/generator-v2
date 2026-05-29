@@ -51,6 +51,7 @@ export function createRunpodClient(service: RunpodService): InferenceClient {
 				endpointId: job.endpointId,
 				errorSummary: job.errorSummary,
 				jobId: job.jobId,
+				lastLogLine: job.lastLogLine,
 				output: job.output,
 				progressPct: job.progressPct,
 				queuePosition: job.queuePosition,

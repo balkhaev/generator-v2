@@ -569,6 +569,56 @@ def get_image_data(filename, subfolder, image_type):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Realtime progress reporting (LTX vendor addition)
+# ---------------------------------------------------------------------------
+# ComfyUI шлёт по websocket'у `executing` (старт ноды) и `progress`
+# (value/max внутри ноды — шаги сэмплера, тайлы VAE и т.п.). Транслируем это
+# в RunPod `progress_update`, чтобы generator увидел реальный % и текстовую
+# метку шага через /status `output` пока job IN_PROGRESS.
+
+# Сэмплинг — доминирующая по времени фаза. Маппим его value/max на основной
+# диапазон бара (8..90), чтобы движение было информативным; остальные ноды
+# дают coarse-метки. Монотонность гарантирует generator (max с persisted).
+_LTX_SAMPLING_FLOOR_PCT = 8.0
+_LTX_SAMPLING_CEIL_PCT = 90.0
+
+_LTX_PHASE_BY_CLASS = {
+    "KSampler": "sampling",
+    "KSamplerAdvanced": "sampling",
+    "SamplerCustom": "sampling",
+    "SamplerCustomAdvanced": "sampling",
+    "LTXVScheduler": "sampling",
+    "VAEDecode": "decoding",
+    "VAEDecodeTiled": "decoding",
+    "VHS_VideoCombine": "encoding",
+    "SaveAnimatedWEBP": "encoding",
+}
+
+
+def _ltx_node_label(workflow, node_id):
+    """Человекочитаемое имя ноды: _meta.title → class_type → id."""
+    node = workflow.get(node_id, {}) if isinstance(workflow, dict) else {}
+    if not isinstance(node, dict):
+        node = {}
+    meta = node.get("_meta")
+    title = meta.get("title") if isinstance(meta, dict) else None
+    return title or node.get("class_type") or f"node {node_id}"
+
+
+def _ltx_phase_for(workflow, node_id):
+    node = workflow.get(node_id, {}) if isinstance(workflow, dict) else {}
+    cls = node.get("class_type") if isinstance(node, dict) else None
+    return _LTX_PHASE_BY_CLASS.get(cls, "running")
+
+
+def _ltx_progress_update(job, payload):
+    try:
+        runpod.serverless.progress_update(job, payload)
+    except Exception as e:
+        print(f"worker-comfyui - progress_update failed: {e}")
+
+
 def handler(job):
     """
     Handles a job using ComfyUI via websockets for status and image retrieval.
@@ -622,6 +672,34 @@ def handler(job):
     prompt_id = None
     output_data = []
     errors = []
+
+    # Realtime progress bookkeeping (per-job).
+    total_nodes = max(1, len(workflow)) if isinstance(workflow, dict) else 1
+    executed_nodes = set()
+    current_node = None
+    last_progress_emit = 0.0
+    last_progress_pct = -1.0
+
+    def emit_progress(pct, message, node_id, phase, step=None, steps=None):
+        nonlocal last_progress_emit, last_progress_pct
+        now_ts = time.time()
+        # Дросселируем: не чаще ~1/сек, либо при сдвиге ≥1%.
+        if now_ts - last_progress_emit < 1.0 and abs(pct - last_progress_pct) < 1.0:
+            return
+        payload = {
+            "progress": round(pct, 1),
+            "phase": phase,
+            "message": message,
+            "node": _ltx_node_label(workflow, node_id) if node_id else None,
+            "completedNodes": max(0, len(executed_nodes) - 1),
+            "totalNodes": total_nodes,
+        }
+        if step is not None and steps is not None:
+            payload["step"] = step
+            payload["steps"] = steps
+        _ltx_progress_update(job, payload)
+        last_progress_emit = now_ts
+        last_progress_pct = pct
 
     try:
         # Establish WebSocket connection
@@ -680,6 +758,56 @@ def handler(job):
                             )
                             execution_done = True
                             break
+                        node_id = data.get("node")
+                        if node_id is not None and data.get("prompt_id") == prompt_id:
+                            executed_nodes.add(node_id)
+                            current_node = node_id
+                            label = _ltx_node_label(workflow, node_id)
+                            phase = _ltx_phase_for(workflow, node_id)
+                            # Coarse node-based оценка (generator зажмёт по max).
+                            done = max(0, len(executed_nodes) - 1)
+                            coarse = min(
+                                _LTX_SAMPLING_CEIL_PCT,
+                                (done / total_nodes) * _LTX_SAMPLING_CEIL_PCT,
+                            )
+                            emit_progress(coarse, label, node_id, phase)
+                    elif message.get("type") == "progress":
+                        data = message.get("data", {})
+                        if data.get("prompt_id") in (None, prompt_id):
+                            value = data.get("value")
+                            maximum = data.get("max")
+                            node_id = data.get("node") or current_node
+                            if (
+                                isinstance(value, (int, float))
+                                and isinstance(maximum, (int, float))
+                                and maximum
+                            ):
+                                frac = max(0.0, min(1.0, value / maximum))
+                                phase = (
+                                    _ltx_phase_for(workflow, node_id)
+                                    if node_id
+                                    else "running"
+                                )
+                                # Доминирующая фаза (сэмплинг) тянет основной
+                                # диапазон бара; прочие progress-ноды дают
+                                # метку и зажимаются монотонностью на стороне
+                                # generator'а.
+                                pct = _LTX_SAMPLING_FLOOR_PCT + frac * (
+                                    _LTX_SAMPLING_CEIL_PCT - _LTX_SAMPLING_FLOOR_PCT
+                                )
+                                label = (
+                                    _ltx_node_label(workflow, node_id)
+                                    if node_id
+                                    else "Processing"
+                                )
+                                emit_progress(
+                                    pct,
+                                    f"{label} {int(value)}/{int(maximum)}",
+                                    node_id,
+                                    phase,
+                                    step=int(value),
+                                    steps=int(maximum),
+                                )
                     elif message.get("type") == "execution_error":
                         data = message.get("data", {})
                         if data.get("prompt_id") == prompt_id:

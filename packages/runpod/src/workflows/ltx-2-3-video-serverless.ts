@@ -83,12 +83,12 @@ const NODE_FALLBACK_SAVE_IMAGE = "9001";
 // Дополнительный fallback — стоковый `SaveAnimatedWEBP` (built-in ComfyUI).
 // Worker-comfyui handler.py читает output key `images`, в которое
 // SaveAnimatedWEBP пишет анимированный webp. VHS_VideoCombine пишет в
-// `gifs`/`videos`, которые без `patch-handler.py` handler НЕ обрабатывает.
+// `gifs`/`videos` — наш завендоренный handler.py их обрабатывает.
 // Webp оставляем как safety net на случай, если custom-нода VHS упадёт.
 const NODE_FALLBACK_SAVE_WEBP = "9002";
 // VHS_VideoCombine (comfyui-videohelpersuite) — даёт реальный h264 mp4.
-// В worker-image встроен patch-handler.py, который поднимает output key
-// `gifs` (там VHS публикует mp4-файлы). Без патча ключ игнорируется.
+// Наш handler.py в worker-image поднимает output key `gifs` (туда VHS
+// публикует mp4-файлы); базовый upstream-handler этот ключ игнорирует.
 // Используем уже существующий в LVRAM-шаблоне узел 140 (VHS_VideoCombine),
 // но: (1) принудительно отвязываем audio input (исходный 201 удалён
 // bypassSpatialUpscale, без audio mp4 пишется только с видео-треком),

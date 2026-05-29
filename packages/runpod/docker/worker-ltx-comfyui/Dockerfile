@@ -54,24 +54,26 @@ RUN comfy-node-install \
 
 # LTX 2.3 audio VAE имеет обновлённые layer names — стандартный
 # VAELoader и устаревший VAELoaderKJ возвращают `None` (issue Kijai
-# #608, HF discussion 5). Lifecycle:
-#   1) Обновляем ComfyUI core до master — после Kijai's fix стандартный
-#      VAELoader умеет audio VAE.
-#   2) Обновляем comfyui-kjnodes до master — там лежит fixed VAELoaderKJ
-#      и LTX2 nodes, которые знают новый layer naming.
-#   3) Pip install requirements: KJNodes ввёл новые runtime deps
-#      (например diffusers >=0.30 для AudioVAE class).
+# #608, HF discussion 5). Поэтому берём свежие ComfyUI core и
+# comfyui-kjnodes (после Kijai's fix), где:
+#   1) стандартный VAELoader умеет audio VAE;
+#   2) лежат fixed VAELoaderKJ и LTX2 nodes со знанием нового layer naming;
+#   3) объявлены новые runtime deps (например diffusers >=0.30 для AudioVAE).
 #
-# Делаем shallow clone, чтобы не раздувать image, и `|| true` на pip,
-# чтобы duplicate-requirement warnings не валили build.
+# Пинним на конкретные commit SHA (не плавающий master) — иначе каждый билд
+# тянет разный код и образ невоспроизводим. Бампать SHA вручную при апдейте
+# (проверять, что LTX 2.3 audio VAE и LTX2 nodes ещё работают).
+ARG COMFYUI_SHA=e7214d78eef4c87cd042bc29ec322ad6a2d1509b
+ARG KJNODES_SHA=51d4261b683b4ed5645c1fe2ce3616d4e3fba090
 RUN set -eux; \
-    cd /comfyui && git fetch --depth 50 origin master && \
-    git checkout master && git reset --hard origin/master && \
+    cd /comfyui && git fetch --depth 1 origin "${COMFYUI_SHA}" && \
+    git checkout "${COMFYUI_SHA}" && \
     pip install --no-cache-dir -r requirements.txt; \
     cd /comfyui/custom_nodes && \
     rm -rf ComfyUI-KJNodes comfyui-kjnodes && \
-    git clone --depth 1 https://github.com/kijai/ComfyUI-KJNodes.git && \
-    pip install --no-cache-dir -r ComfyUI-KJNodes/requirements.txt || true
+    git clone https://github.com/kijai/ComfyUI-KJNodes.git && \
+    cd ComfyUI-KJNodes && git checkout "${KJNODES_SHA}" && \
+    pip install --no-cache-dir -r requirements.txt || true
 
 # `extra_model_paths.yaml` копируется в стандартный ComfyUI location —
 # `/comfyui/extra_model_paths.yaml`. ComfyUI парсит его при старте и
@@ -81,23 +83,22 @@ RUN set -eux; \
 # мапим эти исходные пути в стандартные ComfyUI ключи.
 COPY extra_model_paths.yaml /comfyui/extra_model_paths.yaml
 
-# Bootstrap скрипт для аудио VAE и spatial upscaler на network volume.
-# Запускается перед оригинальным /start.sh (CMD override ниже).
-COPY bootstrap-aux-models.sh /usr/local/bin/bootstrap-aux-models.sh
-RUN chmod +x /usr/local/bin/bootstrap-aux-models.sh
+# Свой handler.py (завендоренный upstream 5.8.5 + наши правки) кладём поверх
+# базового /handler.py. Версионируется в репо, диффится, без sed-патчей по
+# текстовым анкорам. Содержит: обработку video-выходов (gifs/videos от
+# VHS_VideoCombine), per-request докачку динамических Civitai-LoRA и
+# sentinel-диагностику. См. handler.py.
+#
+# ВАЖНО: при бампе WORKER_COMFYUI_VERSION пере-вендорить handler.py из новой
+# upstream-версии (иначе можно затереть свежие фиксы базового handler'а).
+COPY handler.py /handler.py
 
-# Patch /handler.py чтобы он обрабатывал не только output key `images`,
-# но и `gifs`/`videos` (которые пишет VHS_VideoCombine). Без патча mp4
-# никогда не доходит до serverless response — handler помечает ключ как
-# unhandled и теряет файл. Подробности в patch-handler.py.
-COPY patch-handler.py /usr/local/bin/patch-handler.py
-RUN python3 /usr/local/bin/patch-handler.py
-
-# Переопределяем CMD от base image (worker-comfyui:5.8.5-base ставит
-# CMD ["/start.sh"]). Сперва скачиваем aux модели если их нет на volume,
-# потом передаём управление оригинальному /start.sh — он уже сам
-# поднимает ComfyUI + RunPod handler.
-CMD ["/bin/bash", "-c", "/usr/local/bin/bootstrap-aux-models.sh && exec /start.sh"]
+# CMD от base image (worker-comfyui:5.8.5-base) = ["/start.sh"], который сам
+# поднимает ComfyUI + RunPod handler. Статические модели (audio VAE, spatial
+# upscaler, база, distill LoRA) — единый источник правды на network volume,
+# заливаются через `scripts/seed-ltx-aux-models.ts`. Никакого runtime-bootstrap
+# из HF: cold start не качает гигабайты, образ остаётся тонким.
+CMD ["/start.sh"]
 
 # Health/debug hint в логах при старте контейнера, чтобы быстрее ловить
 # проблемы с моунтом volume / отсутствующими файлами.

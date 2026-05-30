@@ -40,9 +40,14 @@ const FIRST_PASS_SIGMAS_REF = [
 	1.0, 0.993_75, 0.9875, 0.981_25, 0.975, 0.909_375, 0.725, 0.421_875, 0.0,
 ] as const;
 const REFINE_PASS_SIGMAS_REF = [0.85, 0.725, 0.4219, 0.0] as const;
-// Второй (refine) pass после ×2 spatial-апскейла: 3 шага не успевают
-// восстановить детали лица. Расширяем до 6, сохраняя форму кривой.
-const REFINE_PASS_STEPS = 6;
+// Второй (refine) pass после ×2 spatial-апскейла. Distilled-модель обучена на
+// ТОЧНОЕ stage-2 расписание из 4 сигм = 3 шага (см. официальный
+// `LTX-2.3_T2V_I2V_Two_Stage_Distilled.json`, ManualSigmas id 4985:
+// "0.85, 0.7250, 0.4219, 0.0"). Растягивание этого расписания
+// интерполяцией ломает тренированную кривую и «плавит» детали, поэтому
+// держим ровно 3 — реальное лечение «плывущих» лиц это включённый spatial
+// upscale (enableSpatialUpscale), а не лишние refine-шаги.
+const REFINE_PASS_STEPS = 3;
 const SIGMA_ROUND = 1e6;
 const COMPLETE_PROGRESS_THRESHOLD = 99.9;
 const RANDOM_SEED_BITS = 24;
@@ -177,7 +182,7 @@ export function createLtx23VideoWorkflow(
 			patchNodeInputs(graph, NODE_FPS, { value: parsed.fps });
 			// `steps` управляет первым (основным) pass'ом через его ManualSigmas
 			// (359), а не через disconnected LTXVScheduler (206). Refine pass
-			// (360) расширяем до фиксированного REFINE_PASS_STEPS для лица.
+			// (360) держим на официальных REFINE_PASS_STEPS (stage-2 distilled).
 			patchNodeInputs(graph, NODE_SIGMAS_FIRST, {
 				sigmas: buildSigmaSchedule(FIRST_PASS_SIGMAS_REF, parsed.steps),
 			});

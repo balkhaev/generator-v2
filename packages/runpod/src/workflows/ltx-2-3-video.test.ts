@@ -626,7 +626,7 @@ describe("buildSigmaSchedule", () => {
 		}
 	});
 
-	it("expands the refine curve to the configured refine step count", () => {
+	it("keeps the official stage-2 distilled refine curve (3 steps, 4 sigmas)", () => {
 		const values = buildSigmaSchedule(
 			LTX_23_SIGMA_REFS.REFINE_PASS_SIGMAS_REF,
 			LTX_23_SIGMA_REFS.REFINE_PASS_STEPS
@@ -635,5 +635,12 @@ describe("buildSigmaSchedule", () => {
 			.map(Number);
 		expect(values).toHaveLength(LTX_23_SIGMA_REFS.REFINE_PASS_STEPS + 1);
 		expect(values.at(-1)).toBe(0);
+		// At the official step count the reference is emitted unchanged.
+		expect(
+			buildSigmaSchedule(
+				LTX_23_SIGMA_REFS.REFINE_PASS_SIGMAS_REF,
+				LTX_23_SIGMA_REFS.REFINE_PASS_STEPS
+			)
+		).toBe(LTX_23_SIGMA_REFS.REFINE_PASS_SIGMAS_REF.join(", "));
 	});
 });

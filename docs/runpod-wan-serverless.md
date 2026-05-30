@@ -15,6 +15,28 @@
 | Studio | Workflow `runpod-wan-2-2-image-to-video`, форма с дефолтом Wan Pussy LoRA |
 | LoRA | Civitai model `1895314` / version `2145434` → `wan22-pussy-high_noise.safetensors` + `wan22-pussy-low_noise.safetensors` на volume |
 
+## Verified configs (official Wan 2.2 I2V A14B + LoRA author)
+
+Сверено с ComfyUI native Wan 2.2 I2V шаблоном и страницей LoRA `1895314`
+(`wan-2-2-video-serverless.ts` соответствует):
+
+| Параметр | Значение | Источник |
+|----------|----------|----------|
+| Модели | `wan2.2_i2v_high_noise_14B_fp8_scaled`, `…_low_noise_…`, `umt5_xxl_fp8_e4m3fn_scaled`, `wan_2.1_vae` | Comfy-Org `Wan_2.2_ComfyUI_Repackaged` |
+| Steps | 20 (high 0→10, low 10→end), boundary 50% | ComfyUI native I2V A14B |
+| CFG | 3.5 (обе ветви) | ComfyUI / DCAI guide |
+| Sampler/Scheduler | `euler` / `simple` | официальная рекомендация (другие ломают motion) |
+| add_noise / leftover | high `enable`/`enable`, low `disable`/`disable` | two-stage MoE refiner |
+| ModelSamplingSD3 shift | 8.0 (non-distill); 5.0 если включить lightx2v accel LoRA | ComfyUI template / lightx2v |
+| Frames / FPS | 4n+1 (81), 16 fps | Wan latent patchify |
+| LoRA strength | **1.0** для I2V (диапазон 0.5–1.0) | автор LoRA: «I normally use 1 for I2V» |
+| Триггер-слова | `vagina`, `anus`, `ass` | страница Civitai `1895314` |
+
+> Ограничение LoRA: датасет содержал движения рук (потирание ног/груди).
+> Если в кадре лишняя жестикуляция — добавить в prompt «hands stay still».
+> Acceleration lightx2v LoRA опциональна (`accelLoraHigh/LowFilename` в конфиге
+> template); при её включении ставить steps 4–8 и shift 5.
+
 ## Чеклист
 
 ### 1. Volumes `wan22-*`
@@ -69,6 +91,15 @@ RUNPOD_WAN22_ENABLE_WARMUP=true
 ```
 
 ### 7. Studio scenario
+
+Каноническое имя prod-сценария: **`Wan Pussy (Serverless)`** (`f1bf5795-cc0b-47f9-a1d3-deb96d174982`).
+
+Миграция `0018_migrate_wan_pussy_serverless` переводит его с Replicate
+(`replicate-wan-2-2-fast-image-to-video`) на `runpod-wan-2-2-image-to-video`,
+проставляет LoRA filenames и привязывает к enabled serverless template
+`workflow_key=wan-2-2-video`.
+
+Для новых окружений:
 
 1. Создать сценарий с workflow **Wan 2.2 I2V (RunPod Serverless)**.
 2. Admin → Scenario bindings → привязать serverless pod template.

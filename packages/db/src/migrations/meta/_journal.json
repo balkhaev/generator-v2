@@ -127,6 +127,13 @@
       "when": 1779384000000,
       "tag": "0017_rename_runpod_serverless_scenarios",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1779387600000,
+      "tag": "0018_migrate_wan_pussy_serverless",
+      "breakpoints": true
     }
   ]
 }

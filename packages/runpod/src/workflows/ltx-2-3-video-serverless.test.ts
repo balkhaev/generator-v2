@@ -6,7 +6,7 @@ const PNG_1X1_BASE64 =
 
 const VALIDATION_ERROR_PATTERN = /validation failed/u;
 const NO_OUTPUT_IMAGES_PATTERN = /no output images/u;
-const ONLY_IMAGE_OUTPUTS_PATTERN = /only image outputs/u;
+const ONLY_IMAGE_OUTPUTS_PATTERN = /only static image outputs/u;
 
 function buildFakeImageResponse(): Response {
 	const bytes = Uint8Array.from(atob(PNG_1X1_BASE64), (c) => c.charCodeAt(0));
@@ -117,7 +117,7 @@ describe("createLtx23VideoServerlessWorkflow", () => {
 			// `steps` транслируется в реальные сигмы первого pass'а (359).
 			expect(typeof graph["359"]?.inputs?.sigmas).toBe("string");
 			expect(graph["359"]?.inputs?.sigmas as string).toContain(", ");
-			// Refine-сигмы (360) расширены до конфигурируемого числа шагов.
+			// Refine-сигмы (360) — официальное stage-2 distilled расписание.
 			expect(graph["360"]?.inputs?.sigmas as string).toContain(", ");
 		} finally {
 			globalThis.fetch = originalFetch;

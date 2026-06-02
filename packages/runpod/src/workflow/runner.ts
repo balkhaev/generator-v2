@@ -8,6 +8,7 @@ import {
 import type { Engine, EngineJob, EngineSubmission } from "../engine/engine";
 import { createPodEngine } from "../engine/pod-engine";
 import { createServerlessEngine } from "../engine/serverless-engine";
+import { createStaticPodEngine } from "../engine/static-pod-engine";
 import type { InferenceStatus } from "../engine/status";
 import type {
 	ActivePodRegistry,
@@ -184,6 +185,15 @@ function buildEngine(
 			workflow: workflow as ServerlessWorkflow<unknown, unknown>,
 		});
 	}
+	const podWorkflow = workflow as PodWorkflow<unknown, unknown>;
+	if (podWorkflow.pod.comfyBaseUrl) {
+		return createStaticPodEngine({
+			comfyBaseUrl: podWorkflow.pod.comfyBaseUrl,
+			logger: ctx.logger,
+			s3: ctx.s3,
+			workflow: podWorkflow,
+		});
+	}
 	return createPodEngine({
 		activeRegistry: ctx.activeRegistry,
 		api: ctx.podsApi,
@@ -194,7 +204,7 @@ function buildEngine(
 		s3: ctx.s3,
 		stickyStore: ctx.stickyStore,
 		warmPool: ctx.warmPool,
-		workflow: workflow as PodWorkflow<unknown, unknown>,
+		workflow: podWorkflow,
 	});
 }
 

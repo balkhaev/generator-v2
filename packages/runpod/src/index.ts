@@ -67,6 +67,12 @@ export {
 	type WarmupScheduler,
 } from "./engine/serverless-warmup";
 export {
+	createStaticPodEngine,
+	formatStaticJobId,
+	parseStaticJobId,
+	type StaticPodEngineOptions,
+} from "./engine/static-pod-engine";
+export {
 	type InferenceStatus,
 	normalizeServerlessStatus,
 	TERMINAL_STATUSES,
@@ -130,6 +136,15 @@ export {
 	type RunpodService,
 	type RunpodSubmission,
 } from "./workflow/runner";
+export {
+	createComfyPodWorkflow,
+	createFluxImagePodWorkflow,
+	createLtxVideoPodWorkflow,
+	createWanVideoPodWorkflow,
+	type FluxImagePodWorkflowConfig,
+	type LtxVideoPodWorkflowConfig,
+	type WanVideoPodWorkflowConfig,
+} from "./workflows/comfy-pod";
 export {
 	createFluxDevImageServerlessWorkflow,
 	type FluxImageInput,

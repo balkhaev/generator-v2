@@ -126,6 +126,13 @@ export interface PodNetworkVolume {
  */
 export interface PodSpec {
 	cloudType?: "SECURE" | "COMMUNITY";
+	/**
+	 * Базовый URL ComfyUI уже запущенного персистентного пода
+	 * (`https://<podId>-8188.proxy.runpod.net`). Если задан — runner
+	 * выбирает `createStaticPodEngine`: генератор ходит напрямую в ComfyUI
+	 * этого пода (без create/delete пода и без авторизации).
+	 */
+	comfyBaseUrl?: string;
 	containerDiskInGb?: number;
 	gpuCount?: number;
 	imageName: string;

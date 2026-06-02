@@ -45,6 +45,10 @@ import {
 	createRedisStickyVolumeStore,
 	createRedisWarmPodPool,
 } from "@/providers/runpod-warm-pool";
+import {
+	buildStaticPodWorkflows,
+	resolveComfyPodBaseUrl,
+} from "@/providers/static-pod-workflows";
 
 function createStubInferenceClient(): InferenceClient {
 	const fail = (): never => {
@@ -155,24 +159,40 @@ const isPublicApiPath = createPublicPathMatcher({
 	exact: ["/api/health", "/api/ready"],
 });
 
-function buildEnvDefaultWorkflows(): AnyWorkflowDefinition[] {
-	const workflows: AnyWorkflowDefinition[] = [];
-	const fooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID;
-	if (fooocusEndpointId) {
-		workflows.push(
-			createFooocusSdxlWorkflow({
-				endpointId: fooocusEndpointId,
-				enableWarmup:
-					process.env.RUNPOD_FOOOCUS_ENABLE_WARMUP?.toLowerCase() === "true",
-				webhookUrl: process.env.RUNPOD_FOOOCUS_WEBHOOK_URL?.trim() || undefined,
-			})
-		);
+/**
+ * Единый персистентный ComfyUI-под (static pod). Если сконфигурирован —
+ * возвращает LTX/WAN/Flux workflows, иначе null (fallback на serverless/pod).
+ */
+function tryBuildStaticPodEnvWorkflows(): AnyWorkflowDefinition[] | null {
+	const comfyPodBaseUrl = resolveComfyPodBaseUrl({
+		baseUrl: process.env.RUNPOD_COMFYUI_BASE_URL,
+		podId: process.env.RUNPOD_COMFYUI_POD_ID,
+	});
+	if (!comfyPodBaseUrl) {
+		return null;
 	}
-	const ltxTemplateId =
-		process.env.RUNPOD_LTX23_POD_TEMPLATE_ID?.trim() || "p4f6rm9tb4";
-	const ltxNetworkVolumes = parseLtx23NetworkVolumesEnv(
-		process.env.RUNPOD_LTX23_POD_NETWORK_VOLUMES
-	);
+	return buildStaticPodWorkflows(comfyPodBaseUrl, {
+		flux: {
+			checkpointFilename:
+				process.env.RUNPOD_FLUX_DEV_CHECKPOINT?.trim() || undefined,
+		},
+		wan: {
+			accelLoraHighFilename:
+				process.env.RUNPOD_WAN22_ACCEL_LORA_HIGH?.trim() || undefined,
+			accelLoraLowFilename:
+				process.env.RUNPOD_WAN22_ACCEL_LORA_LOW?.trim() || undefined,
+			highNoiseModelFilename:
+				process.env.RUNPOD_WAN22_HIGH_NOISE_MODEL?.trim() || undefined,
+			lowNoiseModelFilename:
+				process.env.RUNPOD_WAN22_LOW_NOISE_MODEL?.trim() || undefined,
+			textEncoderFilename:
+				process.env.RUNPOD_WAN22_TEXT_ENCODER?.trim() || undefined,
+			vaeFilename: process.env.RUNPOD_WAN22_VAE?.trim() || undefined,
+		},
+	});
+}
+
+function pushWanFluxServerlessWorkflows(workflows: AnyWorkflowDefinition[]) {
 	const wanEndpointId = process.env.RUNPOD_WAN22_SERVERLESS_ENDPOINT_ID?.trim();
 	if (wanEndpointId) {
 		workflows.push(
@@ -208,40 +228,72 @@ function buildEnvDefaultWorkflows(): AnyWorkflowDefinition[] {
 			})
 		);
 	}
-	if (ltxTemplateId && ltxNetworkVolumes.length > 0) {
+}
+
+function pushLtxDisposablePodWorkflow(workflows: AnyWorkflowDefinition[]) {
+	const ltxTemplateId =
+		process.env.RUNPOD_LTX23_POD_TEMPLATE_ID?.trim() || "p4f6rm9tb4";
+	const ltxNetworkVolumes = parseLtx23NetworkVolumesEnv(
+		process.env.RUNPOD_LTX23_POD_NETWORK_VOLUMES
+	);
+	if (!(ltxTemplateId && ltxNetworkVolumes.length > 0)) {
+		return;
+	}
+	workflows.push(
+		createLtx23VideoWorkflow({
+			pod: {
+				cloudType:
+					process.env.RUNPOD_LTX23_POD_CLOUD_TYPE === "COMMUNITY"
+						? "COMMUNITY"
+						: "SECURE",
+				containerDiskInGb: readPositiveIntegerEnv(
+					process.env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
+					15
+				),
+				imageName:
+					process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
+					"ls250824/run-comfyui-ltx:28042026",
+				keepAliveMs: readNonNegativeIntegerEnv(
+					process.env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS,
+					10 * 60 * 1000
+				),
+				namePrefix: "ltx23",
+				networkVolumes: ltxNetworkVolumes,
+				templateId: ltxTemplateId,
+				timeoutMs: readPositiveIntegerEnv(
+					process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,
+					60 * 60 * 1000
+				),
+				volumeInGb: readPositiveIntegerEnv(
+					process.env.RUNPOD_LTX23_POD_VOLUME_GB,
+					90
+				),
+			},
+		})
+	);
+}
+
+function buildEnvDefaultWorkflows(): AnyWorkflowDefinition[] {
+	const workflows: AnyWorkflowDefinition[] = [];
+	const fooocusEndpointId = process.env.RUNPOD_FOOOCUS_ENDPOINT_ID;
+	if (fooocusEndpointId) {
 		workflows.push(
-			createLtx23VideoWorkflow({
-				pod: {
-					cloudType:
-						process.env.RUNPOD_LTX23_POD_CLOUD_TYPE === "COMMUNITY"
-							? "COMMUNITY"
-							: "SECURE",
-					containerDiskInGb: readPositiveIntegerEnv(
-						process.env.RUNPOD_LTX23_POD_CONTAINER_DISK_GB,
-						15
-					),
-					imageName:
-						process.env.RUNPOD_LTX23_POD_IMAGE_NAME?.trim() ||
-						"ls250824/run-comfyui-ltx:28042026",
-					keepAliveMs: readNonNegativeIntegerEnv(
-						process.env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS,
-						10 * 60 * 1000
-					),
-					namePrefix: "ltx23",
-					networkVolumes: ltxNetworkVolumes,
-					templateId: ltxTemplateId,
-					timeoutMs: readPositiveIntegerEnv(
-						process.env.RUNPOD_LTX23_POD_TIMEOUT_MS,
-						60 * 60 * 1000
-					),
-					volumeInGb: readPositiveIntegerEnv(
-						process.env.RUNPOD_LTX23_POD_VOLUME_GB,
-						90
-					),
-				},
+			createFooocusSdxlWorkflow({
+				endpointId: fooocusEndpointId,
+				enableWarmup:
+					process.env.RUNPOD_FOOOCUS_ENABLE_WARMUP?.toLowerCase() === "true",
+				webhookUrl: process.env.RUNPOD_FOOOCUS_WEBHOOK_URL?.trim() || undefined,
 			})
 		);
 	}
+	// Static pod имеет приоритет над serverless/disposable-pod для LTX/WAN/Flux.
+	const staticPodWorkflows = tryBuildStaticPodEnvWorkflows();
+	if (staticPodWorkflows) {
+		workflows.push(...staticPodWorkflows);
+		return workflows;
+	}
+	pushWanFluxServerlessWorkflows(workflows);
+	pushLtxDisposablePodWorkflow(workflows);
 	return workflows;
 }
 

@@ -101,6 +101,7 @@ export function createComfyUIClient(
 	const baseUrl = options.baseUrl.replace(TRAILING_SLASH, "");
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const timeoutMs = options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const authMode = options.auth ?? "login";
 	let sessionCookie: string | null = null;
 
 	const buildHeaders = (
@@ -147,10 +148,16 @@ export function createComfyUIClient(
 	};
 
 	const login = async (): Promise<void> => {
+		if (authMode === "none") {
+			// Голый ComfyUI без плагина ComfyUI-Login: /login отсутствует,
+			// cookie не нужна. Делаем no-op, чтобы движки могли единообразно
+			// дёргать login()/ensureCookie().
+			return;
+		}
 		const body = new URLSearchParams({
 			guest_mode: "",
-			password: options.password,
-			username: options.username,
+			password: options.password ?? "",
+			username: options.username ?? "",
 		});
 		const response = await request("/login", {
 			body,
@@ -175,6 +182,9 @@ export function createComfyUIClient(
 	};
 
 	const ensureCookie = async (): Promise<void> => {
+		if (authMode === "none") {
+			return;
+		}
 		if (!sessionCookie) {
 			await login();
 		}

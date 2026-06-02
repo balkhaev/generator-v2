@@ -210,6 +210,12 @@ const serverSchema = {
 	RUNPOD_API_KEY: z.string().min(1).optional(),
 	RUNPOD_TRAINING_MODE: z.enum(["serverless", "pod"]).default("pod"),
 
+	// Единый персистентный ComfyUI-под для inference (LTX/WAN/Flux). Если
+	// задан POD_ID или BASE_URL — генератор регистрирует static-pod воркфлоу
+	// (прямой HTTP в ComfyUI без авторизации) с приоритетом над serverless.
+	RUNPOD_COMFYUI_POD_ID: z.string().min(1).optional(),
+	RUNPOD_COMFYUI_BASE_URL: z.url().optional(),
+
 	// Serverless-only.
 	RUNPOD_AI_TOOLKIT_ENDPOINT_ID: z.string().min(1).optional(),
 	RUNPOD_API_BASE_URL: z.url().default("https://api.runpod.ai/v2"),

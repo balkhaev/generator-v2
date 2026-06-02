@@ -29,6 +29,10 @@ import {
 	createRedisStickyVolumeStore,
 	createRedisWarmPodPool,
 } from "@/providers/runpod-warm-pool";
+import {
+	buildStaticPodWorkflows,
+	resolveComfyPodBaseUrl,
+} from "@/providers/static-pod-workflows";
 
 const LTX23_POD_NAME_PREFIX = "ltx23";
 const REAPER_INTERVAL_MS = 60_000;
@@ -50,13 +54,20 @@ const replicateApiToken = env.REPLICATE_API_TOKEN;
 const runpodApiKey = env.RUNPOD_API_KEY;
 const runpodFooocusEndpointId = env.RUNPOD_FOOOCUS_ENDPOINT_ID;
 const runpodLtx23TemplateId = env.RUNPOD_LTX23_POD_TEMPLATE_ID;
+// Единый персистентный ComfyUI-под (static pod) имеет приоритет над
+// admin-managed DB-воркфлоу и env fallback'ом для LTX/WAN/Flux.
+const comfyPodBaseUrl = resolveComfyPodBaseUrl({
+	baseUrl: env.RUNPOD_COMFYUI_BASE_URL,
+	podId: env.RUNPOD_COMFYUI_POD_ID,
+});
 const kafkaConfig = getKafkaEventBusConfig("generator-worker");
 const eventPublisher = kafkaConfig
 	? createKafkaEventPublisher(kafkaConfig, { source: "generator-worker" })
 	: null;
 
 const hasAnyRunpodWorkflow = Boolean(
-	runpodApiKey && (runpodFooocusEndpointId || runpodLtx23TemplateId)
+	runpodApiKey &&
+		(runpodFooocusEndpointId || runpodLtx23TemplateId || comfyPodBaseUrl)
 );
 
 if (!(civitaiApiKey || falKey || replicateApiToken || hasAnyRunpodWorkflow)) {
@@ -88,10 +99,25 @@ const runpodWorkflowsFromDb = await loadRunpodWorkflowsFromDb({
 	logger: console,
 });
 
-const runpodWorkflows: AnyWorkflowDefinition[] =
-	runpodWorkflowsFromDb.length > 0 ? runpodWorkflowsFromDb : [];
+function resolveInitialRunpodWorkflows(): AnyWorkflowDefinition[] {
+	if (comfyPodBaseUrl) {
+		return buildStaticPodWorkflows(comfyPodBaseUrl);
+	}
+	if (runpodWorkflowsFromDb.length > 0) {
+		return runpodWorkflowsFromDb;
+	}
+	return [];
+}
 
-if (runpodWorkflows.length === 0) {
+const runpodWorkflows: AnyWorkflowDefinition[] =
+	resolveInitialRunpodWorkflows();
+
+if (comfyPodBaseUrl) {
+	console.info("generator.worker.runpod.static-pod-mode", {
+		baseUrl: comfyPodBaseUrl,
+		ids: runpodWorkflows.map((w) => w.id),
+	});
+} else if (runpodWorkflows.length === 0) {
 	if (runpodFooocusEndpointId) {
 		runpodWorkflows.push(
 			createFooocusSdxlWorkflow({ endpointId: runpodFooocusEndpointId })

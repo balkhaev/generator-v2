@@ -13,17 +13,22 @@ import {
 	type ComfyUIClientOptions,
 	createComfyUIClient,
 } from "../comfyui/client";
-import type {
-	ComfyUIHistoryItem,
-	ComfyUIQueueItem,
-	ComfyUIQueueResponse,
-} from "../comfyui/types";
+import type { ComfyUIHistoryItem } from "../comfyui/types";
 import { isNoCapacityError } from "../http/client";
 import type {
 	PodNetworkVolume,
 	PodPrepareStatus,
 	PodWorkflow,
 } from "../workflow/definition";
+import {
+	buildComfyArtifactKey,
+	findEntryByClientId,
+	isComfyTransientProxyError,
+	pickPrimaryArtifact,
+	queueContainsClientId,
+	stringifyMessages,
+	summarizeHistoryOutputs,
+} from "./comfy-shared";
 import type { Engine, EngineJob, EngineSubmission } from "./engine";
 import {
 	type ActivePodRegistry,
@@ -55,37 +60,7 @@ const PROGRESS_PCT_PREPARE = 60;
 const PROGRESS_PCT_PROMPT_QUEUED = 75;
 const PROGRESS_PCT_PROMPT_RUNNING = 90;
 
-// RunPod proxy (pod-id-PORT.proxy.runpod.net) is fronted by Cloudflare и
-// периодически отдаёт 5xx/timeout, пока pod ещё провижинится или из-за
-// transient edge-проблем. Такие ошибки не должны валить exec — следующий poll
-// либо пройдёт, либо api.get отдаст 404, и мы корректно зафейлим.
-const COMFY_TRANSIENT_STATUSES = new Set([
-	502, 503, 504, 520, 521, 522, 523, 524,
-]);
-const COMFY_FAILED_STATUS_PATTERN = /failed \((\d{3})\)/u;
 const POD_NOT_FOUND_PATTERN = /\/pods\/[^\s]+\s*\(get\) failed \(404\)/u;
-const FETCH_NETWORK_ERROR_PATTERN =
-	/fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|socket hang up|UND_ERR/iu;
-
-export function isComfyTransientProxyError(error: unknown): boolean {
-	if (!(error instanceof Error)) {
-		return false;
-	}
-	if (!error.message.startsWith("comfyui ")) {
-		// Network-level fetch error без HTTP статуса — тоже считаем транзиентным
-		// для ComfyUI запросов, но только если это произошло в comfyui/* контексте.
-		return false;
-	}
-	if (FETCH_NETWORK_ERROR_PATTERN.test(error.message)) {
-		return true;
-	}
-	const match = error.message.match(COMFY_FAILED_STATUS_PATTERN);
-	if (!match) {
-		return false;
-	}
-	const status = Number.parseInt(match[1] ?? "0", 10);
-	return COMFY_TRANSIENT_STATUSES.has(status);
-}
 
 export function isPodNotFoundError(error: unknown): boolean {
 	return error instanceof Error && POD_NOT_FOUND_PATTERN.test(error.message);
@@ -1088,28 +1063,11 @@ function buildArtifactKey(
 	requestId: string,
 	workflow: PodWorkflow<unknown, unknown>
 ): string {
-	const extension = inferExtension(workflow.artifactContentType);
-	return `${ARTIFACT_KEY_PREFIX}/${requestId}/output${extension}`;
-}
-
-function inferExtension(contentType: string): string {
-	const lower = contentType.toLowerCase();
-	if (lower.startsWith("video/mp4")) {
-		return ".mp4";
-	}
-	if (lower.startsWith("video/webm")) {
-		return ".webm";
-	}
-	if (lower.startsWith("image/png")) {
-		return ".png";
-	}
-	if (lower.startsWith("image/jpeg")) {
-		return ".jpg";
-	}
-	if (lower.startsWith("image/webp")) {
-		return ".webp";
-	}
-	return ".bin";
+	return buildComfyArtifactKey(
+		ARTIFACT_KEY_PREFIX,
+		requestId,
+		workflow.artifactContentType
+	);
 }
 
 function buildRunpodPodConsoleUrl(podId: string): string {
@@ -1133,86 +1091,6 @@ function encodeBase64Json(value: unknown): string {
 function decodeBase64Json(encoded: string): unknown {
 	const json = Buffer.from(encoded, "base64").toString("utf8");
 	return JSON.parse(json);
-}
-
-function pickPrimaryArtifact(
-	outputs: ComfyUIHistoryItem["outputs"]
-): ComfyUIArtifactRef | null {
-	for (const node of Object.values(outputs)) {
-		if (node.videos?.length) {
-			return node.videos[0] ?? null;
-		}
-		if (node.gifs?.length) {
-			return node.gifs[0] ?? null;
-		}
-		if (node.images?.length) {
-			return node.images[0] ?? null;
-		}
-	}
-	return null;
-}
-
-/**
- * Summarises the structure of ComfyUI history `outputs` so engine errors carry
- * enough context to diagnose unexpected output shapes (e.g. custom nodes that
- * use non-standard keys like `result_files` or `audio`).
- */
-function summarizeHistoryOutputs(
-	outputs: ComfyUIHistoryItem["outputs"]
-): string {
-	const summary: Record<string, string[]> = {};
-	for (const [nodeId, node] of Object.entries(outputs)) {
-		if (!node || typeof node !== "object") {
-			continue;
-		}
-		summary[nodeId] = Object.keys(node);
-	}
-	const entries = Object.entries(summary);
-	if (entries.length === 0) {
-		return "{}";
-	}
-	return entries
-		.map(([nid, keys]) => `${nid}=[${keys.join(",")}]`)
-		.join(" ")
-		.slice(0, 600);
-}
-
-function findEntryByClientId(
-	history: Record<string, ComfyUIHistoryItem>,
-	clientId: string
-): ComfyUIHistoryItem | null {
-	for (const item of Object.values(history)) {
-		const itemClientId = extractClientId(item.prompt);
-		if (itemClientId === clientId) {
-			return item;
-		}
-	}
-	return null;
-}
-
-function queueContainsClientId(
-	queue: ComfyUIQueueResponse,
-	clientId: string
-): boolean {
-	const all = [...queue.queue_running, ...queue.queue_pending];
-	return all.some((item) => extractClientId(item) === clientId);
-}
-
-function extractClientId(item: ComfyUIQueueItem): string | null {
-	const extra = item[3];
-	const raw = extra?.client_id;
-	return typeof raw === "string" && raw.length > 0 ? raw : null;
-}
-
-function stringifyMessages(messages: unknown): string {
-	if (!messages) {
-		return "no details";
-	}
-	try {
-		return JSON.stringify(messages).slice(0, 2000);
-	} catch {
-		return String(messages).slice(0, 2000);
-	}
 }
 
 function clamp(value: number, min: number, max: number): number {

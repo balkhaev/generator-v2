@@ -3,10 +3,21 @@ export interface ComfyUIClientCredentials {
 	username: string;
 }
 
-export interface ComfyUIClientOptions extends ComfyUIClientCredentials {
+export interface ComfyUIClientOptions {
+	/**
+	 * Авторизация ComfyUI. `"login"` (default) — через плагин
+	 * `liusida/ComfyUI-Login` (POST /login → AIOHTTP_SESSION cookie),
+	 * как в disposable pod-образе. `"none"` — голый ComfyUI без плагина
+	 * (наш персистентный pod): /login не дёргаем, cookie не шлём.
+	 */
+	auth?: "login" | "none";
 	baseUrl: string;
 	fetchImpl?: typeof fetch;
+	/** Обязателен только при `auth === "login"`. */
+	password?: string;
 	requestTimeoutMs?: number;
+	/** Обязателен только при `auth === "login"`. */
+	username?: string;
 }
 
 export interface ComfyUIPromptResponse {

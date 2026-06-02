@@ -11,10 +11,10 @@ import type {
 	ComfyUIUserdataEntry,
 } from "../comfyui/types";
 import type { PodWorkflow } from "../workflow/definition";
+import { isComfyTransientProxyError } from "./comfy-shared";
 import {
 	createPodEngine,
 	formatPodJobId,
-	isComfyTransientProxyError,
 	isPodNotFoundError,
 	parsePodJobId,
 	reorderVolumesByPreferred,

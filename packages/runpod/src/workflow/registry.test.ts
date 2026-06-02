@@ -98,6 +98,20 @@ describe("WorkflowRegistry", () => {
 		).toThrow("templateId");
 	});
 
+	it("accepts static pod workflows without volume/image/template", () => {
+		const staticWf: PodWorkflow<unknown, unknown> = {
+			...podWf,
+			pod: {
+				comfyBaseUrl: "https://pod-8188.proxy.runpod.net",
+				imageName: "",
+				networkVolumes: [],
+				templateId: undefined,
+			},
+		};
+		const registry = createWorkflowRegistry([staticWf]);
+		expect(registry.get("ltx-2-3-video").id).toBe("ltx-2-3-video");
+	});
+
 	it("throws UnknownWorkflowError on missing id", () => {
 		const registry = createWorkflowRegistry([serverlessWf]);
 		expect(() => registry.get("missing")).toThrow(UnknownWorkflowError);

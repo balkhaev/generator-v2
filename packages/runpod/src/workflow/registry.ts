@@ -56,6 +56,12 @@ function validateWorkflow(workflow: AnyWorkflowDefinition): void {
 		}
 		return;
 	}
+	// Static pod: под уже поднят и держит примонтированный том, поэтому
+	// engine не аллоцирует volume и не создаёт под из image/template —
+	// требований к networkVolumes/imageName/templateId нет.
+	if (workflow.pod.comfyBaseUrl) {
+		return;
+	}
 	if (workflow.pod.networkVolumes.length === 0) {
 		throw new Error(
 			`Pod workflow ${workflow.id} requires at least one networkVolume`

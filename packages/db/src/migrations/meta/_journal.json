@@ -134,6 +134,13 @@
       "when": 1779387600000,
       "tag": "0018_migrate_wan_pussy_serverless",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1779474000000,
+      "tag": "0019_rename_static_pod_scenario_names",
+      "breakpoints": true
     }
   ]
 }

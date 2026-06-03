@@ -1864,9 +1864,9 @@ export const workflowRegistry = {
 	"runpod-ltx-2-3-image-to-video": {
 		baseModel: "ltx-2-3",
 		key: "runpod-ltx-2-3-image-to-video",
-		name: "LTX 2.3 I2V (RunPod Serverless)",
+		name: "LTX 2.3 I2V (RunPod)",
 		description:
-			"LTX 2.3 image-to-video на RunPod serverless (ComfyUI + worker-comfyui). LoRA опциональна — через Civitai id (pre-provisioned на volume как civitai-{modelId}-{versionId}.safetensors) или без LoRA.",
+			"LTX 2.3 image-to-video на персистентном RunPod ComfyUI-поде. LoRA опциональна — Civitai id (файл civitai-{modelId}-{versionId}.safetensors на volume, см. seed-models) или без LoRA.",
 		requiresInputImage: true,
 		parameterSchema: runpodLtx23ParamsSchema,
 		parameterFields: runpodLtx23ParameterFields,
@@ -1879,9 +1879,9 @@ export const workflowRegistry = {
 	"runpod-wan-2-2-image-to-video": {
 		baseModel: "wan-2-2",
 		key: "runpod-wan-2-2-image-to-video",
-		name: "Wan 2.2 I2V (RunPod Serverless)",
+		name: "Wan 2.2 I2V (RunPod)",
 		description:
-			"Wan 2.2 14B image-to-video на RunPod serverless (ComfyUI + worker-comfyui). Двухэкспертный high/low-noise пайплайн, модели на network volume. LoRA («Wan Pussy» и др.) — через loraHighFilename/loraLowFilename на volume или legacy Civitai id.",
+			"Wan 2.2 14B image-to-video на персистентном RunPod ComfyUI-поде. Двухэкспертный high/low-noise пайплайн, модели на network volume. LoRA («Wan Pussy» и др.) — loraHighFilename/loraLowFilename на volume или legacy Civitai id.",
 		requiresInputImage: true,
 		parameterSchema: runpodWan22ParamsSchema,
 		parameterFields: runpodWan22ParameterFields,
@@ -1894,9 +1894,9 @@ export const workflowRegistry = {
 	"runpod-flux-dev-image": {
 		baseModel: "flux",
 		key: "runpod-flux-dev-image",
-		name: "Flux.1-dev (RunPod Serverless)",
+		name: "Flux.1-dev (RunPod)",
 		description:
-			"Flux.1-dev text-to-image на RunPod serverless (ComfyUI + worker-comfyui). All-in-one fp8-чекпоинт на network volume, LoRA («Noisify» и др.) — через loraFilename на volume. Без цензуры (self-hosted).",
+			"Flux.1-dev text-to-image на персистентном RunPod ComfyUI-поде. All-in-one fp8-чекпоинт на network volume, LoRA («Noisify» и др.) — loraFilename на volume. Self-hosted.",
 		requiresInputImage: false,
 		parameterSchema: runpodFluxDevParamsSchema,
 		parameterFields: runpodFluxDevParameterFields,

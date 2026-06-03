@@ -2,6 +2,7 @@ import { z } from "zod";
 import LTX_23_I2V_API_GRAPH from "../../templates/api/ltx-2-3-i2v-lvram.json" with {
 	type: "json",
 };
+import { civitaiLoraSafetensorsFilename } from "../civitai-lora-filenames";
 import type { ComfyUINodeApiInput } from "../comfyui/client";
 import type {
 	ServerlessPayloadContext,
@@ -290,7 +291,10 @@ async function buildPayloadInternal(
 	// `LoraLoaderModelOnly` с civitai LoRA, либо удаляем узел и
 	// перенаправляем его consumers напрямую на distill LoRA (`134`).
 	if (parsed.loraCivitaiModelId && parsed.loraCivitaiVersionId) {
-		const filename = `civitai-${parsed.loraCivitaiModelId}-${parsed.loraCivitaiVersionId}.safetensors`;
+		const filename = civitaiLoraSafetensorsFilename(
+			parsed.loraCivitaiModelId,
+			parsed.loraCivitaiVersionId
+		);
 		replaceLoraManagerWithStandardLoader(
 			graph,
 			NODE_LORA_LOADER,

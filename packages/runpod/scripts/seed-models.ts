@@ -1,5 +1,8 @@
 /* biome-ignore-all lint/suspicious/noConsole: ops seed script reports human-readable timeline */
-export {};
+import {
+	LTX_SYNTH_PUSSY_LORA_FILENAME,
+	LTX_SYNTH_PUSSY_LORA_VERSION_ID,
+} from "../src/civitai-lora-filenames";
 
 /**
  * Засев ВСЕХ моделей (LTX/Sulphur + WAN 2.2 + Flux + LoRA) на один network
@@ -216,6 +219,10 @@ function buildSeedScript(): string {
 	const aria =
 		"aria2c -c -x16 -s16 -k1M --console-log-level=warn --summary-interval=0 --max-tries=20 --retry-wait=10";
 	const hfAuth = hfToken ? ` --header="Authorization: Bearer ${hfToken}"` : "";
+	// Civitai за Cloudflare: aria2c UA блокируется на dc-IP, range игнорится.
+	// Качаем curl'ом с браузерным UA (-L follow redirect).
+	const browserUa =
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
 	const downloads = MODEL_FILES.map(
 		(f) => `
@@ -225,10 +232,6 @@ ${aria}${hfAuth} -d /workspace/ComfyUI/models/${f.dir} -o ${f.name} "${f.url}" |
 	).join("");
 
 	// Wan Pussy LoRA — Civitai zip → распаковка в фиксированные имена.
-	// Civitai за Cloudflare: aria2c UA блокируется на dc-IP, range игнорится.
-	// Качаем curl'ом с браузерным UA (-L follow redirect, -C - resume).
-	const browserUa =
-		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 	const civitaiBlock = civitai
 		? `
 echo "[seed] wan22 pussy lora (civitai ${CIVITAI_VERSION_ID})" | tee -a /workspace/seed.log
@@ -242,18 +245,33 @@ echo "[seed] pussy HIGH=$HIGH LOW=$LOW" | tee -a /workspace/seed.log
 cd /workspace`
 		: '\necho "[seed][WARN] CIVITAI_API_KEY missing — skip pussy lora"';
 
+	// LTX 2.3 «Synth Pussy» LoRA — имя ${LTX_SYNTH_PUSSY_LORA_FILENAME} (см.
+	// civitai-lora-filenames.ts). Guard по файлу; выполняется даже при sentinel.
+	const ltxSynthTarget = `/workspace/ComfyUI/models/loras/${LTX_SYNTH_PUSSY_LORA_FILENAME}`;
+	const ltxSynthBlock = civitai
+		? `
+if [ -s "${ltxSynthTarget}" ]; then
+  echo "[seed] ltx synth lora present — skip" | tee -a /workspace/seed.log
+else
+  echo "[seed] ltx synth lora (civitai ${LTX_SYNTH_PUSSY_LORA_VERSION_ID})" | tee -a /workspace/seed.log
+  mkdir -p /workspace/ComfyUI/models/loras
+  curl -fSL -A "${browserUa}" -o "${ltxSynthTarget}.part" "https://civitai.com/api/download/models/${LTX_SYNTH_PUSSY_LORA_VERSION_ID}?token=${civitai}" 2>>/workspace/seed.log && mv "${ltxSynthTarget}.part" "${ltxSynthTarget}" && echo "[seed] ltx synth lora OK" | tee -a /workspace/seed.log || echo "[seed][WARN] ltx synth lora download failed" | tee -a /workspace/seed.log
+fi`
+		: '\necho "[seed][WARN] CIVITAI_API_KEY missing — skip ltx synth lora"';
+
 	return `
 set +e
 echo "[seed] start $(date -Is)" | tee /workspace/seed.log
+apt-get update -qq && apt-get install -y --no-install-recommends aria2 curl unzip file ca-certificates >> /workspace/seed.log 2>&1
 if [ -f /workspace/${SENTINEL} ]; then
-  echo "[seed] sentinel present — already seeded" | tee -a /workspace/seed.log
+  echo "[seed] sentinel present — bulk already seeded" | tee -a /workspace/seed.log
 else
-  apt-get update -qq && apt-get install -y --no-install-recommends aria2 curl unzip ca-certificates >> /workspace/seed.log 2>&1
   ${downloads}
   ${civitaiBlock}
   touch /workspace/${SENTINEL}
   echo "[seed] done $(date -Is)" | tee -a /workspace/seed.log
 fi
+${ltxSynthBlock}
 du -sh /workspace/ComfyUI/models/* 2>/dev/null | tee -a /workspace/seed.log
 cd /workspace
 exec python3 -m http.server ${SEEDER_PORT}

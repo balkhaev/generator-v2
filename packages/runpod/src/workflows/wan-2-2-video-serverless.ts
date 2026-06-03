@@ -2,6 +2,7 @@ import { z } from "zod";
 import WAN_22_I2V_API_GRAPH from "../../templates/api/wan-2-2-i2v.json" with {
 	type: "json",
 };
+import { civitaiLoraSafetensorsFilename } from "../civitai-lora-filenames";
 import type { ComfyUINodeApiInput } from "../comfyui/client";
 import type {
 	ServerlessPayloadContext,
@@ -372,7 +373,10 @@ function resolveScenarioLoraFilenames(parsed: WanVideoParsed): {
 		};
 	}
 	if (parsed.loraCivitaiModelId && parsed.loraCivitaiVersionId) {
-		const legacy = `civitai-${parsed.loraCivitaiModelId}-${parsed.loraCivitaiVersionId}.safetensors`;
+		const legacy = civitaiLoraSafetensorsFilename(
+			parsed.loraCivitaiModelId,
+			parsed.loraCivitaiVersionId
+		);
 		return { high: legacy, low: legacy };
 	}
 	return {};

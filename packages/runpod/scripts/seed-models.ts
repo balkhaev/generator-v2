@@ -37,6 +37,13 @@ const SENTINEL = "GENERATOR_MODELS_SEED_v5";
 const COMFY_POD_NAME = "generator-comfyui-pro6000";
 const CIVITAI_VERSION_ID = "2145434";
 
+// Flux «Noisify» LoRA: имя на volume и источник (наш S3, без токена). Должно
+// совпадать с RUNPOD_FLUX_NOISIFY_LORA_FILENAME / _SOURCE_URL из
+// packages/workflows (сценарий runpod-flux-dev-image, loraFilename=noisify.safetensors).
+const NOISIFY_LORA_FILENAME = "noisify.safetensors";
+const NOISIFY_LORA_SOURCE_URL =
+	"https://hel1.your-objectstorage.com/generator/loras/external/external-7919a4063730eca7.safetensors";
+
 const CONTAINER_DISK_GB = 20;
 const READY_TIMEOUT_MS = 120 * 60 * 1000;
 const READY_POLL_MS = 30 * 1000;
@@ -141,6 +148,13 @@ const MODEL_FILES: ModelFile[] = [
 		dir: "checkpoints",
 		name: "flux1-dev-fp8.safetensors",
 		url: "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev-fp8.safetensors",
+	},
+	// Flux «Noisify» LoRA — наш S3 (RUNPOD_FLUX_NOISIFY_LORA_SOURCE_URL в
+	// packages/workflows). Сценарий runpod-flux-dev-image, loraFilename=noisify.safetensors.
+	{
+		dir: "loras",
+		name: NOISIFY_LORA_FILENAME,
+		url: NOISIFY_LORA_SOURCE_URL,
 	},
 ];
 
@@ -259,6 +273,18 @@ else
 fi`
 		: '\necho "[seed][WARN] CIVITAI_API_KEY missing — skip ltx synth lora"';
 
+	// Flux «Noisify» LoRA — наш S3 (без токена). Guard по файлу; выполняется даже
+	// при sentinel, чтобы досеять LoRA на уже залитый том без полного пересида.
+	const noisifyTarget = `/workspace/ComfyUI/models/loras/${NOISIFY_LORA_FILENAME}`;
+	const noisifyBlock = `
+if [ -s "${noisifyTarget}" ]; then
+  echo "[seed] noisify lora present — skip" | tee -a /workspace/seed.log
+else
+  echo "[seed] noisify lora (s3)" | tee -a /workspace/seed.log
+  mkdir -p /workspace/ComfyUI/models/loras
+  curl -fSL -o "${noisifyTarget}.part" "${NOISIFY_LORA_SOURCE_URL}" 2>>/workspace/seed.log && mv "${noisifyTarget}.part" "${noisifyTarget}" && echo "[seed] noisify lora OK" | tee -a /workspace/seed.log || echo "[seed][WARN] noisify lora download failed" | tee -a /workspace/seed.log
+fi`;
+
 	return `
 set +e
 echo "[seed] start $(date -Is)" | tee /workspace/seed.log
@@ -272,6 +298,7 @@ else
   echo "[seed] done $(date -Is)" | tee -a /workspace/seed.log
 fi
 ${ltxSynthBlock}
+${noisifyBlock}
 du -sh /workspace/ComfyUI/models/* 2>/dev/null | tee -a /workspace/seed.log
 cd /workspace
 exec python3 -m http.server ${SEEDER_PORT}

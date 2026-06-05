@@ -242,6 +242,29 @@ function extractErrorMessage(
 }
 
 /**
+ * fal принудительно прогоняет flux-LoRA через safety checker (даже при
+ * enable_safety_checker=false) и при срабатывании возвращает COMPLETED со
+ * «слепой» чёрной картинкой-заглушкой и флагом `has_nsfw_concepts: [true]` на
+ * каждое изображение. Такой результат бесполезен и, попав в i2v как исходный
+ * кадр, ломает генерацию (видео стартует с чёрного кадра и теряет личность),
+ * поэтому трактуем его как провал, а не успех. Возвращает текст ошибки либо
+ * null, если хотя бы одно изображение прошло без blackout.
+ */
+function detectFalNsfwBlackout(output: Record<string, unknown>): string | null {
+	const flags = output.has_nsfw_concepts;
+	if (!Array.isArray(flags) || flags.length === 0) {
+		return null;
+	}
+	if (!flags.every((flag) => flag === true)) {
+		return null;
+	}
+	return (
+		"fal.ai content safety checker flagged the output (has_nsfw_concepts) " +
+		"and returned a blackout placeholder image instead of a real result"
+	);
+}
+
+/**
  * fal.ai normalizes model paths in status/response URLs.
  * E.g. submitting to `fal-ai/flux/dev` returns status_url with `fal-ai/flux/requests/...`.
  * We extract the canonical model path from `status_url` to use for subsequent requests.
@@ -520,6 +543,20 @@ export function createFalClient(options: {
 			const resultBody = await request<Record<string, unknown>>(
 				`${apiBaseUrl}/${endpointId}/requests/${jobId}`
 			);
+
+			const blackout = detectFalNsfwBlackout(resultBody);
+			if (blackout) {
+				return {
+					endpointId,
+					errorSummary: blackout,
+					jobId,
+					lastLogLine,
+					output: null,
+					progressPct: null,
+					queuePosition: null,
+					status: "failed",
+				};
+			}
 
 			return {
 				endpointId,

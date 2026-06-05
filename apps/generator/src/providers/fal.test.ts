@@ -107,6 +107,77 @@ describe("fal provider", () => {
 		expect(job.errorSummary).toBeNull();
 	});
 
+	it("marks fal NSFW blackout (has_nsfw_concepts all true) as failed", async () => {
+		const fetchImpl = mock((url: string) => {
+			if (url.includes("/status")) {
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({ status: "COMPLETED", request_id: "req-nsfw" }),
+						{ status: 200, headers: { "content-type": "application/json" } }
+					)
+				);
+			}
+			if (url.endsWith("/fal-ai/flux/requests/req-nsfw")) {
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							images: [
+								{
+									url: "https://v3.fal.media/files/blackout.png",
+									width: 1024,
+									height: 1024,
+								},
+							],
+							has_nsfw_concepts: [true],
+							seed: 7,
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } }
+					)
+				);
+			}
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+
+		const client = createFalClient({ apiKey: "fal_test_key", fetchImpl });
+		const job = await client.getStatus("req-nsfw", "fal-ai/flux");
+		expect(job.status).toBe("failed");
+		expect(job.output).toBeNull();
+		expect(job.errorSummary).toContain("has_nsfw_concepts");
+	});
+
+	it("keeps fal result succeeded when has_nsfw_concepts has a false entry", async () => {
+		const fetchImpl = mock((url: string) => {
+			if (url.includes("/status")) {
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({ status: "COMPLETED", request_id: "req-ok" }),
+						{ status: 200, headers: { "content-type": "application/json" } }
+					)
+				);
+			}
+			if (url.endsWith("/fal-ai/flux/requests/req-ok")) {
+				return Promise.resolve(
+					new Response(
+						JSON.stringify({
+							images: [
+								{ url: "https://v3.fal.media/files/a.png" },
+								{ url: "https://v3.fal.media/files/b.png" },
+							],
+							has_nsfw_concepts: [true, false],
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } }
+					)
+				);
+			}
+			throw new Error(`Unexpected URL: ${url}`);
+		});
+
+		const client = createFalClient({ apiKey: "fal_test_key", fetchImpl });
+		const job = await client.getStatus("req-ok", "fal-ai/flux");
+		expect(job.status).toBe("succeeded");
+		expect(job.output).not.toBeNull();
+	});
+
 	it("falls back to original model when status_url is missing", async () => {
 		const fetchImpl = mock((url: string, init?: RequestInit) => {
 			if (init?.method === "POST") {

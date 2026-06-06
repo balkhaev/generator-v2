@@ -51,9 +51,20 @@ bun --cwd packages/debug-tools run mcp
 - admin queue: `admin_lora_training_queue_snapshot`
 - generator: `generator_workflows_get`, `generator_execution_submit`, `generator_execution_sync`
 - persons: `persons_list`, `persons_get`, `persons_retrain_lora`, `persons_reupload_adorely_assets`, `persons_lora_generation_debug`
-- studio: `studio_execution_debug`, `studio_run_mark_failed`
+- studio: `studio_execution_debug`, `studio_run_mark_failed`, `studio_scenario_update`
+- admin settings: `admin_settings_get`, `training_provider_get`, `training_provider_set`, `admin_request`
+- prompt enhance: `prompt_enhance_get`, `prompt_enhance_set` (провайдер + модель studio/persons "Enhance" / "Enhance for image"; пишет Redis + runtime-config + инвалидация)
 - test users: `test_user_upsert`, `test_user_get`
 - kafka: `kafka_cluster_info`, `kafka_topics_list`, `kafka_topic_offsets`, `kafka_consumer_groups_list`, `kafka_consumer_group_describe`, `kafka_topic_sample`
+- runpod serverless: `runpod_serverless_health`, `runpod_serverless_status`, `runpod_serverless_cancel`, `runpod_serverless_requests`, `runpod_serverless_purge_queue`, `runpod_serverless_run`, `runpod_endpoint_get`, `runpod_endpoint_patch`, `runpod_template_get`, `runpod_template_patch`
+
+#### NSFW prompt-enhance (studio "Enhance for image")
+
+Симптом: в студии `Enhance` / `Enhance for image` отказывается переписывать NSFW-бриф или выдаёт слабый промпт.
+
+1. `prompt_enhance_get { target: "studio" }` — посмотреть текущий `provider` / `openRouterModel`. Если `provider: openrouter` и модель из семейства Qwen или `openai/gpt-4o-mini` — она почти всегда морализирует/отказывает на explicit-брифах, а vision-ветка падает в text-fallback.
+2. `prompt_enhance_set { target: "studio", provider: "openrouter", openRouterModel: "x-ai/grok-4.20" }` — валидированная permissive vision-модель: грундит промпт по input-кадру, различает статичный/экшн-бриф, не отказывает, уважает `reasoning: { enabled: false }`. Один вызов пишет Redis + runtime-config store и инвалидирует кэш консьюмеров.
+3. Проверить end-to-end: `service_request` на studio `/api/enhance-prompt` с `imageUrl` (vision-режим), убедиться что `mode: "vision"` и `notice: null` (не сорвалось в text-fallback).
 
 ### `packages/debug-tools` — stdio MCP + bundle CLI
 

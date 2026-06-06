@@ -4,6 +4,7 @@ import type {
 	WorkflowBaseModel,
 	WorkflowParameterKind,
 	WorkflowParameterType,
+	WorkflowPreset,
 } from "@generator/contracts/generator";
 import type {
 	CreateStudioRunInput,
@@ -17,7 +18,11 @@ import type {
 	StudioShotArtifactKind,
 } from "@generator/contracts/studio";
 
-export type { WorkflowParameterType } from "@generator/contracts/generator";
+export type {
+	WorkflowParameterType,
+	WorkflowPreset,
+	WorkflowPresetGroup,
+} from "@generator/contracts/generator";
 export type {
 	CreateStudioRunInput,
 	CreateStudioScenarioInput,
@@ -51,6 +56,7 @@ export interface WorkflowDefinition {
 	key: string;
 	name: string;
 	parameters: WorkflowParameter[];
+	presets?: readonly WorkflowPreset[];
 	promptHint: string;
 	requiresInputImage: boolean;
 	summary: string;
@@ -214,6 +220,7 @@ function normalizeWorkflowDefinition(
 			type: parameter.type,
 			...(parameter.unit ? { unit: parameter.unit } : {}),
 		})),
+		...(workflow.presets ? { presets: workflow.presets } : {}),
 		promptHint: createPromptHint(workflow.name),
 		requiresInputImage: Boolean(workflow.requiresInputImage),
 		summary: workflow.description,

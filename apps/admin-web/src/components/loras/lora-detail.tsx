@@ -22,6 +22,15 @@ import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
 import { SectionLabel } from "@generator/ui/components/section-label";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectGroupLabel,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
 import { StatusBadge } from "@generator/ui/components/status-badge";
 import { formatBytes, formatDateTime } from "@generator/ui/lib/format";
 import {
@@ -57,8 +66,9 @@ function variantLabel(variant: LoraRegistryEntry["variant"]) {
 
 const baseModelGroups = groupBaseModelsByFamily();
 
-const selectClassName =
-	"flex h-9 w-full rounded-md border border-foreground/10 bg-transparent px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
+const baseModelItems = baseModelGroups.flatMap((group) =>
+	group.models.map((model) => ({ label: model.label, value: model.id }))
+);
 
 interface FormState {
 	baseModel: LoraBaseModel;
@@ -378,27 +388,32 @@ function LoraEditor({
 						<Label className="text-xs" htmlFor="lora-edit-base-model">
 							Base model
 						</Label>
-						<select
-							className={selectClassName}
-							id="lora-edit-base-model"
-							onChange={(event) =>
+						<Select
+							items={baseModelItems}
+							onValueChange={(value) =>
 								setForm((prev) => ({
 									...prev,
-									baseModel: event.target.value as LoraBaseModel,
+									baseModel: (value ?? prev.baseModel) as LoraBaseModel,
 								}))
 							}
 							value={form.baseModel}
 						>
-							{baseModelGroups.map((group) => (
-								<optgroup key={group.family} label={group.label}>
-									{group.models.map((model) => (
-										<option key={model.id} value={model.id}>
-											{model.label}
-										</option>
-									))}
-								</optgroup>
-							))}
-						</select>
+							<SelectTrigger className="w-full" id="lora-edit-base-model">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{baseModelGroups.map((group) => (
+									<SelectGroup key={group.family}>
+										<SelectGroupLabel>{group.label}</SelectGroupLabel>
+										{group.models.map((model) => (
+											<SelectItem key={model.id} value={model.id}>
+												{model.label}
+											</SelectItem>
+										))}
+									</SelectGroup>
+								))}
+							</SelectContent>
+						</Select>
 						<p className="text-[11px] text-muted-foreground">
 							Studio and Persons filter LoRAs by base model — keep this in sync
 							with the workflow you intend to use.

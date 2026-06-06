@@ -6,14 +6,13 @@ import { PageHeader } from "@generator/ui/components/page-header";
 import { SectionLabel } from "@generator/ui/components/section-label";
 import { StatCard } from "@generator/ui/components/stat-card";
 import { StatusBadge } from "@generator/ui/components/status-badge";
+import { RefreshButton } from "@generator/ui/components/toolbar";
 import { formatRelativeTime } from "@generator/ui/lib/format";
-import { cn } from "@generator/ui/lib/utils";
 import {
 	AlertTriangle,
 	CheckCircle2,
 	GraduationCap,
 	Loader2,
-	RefreshCw,
 	Sparkles,
 	Tags,
 	Workflow,
@@ -59,17 +58,10 @@ export default function OverviewContent({
 		<div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
 			<PageHeader
 				actions={
-					<button
-						className="inline-flex items-center gap-2 rounded-md border border-foreground/10 bg-background px-2.5 py-1.5 text-xs transition hover:bg-muted/30 disabled:opacity-50"
-						disabled={isFetching}
-						onClick={() => refetch()}
-						type="button"
-					>
-						<RefreshCw
-							className={cn("size-3", isFetching ? "animate-spin" : "")}
-						/>
-						Refresh
-					</button>
+					<RefreshButton
+						isRefreshing={isFetching}
+						onRefresh={() => refetch()}
+					/>
 				}
 				description={`Updated ${formatRelativeTime(snapshot.snapshotAt)}.`}
 				eyebrow="Overview"

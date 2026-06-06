@@ -25,13 +25,21 @@
 
 ---
 
+## Deploy
+
+Пуш в ветку `main` (репо `balkhaev/generator-v2`) автоматически триггерит деплой всех сервисов через Coolify. Отдельный ручной деплой не нужен.
+
+- Слил PR/закоммитил в `main` → Coolify пересобирает и раскатывает затронутые приложения. Изменения в `apps/mcp` (например новые MCP-тулы) становятся доступны после этого автодеплоя.
+- Ручной `coolify.deploy` / `redeploy_project` нужен только для форс-передеплоя без коммита (например после правки env через `coolify.env_vars`).
+- Runtime-config / env-правки в проде применяются без деплоя — через MCP (`prompt_enhance_set`, `training_provider_set`, `coolify.env_vars` + `coolify.control restart`).
+
 ## Self-Debug Through MCP
 
 В проекте уже есть MCP-инфраструктура для диагностики. Любой дебаг сервисов, прода, инференса, авторизации, Kafka, деплоев и окружения начинается через MCP, а не через разовые ручные команды.
 
 Система должна сама себя дебажить через MCP. У агента два слоя инструментов:
 
-1. **Project MCP** — `apps/mcp` (HTTP `POST /mcp`, bearer `MCP_AUTH_TOKEN`, порт `3010`) + `packages/debug-tools` (stdio + bundle CLI). Тулы: health/`service_request`, generator workflows + execution submit/sync, test users (`test_user_upsert`/`test_user_get`), Kafka (cluster/topics/offsets/consumer groups/sample), `collect_debug_bundle`.
+1. **Project MCP** — `apps/mcp` (HTTP `POST /mcp`, bearer `MCP_AUTH_TOKEN`, порт `3010`) + `packages/debug-tools` (stdio + bundle CLI). Тулы: health/`service_request`, generator workflows + execution submit/sync, test users (`test_user_upsert`/`test_user_get`), Kafka (cluster/topics/offsets/consumer groups/sample), prompt-enhance провайдер/модель (`prompt_enhance_get`/`prompt_enhance_set` для studio/persons "Enhance" / "Enhance for image"), `collect_debug_bundle`.
 2. **Coolify MCP** (`user-balkhaev-coolify`) — прод: `find_issues`, `get_infrastructure_overview`, `list_applications`, `diagnose_app`, `application_logs`, `diagnose_server`, `server_resources`, `deployment` (get/list/cancel), `deploy`, `redeploy_project`, `restart_project_apps`, `control`, `env_vars`, `bulk_env_update`.
 
 Project MCP знает «как должно быть», Coolify — «что реально крутится». Дебаг = свести две картины.

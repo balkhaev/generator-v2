@@ -3,8 +3,8 @@
 import { authClient } from "@generator/auth-client";
 import { Button } from "@generator/ui/components/button";
 import { PageHeader } from "@generator/ui/components/page-header";
-import { cn } from "@generator/ui/lib/utils";
-import { RefreshCw, UserPlus } from "lucide-react";
+import { RefreshButton } from "@generator/ui/components/toolbar";
+import { UserPlus } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
@@ -65,17 +65,10 @@ export default function UsersContent() {
 							<UserPlus data-icon="inline-start" />
 							Create user
 						</Button>
-						<button
-							className="inline-flex items-center gap-2 rounded-md border border-foreground/10 bg-background px-2.5 py-1.5 text-xs transition hover:bg-muted/30 disabled:opacity-50"
-							disabled={isFetching}
-							onClick={() => refetch()}
-							type="button"
-						>
-							<RefreshCw
-								className={cn("size-3", isFetching ? "animate-spin" : "")}
-							/>
-							Refresh
-						</button>
+						<RefreshButton
+							isRefreshing={isFetching}
+							onRefresh={() => refetch()}
+						/>
 					</>
 				}
 				description="Operators with access to the admin console."

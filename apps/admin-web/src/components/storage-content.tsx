@@ -19,6 +19,7 @@ import {
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
 import { PageHeader } from "@generator/ui/components/page-header";
+import { RefreshButton } from "@generator/ui/components/toolbar";
 import { formatBytes, formatDateTime } from "@generator/ui/lib/format";
 import { cn } from "@generator/ui/lib/utils";
 import {
@@ -131,23 +132,10 @@ export default function StorageContent({
 							)}
 							Check
 						</Button>
-						<Button
-							disabled={overviewQuery.isFetching || objectsQuery.isFetching}
-							onClick={refresh}
-							size="sm"
-							type="button"
-							variant="outline"
-						>
-							<RefreshCw
-								className={cn(
-									overviewQuery.isFetching || objectsQuery.isFetching
-										? "animate-spin"
-										: ""
-								)}
-								data-icon="inline-start"
-							/>
-							Refresh
-						</Button>
+						<RefreshButton
+							isRefreshing={overviewQuery.isFetching || objectsQuery.isFetching}
+							onRefresh={refresh}
+						/>
 					</>
 				}
 				description="Browse, upload, sign, and remove objects in the configured S3-compatible bucket."

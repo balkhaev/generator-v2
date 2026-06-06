@@ -44,6 +44,8 @@ const toolbarLinkClass =
 
 const videoExtensionPattern = /\.(mp4|mov|webm)(\?.*)?$/i;
 const videoDataUriPattern = /^data:video\//i;
+/** Video artifacts can persist as `.bin` when content-type is not an image MIME. */
+const nonImageArtifactExtensionPattern = /\.bin(\?.*)?$/i;
 
 export function getMediaType(url: string): "image" | "video" {
 	if (videoExtensionPattern.test(url) || videoDataUriPattern.test(url)) {
@@ -51,6 +53,18 @@ export function getMediaType(url: string): "image" | "video" {
 	}
 
 	return "image";
+}
+
+/** URLs safe to show as still-image thumbnails in the input picker. */
+export function isPickablePickerImageUrl(url: string): boolean {
+	const trimmed = url.trim();
+	if (!trimmed) {
+		return false;
+	}
+	if (getMediaType(trimmed) !== "image") {
+		return false;
+	}
+	return !nonImageArtifactExtensionPattern.test(trimmed);
 }
 
 export interface StudioMediaAsset {

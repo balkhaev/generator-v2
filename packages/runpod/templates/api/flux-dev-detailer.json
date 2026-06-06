@@ -1,0 +1,89 @@
+{
+  "1": {
+    "_meta": { "title": "Load Checkpoint (Flux dev fp8)" },
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "flux1-dev-fp8.safetensors"
+    }
+  },
+  "10": {
+    "_meta": { "title": "Load Input Image" },
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "input.png"
+    }
+  },
+  "11": {
+    "_meta": { "title": "Upscale Image By" },
+    "class_type": "ImageScaleBy",
+    "inputs": {
+      "image": ["10", 0],
+      "scale_by": 1.5,
+      "upscale_method": "lanczos"
+    }
+  },
+  "12": {
+    "_meta": { "title": "VAE Encode" },
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": ["11", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "20": {
+    "_meta": { "title": "CLIP Text Encode (Positive)" },
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "text": "highly detailed, sharp focus, intricate texture"
+    }
+  },
+  "21": {
+    "_meta": { "title": "CLIP Text Encode (Negative)" },
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "text": ""
+    }
+  },
+  "22": {
+    "_meta": { "title": "FluxGuidance" },
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": ["20", 0],
+      "guidance": 3.5
+    }
+  },
+  "40": {
+    "_meta": { "title": "KSampler (detail pass)" },
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 1,
+      "denoise": 0.4,
+      "latent_image": ["12", 0],
+      "model": ["1", 0],
+      "negative": ["21", 0],
+      "positive": ["22", 0],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 0,
+      "steps": 20
+    }
+  },
+  "60": {
+    "_meta": { "title": "VAE Decode" },
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["40", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "70": {
+    "_meta": { "title": "Save Image" },
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "flux-detailer",
+      "images": ["60", 0]
+    }
+  }
+}

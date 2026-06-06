@@ -11,10 +11,17 @@ import {
 } from "@generator/ui/components/data-list";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { PageHeader } from "@generator/ui/components/page-header";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
 import { StatusBadge } from "@generator/ui/components/status-badge";
+import { RefreshButton } from "@generator/ui/components/toolbar";
 import { formatRelativeTime } from "@generator/ui/lib/format";
-import { cn } from "@generator/ui/lib/utils";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -30,9 +37,6 @@ const STATUS_OPTIONS: { value: RunStatus | ""; label: string }[] = [
 	{ value: "succeeded", label: "Succeeded" },
 	{ value: "failed", label: "Failed" },
 ];
-
-const selectClassName =
-	"h-8 rounded-md border border-foreground/10 bg-background px-2 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
 
 export default function RunsContent({
 	initialSnapshot,
@@ -56,6 +60,14 @@ export default function RunsContent({
 		}
 		return Array.from(set).sort();
 	}, [snapshot.recentRuns]);
+
+	const workflowItems = useMemo(
+		() => [
+			{ value: "", label: "All workflows" },
+			...workflows.map((workflow) => ({ value: workflow, label: workflow })),
+		],
+		[workflows]
+	);
 
 	const filteredRuns = useMemo(() => {
 		return snapshot.recentRuns.filter((run) => {
@@ -178,42 +190,46 @@ export default function RunsContent({
 			<PageHeader
 				actions={
 					<div className="flex items-center gap-2">
-						<select
-							aria-label="Filter by status"
-							className={selectClassName}
-							onChange={(event) => updateParam("status", event.target.value)}
+						<Select
+							items={STATUS_OPTIONS}
+							onValueChange={(value) =>
+								updateParam("status", (value ?? "") as string)
+							}
 							value={statusParam}
 						>
-							{STATUS_OPTIONS.map((option) => (
-								<option key={option.value} value={option.value}>
-									{option.label}
-								</option>
-							))}
-						</select>
-						<select
-							aria-label="Filter by workflow"
-							className={selectClassName}
-							onChange={(event) => updateParam("workflow", event.target.value)}
+							<SelectTrigger aria-label="Filter by status" className="w-36">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{STATUS_OPTIONS.map((option) => (
+									<SelectItem key={option.value} value={option.value}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+						<Select
+							items={workflowItems}
+							onValueChange={(value) =>
+								updateParam("workflow", (value ?? "") as string)
+							}
 							value={workflowParam}
 						>
-							<option value="">All workflows</option>
-							{workflows.map((workflow) => (
-								<option key={workflow} value={workflow}>
-									{workflow}
-								</option>
-							))}
-						</select>
-						<button
-							className="inline-flex items-center gap-2 rounded-md border border-foreground/10 bg-background px-2.5 py-1.5 text-xs transition hover:bg-muted/30 disabled:opacity-50"
-							disabled={isFetching}
-							onClick={() => refetch()}
-							type="button"
-						>
-							<RefreshCw
-								className={cn("size-3", isFetching ? "animate-spin" : "")}
-							/>
-							Refresh
-						</button>
+							<SelectTrigger aria-label="Filter by workflow" className="w-44">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{workflowItems.map((option) => (
+									<SelectItem key={option.value} value={option.value}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+						<RefreshButton
+							isRefreshing={isFetching}
+							onRefresh={() => refetch()}
+						/>
 					</div>
 				}
 				description={`${filteredRuns.length} of ${snapshot.recentRuns.length} runs in the recent window.`}

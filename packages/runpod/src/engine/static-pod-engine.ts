@@ -12,6 +12,11 @@ import {
 	type ComfyUIClientOptions,
 	createComfyUIClient,
 } from "../comfyui/client";
+import {
+	type ComfyProgressTracker,
+	mergeRunningProgress,
+	sharedComfyProgressTracker,
+} from "../comfyui/progress-tracker";
 import type { ComfyUIHistoryItem } from "../comfyui/types";
 import type { PodWorkflow } from "../workflow/definition";
 import {
@@ -42,6 +47,7 @@ export interface StaticPodEngineOptions<TInput, TOutput> {
 	 * Под не создаётся и не удаляется движком.
 	 */
 	podId?: string;
+	progressTracker?: ComfyProgressTracker;
 	randomRequestId?: () => string;
 	s3: S3StorageConfig;
 	statObject?: typeof statS3Object;
@@ -80,6 +86,7 @@ export function createStaticPodEngine<TInput, TOutput>(
 		comfyBaseUrl,
 		createClient = createComfyUIClient,
 		logger,
+		progressTracker = sharedComfyProgressTracker,
 		podId = "",
 		randomRequestId = () => crypto.randomUUID(),
 		s3,
@@ -129,16 +136,36 @@ export function createStaticPodEngine<TInput, TOutput>(
 
 	const runningResult = (
 		jobId: string,
-		progressPct: number
+		progressPct: number,
+		lastLogLine: string | null = null
 	): EngineJob & { output: null } => ({
 		errorSummary: null,
 		jobId,
-		lastLogLine: null,
+		lastLogLine,
 		output: null,
 		progressPct,
 		queuePosition: null,
 		status: "running",
 	});
+
+	const buildLiveRunningResult = (
+		jobId: string,
+		requestId: string,
+		fallbackPct: number,
+		workflowGraph?: Record<string, unknown>
+	): EngineJob & { output: null } => {
+		const live = mergeRunningProgress({
+			clientId: requestId,
+			fallbackPct,
+			tracker: progressTracker,
+			tracking: {
+				baseUrl: comfyBaseUrl,
+				clientId: requestId,
+				workflow: workflowGraph,
+			},
+		});
+		return runningResult(jobId, live.progressPct, live.lastLogLine);
+	};
 
 	const downloadAndPersist = async (
 		ref: ComfyUIArtifactRef,
@@ -166,6 +193,7 @@ export function createStaticPodEngine<TInput, TOutput>(
 	): Promise<EngineJob & { output: TOutput | null }> => {
 		const status = entry.status;
 		if (status?.status_str === "error" || status?.status_str === "cancelled") {
+			progressTracker.stopTracking(requestId);
 			return failedResult(
 				jobId,
 				`ComfyUI workflow ${status.status_str}: ${stringifyMessages(status.messages)}`
@@ -181,10 +209,15 @@ export function createStaticPodEngine<TInput, TOutput>(
 					`ComfyUI workflow completed but produced no artifact (outputs: ${outputsSummary}; status: ${messagesSummary})`
 				);
 			}
-			return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
+			return buildLiveRunningResult(
+				jobId,
+				requestId,
+				PROGRESS_PCT_PROMPT_RUNNING
+			);
 		}
 		const stat = await downloadAndPersist(artifactRef, artifactKey);
 		if (!stat) {
+			progressTracker.stopTracking(requestId);
 			return failedResult(
 				jobId,
 				`Failed to verify uploaded artifact at S3 key ${artifactKey}`
@@ -200,6 +233,7 @@ export function createStaticPodEngine<TInput, TOutput>(
 				? `https://runpod.io/console/pods/${podId}`
 				: "",
 		});
+		progressTracker.stopTracking(requestId);
 		return successResult(jobId, output);
 	};
 
@@ -216,19 +250,31 @@ export function createStaticPodEngine<TInput, TOutput>(
 			}
 			const queue = await client.getQueue();
 			if (queueContainsClientId(queue, requestId)) {
-				return runningResult(jobId, PROGRESS_PCT_PROMPT_QUEUED);
+				return buildLiveRunningResult(
+					jobId,
+					requestId,
+					PROGRESS_PCT_PROMPT_QUEUED
+				);
 			}
 			// Ещё не появился ни в истории, ни в очереди — ComfyUI мог только что
 			// принять prompt и не успел его зарегистрировать. Держим running,
 			// общий timeout исполнения контролирует worker.
-			return runningResult(jobId, PROGRESS_PCT_PROMPT_QUEUED);
+			return buildLiveRunningResult(
+				jobId,
+				requestId,
+				PROGRESS_PCT_PROMPT_QUEUED
+			);
 		} catch (error) {
 			if (isComfyTransientProxyError(error)) {
 				logger?.warn?.("runpod-static-pod.comfyui-transient", {
 					message: error instanceof Error ? error.message : String(error),
 					requestId,
 				});
-				return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
+				return buildLiveRunningResult(
+					jobId,
+					requestId,
+					PROGRESS_PCT_PROMPT_RUNNING
+				);
 			}
 			throw error;
 		}
@@ -284,6 +330,12 @@ export function createStaticPodEngine<TInput, TOutput>(
 				clientId: requestId,
 				extraData: { client_id: requestId },
 				prompt: built.prompt,
+			});
+			progressTracker.ensureTracking({
+				baseUrl: comfyBaseUrl,
+				clientId: requestId,
+				totalNodes: Object.keys(built.prompt).length,
+				workflow: built.prompt,
 			});
 			logger?.info?.("runpod-static-pod.submitted", {
 				requestId,

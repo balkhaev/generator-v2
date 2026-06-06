@@ -1,5 +1,6 @@
 import type {
 	WorkflowField,
+	WorkflowPreset,
 	WorkflowSummary,
 } from "@generator/contracts/generator";
 import { z } from "zod";
@@ -86,6 +87,7 @@ export const RUNPOD_WAN22_PUSSY_LORA_HIGH_FILENAME =
 export const RUNPOD_WAN22_PUSSY_LORA_LOW_FILENAME =
 	"wan22-pussy-low_noise.safetensors";
 const RUNPOD_FLUX_DEV_IMAGE_KEY = "flux-dev-image";
+const RUNPOD_FLUX_DETAILER_KEY = "flux-dev-detailer";
 /**
  * «Noisify» — Flux.1-dev LoRA (raw grainy snapshot aesthetic), хостится на
  * нашем S3. Файл pre-provisioned на network volume Flux endpoint'а под именем
@@ -324,6 +326,21 @@ const runpodFluxDevParamsSchema = z.object({
 	seed: z.number().int().nonnegative().optional(),
 	loraFilename: z.string().min(1).optional(),
 	loraScale: z.number().min(0).max(2).default(1),
+});
+
+/**
+ * Параметры RunPod Flux.1-dev детейлера. Переиспользует тот же flux endpoint
+ * и all-in-one fp8-чекпоинт, но граф — img2img: пиксельный апскейл (upscaleBy)
+ * + низкий denoise (strength) для добавления деталей без потери композиции.
+ * Граф патчится в `flux-dev-detailer-serverless.ts`.
+ */
+const runpodFluxDetailerParamsSchema = z.object({
+	denoise: z.number().min(0.05).max(1).default(0.4),
+	upscaleBy: z.number().min(1).max(2).default(1.5),
+	steps: z.number().int().min(1).max(60).default(20),
+	guidance: z.number().min(0).max(20).default(3.5),
+	negativePrompt: z.string().default(""),
+	seed: z.number().int().nonnegative().optional(),
 });
 
 const replicateFooocusSdxlParamsSchema = z.object({
@@ -861,6 +878,7 @@ type RunpodFooocusSdxlParams = z.infer<typeof runpodFooocusSdxlParamsSchema>;
 type RunpodLtx23Params = z.infer<typeof runpodLtx23ParamsSchema>;
 type RunpodWan22Params = z.infer<typeof runpodWan22ParamsSchema>;
 type RunpodFluxDevParams = z.infer<typeof runpodFluxDevParamsSchema>;
+type RunpodFluxDetailerParams = z.infer<typeof runpodFluxDetailerParamsSchema>;
 
 function buildRunpodFluxDevInput({
 	parsed,
@@ -882,6 +900,28 @@ function buildRunpodFluxDevInput({
 		guidance: parsed.guidance,
 		numImages: parsed.numImages,
 		...lora,
+		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+	};
+}
+
+function buildRunpodFluxDetailerInput({
+	inputImageUrl,
+	parsed,
+	prompt,
+}: {
+	inputImageUrl?: string;
+	parsed: RunpodFluxDetailerParams;
+	prompt: string;
+}): Record<string, unknown> {
+	return {
+		__runpodWorkflow: RUNPOD_FLUX_DETAILER_KEY,
+		prompt,
+		negativePrompt: parsed.negativePrompt,
+		denoise: parsed.denoise,
+		upscaleBy: parsed.upscaleBy,
+		steps: parsed.steps,
+		guidance: parsed.guidance,
+		...(inputImageUrl === undefined ? {} : { inputImageUrl }),
 		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
 	};
 }
@@ -1182,6 +1222,8 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"civitai-ltx-2-3-synth-text-to-video": 2 * MINUTE,
 	"civitai-ltx-2-3-synth-image-to-video": 2 * MINUTE,
 	"runpod-fooocus-sdxl": 90 * SECOND,
+	// Flux img2img detailer: ~10s queue + ~30-40s render (20 steps, upscale 1.5×).
+	"runpod-flux-detailer": 45 * SECOND,
 	// Always-warm serverless (workersMin=1, flashboot): cold start'ов нет.
 	// Измерено на тёплом воркере: delay ~10s + render ~9.2min ≈ 9.5min
 	// (512x896, 5s/97 кадров, 8 шагов). Берём 10min с небольшим буфером —
@@ -1406,6 +1448,108 @@ const runpodWan22ParameterFields: readonly WorkflowField[] = [
 	},
 ];
 
+// Пресеты LTX 2.3 i2v. distill-LoRA фиксирует cfg≈1, поэтому «качество» растёт
+// за счёт разрешения/шагов, а не CFG. Длительность задаётся секундами — кадры
+// (8n+1) считаются из durationSeconds*fps в normalizeLtx23FrameCount.
+const runpodLtx23Presets: readonly WorkflowPreset[] = [
+	{
+		description: "640×896, 6 шагов — для быстрой проверки кадра.",
+		group: "quality",
+		id: "ltx-quality-preview",
+		label: "Превью",
+		params: { width: 640, height: 896, steps: 6, cfgScale: 1, loraScale: 0.7 },
+	},
+	{
+		description: "896×1280, 8 шагов — баланс скорости и детализации.",
+		group: "quality",
+		id: "ltx-quality-balanced",
+		label: "Баланс",
+		params: { width: 896, height: 1280, steps: 8, cfgScale: 1, loraScale: 0.7 },
+	},
+	{
+		description: "896×1280, 12 шагов — максимум резкости.",
+		group: "quality",
+		id: "ltx-quality-high",
+		label: "Качество",
+		params: {
+			width: 896,
+			height: 1280,
+			steps: 12,
+			cfgScale: 1,
+			loraScale: 0.8,
+		},
+	},
+	{
+		description: "~3 секунды при 24 fps.",
+		group: "duration",
+		id: "ltx-duration-3s",
+		label: "3 сек",
+		params: { durationSeconds: 3, fps: 24 },
+	},
+	{
+		description: "~5 секунд при 24 fps.",
+		group: "duration",
+		id: "ltx-duration-5s",
+		label: "5 сек",
+		params: { durationSeconds: 5, fps: 24 },
+	},
+	{
+		description: "~10 секунд при 24 fps.",
+		group: "duration",
+		id: "ltx-duration-10s",
+		label: "10 сек",
+		params: { durationSeconds: 10, fps: 24 },
+	},
+];
+
+// Пресеты Wan 2.2 i2v под lightx2v accel-LoRA (worker всегда подмешивает её):
+// distill требует cfg=1 и 4–8 шагов. Длительность — через durationSeconds; fps
+// подобран так, чтобы кадры (4n+1) укладывались в лимит 121 (8 с максимум).
+const runpodWan22Presets: readonly WorkflowPreset[] = [
+	{
+		description: "480×832, 4 шага — самый быстрый прогон (lightx2v).",
+		group: "quality",
+		id: "wan-quality-preview",
+		label: "Превью",
+		params: { width: 480, height: 832, steps: 4, cfgScale: 1, loraScale: 1 },
+	},
+	{
+		description: "720×1280, 6 шагов — баланс скорости и резкости.",
+		group: "quality",
+		id: "wan-quality-balanced",
+		label: "Баланс",
+		params: { width: 720, height: 1280, steps: 6, cfgScale: 1, loraScale: 1 },
+	},
+	{
+		description: "720×1280, 8 шагов — максимум качества под lightx2v.",
+		group: "quality",
+		id: "wan-quality-high",
+		label: "Качество",
+		params: { width: 720, height: 1280, steps: 8, cfgScale: 1, loraScale: 1 },
+	},
+	{
+		description: "~3 секунды при 24 fps (72 кадра).",
+		group: "duration",
+		id: "wan-duration-3s",
+		label: "3 сек",
+		params: { durationSeconds: 3, fps: 24 },
+	},
+	{
+		description: "~5 секунд при 24 fps (121 кадр).",
+		group: "duration",
+		id: "wan-duration-5s",
+		label: "5 сек",
+		params: { durationSeconds: 5, fps: 24 },
+	},
+	{
+		description: "~6 секунд при 20 fps (121 кадр).",
+		group: "duration",
+		id: "wan-duration-6s",
+		label: "6 сек",
+		params: { durationSeconds: 6, fps: 20 },
+	},
+];
+
 const runpodFluxDevParameterFields: readonly WorkflowField[] = [
 	{
 		description: "Output image width in pixels. Must be divisible by 16.",
@@ -1476,6 +1620,62 @@ const runpodFluxDevParameterFields: readonly WorkflowField[] = [
 		min: 0,
 		step: 0.05,
 		type: "number",
+	},
+	{
+		description: "Optional deterministic seed.",
+		key: "seed",
+		label: "Seed",
+		optional: true,
+		type: "number",
+	},
+];
+
+const runpodFluxDetailerParameterFields: readonly WorkflowField[] = [
+	{
+		description:
+			"Detail strength (img2img denoise). Lower keeps the original, higher adds more detail. 0.3–0.5 recommended.",
+		key: "denoise",
+		label: "Detail strength",
+		max: 1,
+		min: 0.05,
+		step: 0.05,
+		type: "number",
+	},
+	{
+		description:
+			"Upscale factor applied before the detail pass (1 = keep size, 2 = double resolution).",
+		key: "upscaleBy",
+		label: "Upscale",
+		max: 2,
+		min: 1,
+		step: 0.1,
+		type: "number",
+	},
+	{
+		description: "Total denoising steps for the detail pass.",
+		key: "steps",
+		label: "Steps",
+		max: 60,
+		min: 1,
+		step: 1,
+		unit: "steps",
+		type: "number",
+	},
+	{
+		description: "Flux guidance (distilled CFG). Recommended 2.5–4.0.",
+		key: "guidance",
+		label: "Guidance",
+		max: 20,
+		min: 0,
+		step: 0.1,
+		type: "number",
+	},
+	{
+		description: "Negative prompt to discourage unwanted content.",
+		key: "negativePrompt",
+		label: "Negative prompt",
+		optional: true,
+		type: "text",
 	},
 	{
 		description: "Optional deterministic seed.",
@@ -1862,6 +2062,7 @@ export const workflowRegistry = {
 		requiresInputImage: true,
 		parameterSchema: runpodLtx23ParamsSchema,
 		parameterFields: runpodLtx23ParameterFields,
+		presets: runpodLtx23Presets,
 		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
 			const parsed = runpodLtx23ParamsSchema.parse(params);
 			return buildRunpodLtx23Input({ inputImageUrl, parsed, prompt });
@@ -1877,6 +2078,7 @@ export const workflowRegistry = {
 		requiresInputImage: true,
 		parameterSchema: runpodWan22ParamsSchema,
 		parameterFields: runpodWan22ParameterFields,
+		presets: runpodWan22Presets,
 		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
 			const parsed = runpodWan22ParamsSchema.parse(params);
 			return buildRunpodWan22Input({ inputImageUrl, parsed, prompt });
@@ -1895,6 +2097,21 @@ export const workflowRegistry = {
 		buildProviderInput: ({ params, prompt }) => {
 			const parsed = runpodFluxDevParamsSchema.parse(params);
 			return buildRunpodFluxDevInput({ parsed, prompt });
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"runpod-flux-detailer": {
+		baseModel: "flux",
+		key: "runpod-flux-detailer",
+		name: "Flux Detailer (RunPod)",
+		description:
+			"Детейлер изображений на Flux.1-dev: апскейл исходника + img2img проход с низким denoise для добавления деталей и резкости. Переиспользует тот же RunPod ComfyUI flux endpoint и fp8-чекпоинт.",
+		requiresInputImage: true,
+		parameterSchema: runpodFluxDetailerParamsSchema,
+		parameterFields: runpodFluxDetailerParameterFields,
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = runpodFluxDetailerParamsSchema.parse(params);
+			return buildRunpodFluxDetailerInput({ inputImageUrl, parsed, prompt });
 		},
 		extractArtifactUrls: collectArtifactUrls,
 	},
@@ -3763,6 +3980,7 @@ export function listWorkflows(): WorkflowSummary[] {
 				parameterFields: workflow.parameterFields.map((field) =>
 					enrichField(field, workflow.key)
 				),
+				...(workflow.presets ? { presets: workflow.presets } : {}),
 				requiresInputImage: workflow.requiresInputImage,
 			};
 		});

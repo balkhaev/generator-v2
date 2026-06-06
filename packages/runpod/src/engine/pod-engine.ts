@@ -13,6 +13,11 @@ import {
 	type ComfyUIClientOptions,
 	createComfyUIClient,
 } from "../comfyui/client";
+import {
+	type ComfyProgressTracker,
+	mergeRunningProgress,
+	sharedComfyProgressTracker,
+} from "../comfyui/progress-tracker";
 import type { ComfyUIHistoryItem } from "../comfyui/types";
 import { isNoCapacityError } from "../http/client";
 import type {
@@ -88,6 +93,7 @@ interface PodEngineDeps {
 	inputStore?: PodInputStore;
 	logger?: Pick<Console, "info" | "warn">;
 	now?: () => Date;
+	progressTracker?: ComfyProgressTracker;
 	randomPassword?: () => string;
 	randomRequestId?: () => string;
 	s3: S3StorageConfig;
@@ -170,6 +176,7 @@ export function createPodEngine<TInput, TOutput>(
 		inputStore = createNoopPodInputStore(),
 		logger,
 		now = () => new Date(),
+		progressTracker = sharedComfyProgressTracker,
 		randomPassword = generatePassword,
 		randomRequestId = () => crypto.randomUUID(),
 		s3,
@@ -317,10 +324,13 @@ export function createPodEngine<TInput, TOutput>(
 
 	const buildClient = (podId: string, password: string): ComfyUIClient =>
 		createClient({
-			baseUrl: `https://${podId}-${COMFYUI_PORT}.proxy.runpod.net`,
+			baseUrl: comfyBaseUrlForPod(podId),
 			password,
 			username: COMFYUI_USERNAME,
 		});
+
+	const comfyBaseUrlForPod = (podId: string): string =>
+		`https://${podId}-${COMFYUI_PORT}.proxy.runpod.net`;
 
 	const successResult = (
 		jobId: string,
@@ -350,16 +360,39 @@ export function createPodEngine<TInput, TOutput>(
 
 	const runningResult = (
 		jobId: string,
-		progressPct: number
+		progressPct: number,
+		lastLogLine: string | null = null
 	): EngineJob & { output: null } => ({
 		errorSummary: null,
 		jobId,
-		lastLogLine: null,
+		lastLogLine,
 		output: null,
 		progressPct,
 		queuePosition: null,
 		status: "running",
 	});
+
+	const buildLiveRunningResult = (input: {
+		client: ComfyUIClient;
+		fallbackPct: number;
+		jobId: string;
+		podId: string;
+		requestId: string;
+		workflowGraph?: Record<string, unknown>;
+	}): EngineJob & { output: null } => {
+		const live = mergeRunningProgress({
+			clientId: input.requestId,
+			fallbackPct: input.fallbackPct,
+			tracker: progressTracker,
+			tracking: {
+				baseUrl: comfyBaseUrlForPod(input.podId),
+				clientId: input.requestId,
+				cookieHeader: input.client.getSessionCookie(),
+				workflow: input.workflowGraph,
+			},
+		});
+		return runningResult(input.jobId, live.progressPct, live.lastLogLine);
+	};
 
 	const downloadAndPersist = async (
 		client: ComfyUIClient,
@@ -405,6 +438,7 @@ export function createPodEngine<TInput, TOutput>(
 			// Pod state is suspect after workflow error — don't return to pool,
 			// always cleanup so the next exec gets a fresh boot.
 			await cleanupPod(podId, "comfyui-error", requestId);
+			progressTracker.stopTracking(requestId);
 			return failedResult(
 				jobId,
 				`ComfyUI workflow ${status.status_str}: ${stringifyMessages(status.messages)}`
@@ -416,15 +450,23 @@ export function createPodEngine<TInput, TOutput>(
 				const outputsSummary = summarizeHistoryOutputs(entry.outputs);
 				const messagesSummary = stringifyMessages(status.messages);
 				await cleanupPod(podId, "completed-without-artifact", requestId);
+				progressTracker.stopTracking(requestId);
 				return failedResult(
 					jobId,
 					`ComfyUI workflow completed but produced no artifact (outputs: ${outputsSummary}; status: ${messagesSummary})`
 				);
 			}
-			return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
+			return buildLiveRunningResult({
+				client,
+				fallbackPct: PROGRESS_PCT_PROMPT_RUNNING,
+				jobId,
+				podId,
+				requestId,
+			});
 		}
 		const stat = await downloadAndPersist(client, artifactRef, artifactKey);
 		if (!stat) {
+			progressTracker.stopTracking(requestId);
 			return failedResult(
 				jobId,
 				`Failed to verify uploaded artifact at S3 key ${artifactKey}`
@@ -434,6 +476,7 @@ export function createPodEngine<TInput, TOutput>(
 			{ networkVolumeId, password, podId, requestId },
 			"artifact-uploaded"
 		);
+		progressTracker.stopTracking(requestId);
 		const artifactPublicUrl = buildPublicAssetUrl(s3, artifactKey);
 		const output = workflow.parseOutput({
 			artifactPublicUrl,
@@ -457,8 +500,13 @@ export function createPodEngine<TInput, TOutput>(
 	const submitPromptIfNeeded = async (
 		client: ComfyUIClient,
 		input: TInput,
+		podId: string,
 		requestId: string
-	): Promise<{ inFlight: boolean; submitted: boolean }> => {
+	): Promise<{
+		inFlight: boolean;
+		submitted: boolean;
+		workflowGraph?: Record<string, unknown>;
+	}> => {
 		const history = await client.getHistory();
 		if (findEntryByClientId(history, requestId)) {
 			return { inFlight: false, submitted: true };
@@ -477,7 +525,18 @@ export function createPodEngine<TInput, TOutput>(
 			extraData: { client_id: requestId },
 			prompt: built.prompt,
 		});
-		return { inFlight: true, submitted: true };
+		progressTracker.ensureTracking({
+			baseUrl: comfyBaseUrlForPod(podId),
+			clientId: requestId,
+			cookieHeader: client.getSessionCookie(),
+			totalNodes: Object.keys(built.prompt).length,
+			workflow: built.prompt,
+		});
+		return {
+			inFlight: true,
+			submitted: true,
+			workflowGraph: built.prompt,
+		};
 	};
 
 	const tryReadyPodSnapshot = async (
@@ -704,15 +763,34 @@ export function createPodEngine<TInput, TOutput>(
 				return prepareResult;
 			}
 
-			const submission = await submitPromptIfNeeded(client, input, requestId);
+			const submission = await submitPromptIfNeeded(
+				client,
+				input,
+				podId,
+				requestId
+			);
 			if (!submission.submitted || submission.inFlight) {
-				return runningResult(jobId, PROGRESS_PCT_PROMPT_QUEUED);
+				return buildLiveRunningResult({
+					client,
+					fallbackPct: PROGRESS_PCT_PROMPT_QUEUED,
+					jobId,
+					podId,
+					requestId,
+					workflowGraph: submission.workflowGraph,
+				});
 			}
 
 			const history = await client.getHistory();
 			const entry = findEntryByClientId(history, requestId);
 			if (!entry) {
-				return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
+				return buildLiveRunningResult({
+					client,
+					fallbackPct: PROGRESS_PCT_PROMPT_RUNNING,
+					jobId,
+					podId,
+					requestId,
+					workflowGraph: submission.workflowGraph,
+				});
 			}
 			return await handleHistoryEntry({
 				artifactKey,
@@ -731,7 +809,13 @@ export function createPodEngine<TInput, TOutput>(
 					podId,
 					requestId,
 				});
-				return runningResult(jobId, PROGRESS_PCT_PROMPT_RUNNING);
+				return buildLiveRunningResult({
+					client,
+					fallbackPct: PROGRESS_PCT_PROMPT_RUNNING,
+					jobId,
+					podId,
+					requestId,
+				});
 			}
 			throw error;
 		}

@@ -138,13 +138,22 @@ export {
 } from "./workflow/runner";
 export {
 	createComfyPodWorkflow,
+	createFluxImageDetailerPodWorkflow,
 	createFluxImagePodWorkflow,
 	createLtxVideoPodWorkflow,
 	createWanVideoPodWorkflow,
+	type FluxImageDetailerPodWorkflowConfig,
 	type FluxImagePodWorkflowConfig,
 	type LtxVideoPodWorkflowConfig,
 	type WanVideoPodWorkflowConfig,
 } from "./workflows/comfy-pod";
+export {
+	createFluxDevDetailerServerlessWorkflow,
+	type FluxDetailerInput,
+	type FluxDetailerOutput,
+	type FluxDetailerServerlessWorkflowConfig,
+	fluxDetailerInputSchema,
+} from "./workflows/flux-dev-detailer-serverless";
 export {
 	createFluxDevImageServerlessWorkflow,
 	type FluxImageInput,

@@ -132,26 +132,22 @@ let lastLine = "";
 while (Date.now() < deadline) {
 	await new Promise((r) => setTimeout(r, 8000));
 
-	const pollEnvelope = asRecord(
-		await mcpCall(mcpUrl, mcpToken, "service_request", {
-			method: "GET",
-			path: `/api/executions/${executionId}`,
-			service: "generator",
+	const debug = asRecord(
+		await mcpCall(mcpUrl, mcpToken, "studio_execution_debug", {
+			executionId,
 		})
 	);
-	const row =
-		asRecord(pollEnvelope?.body)?.execution ??
-		pollEnvelope?.execution ??
-		pollEnvelope;
+	const executions = Array.isArray(debug?.executions) ? debug.executions : [];
+	const row = asRecord(executions[0]);
 	if (!row) {
 		console.log("poll: empty response");
 		continue;
 	}
-	const status = String(row?.status ?? "unknown");
-	const progressPct = row?.progressPct;
-	const lastLogLine = row?.lastLogLine;
-	const etaMs = row?.etaMs;
-	const phase = row?.phase;
+	const status = String(row.status ?? "unknown");
+	const progressPct = row.progressPct;
+	const lastLogLine = row.lastLogLine;
+	const etaMs = row.etaMs;
+	const phase = row.phase;
 
 	if (typeof progressPct === "number" && progressPct > 12) {
 		sawRealProgress = true;

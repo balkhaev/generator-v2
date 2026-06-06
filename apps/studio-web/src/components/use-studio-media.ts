@@ -65,7 +65,23 @@ export function useStudioMedia({
 		const directIndex = selectedScenarioAssets.findIndex(
 			(asset) => asset.id === requestedAssetId
 		);
-		return directIndex === -1 ? 0 : directIndex;
+		if (directIndex !== -1) {
+			return directIndex;
+		}
+		// Когда явного asset нет, но в URL зафиксирован run (например, только что
+		// запущенный из Launch), держим воркспейс на ассете этого run'а. Так превью
+		// сразу переключается на новую генерацию и автоматически следует за ней
+		// через placeholder (pending-…) к готовому артефакту (output-…) без ручного
+		// клика — id ассета меняется, но run остаётся тем же.
+		if (requestedRunId) {
+			const runIndex = selectedScenarioAssets.findIndex(
+				(asset) => asset.runId === requestedRunId
+			);
+			if (runIndex !== -1) {
+				return runIndex;
+			}
+		}
+		return 0;
 	})();
 
 	const selectedMediaId =

@@ -31,6 +31,7 @@ function fakeClient(
 		getLoraManagerSettings: dummy as never,
 		getObjectInfo: dummy as never,
 		getQueue: dummy as never,
+		getSessionCookie: () => null,
 		getSystemStats: dummy as never,
 		listUserdata: dummy as never,
 		login: () => Promise.resolve(),

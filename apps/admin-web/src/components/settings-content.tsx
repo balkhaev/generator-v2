@@ -3,8 +3,7 @@
 import type { AdminSettingsSnapshot } from "@generator/contracts/admin";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { PageHeader } from "@generator/ui/components/page-header";
-import { cn } from "@generator/ui/lib/utils";
-import { RefreshCw } from "lucide-react";
+import { RefreshButton } from "@generator/ui/components/toolbar";
 import type { ReactNode } from "react";
 
 import { DatasetBuilderCard } from "@/components/settings/dataset-builder-card";
@@ -33,17 +32,10 @@ export default function SettingsContent({
 		<div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
 			<PageHeader
 				actions={
-					<button
-						className="inline-flex items-center gap-2 rounded-md border border-foreground/10 bg-background px-2.5 py-1.5 text-xs transition hover:bg-muted/30 disabled:opacity-50"
-						disabled={isFetching}
-						onClick={() => refetch()}
-						type="button"
-					>
-						<RefreshCw
-							className={cn("size-3", isFetching ? "animate-spin" : "")}
-						/>
-						Refresh
-					</button>
+					<RefreshButton
+						isRefreshing={isFetching}
+						onRefresh={() => refetch()}
+					/>
 				}
 				description="Inspect and tune runtime knobs for inference pipelines."
 				eyebrow="Admin"

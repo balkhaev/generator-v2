@@ -3,8 +3,8 @@
 import type { AdminUser } from "@generator/contracts/admin";
 import { Button } from "@generator/ui/components/button";
 import { EmptyState } from "@generator/ui/components/empty-state";
-import { Input } from "@generator/ui/components/input";
-import { Loader2, Search, UserPlus } from "lucide-react";
+import { SearchInput } from "@generator/ui/components/search-input";
+import { Loader2, UserPlus } from "lucide-react";
 
 import UserRow from "./user-row";
 
@@ -34,16 +34,13 @@ export default function UserList({
 					Manage admin console operators. Each user can sign in with email and
 					password.
 				</p>
-				<div className="relative w-56">
-					<Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						aria-label="Search users"
-						className="h-8 pl-7 text-xs"
-						onChange={(event) => onSearchChange(event.target.value)}
-						placeholder="Search by name or email"
-						value={search}
-					/>
-				</div>
+				<SearchInput
+					aria-label="Search users"
+					className="w-56"
+					onValueChange={onSearchChange}
+					placeholder="Search by name or email"
+					value={search}
+				/>
 			</div>
 
 			{renderBody({

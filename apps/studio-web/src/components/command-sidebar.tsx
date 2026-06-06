@@ -54,7 +54,10 @@ import { buildFinalPromptPreview } from "@/components/final-prompt-preview";
 import IconButton from "@/components/icon-button";
 import PersonLaunchSection from "@/components/person-launch-section";
 import PersonsInputPicker from "@/components/persons-input-picker";
-import { getMediaType } from "@/components/preview-surface";
+import {
+	getMediaType,
+	isPickablePickerImageUrl,
+} from "@/components/preview-surface";
 import type { ScenarioCardData } from "@/components/scenario-card-data";
 import SubjectSwitcher from "@/components/subject-switcher";
 import { useStudioLoras } from "@/components/use-studio-loras";
@@ -69,6 +72,8 @@ interface CommandSidebarProps {
 	onPersonRefreshed: (person: PersonRecord) => void;
 	onPickPerson: (personId: string) => void;
 	onPickScenario: (scenarioId: string) => void;
+	/** Фокусирует воркспейс на только что запущенном run'е (переключает превью). */
+	onRunLaunched?: (runId: string, scenarioId: string) => void;
 	onSnapshotChange: (snapshot: AdminSnapshot) => void;
 	persons: PersonRecord[];
 	scenarioCards: ScenarioCardData[];
@@ -236,13 +241,24 @@ function getRecentReferenceOptions(
 		right.createdAt.localeCompare(left.createdAt)
 	);
 
+	function pushReference(entry: { id: string; label: string; url: string }) {
+		if (!isPickablePickerImageUrl(entry.url) || uniqueUrls.has(entry.url)) {
+			return;
+		}
+		uniqueUrls.add(entry.url);
+		references.push(entry);
+	}
+
 	for (const run of sortedRuns) {
+		if (run.inputImageUrl) {
+			pushReference({
+				id: `${run.id}:input`,
+				label: `${run.scenarioName} input`,
+				url: run.inputImageUrl,
+			});
+		}
 		for (const [index, url] of run.artifactUrls.entries()) {
-			if (getMediaType(url) !== "image" || uniqueUrls.has(url)) {
-				continue;
-			}
-			uniqueUrls.add(url);
-			references.push({
+			pushReference({
 				id: `${run.id}:output:${index}`,
 				label:
 					run.artifactUrls.length > 1
@@ -250,9 +266,9 @@ function getRecentReferenceOptions(
 						: `${run.scenarioName} output`,
 				url,
 			});
-			if (references.length >= 16) {
-				return references;
-			}
+		}
+		if (references.length >= 16) {
+			return references.slice(0, 16);
 		}
 	}
 
@@ -1145,6 +1161,7 @@ export default function CommandSidebar({
 	onPersonRefreshed,
 	onPickPerson,
 	onPickScenario,
+	onRunLaunched,
 	onSnapshotChange,
 	persons,
 	scenarioCards,
@@ -1330,6 +1347,10 @@ export default function CommandSidebar({
 					promptSource: undefined,
 				},
 			}));
+			// Сразу переключаем воркспейс на новую генерацию: превью покажет
+			// placeholder с информативным прогрессом, а по завершении — готовый
+			// артефакт без лишних кликов.
+			onRunLaunched?.(result.data.id, scenario.id);
 			toast.success("Run queued.");
 		} catch (error) {
 			toast.error(

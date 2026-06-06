@@ -34,6 +34,22 @@ export interface WorkflowField {
 	unit?: string;
 }
 
+/** Логическая группа пресета — рендерится отдельной строкой чипов в UI. */
+export type WorkflowPresetGroup = "quality" | "duration";
+
+/**
+ * Готовый набор значений параметров, который пользователь применяет одним
+ * кликом в редакторе сценария. `params` мерджится поверх текущих значений
+ * формы (ключи должны совпадать с {@link WorkflowField.key}).
+ */
+export interface WorkflowPreset {
+	description?: string;
+	group: WorkflowPresetGroup;
+	id: string;
+	label: string;
+	params: Record<string, number | string | boolean>;
+}
+
 export interface WorkflowSummary {
 	active?: boolean;
 	baseModel?: WorkflowBaseModel;
@@ -42,6 +58,7 @@ export interface WorkflowSummary {
 	key: string;
 	name: string;
 	parameterFields: readonly WorkflowField[];
+	presets?: readonly WorkflowPreset[];
 	requiresInputImage?: boolean;
 }
 

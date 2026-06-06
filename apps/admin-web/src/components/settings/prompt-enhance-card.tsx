@@ -7,8 +7,16 @@ import type {
 } from "@generator/contracts/admin";
 import { Button } from "@generator/ui/components/button";
 import { Input } from "@generator/ui/components/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
+import { RefreshButton } from "@generator/ui/components/toolbar";
 import { cn } from "@generator/ui/lib/utils";
-import { CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { SettingsCard, SettingsRow } from "@/components/settings/settings-card";
@@ -73,6 +81,17 @@ export function PromptEnhanceCard({
 			)
 			.slice(0, 200);
 	}, [modelsQuery.data, modelFilter]);
+
+	const catalogItems = useMemo(
+		() => [
+			{ label: "— pick from catalog —", value: "" },
+			...filteredModels.map((m) => ({
+				label: `${m.name} — ${m.id}`,
+				value: m.id,
+			})),
+		],
+		[filteredModels]
+	);
 
 	// Pending state must be scoped to THIS target — both PromptEnhanceCard
 	// instances share one mutation hook, so we filter on `variables.target`.
@@ -204,9 +223,11 @@ export function PromptEnhanceCard({
 					</Button>
 				</div>
 				<div className="flex flex-wrap items-center gap-2">
-					<Button
-						className="h-8 gap-1"
-						onClick={() => {
+					<RefreshButton
+						className="h-8"
+						isRefreshing={modelsQuery.isFetching}
+						label="Load catalog"
+						onRefresh={() => {
 							if (catalogRequested) {
 								modelsQuery.refetch().catch(() => {
 									// Errors surface via modelsQuery.isError
@@ -215,17 +236,7 @@ export function PromptEnhanceCard({
 								setCatalogRequested(true);
 							}
 						}}
-						size="sm"
-						type="button"
-						variant="outline"
-					>
-						{modelsQuery.isFetching ? (
-							<Loader2 className="size-3 animate-spin" />
-						) : (
-							<RefreshCw className="size-3" />
-						)}
-						Load catalog
-					</Button>
+					/>
 					{modelsQuery.isError ? (
 						<span className="text-destructive text-xs">
 							{modelsQuery.error instanceof Error
@@ -242,24 +253,29 @@ export function PromptEnhanceCard({
 							placeholder="Filter catalog…"
 							value={modelFilter}
 						/>
-						<select
-							aria-label="OpenRouter models from catalog"
-							className="max-h-40 min-h-32 w-full rounded-md border border-input bg-background px-2 py-1 font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
-							onChange={(e) => setModelDraft(e.target.value)}
-							size={Math.min(12, Math.max(4, filteredModels.length + 1))}
+						<Select
+							items={catalogItems}
+							onValueChange={(value) => setModelDraft((value ?? "") as string)}
 							value={
 								filteredModels.some((m) => m.id === modelDraft)
 									? modelDraft
 									: ""
 							}
 						>
-							<option value="">— pick from catalog —</option>
-							{filteredModels.map((m) => (
-								<option key={m.id} value={m.id}>
-									{m.name} — {m.id}
-								</option>
-							))}
-						</select>
+							<SelectTrigger
+								aria-label="OpenRouter models from catalog"
+								className="w-full font-mono text-[11px]"
+							>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{catalogItems.map((option) => (
+									<SelectItem key={option.value} value={option.value}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 						<p className="text-[10px] text-muted-foreground">
 							{filteredModels.length} models shown
 							{modelFilter.trim() ? " (filtered)" : ""}. Pick a row, then «Save

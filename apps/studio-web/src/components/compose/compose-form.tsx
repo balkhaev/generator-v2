@@ -11,6 +11,7 @@ import {
 	type ScenarioFormState,
 	type WorkflowDefinition,
 	type WorkflowParameter,
+	type WorkflowPreset,
 } from "@generator/studio-client/shared";
 import { Button } from "@generator/ui/components/button";
 import { EnhancePromptButton } from "@generator/ui/components/enhance-prompt-button";
@@ -70,6 +71,7 @@ import {
 	type Modality,
 	pickDefaultWorkflow,
 } from "./workflow-matrix";
+import { WorkflowPresets } from "./workflow-presets";
 
 const PROMPT_LIMIT = 1500;
 
@@ -961,6 +963,12 @@ function SettingsSection({
 		}
 	}
 
+	function applyPreset(preset: WorkflowPreset) {
+		for (const [key, value] of Object.entries(preset.params)) {
+			onParamChange(key, String(value));
+		}
+	}
+
 	return (
 		<>
 			<WorkflowSetupSection
@@ -989,6 +997,14 @@ function SettingsSection({
 					onLorasImported={onLorasImported}
 					onParamChange={onParamChange}
 					selectedWorkflow={selectedWorkflow}
+				/>
+			) : null}
+
+			{!isCivitaiLtx23 && selectedWorkflow.presets?.length ? (
+				<WorkflowPresets
+					form={form}
+					onApplyPreset={applyPreset}
+					workflow={selectedWorkflow}
 				/>
 			) : null}
 

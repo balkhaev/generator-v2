@@ -1,6 +1,7 @@
 import type {
 	WorkflowBaseModel,
 	WorkflowField,
+	WorkflowPreset,
 } from "@generator/contracts/generator";
 import type { z } from "zod";
 
@@ -29,5 +30,7 @@ export interface WorkflowDefinition<
 	name: string;
 	parameterFields: readonly WorkflowField[];
 	parameterSchema: TParams;
+	/** Быстрые наборы значений (качество/длительность) для редактора сценария. */
+	presets?: readonly WorkflowPreset[];
 	requiresInputImage: boolean;
 }

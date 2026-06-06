@@ -12,6 +12,7 @@ import { createRedisConnection } from "@generator/queue";
 import {
 	type ActivePodRegistry,
 	type AnyWorkflowDefinition,
+	createFluxDevDetailerServerlessWorkflow,
 	createFluxDevImageServerlessWorkflow,
 	createFooocusSdxlWorkflow,
 	createLtx23VideoWorkflow,
@@ -208,6 +209,17 @@ function pushWanFluxServerlessWorkflows(workflows: AnyWorkflowDefinition[]) {
 				checkpointFilename:
 					process.env.RUNPOD_FLUX_DEV_CHECKPOINT?.trim() || undefined,
 				enableWarmup: process.env.RUNPOD_FLUX_DEV_ENABLE_WARMUP === "true",
+				endpointId: fluxEndpointId,
+				webhookUrl:
+					process.env.RUNPOD_FLUX_DEV_WEBHOOK_URL?.trim() || undefined,
+			})
+		);
+		// Детейлер переиспользует тот же flux serverless endpoint (та же модель
+		// на volume), отличается только графом (img2img upscale+detail).
+		workflows.push(
+			createFluxDevDetailerServerlessWorkflow({
+				checkpointFilename:
+					process.env.RUNPOD_FLUX_DEV_CHECKPOINT?.trim() || undefined,
 				endpointId: fluxEndpointId,
 				webhookUrl:
 					process.env.RUNPOD_FLUX_DEV_WEBHOOK_URL?.trim() || undefined,

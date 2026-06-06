@@ -59,6 +59,8 @@ export interface ComfyUIClient {
 	getLoraManagerSettings(): Promise<LoraManagerSettings>;
 	getObjectInfo(nodeClass: string): Promise<ComfyUIObjectInfoEntry | null>;
 	getQueue(): Promise<ComfyUIQueueResponse>;
+	/** AIOHTTP_SESSION для ComfyUI-Login (WebSocket progress и т.п.). */
+	getSessionCookie(): string | null;
 	getSystemStats(): Promise<ComfyUISystemStats>;
 	listUserdata(dir: string): Promise<ComfyUIUserdataEntry[]>;
 	login(): Promise<void>;
@@ -189,6 +191,9 @@ export function createComfyUIClient(
 			await login();
 		}
 	};
+
+	const getSessionCookie = (): string | null =>
+		sessionCookie ? `AIOHTTP_SESSION=${sessionCookie}` : null;
 
 	const getSystemStats = async (): Promise<ComfyUISystemStats> => {
 		await ensureCookie();
@@ -458,6 +463,7 @@ export function createComfyUIClient(
 		getLoraManagerSettings,
 		getObjectInfo,
 		getQueue,
+		getSessionCookie,
 		getSystemStats,
 		listUserdata,
 		login,

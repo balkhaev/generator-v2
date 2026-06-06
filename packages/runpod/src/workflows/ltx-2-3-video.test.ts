@@ -80,6 +80,7 @@ function buildClient(overrides: Partial<ComfyUIClient> = {}): ComfyUIClient {
 		getLoraManagerSettings: noop as never,
 		getObjectInfo: readyObjectInfo() as never,
 		getQueue: noop as never,
+		getSessionCookie: () => null,
 		getSystemStats: noop as never,
 		listUserdata: noop as never,
 		login: () => Promise.resolve(),

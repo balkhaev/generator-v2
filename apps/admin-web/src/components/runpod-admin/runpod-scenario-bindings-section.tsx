@@ -2,14 +2,20 @@
 
 import type { RunpodPodTemplate } from "@generator/contracts/runpod-admin";
 import { EmptyState } from "@generator/ui/components/empty-state";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
 import { useMemo } from "react";
 import { toast } from "sonner";
 
 import { useSetScenarioRunpodBinding } from "@/hooks/use-admin-runpod";
 import type { ScenarioRunpodBinding } from "@/lib/runpod-admin-client";
 
-const selectClassName =
-	"h-8 rounded-md border border-foreground/10 bg-background px-2 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
+const DEFAULT_BINDING_OPTION = { label: "— default —", value: "" };
 
 export default function RunpodScenarioBindingsSection({
 	bindings,
@@ -67,6 +73,10 @@ export default function RunpodScenarioBindingsSection({
 			</p>
 			{bindings.map((binding) => {
 				const options = templatesByWorkflowKey.get(binding.workflowKey) ?? [];
+				const bindingItems = [
+					DEFAULT_BINDING_OPTION,
+					...options.map((tpl) => ({ label: tpl.name, value: tpl.id })),
+				];
 				return (
 					<div
 						className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-foreground/10 bg-background px-3 py-2 text-sm"
@@ -78,23 +88,27 @@ export default function RunpodScenarioBindingsSection({
 								workflow: {binding.workflowKey}
 							</span>
 						</div>
-						<select
-							className={selectClassName}
-							onChange={(event) =>
+						<Select
+							items={bindingItems}
+							onValueChange={(value) =>
 								handleChange(
 									binding.scenarioId,
-									event.target.value ? event.target.value : null
+									value ? (value as string) : null
 								)
 							}
 							value={binding.podTemplateId ?? ""}
 						>
-							<option value="">— default —</option>
-							{options.map((tpl) => (
-								<option key={tpl.id} value={tpl.id}>
-									{tpl.name}
-								</option>
-							))}
-						</select>
+							<SelectTrigger aria-label="Pod template binding" className="w-56">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{bindingItems.map((option) => (
+									<SelectItem key={option.value} value={option.value}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
 				);
 			})}

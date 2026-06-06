@@ -6,14 +6,28 @@ import type {
 	LoraRegistryEntry,
 } from "@generator/contracts/loras";
 import { EmptyState } from "@generator/ui/components/empty-state";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectGroupLabel,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
 import { Loader2 } from "lucide-react";
 
 import LoraRow from "./lora-row";
 
 const baseModelGroups = groupBaseModelsByFamily();
 
-const selectClassName =
-	"h-8 rounded-md border border-foreground/10 bg-background px-2 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
+const ALL_BASE_MODELS_OPTION = { label: "All base models", value: "" };
+const baseModelFilterItems = [
+	ALL_BASE_MODELS_OPTION,
+	...baseModelGroups.flatMap((group) =>
+		group.models.map((model) => ({ label: model.label, value: model.id }))
+	),
+];
 
 export default function LoraList({
 	filterBaseModel,
@@ -36,25 +50,30 @@ export default function LoraList({
 				<p className="text-muted-foreground text-xs">
 					Shared registry across Studio and Persons.
 				</p>
-				<select
-					aria-label="Filter by base model"
-					className={selectClassName}
-					onChange={(event) =>
-						onFilterChange(event.target.value as LoraBaseModel | "")
+				<Select
+					items={baseModelFilterItems}
+					onValueChange={(value) =>
+						onFilterChange((value ?? "") as LoraBaseModel | "")
 					}
 					value={filterBaseModel}
 				>
-					<option value="">All base models</option>
-					{baseModelGroups.map((group) => (
-						<optgroup key={group.family} label={group.label}>
-							{group.models.map((model) => (
-								<option key={model.id} value={model.id}>
-									{model.label}
-								</option>
-							))}
-						</optgroup>
-					))}
-				</select>
+					<SelectTrigger aria-label="Filter by base model" className="w-56">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="">{ALL_BASE_MODELS_OPTION.label}</SelectItem>
+						{baseModelGroups.map((group) => (
+							<SelectGroup key={group.family}>
+								<SelectGroupLabel>{group.label}</SelectGroupLabel>
+								{group.models.map((model) => (
+									<SelectItem key={model.id} value={model.id}>
+										{model.label}
+									</SelectItem>
+								))}
+							</SelectGroup>
+						))}
+					</SelectContent>
+				</Select>
 			</div>
 
 			{renderBody({ isLoading, loras, onSelect, selectedId })}

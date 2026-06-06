@@ -1,8 +1,6 @@
 import { cn } from "@generator/ui/lib/utils";
 import type { ReactNode } from "react";
 
-import { InfoTooltip } from "./info-tooltip";
-
 export function PageHeader({
 	actions,
 	className,
@@ -19,7 +17,7 @@ export function PageHeader({
 	return (
 		<header
 			className={cn(
-				"flex flex-col gap-3 border-foreground/6 border-b px-4 py-4 lg:flex-row lg:items-end lg:justify-between dark:border-foreground/10",
+				"flex flex-col gap-3 border-foreground/6 border-b px-4 py-4 lg:flex-row lg:items-start lg:justify-between dark:border-foreground/10",
 				className
 			)}
 		>
@@ -29,17 +27,19 @@ export function PageHeader({
 						{eyebrow}
 					</p>
 				) : null}
-				<div className="flex min-w-0 items-center gap-1.5">
-					<h2 className="font-medium text-base tracking-tight">{title}</h2>
-					{description ? (
-						<InfoTooltip label="Show page details" side="bottom">
-							{description}
-						</InfoTooltip>
-					) : null}
-				</div>
+				<h2 className="min-w-0 font-medium text-base tracking-tight">
+					{title}
+				</h2>
+				{description ? (
+					<p className="max-w-2xl text-muted-foreground text-xs leading-relaxed">
+						{description}
+					</p>
+				) : null}
 			</div>
 			{actions ? (
-				<div className="flex flex-wrap items-center gap-2">{actions}</div>
+				<div className="flex shrink-0 flex-wrap items-center gap-2">
+					{actions}
+				</div>
 			) : null}
 		</header>
 	);

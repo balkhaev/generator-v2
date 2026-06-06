@@ -79,6 +79,66 @@ const THUMB_GRID_TWO_ROWS_SCROLL_CLASSES =
 const THUMB_GRID_THREE_ROWS_SCROLL_CLASSES =
 	"max-h-[396px] min-w-0 overflow-y-auto pr-1";
 
+function PickerThumbImage({
+	alt,
+	className,
+	fallbackUrl,
+	objectFit = "cover",
+	url,
+}: {
+	alt: string;
+	className?: string;
+	fallbackUrl?: string | null;
+	objectFit?: "contain" | "cover";
+	url: string;
+}) {
+	const [src, setSrc] = useState(url);
+	const [usedFallback, setUsedFallback] = useState(false);
+
+	useEffect(() => {
+		setSrc(url);
+		setUsedFallback(false);
+	}, [url]);
+
+	if (!src) {
+		return null;
+	}
+
+	return (
+		// biome-ignore lint/performance/noImgElement: external CDN thumbnails, onError fallback
+		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: onError thumbnail fallback only
+		<img
+			alt={alt}
+			className={cn(
+				"absolute inset-0 h-full w-full object-center",
+				objectFit === "contain" ? "object-contain" : "object-cover",
+				className
+			)}
+			decoding="async"
+			height={128}
+			loading="lazy"
+			onError={() => {
+				if (fallbackUrl && !usedFallback && fallbackUrl !== src) {
+					setUsedFallback(true);
+					setSrc(fallbackUrl);
+					return;
+				}
+				setSrc("");
+			}}
+			src={src}
+			width={72}
+		/>
+	);
+}
+
+function getPersonPickerThumbnail(person: PersonRecord) {
+	return person.referencePhotoUrl ?? person.photoUrl ?? null;
+}
+
+function getGenerationPickerThumbnail(generation: PersonGenerationRecord) {
+	return generation.previewUrl ?? generation.sourceUrl ?? null;
+}
+
 interface IdentityTile {
 	id: string;
 	label: string;
@@ -139,11 +199,7 @@ function IdentityTiles({
 									/>
 								}
 							>
-								<div
-									aria-hidden="true"
-									className="absolute inset-0 bg-center bg-cover"
-									style={{ backgroundImage: `url("${tile.url}")` }}
-								/>
+								<PickerThumbImage alt={tile.label} url={tile.url} />
 								<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1 pt-3 pb-1">
 									<p className="truncate text-center text-[10px] text-white leading-tight">
 										{tile.label}
@@ -455,12 +511,15 @@ export default function PersonsInputPicker({
 		return (
 			<div className="group relative overflow-hidden rounded-xl border border-foreground/8">
 				<div
-					className="mx-auto max-h-[60vh] w-full bg-center bg-contain bg-muted/10 bg-no-repeat"
-					style={{
-						aspectRatio: previewAspect,
-						backgroundImage: `url("${currentUrl}")`,
-					}}
-				/>
+					className="relative mx-auto max-h-[60vh] w-full bg-muted/10"
+					style={{ aspectRatio: previewAspect }}
+				>
+					<PickerThumbImage
+						alt="Selected input image"
+						objectFit="contain"
+						url={currentUrl}
+					/>
+				</div>
 				<div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-1.5 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-2 pt-8 pb-2">
 					<button
 						aria-label="Clear input image"
@@ -610,11 +669,7 @@ export default function PersonsInputPicker({
 									/>
 								}
 							>
-								<div
-									aria-hidden="true"
-									className="absolute inset-0 bg-center bg-cover"
-									style={{ backgroundImage: `url("${reference.url}")` }}
-								/>
+								<PickerThumbImage alt={reference.label} url={reference.url} />
 								<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1 pt-3 pb-1">
 									<p className="truncate text-center text-[10px] text-white leading-tight">
 										{reference.label}
@@ -650,7 +705,7 @@ export default function PersonsInputPicker({
 			>
 				{filteredPersons.map((person) => {
 					const isActive = selectedPersonId === person.id;
-					const thumbnail = person.photoUrl ?? person.referencePhotoUrl ?? null;
+					const thumbnail = getPersonPickerThumbnail(person);
 					return (
 						<button
 							className={cn(
@@ -665,10 +720,10 @@ export default function PersonsInputPicker({
 							type="button"
 						>
 							{thumbnail ? (
-								<div
-									aria-hidden="true"
-									className="absolute inset-0 bg-center bg-cover"
-									style={{ backgroundImage: `url("${thumbnail}")` }}
+								<PickerThumbImage
+									alt={person.name}
+									fallbackUrl={person.photoUrl}
+									url={thumbnail}
 								/>
 							) : (
 								<div className="absolute inset-0 bg-muted/20" />
@@ -761,7 +816,7 @@ export default function PersonsInputPicker({
 							)}
 						>
 							{readyGenerations.map((generation) => {
-								const url = generation.previewUrl ?? generation.sourceUrl ?? "";
+								const url = getGenerationPickerThumbnail(generation) ?? "";
 								const isActive = currentUrl === url;
 								return (
 									<button
@@ -778,11 +833,13 @@ export default function PersonsInputPicker({
 										}
 										type="button"
 									>
-										<div
-											aria-hidden="true"
-											className="absolute inset-0 bg-center bg-cover"
-											style={{ backgroundImage: `url("${url}")` }}
-										/>
+										{url ? (
+											<PickerThumbImage
+												alt={generation.title}
+												fallbackUrl={generation.sourceUrl}
+												url={url}
+											/>
+										) : null}
 									</button>
 								);
 							})}
@@ -891,10 +948,9 @@ export default function PersonsInputPicker({
 									/>
 								}
 							>
-								<div
-									aria-hidden="true"
-									className="absolute inset-0 bg-center bg-cover"
-									style={{ backgroundImage: `url("${shot.artifactUrl}")` }}
+								<PickerThumbImage
+									alt={shot.scenarioName}
+									url={shot.artifactUrl}
 								/>
 							</TooltipTrigger>
 							<TooltipContent>{shot.scenarioName}</TooltipContent>

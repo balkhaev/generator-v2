@@ -2,8 +2,7 @@
 
 import type { LoraBaseModel } from "@generator/contracts/loras";
 import { PageHeader } from "@generator/ui/components/page-header";
-import { cn } from "@generator/ui/lib/utils";
-import { RefreshCw } from "lucide-react";
+import { RefreshButton } from "@generator/ui/components/toolbar";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
@@ -53,17 +52,10 @@ export default function LorasContent() {
 		<div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
 			<PageHeader
 				actions={
-					<button
-						className="inline-flex items-center gap-2 rounded-md border border-foreground/10 bg-background px-2.5 py-1.5 text-xs transition hover:bg-muted/30 disabled:opacity-50"
-						disabled={isFetching}
-						onClick={() => refetch()}
-						type="button"
-					>
-						<RefreshCw
-							className={cn("size-3", isFetching ? "animate-spin" : "")}
-						/>
-						Refresh
-					</button>
+					<RefreshButton
+						isRefreshing={isFetching}
+						onRefresh={() => refetch()}
+					/>
 				}
 				description="LoRAs imported via S3 cache. Used by Studio and Persons workflows."
 				eyebrow="LoRA registry"

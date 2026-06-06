@@ -22,6 +22,13 @@ import {
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
 import { cn } from "@generator/ui/lib/utils";
 import { Plus, Trash2 } from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
@@ -36,8 +43,18 @@ import {
 const ENV_LINE_SPLIT_PATTERN = /\n+/u;
 const LIST_SPLIT_PATTERN = /[,\n]+/u;
 
-const selectClassName =
-	"h-8 w-full rounded-md border border-foreground/10 bg-background px-2.5 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
+const MODE_OPTIONS = RUNPOD_TEMPLATE_MODES.map((mode) => ({
+	label: mode,
+	value: mode,
+}));
+const WORKFLOW_OPTIONS = [
+	{ label: "ltx-2-3-video", value: "ltx-2-3-video" },
+	{ label: "fooocus-sdxl", value: "fooocus-sdxl" },
+];
+const CLOUD_TYPE_OPTIONS = [
+	{ label: "SECURE", value: "SECURE" },
+	{ label: "COMMUNITY", value: "COMMUNITY" },
+];
 
 interface FormState {
 	cloudType: string;
@@ -416,43 +433,54 @@ function TemplateFormDialog({
 								</div>
 								<div className="grid gap-1.5">
 									<Label htmlFor="tpl-mode">Mode</Label>
-									<select
-										className={selectClassName}
-										id="tpl-mode"
-										onChange={(event) =>
+									<Select
+										items={MODE_OPTIONS}
+										onValueChange={(value) =>
 											setState((prev) => ({
 												...prev,
-												mode: event.target.value as RunpodTemplateMode,
+												mode: (value ?? prev.mode) as RunpodTemplateMode,
 											}))
 										}
 										value={state.mode}
 									>
-										{RUNPOD_TEMPLATE_MODES.map((mode) => (
-											<option key={mode} value={mode}>
-												{mode}
-											</option>
-										))}
-									</select>
+										<SelectTrigger className="w-full" id="tpl-mode">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											{MODE_OPTIONS.map((option) => (
+												<SelectItem key={option.value} value={option.value}>
+													{option.label}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
 								</div>
 							</div>
 
 							<div className="grid grid-cols-2 gap-3">
 								<div className="grid gap-1.5">
 									<Label htmlFor="tpl-workflow">Workflow key (runtime)</Label>
-									<select
-										className={selectClassName}
-										id="tpl-workflow"
-										onChange={(event) =>
+									<Select
+										items={WORKFLOW_OPTIONS}
+										onValueChange={(value) =>
 											setState((prev) => ({
 												...prev,
-												workflowKey: event.target.value,
+												workflowKey: (value ?? "") as string,
 											}))
 										}
 										value={state.workflowKey}
 									>
-										<option value="ltx-2-3-video">ltx-2-3-video</option>
-										<option value="fooocus-sdxl">fooocus-sdxl</option>
-									</select>
+										<SelectTrigger className="w-full" id="tpl-workflow">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											{WORKFLOW_OPTIONS.map((option) => (
+												<SelectItem key={option.value} value={option.value}>
+													{option.label}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
 								</div>
 								<div className="flex items-center gap-2 text-xs">
 									<Checkbox
@@ -590,17 +618,27 @@ function PodFields({
 			<div className="grid grid-cols-3 gap-3">
 				<div className="grid gap-1.5">
 					<Label htmlFor="tpl-cloud">Cloud type</Label>
-					<select
-						className={selectClassName}
-						id="tpl-cloud"
-						onChange={(event) =>
-							setState((prev) => ({ ...prev, cloudType: event.target.value }))
+					<Select
+						items={CLOUD_TYPE_OPTIONS}
+						onValueChange={(value) =>
+							setState((prev) => ({
+								...prev,
+								cloudType: (value ?? "") as string,
+							}))
 						}
 						value={state.cloudType}
 					>
-						<option value="SECURE">SECURE</option>
-						<option value="COMMUNITY">COMMUNITY</option>
-					</select>
+						<SelectTrigger className="w-full" id="tpl-cloud">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{CLOUD_TYPE_OPTIONS.map((option) => (
+								<SelectItem key={option.value} value={option.value}>
+									{option.label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
 				</div>
 				<div className="grid gap-1.5">
 					<Label htmlFor="tpl-disk">Container disk (GB)</Label>

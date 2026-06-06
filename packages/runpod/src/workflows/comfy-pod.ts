@@ -7,6 +7,11 @@ import type {
 	ServerlessWorkflow,
 } from "../workflow/definition";
 import {
+	createFluxDevDetailerServerlessWorkflow,
+	type FluxDetailerInput,
+	type FluxDetailerOutput,
+} from "./flux-dev-detailer-serverless";
+import {
 	createFluxDevImageServerlessWorkflow,
 	type FluxImageInput,
 	type FluxImageOutput,
@@ -191,6 +196,38 @@ export function createFluxImagePodWorkflow(
 		comfyBaseUrl: config.comfyBaseUrl,
 		id: config.id ?? "flux-dev-image",
 		parseArtifact(ctx): FluxImageOutput {
+			return {
+				imageUrl: ctx.artifactPublicUrl,
+				imageUrls: [ctx.artifactPublicUrl],
+				requestId: ctx.requestId,
+			};
+		},
+		serverless,
+	});
+}
+
+export interface FluxImageDetailerPodWorkflowConfig {
+	checkpointFilename?: string;
+	comfyBaseUrl: string;
+	id?: string;
+	samplerName?: string;
+	scheduler?: string;
+}
+
+export function createFluxImageDetailerPodWorkflow(
+	config: FluxImageDetailerPodWorkflowConfig
+): PodWorkflow<FluxDetailerInput, FluxDetailerOutput> {
+	const serverless = createFluxDevDetailerServerlessWorkflow({
+		checkpointFilename: config.checkpointFilename,
+		endpointId: "static-pod",
+		samplerName: config.samplerName,
+		scheduler: config.scheduler,
+	});
+	return createComfyPodWorkflow<FluxDetailerInput, FluxDetailerOutput>({
+		artifactContentType: "image/png",
+		comfyBaseUrl: config.comfyBaseUrl,
+		id: config.id ?? "flux-dev-detailer",
+		parseArtifact(ctx): FluxDetailerOutput {
 			return {
 				imageUrl: ctx.artifactPublicUrl,
 				imageUrls: [ctx.artifactPublicUrl],

@@ -94,6 +94,7 @@ function buildClientStub(overrides: ClientStubOverrides = {}): ComfyUIClient {
 		getQueue:
 			overrides.getQueue ??
 			(() => Promise.resolve({ queue_pending: [], queue_running: [] })),
+		getSessionCookie: () => null,
 		getSystemStats: dummy as never,
 		listUserdata: dummy as never,
 		login: () => Promise.resolve(),

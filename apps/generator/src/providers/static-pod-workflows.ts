@@ -1,5 +1,6 @@
 import {
 	type AnyWorkflowDefinition,
+	createFluxImageDetailerPodWorkflow,
 	createFluxImagePodWorkflow,
 	createLtxVideoPodWorkflow,
 	createWanVideoPodWorkflow,
@@ -92,6 +93,10 @@ export function buildStaticPodWorkflows(
 			vaeFilename: overrides.wan?.vaeFilename,
 		}),
 		createFluxImagePodWorkflow({
+			checkpointFilename: overrides.flux?.checkpointFilename,
+			comfyBaseUrl,
+		}),
+		createFluxImageDetailerPodWorkflow({
 			checkpointFilename: overrides.flux?.checkpointFilename,
 			comfyBaseUrl,
 		}),

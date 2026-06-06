@@ -4,15 +4,17 @@ import type { AdminDashboardSnapshot } from "@generator/contracts/admin";
 import type { PersonLoraTrainingStatus } from "@generator/contracts/persons";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { PageHeader } from "@generator/ui/components/page-header";
-import { StatCard } from "@generator/ui/components/stat-card";
-import { cn } from "@generator/ui/lib/utils";
+import { SearchInput } from "@generator/ui/components/search-input";
 import {
-	CheckCircle2,
-	GraduationCap,
-	Loader2,
-	RefreshCw,
-	Search,
-} from "lucide-react";
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
+import { StatCard } from "@generator/ui/components/stat-card";
+import { RefreshButton } from "@generator/ui/components/toolbar";
+import { CheckCircle2, GraduationCap, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import TrainingCard from "@/components/training/training-card";
@@ -33,9 +35,6 @@ const FILTERS: { value: TrainingStatusFilter; label: string }[] = [
 	{ value: "ready", label: "Ready" },
 	{ value: "failed", label: "Failed" },
 ];
-
-const selectClassName =
-	"h-8 rounded-md border border-foreground/10 bg-background px-2 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
 
 export default function TrainingContent({
 	initialSnapshot,
@@ -99,40 +98,34 @@ export default function TrainingContent({
 			<PageHeader
 				actions={
 					<div className="flex items-center gap-2">
-						<div className="relative">
-							<Search className="absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
-							<input
-								className="h-8 w-44 rounded-md border border-foreground/10 bg-background pr-2 pl-7 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
-								onChange={(event) => setSearch(event.target.value)}
-								placeholder="Search by person"
-								value={search}
-							/>
-						</div>
-						<select
-							aria-label="Filter by status"
-							className={selectClassName}
-							onChange={(event) =>
-								setFilter(event.target.value as TrainingStatusFilter)
+						<SearchInput
+							className="w-44"
+							onValueChange={setSearch}
+							placeholder="Search by person"
+							value={search}
+						/>
+						<Select
+							items={FILTERS}
+							onValueChange={(value) =>
+								setFilter((value ?? "all") as TrainingStatusFilter)
 							}
 							value={filter}
 						>
-							{FILTERS.map((option) => (
-								<option key={option.value} value={option.value}>
-									{option.label}
-								</option>
-							))}
-						</select>
-						<button
-							className="inline-flex items-center gap-2 rounded-md border border-foreground/10 bg-background px-2.5 py-1.5 text-xs transition hover:bg-muted/30 disabled:opacity-50"
-							disabled={isFetching}
-							onClick={() => refetch()}
-							type="button"
-						>
-							<RefreshCw
-								className={cn("size-3", isFetching ? "animate-spin" : "")}
-							/>
-							Refresh
-						</button>
+							<SelectTrigger aria-label="Filter by status" className="w-36">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{FILTERS.map((option) => (
+									<SelectItem key={option.value} value={option.value}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+						<RefreshButton
+							isRefreshing={isFetching}
+							onRefresh={() => refetch()}
+						/>
 					</div>
 				}
 				description={`${filteredItems.length} of ${stats.total} training jobs.`}

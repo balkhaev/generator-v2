@@ -21,7 +21,9 @@ export {};
 const RUNPOD_BASE_URL = "https://rest.runpod.io/v1";
 const TEMPLATE_NAME = "flux-dev-image-serverless";
 const ENDPOINT_NAME = "flux-dev-image-serverless";
-const DEFAULT_WORKERS_MAX = 5;
+// RunPod account-wide workers quota (10) shared across endpoints; image-gen
+// flux нужно немного — 3 укладывается в остаток квоты.
+const DEFAULT_WORKERS_MAX = 3;
 // Картиночный T2I — холодный старт приемлем, flashboot + кэш на volume.
 const DEFAULT_WORKERS_MIN = 0;
 const DEFAULT_IDLE_TIMEOUT_SEC = 300;

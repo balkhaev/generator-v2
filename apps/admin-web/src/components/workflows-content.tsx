@@ -12,16 +12,11 @@ import {
 } from "@generator/ui/components/data-list";
 import { EmptyState } from "@generator/ui/components/empty-state";
 import { PageHeader } from "@generator/ui/components/page-header";
+import { SearchInput } from "@generator/ui/components/search-input";
 import { StatusBadge } from "@generator/ui/components/status-badge";
+import { RefreshButton } from "@generator/ui/components/toolbar";
 import { cn } from "@generator/ui/lib/utils";
-import {
-	CheckCircle2,
-	Eye,
-	EyeOff,
-	Loader2,
-	RefreshCw,
-	Search,
-} from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -328,27 +323,16 @@ export default function WorkflowsContent({
 			<PageHeader
 				actions={
 					<div className="flex items-center gap-2">
-						<div className="relative">
-							<Search className="absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
-							<input
-								className="h-8 w-56 rounded-md border border-foreground/10 bg-background pr-2 pl-7 text-xs outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
-								onChange={(event) => setSearch(event.target.value)}
-								placeholder="Search workflows"
-								value={search}
-							/>
-						</div>
-						<Button
-							disabled={isFetching}
-							onClick={() => refetch()}
-							size="sm"
-							type="button"
-							variant="outline"
-						>
-							<RefreshCw
-								className={cn("size-3.5", isFetching ? "animate-spin" : "")}
-							/>
-							Refresh
-						</Button>
+						<SearchInput
+							className="w-56"
+							onValueChange={setSearch}
+							placeholder="Search workflows"
+							value={search}
+						/>
+						<RefreshButton
+							isRefreshing={isFetching}
+							onRefresh={() => refetch()}
+						/>
 					</div>
 				}
 				description={`${activeCount} active, ${inactiveCount} hidden. Hidden workflows stay runnable for existing scenarios but disappear from new Studio choices.`}

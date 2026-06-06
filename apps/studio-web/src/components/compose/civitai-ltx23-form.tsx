@@ -11,6 +11,13 @@ import {
 import { Button } from "@generator/ui/components/button";
 import { Input } from "@generator/ui/components/input";
 import { SectionLabel } from "@generator/ui/components/section-label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
 import { cn } from "@generator/ui/lib/utils";
 import {
 	AlertCircle,
@@ -24,7 +31,7 @@ import {
 	Type,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import ParameterField from "./parameter-field";
@@ -562,6 +569,16 @@ function CivitaiLoraSelector({
 	);
 	const [isPreviewing, setIsPreviewing] = useState(false);
 	const trimmedSourceUrl = sourceUrl.trim();
+	const versionItems = useMemo(
+		() =>
+			(preview?.variants ?? []).map((variant) => ({
+				label: [variant.versionName, variant.baseModel, variant.fileName]
+					.filter(Boolean)
+					.join(" / "),
+				value: String(variant.versionId),
+			})),
+		[preview]
+	);
 	const previewMetadata = preview
 		? buildMetadataFromPreview({
 				preview,
@@ -690,27 +707,32 @@ function CivitaiLoraSelector({
 			</div>
 
 			{preview?.variants && preview.variants.length > 1 ? (
-				<select
-					aria-label="Civitai LoRA version"
-					className="h-8 rounded-md border border-foreground/10 bg-background px-2 text-[11px] outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
+				<Select
 					disabled={isPreviewing}
-					onChange={(event) => {
-						const nextVersionId = Number(event.target.value);
+					items={versionItems}
+					onValueChange={(next) => {
+						const nextVersionId = Number((next ?? "") as string);
 						setSelectedVersionId(nextVersionId);
 						handlePreview(trimmedSourceUrl, nextVersionId).catch(
 							() => undefined
 						);
 					}}
-					value={selectedVersionId ?? ""}
+					value={selectedVersionId === null ? "" : String(selectedVersionId)}
 				>
-					{preview.variants.map((variant) => (
-						<option key={variant.versionId} value={variant.versionId}>
-							{[variant.versionName, variant.baseModel, variant.fileName]
-								.filter(Boolean)
-								.join(" / ")}
-						</option>
-					))}
-				</select>
+					<SelectTrigger
+						aria-label="Civitai LoRA version"
+						className="text-[11px]"
+					>
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{versionItems.map((item) => (
+							<SelectItem key={item.value} value={item.value}>
+								{item.label}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 			) : null}
 
 			{previewMetadata ? (

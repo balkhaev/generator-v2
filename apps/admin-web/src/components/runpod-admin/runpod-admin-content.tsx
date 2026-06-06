@@ -1,8 +1,8 @@
 "use client";
 
 import { PageHeader } from "@generator/ui/components/page-header";
+import { RefreshButton } from "@generator/ui/components/toolbar";
 import { cn } from "@generator/ui/lib/utils";
-import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -61,17 +61,7 @@ export default function RunpodAdminContent() {
 		<div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
 			<PageHeader
 				actions={
-					<button
-						className="inline-flex items-center gap-2 rounded-md border border-foreground/10 bg-background px-2.5 py-1.5 text-xs transition hover:bg-muted/30 disabled:opacity-50"
-						disabled={refreshing}
-						onClick={refreshAll}
-						type="button"
-					>
-						<RefreshCw
-							className={cn("size-3", refreshing ? "animate-spin" : "")}
-						/>
-						Refresh
-					</button>
+					<RefreshButton isRefreshing={refreshing} onRefresh={refreshAll} />
 				}
 				description={activeTab?.description}
 				eyebrow="RunPod runtime"

@@ -131,6 +131,7 @@ function buildClientStub(overrides: ClientStubOverrides = {}): ComfyUIClient {
 					queue_pending: [],
 					queue_running: [],
 				})),
+		getSessionCookie: () => null,
 		getSystemStats:
 			overrides.getSystemStats ??
 			(() =>

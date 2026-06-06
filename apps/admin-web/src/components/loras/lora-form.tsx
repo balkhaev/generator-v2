@@ -18,6 +18,15 @@ import {
 } from "@generator/ui/components/card";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectGroupLabel,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
 import { formatBytes } from "@generator/ui/lib/format";
 import { cn } from "@generator/ui/lib/utils";
 import { ChevronDown, Eye, Loader2, Plus } from "lucide-react";
@@ -34,8 +43,9 @@ import { useCreateLora, usePreviewLoraSource } from "@/hooks/use-admin-loras";
 
 const baseModelGroups = groupBaseModelsByFamily();
 
-const selectClassName =
-	"flex h-9 w-full rounded-md border border-foreground/10 bg-transparent px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50";
+const baseModelItems = baseModelGroups.flatMap((group) =>
+	group.models.map((model) => ({ label: model.label, value: model.id }))
+);
 const civitaiHostPattern = /(^|\.)civitai\.(com|red)$/iu;
 const videoUrlPattern = /\.(mp4|webm)(\?|$)/iu;
 const importProgressSteps = [
@@ -198,6 +208,21 @@ function PreviewCard({
 	const sizeBytes = activeVariant?.sizeBytes ?? preview.sizeBytes;
 	const trainedWords = activeVariant?.trainedWords ?? preview.trainedWords;
 	const versionName = activeVariant?.versionName ?? preview.versionName;
+	const versionItems = useMemo(
+		() =>
+			(preview.variants ?? []).map((variant) => ({
+				label: [
+					variant.versionName,
+					variant.baseModel,
+					variant.fileName,
+					variant.sizeBytes ? formatBytes(variant.sizeBytes) : undefined,
+				]
+					.filter(Boolean)
+					.join(" / "),
+				value: String(variant.versionId),
+			})),
+		[preview.variants]
+	);
 
 	return (
 		<div className="grid gap-3 rounded-md border border-foreground/10 bg-muted/20 p-3 md:col-span-2 md:grid-cols-[96px_minmax(0,1fr)] dark:bg-muted/10">
@@ -212,27 +237,22 @@ function PreviewCard({
 				{preview.variants && preview.variants.length > 1 ? (
 					<div className="grid gap-1">
 						<Label htmlFor="lora-source-version">Version</Label>
-						<select
-							className={selectClassName}
-							id="lora-source-version"
-							onChange={(event) => onVersionChange(Number(event.target.value))}
-							value={selectedVersionId ?? ""}
+						<Select
+							items={versionItems}
+							onValueChange={(value) => onVersionChange(Number(value))}
+							value={selectedVersionId == null ? "" : String(selectedVersionId)}
 						>
-							{preview.variants.map((variant) => (
-								<option key={variant.versionId} value={variant.versionId}>
-									{[
-										variant.versionName,
-										variant.baseModel,
-										variant.fileName,
-										variant.sizeBytes
-											? formatBytes(variant.sizeBytes)
-											: undefined,
-									]
-										.filter(Boolean)
-										.join(" / ")}
-								</option>
-							))}
-						</select>
+							<SelectTrigger className="w-full" id="lora-source-version">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{versionItems.map((option) => (
+									<SelectItem key={option.value} value={option.value}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
 				) : null}
 				<div className="grid gap-1">
@@ -465,24 +485,29 @@ export default function LoraForm() {
 				<CardContent className="grid gap-3 md:grid-cols-2">
 					<div className="grid gap-1.5">
 						<Label htmlFor="lora-base-model">Base model</Label>
-						<select
-							className={selectClassName}
-							id="lora-base-model"
-							onChange={(event) =>
-								setBaseModel(event.target.value as LoraBaseModel)
+						<Select
+							items={baseModelItems}
+							onValueChange={(value) =>
+								setBaseModel((value ?? baseModel) as LoraBaseModel)
 							}
 							value={baseModel}
 						>
-							{baseModelGroups.map((group) => (
-								<optgroup key={group.family} label={group.label}>
-									{group.models.map((model) => (
-										<option key={model.id} value={model.id}>
-											{model.label}
-										</option>
-									))}
-								</optgroup>
-							))}
-						</select>
+							<SelectTrigger className="w-full" id="lora-base-model">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{baseModelGroups.map((group) => (
+									<SelectGroup key={group.family}>
+										<SelectGroupLabel>{group.label}</SelectGroupLabel>
+										{group.models.map((model) => (
+											<SelectItem key={model.id} value={model.id}>
+												{model.label}
+											</SelectItem>
+										))}
+									</SelectGroup>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
 					<div className="grid gap-1.5 md:col-span-2">
 						<Label htmlFor="lora-source-url">Source URL</Label>

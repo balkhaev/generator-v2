@@ -5,9 +5,16 @@ import type { WorkflowParameter } from "@generator/studio-client/shared";
 import { ImageUploader } from "@generator/ui/components/image-uploader";
 import { Input } from "@generator/ui/components/input";
 import { Label } from "@generator/ui/components/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
 import { cn } from "@generator/ui/lib/utils";
 import { Dice5 } from "lucide-react";
-import { useId } from "react";
+import { useId, useMemo } from "react";
 import { toast } from "sonner";
 
 import AspectPicker from "./aspect-picker";
@@ -51,19 +58,31 @@ function EnumSelect({
 	value: string;
 }) {
 	const selectedValue = options.includes(value) ? value : (options[0] ?? "");
+	const items = useMemo(
+		() =>
+			options.map((option) => ({
+				label: formatEnumLabel(option),
+				value: option,
+			})),
+		[options]
+	);
 	return (
-		<select
-			className={selectClassName}
-			id={id}
-			onChange={(event) => onChange(event.target.value)}
+		<Select
+			items={items}
+			onValueChange={(next) => onChange((next ?? "") as string)}
 			value={selectedValue}
 		>
-			{options.map((option) => (
-				<option key={option} value={option}>
-					{formatEnumLabel(option)}
-				</option>
-			))}
-		</select>
+			<SelectTrigger className={selectClassName} id={id}>
+				<SelectValue />
+			</SelectTrigger>
+			<SelectContent>
+				{items.map((item) => (
+					<SelectItem key={item.value} value={item.value}>
+						{item.label}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
 	);
 }
 

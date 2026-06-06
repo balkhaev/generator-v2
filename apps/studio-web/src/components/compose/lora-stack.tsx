@@ -19,6 +19,14 @@ import type {
 } from "@generator/studio-client/shared";
 import { Button } from "@generator/ui/components/button";
 import { Input } from "@generator/ui/components/input";
+import { SearchInput } from "@generator/ui/components/search-input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@generator/ui/components/select";
 import {
 	Check,
 	Download,
@@ -28,7 +36,6 @@ import {
 	Link as LinkIcon,
 	Loader2,
 	Plus,
-	Search,
 	Sparkles,
 	X,
 } from "lucide-react";
@@ -249,6 +256,16 @@ function CivitaiPreviewDetails({
 	const previewVersion = activeVariant?.versionName ?? preview.versionName;
 	const previewFile = activeVariant?.fileName ?? preview.fileName;
 	const previewWords = activeVariant?.trainedWords ?? preview.trainedWords;
+	const versionItems = useMemo(
+		() =>
+			(preview.variants ?? []).map((variant) => ({
+				label: [variant.versionName, variant.baseModel, variant.fileName]
+					.filter(Boolean)
+					.join(" / "),
+				value: String(variant.versionId),
+			})),
+		[preview.variants]
+	);
 
 	return (
 		<div className="grid gap-1.5 rounded-lg bg-foreground/[0.03] px-2.5 py-2">
@@ -271,20 +288,28 @@ function CivitaiPreviewDetails({
 				</div>
 			) : null}
 			{preview.variants && preview.variants.length > 1 ? (
-				<select
-					aria-label="Civitai model version"
-					className="h-7 rounded-md border border-foreground/10 bg-background px-2 text-[11px] outline-none transition focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
-					onChange={(event) => onVersionChange(Number(event.target.value))}
-					value={selectedVersionId ?? ""}
+				<Select
+					items={versionItems}
+					onValueChange={(next) =>
+						onVersionChange(Number((next ?? "") as string))
+					}
+					value={selectedVersionId === null ? "" : String(selectedVersionId)}
 				>
-					{preview.variants.map((variant) => (
-						<option key={variant.versionId} value={variant.versionId}>
-							{[variant.versionName, variant.baseModel, variant.fileName]
-								.filter(Boolean)
-								.join(" / ")}
-						</option>
-					))}
-				</select>
+					<SelectTrigger
+						aria-label="Civitai model version"
+						className="text-[11px]"
+						size="sm"
+					>
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{versionItems.map((item) => (
+							<SelectItem key={item.value} value={item.value}>
+								{item.label}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 			) : null}
 		</div>
 	);
@@ -810,19 +835,13 @@ function PickerPopover({
 			className="absolute top-full right-0 left-0 z-20 mt-1.5 grid gap-2 rounded-xl border border-foreground/10 bg-popover p-2.5 shadow-lg"
 			ref={containerRef}
 		>
-			<div className="relative">
-				<Search
-					aria-hidden="true"
-					className="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground"
-				/>
-				<Input
-					aria-label="Search LoRAs"
-					className="h-7 pr-2 pl-7 text-[11px]"
-					onChange={(event) => setQuery(event.target.value)}
-					placeholder="Search by name, slug, description"
-					value={query}
-				/>
-			</div>
+			<SearchInput
+				aria-label="Search LoRAs"
+				className="h-7"
+				onValueChange={setQuery}
+				placeholder="Search by name, slug, description"
+				value={query}
+			/>
 
 			{filtered.length > 0 ? (
 				<ul className="grid max-h-64 gap-0.5 overflow-y-auto pr-0.5">

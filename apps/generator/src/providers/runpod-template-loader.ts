@@ -7,6 +7,7 @@ import {
 } from "@generator/db/schema/runpod";
 import {
 	type AnyWorkflowDefinition,
+	createFluxDevDetailerServerlessWorkflow,
 	createFluxDevImageServerlessWorkflow,
 	createFooocusSdxlWorkflow,
 	createLtx23VideoServerlessWorkflow,
@@ -101,6 +102,15 @@ export async function loadRunpodWorkflowsFromDb(
 		const workflow = buildWorkflowFromTemplate(tpl, logger);
 		if (workflow) {
 			workflows.push(workflow);
+		}
+		// Детейлер сидится «бесплатно» поверх flux-template: тот же endpoint и
+		// модель, отдельный граф (img2img upscale+detail). Отдельного template
+		// в БД не требует.
+		if (tpl.workflowKey === "flux-dev-image") {
+			const detailer = buildFluxDevDetailerServerlessWorkflow(tpl, logger);
+			if (detailer) {
+				workflows.push(detailer);
+			}
 		}
 	}
 	return workflows;
@@ -373,6 +383,26 @@ function buildFluxDevImageServerlessWorkflow(
 		enableWarmup: process.env.RUNPOD_FLUX_DEV_ENABLE_WARMUP === "true",
 		endpointId: tpl.runpodEndpointId,
 		id: "flux-dev-image",
+		webhookUrl: process.env.RUNPOD_FLUX_DEV_WEBHOOK_URL?.trim() || undefined,
+	});
+}
+
+function buildFluxDevDetailerServerlessWorkflow(
+	tpl: LoadedTemplate,
+	logger: Pick<Console, "info" | "warn">
+): AnyWorkflowDefinition | null {
+	if (tpl.mode !== "serverless" || !tpl.runpodEndpointId) {
+		logger.warn?.("runpod.template-loader.detailer-skipped", {
+			mode: tpl.mode,
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	return createFluxDevDetailerServerlessWorkflow({
+		checkpointFilename:
+			process.env.RUNPOD_FLUX_DEV_CHECKPOINT?.trim() || undefined,
+		endpointId: tpl.runpodEndpointId,
+		id: "flux-dev-detailer",
 		webhookUrl: process.env.RUNPOD_FLUX_DEV_WEBHOOK_URL?.trim() || undefined,
 	});
 }

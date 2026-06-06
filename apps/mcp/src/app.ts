@@ -728,6 +728,48 @@ const toolDefinitions = [
 		},
 		name: "admin_request",
 	},
+	{
+		description:
+			"Read the active prompt-enhance provider and model for a target (studio|persons). Shows provider (grok|openrouter), openRouterModel, env default and whether each provider has credentials. Use this first when debugging why studio 'Enhance' / 'Enhance for image' refuses or under-performs on NSFW briefs.",
+		inputSchema: {
+			properties: {
+				target: {
+					description: "'studio' or 'persons'.",
+					enum: ["studio", "persons"],
+					type: "string",
+				},
+			},
+			required: ["target"],
+			type: "object",
+		},
+		name: "prompt_enhance_get",
+	},
+	{
+		description:
+			"Set the prompt-enhance provider and/or OpenRouter model for a target (studio|persons). Writes Redis + runtime-config store and invalidates consumer caches in one call. For NSFW vision enhance ('Enhance for image') use provider='openrouter' with a permissive vision model — x-ai/grok-4.20 is the validated default (Qwen and openai/gpt-4o-mini refuse explicit briefs).",
+		inputSchema: {
+			properties: {
+				openRouterModel: {
+					description:
+						"OpenRouter model slug, e.g. 'x-ai/grok-4.20'. Only applied when provider is openrouter.",
+					type: "string",
+				},
+				provider: {
+					description: "'grok' or 'openrouter'.",
+					enum: ["grok", "openrouter"],
+					type: "string",
+				},
+				target: {
+					description: "'studio' or 'persons'.",
+					enum: ["studio", "persons"],
+					type: "string",
+				},
+			},
+			required: ["target"],
+			type: "object",
+		},
+		name: "prompt_enhance_set",
+	},
 ] as const;
 
 function createToolResult(payload: unknown, isError = false) {
@@ -2020,6 +2062,86 @@ async function handleTrainingProviderToolCall(
 	return createErrorResponse(id, `Unknown training-provider tool: ${name}`);
 }
 
+const PROMPT_ENHANCE_TARGETS = new Set(["studio", "persons"]);
+
+function parsePromptEnhanceSetBody(
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+): { body: Record<string, unknown> } | { error: JsonRpcResponse } {
+	const body: Record<string, unknown> = {};
+	const provider = parseOptionalString(argumentsPayload.provider);
+	if (provider !== undefined) {
+		if (provider !== "grok" && provider !== "openrouter") {
+			return {
+				error: createErrorResponse(
+					id,
+					"provider must be 'grok' or 'openrouter'"
+				),
+			};
+		}
+		body.provider = provider;
+	}
+	const openRouterModel = parseOptionalString(argumentsPayload.openRouterModel);
+	if (openRouterModel) {
+		body.openRouterModel = openRouterModel;
+	}
+	if (Object.keys(body).length === 0) {
+		return {
+			error: createErrorResponse(
+				id,
+				"provide provider and/or openRouterModel to update"
+			),
+		};
+	}
+	return { body };
+}
+
+async function handlePromptEnhanceToolCall(
+	name: string,
+	argumentsPayload: Record<string, unknown>,
+	id: JsonRpcResponse["id"]
+) {
+	const target = parseOptionalString(argumentsPayload.target);
+	if (!(target && PROMPT_ENHANCE_TARGETS.has(target))) {
+		return createErrorResponse(id, "target must be 'studio' or 'persons'");
+	}
+
+	const setBody =
+		name === "prompt_enhance_set"
+			? parsePromptEnhanceSetBody(argumentsPayload, id)
+			: null;
+	if (setBody && "error" in setBody) {
+		return setBody.error;
+	}
+
+	const { error, token } = requireTrainingControlToken(id);
+	if (error) {
+		return error;
+	}
+	const authHeaders = { authorization: `Bearer ${token}` };
+	const path = `/api/admin/prompt-enhance-provider/${target}`;
+
+	if (!setBody) {
+		return createOkResponse(
+			id,
+			createToolResult(
+				await fetchServiceSnapshot("admin", path, { headers: authHeaders })
+			)
+		);
+	}
+
+	return createOkResponse(
+		id,
+		createToolResult(
+			await fetchServiceSnapshot("admin", path, {
+				body: JSON.stringify(setBody.body),
+				headers: { ...authHeaders, "content-type": "application/json" },
+				method: "PUT",
+			})
+		)
+	);
+}
+
 async function handleAdminLoraTrainingQueueToolCall(
 	_name: string,
 	argumentsPayload: Record<string, unknown>,
@@ -2885,6 +3007,8 @@ const toolHandlers: Record<string, ToolHandler> = {
 	generator_execution_sync: handleGeneratorExecutionToolCall,
 	lora_get: handleLoraToolCall,
 	lora_list: handleLoraToolCall,
+	prompt_enhance_get: handlePromptEnhanceToolCall,
+	prompt_enhance_set: handlePromptEnhanceToolCall,
 	studio_execution_debug: handleStudioExecutionDebugToolCall,
 	studio_run_mark_failed: handleStudioRunMarkFailedToolCall,
 	studio_scenario_update: handleStudioScenarioUpdateToolCall,

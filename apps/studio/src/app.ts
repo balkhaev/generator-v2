@@ -4,7 +4,10 @@ import {
 	createSessionMiddleware,
 } from "@generator/auth/middleware";
 import { createPublicPathMatcher } from "@generator/auth/public-paths";
-import type { WorkflowSummary as ServerWorkflowSummary } from "@generator/contracts/generator";
+import type {
+	WorkflowSummary as ServerWorkflowSummary,
+	WorkflowPreset,
+} from "@generator/contracts/generator";
 import type { StudioShotRecord } from "@generator/contracts/studio";
 import { pingDatabase } from "@generator/db/health";
 import type { LoraReadRepository } from "@generator/db/repositories/lora-read";
@@ -94,6 +97,7 @@ interface WorkflowDefinition {
 		type: string;
 		unit?: string;
 	}>;
+	presets?: readonly WorkflowPreset[];
 	promptHint: string;
 	requiresInputImage: boolean;
 	summary: string;
@@ -176,6 +180,7 @@ function normalizeWorkflowDefinition(
 			type: parameter.type,
 			...(parameter.unit ? { unit: parameter.unit } : {}),
 		})),
+		...(workflow.presets ? { presets: workflow.presets } : {}),
 		promptHint: createPromptHint(workflow.name),
 		requiresInputImage: Boolean(workflow.requiresInputImage),
 		summary: workflow.description,

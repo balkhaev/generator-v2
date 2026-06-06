@@ -25,12 +25,13 @@ import WorkspaceShell, {
 	WorkspaceStatus,
 } from "@generator/ui/components/workspace-shell";
 import { createWorkspaceNavigation } from "@generator/ui/lib/workspace-nav";
-import { Loader2, Send, Trash2 } from "lucide-react";
+import { Loader2, Search, Send, Sparkles, Trash2 } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { StudioCommandPalette } from "@/components/command-palette";
 import CommandSidebar, {
 	type SourceImageTransfer,
 } from "@/components/command-sidebar";
@@ -563,6 +564,7 @@ export default function StudioShell({
 	sessionName: string;
 }) {
 	const [snapshot, setSnapshot] = useState<AdminSnapshot>(initialSnapshot);
+	const [isCommandOpen, setIsCommandOpen] = useState(false);
 	const [isComposeOpen, setIsComposeOpen] = useState(false);
 	const [composeInitialWorkflowKey, setComposeInitialWorkflowKey] = useState<
 		string | null
@@ -807,6 +809,22 @@ export default function StudioShell({
 			// silent: best-effort recovery, will retry next tick
 		}
 	}, []);
+
+	const handleRunLaunched = useCallback(
+		(runId: string, scenarioId: string) => {
+			// Фиксируем run в URL и чистим asset — useStudioMedia подхватит этот run
+			// и переключит превью на его ассет (placeholder → готовый артефакт).
+			navigate(
+				selectionUrlBuilder({
+					assetId: null,
+					personId: null,
+					runId,
+					scenarioId,
+				})
+			);
+		},
+		[navigate, selectionUrlBuilder]
+	);
 
 	const hasActiveStudioRuns = useMemo(
 		() =>
@@ -1054,6 +1072,19 @@ export default function StudioShell({
 		<WorkspaceShell
 			actions={
 				<>
+					<Button
+						className="gap-2 text-muted-foreground"
+						onClick={() => setIsCommandOpen(true)}
+						size="sm"
+						type="button"
+						variant="outline"
+					>
+						<Search className="size-3.5" />
+						<span className="hidden sm:inline">Search</span>
+						<kbd className="hidden rounded-sm border border-foreground/10 bg-muted/40 px-1 font-mono text-[10px] sm:inline-block">
+							⌘K
+						</kbd>
+					</Button>
 					<ModeToggle />
 					<UserMenu email={sessionEmail} name={sessionName} />
 				</>
@@ -1068,6 +1099,7 @@ export default function StudioShell({
 					onPersonRefreshed={handlePersonRefreshed}
 					onPickPerson={handlePickPerson}
 					onPickScenario={handlePickScenario}
+					onRunLaunched={handleRunLaunched}
 					onSnapshotChange={setSnapshot}
 					persons={persons}
 					scenarioCards={scenarioCards}
@@ -1079,12 +1111,20 @@ export default function StudioShell({
 				/>
 			}
 			contextWidth="wide"
-			navigation={createWorkspaceNavigation("studio", {
-				admin: adminUrl,
-				persons: personsUrl,
-				shots: "/shots",
-				studio: "/",
-			})}
+			navigation={[
+				...createWorkspaceNavigation("studio", {
+					admin: adminUrl,
+					persons: personsUrl,
+					shots: "/shots",
+					studio: "/",
+				}),
+				{
+					href: "/detailer",
+					icon: Sparkles,
+					label: "Detailer",
+					shortLabel: "Det",
+				},
+			]}
 			status={
 				<StudioStatusBar
 					activeRunCount={isPersonMode ? 0 : activeRunCount}
@@ -1105,6 +1145,19 @@ export default function StudioShell({
 			title={titleText}
 			workspaceLabel="Studio"
 		>
+			<StudioCommandPalette
+				adminUrl={adminUrl}
+				onCreateScenario={handleCreateScenario}
+				onOpenChange={setIsCommandOpen}
+				onPickPerson={handlePickPerson}
+				onPickScenario={handlePickScenario}
+				open={isCommandOpen}
+				persons={persons}
+				personsUrl={personsUrl}
+				scenarioCards={scenarioCards}
+				selectedPersonId={selectedPersonId}
+				selectedScenarioId={selectedScenarioId}
+			/>
 			<ComposeDialog
 				editingScenario={editingScenario}
 				initialWorkflowKey={composeInitialWorkflowKey}

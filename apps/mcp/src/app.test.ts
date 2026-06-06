@@ -53,6 +53,58 @@ describe("mcp app", () => {
 		expect(toolNames).toContain("studio_run_mark_failed");
 		expect(toolNames).toContain("studio_scenario_update");
 		expect(toolNames).toContain("admin_lora_training_queue_snapshot");
+		expect(toolNames).toContain("prompt_enhance_get");
+		expect(toolNames).toContain("prompt_enhance_set");
+	});
+
+	it("validates prompt enhance target and update fields", async () => {
+		const badTarget = await app.request("/mcp", {
+			body: JSON.stringify({
+				id: 1,
+				jsonrpc: "2.0",
+				method: "tools/call",
+				params: {
+					arguments: { target: "nope" },
+					name: "prompt_enhance_set",
+				},
+			}),
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+		expect(badTarget.status).toBe(200);
+		const badTargetPayload = (await badTarget.json()) as {
+			error?: { message: string };
+		};
+		expect(badTargetPayload.error?.message).toBe(
+			"target must be 'studio' or 'persons'"
+		);
+
+		const noFields = await app.request("/mcp", {
+			body: JSON.stringify({
+				id: 2,
+				jsonrpc: "2.0",
+				method: "tools/call",
+				params: {
+					arguments: { target: "studio" },
+					name: "prompt_enhance_set",
+				},
+			}),
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+			},
+			method: "POST",
+		});
+		expect(noFields.status).toBe(200);
+		const noFieldsPayload = (await noFields.json()) as {
+			error?: { message: string };
+		};
+		expect(noFieldsPayload.error?.message).toBe(
+			"provide provider and/or openRouterModel to update"
+		);
 	});
 
 	it("validates studio scenario update arguments", async () => {

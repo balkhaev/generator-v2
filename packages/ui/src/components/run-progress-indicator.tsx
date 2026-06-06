@@ -3,7 +3,7 @@
 import type { ExecutionPhase } from "@generator/contracts/generator";
 import { cn } from "@generator/ui/lib/utils";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type RunProgressStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -55,6 +55,15 @@ export interface RunProgressIndicatorProps {
 
 const SOFT_PROGRESS_CAP_PCT = 90;
 const TICK_MS = 500;
+/**
+ * Постоянная времени «доползания» (re-anchored creep). После каждого реального
+ * апдейта прогресс асимптотически приближается к 90% от последнего реального
+ * значения с этой постоянной. ~60s → за 20s после остановки бар проходит ~28%
+ * оставшегося зазора: достаточно, чтобы было видно «всё ещё работает», но без
+ * фейкового рывка. Гарантирует, что бар не «висит» на 75%, даже если провайдер
+ * перестал слать прогресс (хвостовые ноды ComfyUI) и нет expectedDurationMs.
+ */
+const CREEP_TAU_MS = 60_000;
 
 /**
  * Та же формула, что у backend'а в `derivePhaseAndProgress` — асимптотический
@@ -100,6 +109,123 @@ function useNowTicker(active: boolean): number {
 	}, [active]);
 
 	return now;
+}
+
+/**
+ * Re-anchored creep: запоминает последнее реальное серверное значение и момент
+ * его прихода; между апдейтами прогресс сам асимптотически ползёт к 90% от этой
+ * точки. Так бар «постоянно двигается» и не зависает, даже когда провайдер
+ * замолчал (хвостовые ноды ComfyUI), а workflow не задаёт expectedDurationMs.
+ * Возвращает `null` для не-running статусов.
+ */
+function useReanchoredCreepPct(input: {
+	now: number;
+	progressMonotonicKey: string | null | undefined;
+	serverProgressPct: number | null;
+	status: RunProgressStatus;
+}): number | null {
+	const { now, progressMonotonicKey, serverProgressPct, status } = input;
+	const anchorRef = useRef<{ at: number; pct: number }>({ at: now, pct: 0 });
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: сброс якоря при смене run
+	useEffect(() => {
+		anchorRef.current = { at: Date.now(), pct: 0 };
+	}, [progressMonotonicKey]);
+
+	useEffect(() => {
+		if (status !== "running") {
+			return;
+		}
+		const serverPct = serverProgressPct ?? 0;
+		if (serverPct > anchorRef.current.pct) {
+			anchorRef.current = { at: Date.now(), pct: serverPct };
+		}
+	}, [serverProgressPct, status]);
+
+	if (status !== "running") {
+		return null;
+	}
+	const anchor = anchorRef.current;
+	const dt = Math.max(0, now - anchor.at);
+	return (
+		anchor.pct +
+		(SOFT_PROGRESS_CAP_PCT - anchor.pct) * (1 - Math.exp(-dt / CREEP_TAU_MS))
+	);
+}
+
+/**
+ * Сводит реальный прогресс сервера, soft-интерполяцию и creep в одно «сырое»
+ * значение. Серверное задаёт нижнюю границу, остальные — плавность; берём max,
+ * чтобы прогресс не двигался назад. `null` → нечего показывать (queued / нет
+ * данных) → индетерминантный shimmer.
+ */
+function combineRawProgressPct(input: {
+	creepPct: number | null;
+	serverProgressPct: number | null;
+	softProgressPct: number | null;
+	status: RunProgressStatus;
+}): number | null {
+	const { creepPct, serverProgressPct, softProgressPct, status } = input;
+	if (status === "succeeded") {
+		return 100;
+	}
+	if (status === "queued") {
+		return null;
+	}
+	if (
+		serverProgressPct === null &&
+		softProgressPct === null &&
+		creepPct === null
+	) {
+		return null;
+	}
+	return Math.max(serverProgressPct ?? 0, softProgressPct ?? 0, creepPct ?? 0);
+}
+
+/**
+ * Делает итоговый процент монотонным: держит «пик» в state и не даёт бару
+ * откатываться назад между апдейтами. Сбрасывает пик при смене run id.
+ */
+function useMonotonicEffectivePct(input: {
+	combinedRaw: number | null;
+	progressMonotonicKey: string | null | undefined;
+	status: RunProgressStatus;
+}): number | null {
+	const { combinedRaw, progressMonotonicKey, status } = input;
+	const [peakProgressPct, setPeakProgressPct] = useState(0);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: сброс пика при смене run id
+	useEffect(() => {
+		setPeakProgressPct(0);
+	}, [progressMonotonicKey]);
+
+	useEffect(() => {
+		if (status === "succeeded") {
+			setPeakProgressPct(100);
+			return;
+		}
+		if (status === "queued") {
+			setPeakProgressPct(0);
+			return;
+		}
+		if (status === "failed") {
+			return;
+		}
+		if (typeof combinedRaw === "number") {
+			setPeakProgressPct((previous) => Math.max(previous, combinedRaw));
+		}
+	}, [combinedRaw, status]);
+
+	if (status === "succeeded") {
+		return 100;
+	}
+	if (status === "queued") {
+		return null;
+	}
+	if (typeof combinedRaw === "number") {
+		return Math.max(combinedRaw, peakProgressPct);
+	}
+	return null;
 }
 
 const PHASE_LABEL_RU: Record<ExecutionPhase, string> = {
@@ -514,51 +640,24 @@ export function RunProgressIndicator({
 	const elapsedLabel = formatElapsed(elapsedMs);
 	const serverProgressPct =
 		typeof progressPct === "number" ? progressPct : null;
-	// Серверное значение задаёт нижнюю границу (включая running floor 8%), soft —
-	// плавную интерполяцию между апдейтами. Берём max, чтобы прогресс никогда
-	// не двигался назад. В `queued` процента ещё нет (combinedRaw = null) →
-	// рисуем индетерминантный shimmer вместо застывшей нулевой полосы.
-	let combinedRaw: number | null = null;
-	if (status === "succeeded") {
-		combinedRaw = 100;
-	} else if (status === "queued") {
-		combinedRaw = null;
-	} else if (serverProgressPct !== null || softProgressPct !== null) {
-		combinedRaw = Math.max(serverProgressPct ?? 0, softProgressPct ?? 0);
-	}
+	const creepPct = useReanchoredCreepPct({
+		now,
+		progressMonotonicKey,
+		serverProgressPct,
+		status,
+	});
 
-	const [peakProgressPct, setPeakProgressPct] = useState(0);
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional — сброс пика при смене run id (линтер считает dep лишней)
-	useEffect(() => {
-		setPeakProgressPct(0);
-	}, [progressMonotonicKey]);
-
-	useEffect(() => {
-		if (status === "succeeded") {
-			setPeakProgressPct(100);
-			return;
-		}
-		if (status === "queued") {
-			setPeakProgressPct(0);
-			return;
-		}
-		if (status === "failed") {
-			return;
-		}
-		if (typeof combinedRaw === "number") {
-			setPeakProgressPct((previous) => Math.max(previous, combinedRaw));
-		}
-	}, [combinedRaw, status]);
-
-	let effectiveProgressPct: number | null = null;
-	if (status === "succeeded") {
-		effectiveProgressPct = 100;
-	} else if (status === "queued") {
-		effectiveProgressPct = null;
-	} else if (typeof combinedRaw === "number") {
-		effectiveProgressPct = Math.max(combinedRaw, peakProgressPct);
-	}
+	const combinedRaw = combineRawProgressPct({
+		creepPct,
+		serverProgressPct,
+		softProgressPct,
+		status,
+	});
+	const effectiveProgressPct = useMonotonicEffectivePct({
+		combinedRaw,
+		progressMonotonicKey,
+		status,
+	});
 	const phaseLabel = buildPhaseLabel(phase, queuePosition, etaMs, status);
 	const hasProgress = typeof effectiveProgressPct === "number";
 	const clamped = hasProgress

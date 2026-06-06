@@ -219,9 +219,10 @@ const ltx23FrameCountSchema = z
 	.int()
 	.min(17)
 	.max(361)
-	.refine((value) => (value - 1) % 8 === 0, {
-		message: "LTX 2.3 frame count must be 8n + 1",
-	});
+	// Вместо отказа на не-8n+1 тихо снапим к ближайшему валидному кадру.
+	// Иначе редактирование сценария («указать 24 кадра») падало с ошибкой
+	// валидации вместо разумного округления.
+	.transform((value) => snapLtx23FrameCount(value));
 
 /**
  * Параметры RunPod LTX 2.3 image-to-video workflow поверх pre-provisioned
@@ -265,9 +266,10 @@ const wan22FrameCountSchema = z
 	.int()
 	.min(17)
 	.max(121)
-	.refine((value) => (value - 1) % 4 === 0, {
-		message: "Wan 2.2 frame count must be 4n + 1",
-	});
+	// Тихий снап к ближайшему 4n+1 вместо ошибки валидации — чтобы любое
+	// введённое в редакторе число кадров (например 24) сохранялось и
+	// исполнялось как валидное (25), а не падало.
+	.transform((value) => snapWan22FrameCount(value));
 
 /**
  * Параметры RunPod Wan 2.2 image-to-video serverless workflow. Endpoint
@@ -926,13 +928,20 @@ function buildRunpodFooocusSdxlInput({
 	};
 }
 
+// LTX 2.3 требует кадры вида 8n+1. Снапим любое значение к ближайшему
+// валидному и клампим в [17, 361]. Используется и схемой (явный numFrames),
+// и normalize-путём (из duration*fps), чтобы UX-редактирование не падало:
+// например 24 → 25.
+function snapLtx23FrameCount(rawFrames: number): number {
+	const normalized = Math.round((rawFrames - 1) / 8) * 8 + 1;
+	return Math.min(361, Math.max(17, normalized));
+}
+
 function normalizeLtx23FrameCount(
 	durationSeconds: number,
 	fps: number
 ): number {
-	const rawFrames = Math.round(durationSeconds * fps);
-	const normalized = Math.round((rawFrames - 1) / 8) * 8 + 1;
-	return Math.min(361, Math.max(17, normalized));
+	return snapLtx23FrameCount(Math.round(durationSeconds * fps));
 }
 
 function buildRunpodLtx23Input({
@@ -972,13 +981,20 @@ function buildRunpodLtx23Input({
 	};
 }
 
+// Wan 2.2 требует кадры вида 4n+1. Снапим к ближайшему валидному и клампим
+// в [17, 121]. Общая математика для схемы (явный numFrames) и normalize-пути
+// (из duration*fps): редактирование «24 кадра» больше не падает, а тихо
+// округляется до 25.
+function snapWan22FrameCount(rawFrames: number): number {
+	const normalized = Math.round((rawFrames - 1) / 4) * 4 + 1;
+	return Math.min(121, Math.max(17, normalized));
+}
+
 function normalizeWan22FrameCount(
 	durationSeconds: number,
 	fps: number
 ): number {
-	const rawFrames = Math.round(durationSeconds * fps);
-	const normalized = Math.round((rawFrames - 1) / 4) * 4 + 1;
-	return Math.min(121, Math.max(17, normalized));
+	return snapWan22FrameCount(Math.round(durationSeconds * fps));
 }
 
 function buildRunpodWan22Input({
@@ -1226,13 +1242,13 @@ const runpodLtx23ParameterFields: readonly WorkflowField[] = [
 	},
 	{
 		description:
-			"Explicit frame count override. Must be 8n+1, for example 121, 241, or 361.",
+			"Explicit frame count override. Any value is auto-rounded to the nearest valid LTX 8n+1 count (e.g. 24 → 25, 120 → 121).",
 		key: "numFrames",
 		label: "Frames",
 		max: 361,
 		min: 17,
 		optional: true,
-		step: 8,
+		step: 1,
 		unit: "frames",
 		type: "number",
 	},
@@ -1336,13 +1352,13 @@ const runpodWan22ParameterFields: readonly WorkflowField[] = [
 	},
 	{
 		description:
-			"Explicit frame count override. Must be 4n+1, for example 81 or 121.",
+			"Explicit frame count override. Any value is auto-rounded to the nearest valid Wan 4n+1 count (e.g. 24 → 25, 80 → 81).",
 		key: "numFrames",
 		label: "Frames",
 		max: 121,
 		min: 17,
 		optional: true,
-		step: 4,
+		step: 1,
 		unit: "frames",
 		type: "number",
 	},

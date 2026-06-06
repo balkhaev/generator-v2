@@ -1241,18 +1241,6 @@ const runpodLtx23ParameterFields: readonly WorkflowField[] = [
 		type: "number",
 	},
 	{
-		description:
-			"Explicit frame count override. Any value is auto-rounded to the nearest valid LTX 8n+1 count (e.g. 24 → 25, 120 → 121).",
-		key: "numFrames",
-		label: "Frames",
-		max: 361,
-		min: 17,
-		optional: true,
-		step: 1,
-		unit: "frames",
-		type: "number",
-	},
-	{
 		description: "Output frames per second.",
 		key: "fps",
 		label: "FPS",
@@ -1348,18 +1336,6 @@ const runpodWan22ParameterFields: readonly WorkflowField[] = [
 		min: 1,
 		step: 0.5,
 		unit: "s",
-		type: "number",
-	},
-	{
-		description:
-			"Explicit frame count override. Any value is auto-rounded to the nearest valid Wan 4n+1 count (e.g. 24 → 25, 80 → 81).",
-		key: "numFrames",
-		label: "Frames",
-		max: 121,
-		min: 17,
-		optional: true,
-		step: 1,
-		unit: "frames",
 		type: "number",
 	},
 	{

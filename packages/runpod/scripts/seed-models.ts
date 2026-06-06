@@ -44,6 +44,17 @@ const NOISIFY_LORA_FILENAME = "noisify.safetensors";
 const NOISIFY_LORA_SOURCE_URL =
 	"https://hel1.your-objectstorage.com/generator/loras/external/external-7919a4063730eca7.safetensors";
 
+// Wan 2.2 «lightx2v» acceleration LoRA (Lightning I2V A14B, rank64 Seko V1,
+// 4-step distill). Имена на volume должны совпадать с
+// RUNPOD_WAN22_ACCEL_LORA_HIGH / _LOW на generator-worker. Public HF репо.
+const WAN22_LIGHTX2V_HIGH_FILENAME =
+	"wan22-lightx2v-i2v-high-4step.safetensors";
+const WAN22_LIGHTX2V_LOW_FILENAME = "wan22-lightx2v-i2v-low-4step.safetensors";
+const HF_LIGHTX2V =
+	"https://huggingface.co/lightx2v/Wan2.2-Lightning/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1";
+const WAN22_LIGHTX2V_HIGH_URL = `${HF_LIGHTX2V}/high_noise_model.safetensors`;
+const WAN22_LIGHTX2V_LOW_URL = `${HF_LIGHTX2V}/low_noise_model.safetensors`;
+
 const CONTAINER_DISK_GB = 20;
 const READY_TIMEOUT_MS = 120 * 60 * 1000;
 const READY_POLL_MS = 30 * 1000;
@@ -155,6 +166,17 @@ const MODEL_FILES: ModelFile[] = [
 		dir: "loras",
 		name: NOISIFY_LORA_FILENAME,
 		url: NOISIFY_LORA_SOURCE_URL,
+	},
+	// Wan 2.2 lightx2v acceleration LoRA (high/low noise, 4-step Lightning).
+	{
+		dir: "loras",
+		name: WAN22_LIGHTX2V_HIGH_FILENAME,
+		url: WAN22_LIGHTX2V_HIGH_URL,
+	},
+	{
+		dir: "loras",
+		name: WAN22_LIGHTX2V_LOW_FILENAME,
+		url: WAN22_LIGHTX2V_LOW_URL,
 	},
 ];
 
@@ -285,6 +307,25 @@ else
   curl -fSL -o "${noisifyTarget}.part" "${NOISIFY_LORA_SOURCE_URL}" 2>>/workspace/seed.log && mv "${noisifyTarget}.part" "${noisifyTarget}" && echo "[seed] noisify lora OK" | tee -a /workspace/seed.log || echo "[seed][WARN] noisify lora download failed" | tee -a /workspace/seed.log
 fi`;
 
+	// Wan 2.2 lightx2v accel LoRA — public HF. Guard по файлам; выполняется даже
+	// при sentinel, чтобы досеять на уже залитый том без полного пересида.
+	const lightHigh = `/workspace/ComfyUI/models/loras/${WAN22_LIGHTX2V_HIGH_FILENAME}`;
+	const lightLow = `/workspace/ComfyUI/models/loras/${WAN22_LIGHTX2V_LOW_FILENAME}`;
+	const lightx2vBlock = `
+mkdir -p /workspace/ComfyUI/models/loras
+if [ -s "${lightHigh}" ]; then
+  echo "[seed] lightx2v high present — skip" | tee -a /workspace/seed.log
+else
+  echo "[seed] lightx2v high" | tee -a /workspace/seed.log
+  ${aria}${hfAuth} -d /workspace/ComfyUI/models/loras -o ${WAN22_LIGHTX2V_HIGH_FILENAME} "${WAN22_LIGHTX2V_HIGH_URL}" || echo "[seed][WARN] lightx2v high failed" | tee -a /workspace/seed.log
+fi
+if [ -s "${lightLow}" ]; then
+  echo "[seed] lightx2v low present — skip" | tee -a /workspace/seed.log
+else
+  echo "[seed] lightx2v low" | tee -a /workspace/seed.log
+  ${aria}${hfAuth} -d /workspace/ComfyUI/models/loras -o ${WAN22_LIGHTX2V_LOW_FILENAME} "${WAN22_LIGHTX2V_LOW_URL}" || echo "[seed][WARN] lightx2v low failed" | tee -a /workspace/seed.log
+fi`;
+
 	return `
 set +e
 echo "[seed] start $(date -Is)" | tee /workspace/seed.log
@@ -299,6 +340,7 @@ else
 fi
 ${ltxSynthBlock}
 ${noisifyBlock}
+${lightx2vBlock}
 du -sh /workspace/ComfyUI/models/* 2>/dev/null | tee -a /workspace/seed.log
 cd /workspace
 exec python3 -m http.server ${SEEDER_PORT}

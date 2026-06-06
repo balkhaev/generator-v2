@@ -44,6 +44,32 @@ export interface StaticPodWorkflowOverrides {
 	};
 }
 
+function envOrUndefined(key: string): string | undefined {
+	return process.env[key]?.trim() || undefined;
+}
+
+/**
+ * Собирает static-pod overrides из env. Должен использоваться И в HTTP-app
+ * (`app.ts`), И в очереди-исполнителе (`worker.ts`) — именно воркер реально
+ * шлёт промпты в ComfyUI, поэтому без этого accel-LoRA (lightx2v) и кастомные
+ * имена моделей в проде игнорировались.
+ */
+export function resolveStaticPodOverridesFromEnv(): StaticPodWorkflowOverrides {
+	return {
+		flux: {
+			checkpointFilename: envOrUndefined("RUNPOD_FLUX_DEV_CHECKPOINT"),
+		},
+		wan: {
+			accelLoraHighFilename: envOrUndefined("RUNPOD_WAN22_ACCEL_LORA_HIGH"),
+			accelLoraLowFilename: envOrUndefined("RUNPOD_WAN22_ACCEL_LORA_LOW"),
+			highNoiseModelFilename: envOrUndefined("RUNPOD_WAN22_HIGH_NOISE_MODEL"),
+			lowNoiseModelFilename: envOrUndefined("RUNPOD_WAN22_LOW_NOISE_MODEL"),
+			textEncoderFilename: envOrUndefined("RUNPOD_WAN22_TEXT_ENCODER"),
+			vaeFilename: envOrUndefined("RUNPOD_WAN22_VAE"),
+		},
+	};
+}
+
 /**
  * Собирает три static-pod воркфлоу (LTX/WAN/Flux) с id, совпадающими с
  * ключами `__runpodWorkflow` из `@generator/workflows`

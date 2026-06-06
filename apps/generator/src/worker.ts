@@ -32,6 +32,7 @@ import {
 import {
 	buildStaticPodWorkflows,
 	resolveComfyPodBaseUrl,
+	resolveStaticPodOverridesFromEnv,
 } from "@/providers/static-pod-workflows";
 
 const LTX23_POD_NAME_PREFIX = "ltx23";
@@ -101,7 +102,10 @@ const runpodWorkflowsFromDb = await loadRunpodWorkflowsFromDb({
 
 function resolveInitialRunpodWorkflows(): AnyWorkflowDefinition[] {
 	if (comfyPodBaseUrl) {
-		return buildStaticPodWorkflows(comfyPodBaseUrl);
+		return buildStaticPodWorkflows(
+			comfyPodBaseUrl,
+			resolveStaticPodOverridesFromEnv()
+		);
 	}
 	if (runpodWorkflowsFromDb.length > 0) {
 		return runpodWorkflowsFromDb;

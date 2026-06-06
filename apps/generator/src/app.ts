@@ -48,6 +48,7 @@ import {
 import {
 	buildStaticPodWorkflows,
 	resolveComfyPodBaseUrl,
+	resolveStaticPodOverridesFromEnv,
 } from "@/providers/static-pod-workflows";
 
 function createStubInferenceClient(): InferenceClient {
@@ -171,25 +172,10 @@ function tryBuildStaticPodEnvWorkflows(): AnyWorkflowDefinition[] | null {
 	if (!comfyPodBaseUrl) {
 		return null;
 	}
-	return buildStaticPodWorkflows(comfyPodBaseUrl, {
-		flux: {
-			checkpointFilename:
-				process.env.RUNPOD_FLUX_DEV_CHECKPOINT?.trim() || undefined,
-		},
-		wan: {
-			accelLoraHighFilename:
-				process.env.RUNPOD_WAN22_ACCEL_LORA_HIGH?.trim() || undefined,
-			accelLoraLowFilename:
-				process.env.RUNPOD_WAN22_ACCEL_LORA_LOW?.trim() || undefined,
-			highNoiseModelFilename:
-				process.env.RUNPOD_WAN22_HIGH_NOISE_MODEL?.trim() || undefined,
-			lowNoiseModelFilename:
-				process.env.RUNPOD_WAN22_LOW_NOISE_MODEL?.trim() || undefined,
-			textEncoderFilename:
-				process.env.RUNPOD_WAN22_TEXT_ENCODER?.trim() || undefined,
-			vaeFilename: process.env.RUNPOD_WAN22_VAE?.trim() || undefined,
-		},
-	});
+	return buildStaticPodWorkflows(
+		comfyPodBaseUrl,
+		resolveStaticPodOverridesFromEnv()
+	);
 }
 
 function pushWanFluxServerlessWorkflows(workflows: AnyWorkflowDefinition[]) {

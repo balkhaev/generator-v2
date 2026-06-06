@@ -139,7 +139,22 @@ export default function MediaStrip({
 									{isVideo ? <span>video</span> : null}
 								</div>
 							</TooltipTrigger>
-							<TooltipContent>{asset.label}</TooltipContent>
+							<TooltipContent className="grid max-w-[16rem] gap-1.5">
+								<span className="truncate">{asset.label}</span>
+								{isPlaceholder ? (
+									<RunProgressIndicator
+										etaMs={asset.etaMs}
+										expectedDurationMs={asset.expectedDurationMs}
+										phase={asset.phase}
+										progressMonotonicKey={asset.runId}
+										progressPct={asset.progressPct}
+										queuePosition={asset.queuePosition}
+										runStartedAt={asset.createdAt}
+										status={asset.status}
+										variant="inline"
+									/>
+								) : null}
+							</TooltipContent>
 						</Tooltip>
 					);
 				})}

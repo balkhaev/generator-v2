@@ -54,7 +54,7 @@ export interface RunProgressIndicatorProps {
 }
 
 const SOFT_PROGRESS_CAP_PCT = 90;
-const SOFT_PROGRESS_TICK_MS = 500;
+const TICK_MS = 500;
 
 /**
  * Та же формула, что у backend'а в `derivePhaseAndProgress` — асимптотический
@@ -80,37 +80,26 @@ function parseRunStartedAt(
 }
 
 /**
- * Локально пересчитывает soft-progress каждые ~500ms пока ран в `running`.
- * Возвращает `null`, если интерполировать нечем (нет startedAt/expected или
- * статус терминальный).
+ * Один общий таймер: тикает каждые ~500ms, пока ран в `queued`/`running`.
+ * Возвращает текущее `Date.now()`, на базе которого индикатор сам считает
+ * прошедшее время (elapsed) и soft-progress интерполяцию между апдейтами.
+ * Для терминальных статусов таймер выключен, чтобы не крутить лишние ререндеры.
  */
-function useSoftProgressPct(input: {
-	expectedDurationMs: number | null | undefined;
-	runStartedAt: Date | string | null | undefined;
-	status: RunProgressStatus;
-}): number | null {
-	const startedAtMs = parseRunStartedAt(input.runStartedAt);
-	const expectedMs = input.expectedDurationMs ?? null;
-	const canTick =
-		input.status === "running" && startedAtMs !== null && (expectedMs ?? 0) > 0;
-
+function useNowTicker(active: boolean): number {
 	const [now, setNow] = useState<number>(() => Date.now());
 
 	useEffect(() => {
-		if (!canTick) {
+		if (!active) {
 			return;
 		}
 		setNow(Date.now());
 		const handle = setInterval(() => {
 			setNow(Date.now());
-		}, SOFT_PROGRESS_TICK_MS);
+		}, TICK_MS);
 		return () => clearInterval(handle);
-	}, [canTick]);
+	}, [active]);
 
-	if (!canTick || startedAtMs === null || expectedMs === null) {
-		return null;
-	}
-	return computeSoftProgressPct(now - startedAtMs, expectedMs);
+	return now;
 }
 
 const PHASE_LABEL_RU: Record<ExecutionPhase, string> = {
@@ -140,6 +129,23 @@ function formatEta(etaMs: number | null | undefined): string | null {
 		return `~${minutes}м ${seconds}с`;
 	}
 	return `~${minutes}м`;
+}
+
+/** Прошедшее время в формате `m:ss` (или `h:mm:ss` для долгих ранов). */
+function formatElapsed(elapsedMs: number | null): string | null {
+	if (elapsedMs === null || elapsedMs < 0) {
+		return null;
+	}
+	const totalSeconds = Math.floor(elapsedMs / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+	const paddedSeconds = seconds.toString().padStart(2, "0");
+	if (hours > 0) {
+		const paddedMinutes = minutes.toString().padStart(2, "0");
+		return `${hours}:${paddedMinutes}:${paddedSeconds}`;
+	}
+	return `${minutes}:${paddedSeconds}`;
 }
 
 function getStatusTone(status: RunProgressStatus) {
@@ -208,6 +214,17 @@ function PercentLabel({
 	return (
 		<span className={cn("font-medium tabular-nums leading-none", className)}>
 			{Math.round(progressPct)}%
+		</span>
+	);
+}
+
+function ElapsedLabel({ elapsed }: { elapsed: string | null }) {
+	if (!elapsed) {
+		return null;
+	}
+	return (
+		<span className="font-normal text-muted-foreground/70 tabular-nums leading-none">
+			{elapsed}
 		</span>
 	);
 }
@@ -322,6 +339,7 @@ function RunProgressCircleVariant({
 function RunProgressInlineVariant({
 	className,
 	clamped,
+	elapsed,
 	hasProgress,
 	hidePercent,
 	phaseLabel,
@@ -330,6 +348,7 @@ function RunProgressInlineVariant({
 }: {
 	className?: string;
 	clamped: number;
+	elapsed: string | null;
 	hasProgress: boolean;
 	hidePercent?: boolean;
 	phaseLabel: string;
@@ -351,6 +370,7 @@ function RunProgressInlineVariant({
 			{hasProgress && !hidePercent ? (
 				<PercentLabel progressPct={clamped} />
 			) : null}
+			<ElapsedLabel elapsed={elapsed} />
 		</span>
 	);
 }
@@ -358,6 +378,7 @@ function RunProgressInlineVariant({
 function RunProgressBarVariant({
 	className,
 	clamped,
+	elapsed,
 	errorSummary,
 	hasProgress,
 	hidePercent,
@@ -369,6 +390,7 @@ function RunProgressBarVariant({
 }: {
 	className?: string;
 	clamped: number;
+	elapsed: string | null;
 	errorSummary?: string | null;
 	hasProgress: boolean;
 	hidePercent?: boolean;
@@ -378,6 +400,7 @@ function RunProgressBarVariant({
 	status: RunProgressStatus;
 	tone: ReturnType<typeof getStatusTone>;
 }) {
+	const isRunning = status === "running";
 	return (
 		<div className={cn("grid gap-1.5", className)}>
 			{hasProgress ? (
@@ -394,11 +417,15 @@ function RunProgressBarVariant({
 				>
 					<div
 						className={cn(
-							"absolute inset-y-0 left-0 transition-[width] duration-500 ease-out",
+							"absolute inset-y-0 left-0 overflow-hidden rounded-full transition-[width] duration-500 ease-out",
 							tone.fill
 						)}
 						style={{ width: `${clamped}%` }}
-					/>
+					>
+						{isRunning ? (
+							<div className="absolute inset-y-0 left-0 w-full animate-[run-progress-sheen_1.6s_linear_infinite] bg-gradient-to-r from-transparent via-white/35 to-transparent" />
+						) : null}
+					</div>
 				</div>
 			) : (
 				<ShimmerFallback />
@@ -410,11 +437,14 @@ function RunProgressBarVariant({
 						tone.text
 					)}
 				>
-					<span className="flex items-center gap-1.5 font-medium">
+					<span className="flex min-w-0 items-center gap-1.5 font-medium">
 						<StatusIcon status={status} />
-						{phaseLabel}
+						<span className="truncate">{phaseLabel}</span>
 					</span>
-					{hidePercent ? null : <PercentLabel progressPct={clamped} />}
+					<span className="flex shrink-0 items-center gap-1.5">
+						<ElapsedLabel elapsed={elapsed} />
+						{hidePercent ? null : <PercentLabel progressPct={clamped} />}
+					</span>
 				</div>
 			)}
 			{lastLogLine && status !== "succeeded" ? (
@@ -436,10 +466,14 @@ function RunProgressBarVariant({
  * полям run'а (`progressPct`, `phase`, `etaMs`, `queuePosition`, `lastLogLine`).
  *
  * Дизайн-логика:
- *   - В `queued` всегда показываем 0%, без shimmer/soft-progress.
- *   - Если `progressPct` есть (real или soft-progress) — рисуем заполнение.
- *   - Если нет — рисуем shimmer-плейсхолдер вместо нулевой полосы, чтобы UI
- *     не выглядел застывшим.
+ *   - В `queued` процента ещё нет — рисуем индетерминантный shimmer (полоса)
+ *     или спиннер (circle), чтобы было видно «ждём очередь», а не застывший 0%.
+ *   - Если `progressPct` есть (real или soft-progress) — рисуем заполнение
+ *     с бегущим бликом (sheen) поверх, пока ран в `running`.
+ *   - Пока ран активен, тикает elapsed-таймер (m:ss) — постоянная обратная
+ *     связь, даже когда процент между апдейтами стоит на месте.
+ *   - Если прогресса нет — рисуем shimmer-плейсхолдер вместо нулевой полосы,
+ *     чтобы UI не выглядел застывшим.
  *   - Цвет и иконка определяются `status`, а не `phase`: это самые жёсткие
  *     инварианты, которые приходят из сервера всегда.
  *   - Подпись фазы (`PHASE_LABEL_RU[phase]`) и ETA — необязательные, спрятать
@@ -465,21 +499,30 @@ export function RunProgressIndicator({
 	variant = "bar",
 }: RunProgressIndicatorProps) {
 	const tone = getStatusTone(status);
-	const softProgressPct = useSoftProgressPct({
-		expectedDurationMs,
-		runStartedAt,
-		status,
-	});
+	const isActive = status === "running" || status === "queued";
+	const now = useNowTicker(isActive);
+	const startedAtMs = parseRunStartedAt(runStartedAt);
+	const elapsedMs =
+		isActive && startedAtMs !== null ? Math.max(0, now - startedAtMs) : null;
+	const expectedMs = expectedDurationMs ?? null;
+	// Soft-progress интерполяция между Kafka/SSE-апдейтами — только в `running`
+	// и только если знаем ожидаемую длительность ран'а.
+	const softProgressPct =
+		status === "running" && elapsedMs !== null && (expectedMs ?? 0) > 0
+			? computeSoftProgressPct(elapsedMs, expectedMs as number)
+			: null;
+	const elapsedLabel = formatElapsed(elapsedMs);
 	const serverProgressPct =
 		typeof progressPct === "number" ? progressPct : null;
 	// Серверное значение задаёт нижнюю границу (включая running floor 8%), soft —
 	// плавную интерполяцию между апдейтами. Берём max, чтобы прогресс никогда
-	// не двигался назад. Для terminal-статусов soft игнорируем (хук вернёт null).
+	// не двигался назад. В `queued` процента ещё нет (combinedRaw = null) →
+	// рисуем индетерминантный shimmer вместо застывшей нулевой полосы.
 	let combinedRaw: number | null = null;
 	if (status === "succeeded") {
 		combinedRaw = 100;
 	} else if (status === "queued") {
-		combinedRaw = 0;
+		combinedRaw = null;
 	} else if (serverProgressPct !== null || softProgressPct !== null) {
 		combinedRaw = Math.max(serverProgressPct ?? 0, softProgressPct ?? 0);
 	}
@@ -512,7 +555,7 @@ export function RunProgressIndicator({
 	if (status === "succeeded") {
 		effectiveProgressPct = 100;
 	} else if (status === "queued") {
-		effectiveProgressPct = 0;
+		effectiveProgressPct = null;
 	} else if (typeof combinedRaw === "number") {
 		effectiveProgressPct = Math.max(combinedRaw, peakProgressPct);
 	}
@@ -542,6 +585,7 @@ export function RunProgressIndicator({
 			<RunProgressInlineVariant
 				clamped={clamped}
 				className={className}
+				elapsed={elapsedLabel}
 				hasProgress={hasProgress}
 				hidePercent={hidePercent}
 				phaseLabel={phaseLabel}
@@ -555,6 +599,7 @@ export function RunProgressIndicator({
 		<RunProgressBarVariant
 			clamped={clamped}
 			className={className}
+			elapsed={elapsedLabel}
 			errorSummary={errorSummary}
 			hasProgress={hasProgress}
 			hidePercent={hidePercent}

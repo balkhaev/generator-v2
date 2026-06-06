@@ -150,3 +150,22 @@
 		transform: rotate(360deg);
 	}
 }
+
+/* Бегущий блик поверх заполнения полосы — даёт ощущение «живого» прогресса,
+   даже когда процент между Kafka/SSE-апдейтами стоит на месте. */
+@keyframes run-progress-sheen {
+	0% {
+		transform: translateX(-100%);
+	}
+	100% {
+		transform: translateX(200%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.animate-\[run-progress-sheen_1\.6s_linear_infinite\],
+	.animate-\[run-progress-shimmer_1\.4s_ease-in-out_infinite\],
+	.animate-\[run-progress-spin_2s_linear_infinite\] {
+		animation: none !important;
+	}
+}

@@ -41,6 +41,35 @@ end
 return removed
 `;
 
+// Capacity-bounded release. Purges expired entries, removes any prior entry for
+// the same podId (idempotent refresh), then admits the new entry only if the
+// live bucket size is below the per-workflow cap. Returns 1 when admitted, 0
+// when the cap is reached (caller must terminate the pod). cap <= 0 = unbounded.
+const RELEASE_LUA = `
+local now = tonumber(ARGV[1])
+local expiresAt = tonumber(ARGV[2])
+local member = ARGV[3]
+local podId = ARGV[4]
+local cap = tonumber(ARGV[5])
+local bucketTtlMs = tonumber(ARGV[6])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', '(' .. tostring(now))
+local isReRelease = false
+local members = redis.call('ZRANGE', KEYS[1], 0, -1)
+for _, m in ipairs(members) do
+  local ok, parsed = pcall(cjson.decode, m)
+  if ok and parsed and parsed.podId == podId then
+    redis.call('ZREM', KEYS[1], m)
+    isReRelease = true
+  end
+end
+if (not isReRelease) and cap > 0 and redis.call('ZCARD', KEYS[1]) >= cap then
+  return 0
+end
+redis.call('ZADD', KEYS[1], expiresAt, member)
+redis.call('PEXPIRE', KEYS[1], bucketTtlMs)
+return 1
+`;
+
 const SCAN_PAGE_SIZE = 100;
 
 function poolKey(workflowId: string): string {
@@ -78,7 +107,12 @@ function parseEntry(raw: string): WarmPodEntry | null {
  *   (ms since epoch). One sorted set per workflow keeps claim O(log N) and
  *   trivially supports lazy purge via `ZREMRANGEBYSCORE -inf <now>`.
  */
-export function createRedisWarmPodPool(redis: Redis): WarmPodPool {
+export function createRedisWarmPodPool(
+	redis: Redis,
+	options?: { maxPerWorkflow?: number }
+): WarmPodPool {
+	// <= 0 disables the cap (unbounded), matching the Lua contract.
+	const cap = options?.maxPerWorkflow ?? 0;
 	return {
 		async claim(workflowId) {
 			const raw = (await redis.eval(
@@ -122,21 +156,29 @@ export function createRedisWarmPodPool(redis: Redis): WarmPodPool {
 			return out;
 		},
 		async release(workflowId, entry, ttlMs) {
-			const key = poolKey(workflowId);
-			const expiresAt = Date.now() + ttlMs;
+			const now = Date.now();
+			const expiresAt = now + ttlMs;
 			const member = JSON.stringify({
 				networkVolumeId: entry.networkVolumeId,
 				password: entry.password,
 				podId: entry.podId,
 			});
-			// Refresh the score for an existing entry (idempotent), then make sure
-			// the bucket TTL outlives the latest entry so stale workflow keys
-			// don't pile up after pool empties.
-			await redis
-				.multi()
-				.zadd(key, expiresAt, member)
-				.pexpire(key, ttlMs + 60_000)
-				.exec();
+			// Atomically refresh-or-admit under the per-workflow cap, keeping the
+			// bucket TTL ahead of the latest entry so stale workflow keys don't
+			// pile up after the pool empties. Returns 1 when admitted, 0 when the
+			// cap is reached.
+			const admitted = (await redis.eval(
+				RELEASE_LUA,
+				1,
+				poolKey(workflowId),
+				now.toString(),
+				expiresAt.toString(),
+				member,
+				entry.podId,
+				cap.toString(),
+				(ttlMs + 60_000).toString()
+			)) as number;
+			return admitted === 1;
 		},
 	};
 }

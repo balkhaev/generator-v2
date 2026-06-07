@@ -37,6 +37,41 @@ import {
 
 const LTX23_POD_NAME_PREFIX = "ltx23";
 const REAPER_INTERVAL_MS = 60_000;
+// Backstop поверх (timeout + keepAlive) самого долгого disposable-pod
+// workflow'а: reaper никогда не должен прервать ещё работающий inference, даже
+// если worker крашнулся между api.create и registry.add.
+const REAPER_SAFETY_BACKSTOP_MS = 5 * 60 * 1000;
+// Если у workflow не задан timeout, считаем его «долгим», чтобы reaper не убил
+// in-flight под раньше времени.
+const DEFAULT_DISPOSABLE_POD_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Собирает name-префиксы и безопасный возраст для reaper'а по ВСЕМ
+ * disposable-pod workflow'ам (`mode === "pod"` без `comfyBaseUrl` —
+ * persistent static-pod'ы reaper трогать не должен). Раньше reaper знал только
+ * про `ltx23`, из-за чего любой другой disposable-pod workflow (например
+ * admin-managed из БД с собственным префиксом) утекал орфанами и жёг деньги.
+ */
+function collectDisposablePodReaperConfig(
+	workflows: readonly AnyWorkflowDefinition[]
+): { prefixes: string[]; safetyAgeMs: number } {
+	const prefixes = new Set<string>();
+	let maxLifecycleMs = 0;
+	for (const workflow of workflows) {
+		if (workflow.mode !== "pod" || workflow.pod.comfyBaseUrl) {
+			continue;
+		}
+		prefixes.add(workflow.pod.namePrefix ?? workflow.id);
+		const timeoutMs =
+			workflow.pod.timeoutMs ?? DEFAULT_DISPOSABLE_POD_TIMEOUT_MS;
+		const keepAliveMs = workflow.pod.keepAliveMs ?? 0;
+		maxLifecycleMs = Math.max(maxLifecycleMs, timeoutMs + keepAliveMs);
+	}
+	return {
+		prefixes: [...prefixes],
+		safetyAgeMs: maxLifecycleMs + REAPER_SAFETY_BACKSTOP_MS,
+	};
+}
 
 import {
 	createProviderArtifactDownloadOptions,
@@ -169,7 +204,11 @@ const runpodRedis =
 		? createRedisConnection(redisUrl)
 		: null;
 
-const warmPool = runpodRedis ? createRedisWarmPodPool(runpodRedis) : null;
+const warmPool = runpodRedis
+	? createRedisWarmPodPool(runpodRedis, {
+			maxPerWorkflow: env.RUNPOD_WARM_POOL_MAX_PER_WORKFLOW,
+		})
+	: null;
 const activeRegistry = runpodRedis
 	? createRedisActivePodRegistry(runpodRedis)
 	: null;
@@ -199,28 +238,31 @@ const runpodService =
 // защиту аж до safetyAgeMs — и убивало бы pods во время cold start'а или
 // длинного inference'а. Registry — это явная гарантия "пока worker
 // держит pod, reaper его не трогает".
+const disposablePodReaperConfig =
+	collectDisposablePodReaperConfig(runpodWorkflows);
 const reaper =
-	runpodService && warmPool && env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS > 0
+	runpodService && warmPool && disposablePodReaperConfig.prefixes.length > 0
 		? createPodReaper({
 				activeRegistry: activeRegistry ?? undefined,
 				api: runpodService.podsApi,
 				intervalMs: REAPER_INTERVAL_MS,
 				logger: console,
-				namePrefixes: [LTX23_POD_NAME_PREFIX],
+				// Все disposable-pod префиксы (ltx23 + любые admin-managed из БД),
+				// чтобы ни один движок не оставлял неучтённых орфанов.
+				namePrefixes: disposablePodReaperConfig.prefixes,
 				// Active registry уже защищает pod пока worker помнит про него,
 				// поэтому safetyAgeMs здесь — backstop на случай worker-crash'а
-				// между api.create и registry.add. Запас должен быть > worst-case
-				// cold start + inference, но без registry он был бы критичен.
-				safetyAgeMs:
-					env.RUNPOD_LTX23_POD_TIMEOUT_MS +
-					env.RUNPOD_LTX23_POD_KEEP_ALIVE_MS +
-					5 * 60 * 1000,
+				// между api.create и registry.add. Считается как максимум
+				// (timeout + keepAlive) по всем disposable workflow'ам.
+				safetyAgeMs: disposablePodReaperConfig.safetyAgeMs,
 				warmPool,
 			})
 		: null;
 if (reaper) {
 	console.info("generator.worker.runpod-pod-reaper.enabled", {
 		intervalMs: REAPER_INTERVAL_MS,
+		prefixes: disposablePodReaperConfig.prefixes,
+		safetyAgeMs: disposablePodReaperConfig.safetyAgeMs,
 	});
 }
 

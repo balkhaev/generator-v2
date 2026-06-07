@@ -277,7 +277,7 @@ export function createPodEngine<TInput, TOutput>(
 			return;
 		}
 		try {
-			await warmPool.release(
+			const pooled = await warmPool.release(
 				workflow.id,
 				{
 					networkVolumeId: ctx.networkVolumeId,
@@ -286,6 +286,18 @@ export function createPodEngine<TInput, TOutput>(
 				},
 				keepAliveMs
 			);
+			if (!pooled) {
+				// Warm pool is at capacity for this workflow — terminate instead of
+				// letting idle pods pile up beyond the cap (each one is billed
+				// per-second). cleanupPod also drops the active-registry entry.
+				logger?.info?.("runpod-pod.warm-pool-cap-reached", {
+					podId: ctx.podId,
+					requestId: ctx.requestId,
+					workflowId: workflow.id,
+				});
+				await cleanupPod(ctx.podId, "warm-pool-cap-reached", ctx.requestId);
+				return;
+			}
 			// Pod ownership transfers from "active" → "warm". Reaper now protects
 			// it via the warm-pool entry, so drop the active registry record to
 			// avoid double-counting/double-protecting beyond keepAliveMs.

@@ -253,6 +253,13 @@ const serverSchema = {
 		.min(0)
 		.default(10 * 60 * 1000),
 	/**
+	 * Максимум idle-подов, которые warm-pool держит на один workflow. Защита от
+	 * burst-роста: если за keepAlive-окно завершилось больше подов, чем cap,
+	 * лишние терминируются сразу, а не висят оплачиваемыми «про запас».
+	 * Дефолт — 3 (достаточно, чтобы покрыть burst переиспользования).
+	 */
+	RUNPOD_WARM_POOL_MAX_PER_WORKFLOW: z.coerce.number().int().min(1).default(3),
+	/**
 	 * JSON-массив network-volume'ов с GPU-типами, доступными в DC volume'а.
 	 * `[{"id":"vol1","label":"EU-RO-1","gpus":["NVIDIA RTX A6000","NVIDIA B200"]}]`.
 	 * Каждый volume привязан к одному DC; engine перебирает их по очереди при

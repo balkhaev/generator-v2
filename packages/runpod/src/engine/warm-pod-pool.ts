@@ -41,12 +41,19 @@ export interface WarmPodPool {
 	/**
 	 * Put `entry` into the pool with `ttlMs` lifetime. After the TTL elapses,
 	 * subsequent `claim`s must skip it as if it were never released.
+	 *
+	 * Returns `true` when the pod was admitted to the pool, `false` when the
+	 * per-workflow capacity is already reached. On `false` the caller MUST
+	 * terminate the pod itself — otherwise a burst of finished pods would keep
+	 * piling up idle pods (each one billed per-second) far beyond the intended
+	 * warm-pool size. Re-releasing an already-pooled pod (idempotent refresh)
+	 * always returns `true`.
 	 */
 	release(
 		workflowId: string,
 		entry: WarmPodEntry,
 		ttlMs: number
-	): Promise<void>;
+	): Promise<boolean>;
 }
 
 /**
@@ -151,7 +158,8 @@ const NOOP_WARM_POOL: WarmPodPool = {
 		return Promise.resolve([]);
 	},
 	release() {
-		return Promise.resolve();
+		// A noop pool never keeps pods warm, so it never admits a release.
+		return Promise.resolve(false);
 	},
 };
 
@@ -253,9 +261,12 @@ export function createInMemoryActivePodRegistry(options?: {
  * Entries past their `expiresAt` are skipped on `claim` and dropped lazily.
  */
 export function createInMemoryWarmPodPool(options?: {
+	/** Max live idle pods kept per workflow. `undefined` = unbounded. */
+	maxPerWorkflow?: number;
 	now?: () => number;
 }): WarmPodPool {
 	const now = options?.now ?? Date.now;
+	const maxPerWorkflow = options?.maxPerWorkflow;
 	const buckets = new Map<
 		string,
 		Array<{ entry: WarmPodEntry; expiresAt: number }>
@@ -314,11 +325,20 @@ export function createInMemoryWarmPodPool(options?: {
 			return Promise.resolve(out);
 		},
 		release(workflowId, entry, ttlMs) {
+			purgeExpired(workflowId);
 			const bucket = buckets.get(workflowId) ?? [];
 			const without = bucket.filter((b) => b.entry.podId !== entry.podId);
+			const isReRelease = without.length !== bucket.length;
+			if (
+				!isReRelease &&
+				maxPerWorkflow !== undefined &&
+				without.length >= maxPerWorkflow
+			) {
+				return Promise.resolve(false);
+			}
 			without.push({ entry, expiresAt: now() + ttlMs });
 			buckets.set(workflowId, without);
-			return Promise.resolve();
+			return Promise.resolve(true);
 		},
 	};
 }

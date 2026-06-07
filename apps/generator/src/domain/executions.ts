@@ -13,6 +13,13 @@ import {
 } from "@generator/workflows";
 import { z } from "zod";
 
+import {
+	classifyInferenceError,
+	deriveProvider,
+	emitInferenceMetric,
+	type InferenceMetricEvent,
+	type InferenceMetricName,
+} from "@/observability/inference-metrics";
 import type {
 	InferenceClient,
 	InferenceJob,
@@ -372,6 +379,38 @@ export class ExecutionService {
 		this.eventPublisher = eventPublisher;
 	}
 
+	private emitMetric(
+		execution: ExecutionEntity,
+		metric: InferenceMetricName,
+		extra?: Partial<InferenceMetricEvent>
+	) {
+		emitInferenceMetric(this.logger, {
+			expectedMs: getWorkflowExpectedDurationMs(execution.workflowKey),
+			metric,
+			provider: deriveProvider(execution.workflowKey),
+			workflowKey: execution.workflowKey,
+			...extra,
+		});
+	}
+
+	private emitTerminalMetric(
+		execution: ExecutionEntity,
+		job: Pick<InferenceJob, "status" | "errorSummary">,
+		timing: { durationMs: number; queueWaitMs?: number }
+	) {
+		if (job.status !== "succeeded" && job.status !== "failed") {
+			return;
+		}
+		this.emitMetric(execution, job.status, {
+			durationMs: timing.durationMs,
+			queueWaitMs: timing.queueWaitMs,
+			status: job.status,
+			...(job.status === "failed"
+				? { errorClass: classifyInferenceError(job.errorSummary) }
+				: {}),
+		});
+	}
+
 	private buildSubmissionPayload(
 		execution: ExecutionEntity,
 		workflow: NonNullable<ReturnType<typeof getWorkflowDefinition>>
@@ -424,6 +463,11 @@ export class ExecutionService {
 		const errorSummary = error.message;
 		const updated = await this.repository.updateExecution(execution.id, {
 			errorSummary,
+			status: "failed",
+		});
+		this.emitMetric(execution, "failed", {
+			durationMs: Date.now() - execution.createdAt.getTime(),
+			errorClass: classifyInferenceError(errorSummary),
 			status: "failed",
 		});
 		this.logger.info("generator.execution.non-retryable-failed", {
@@ -831,6 +875,11 @@ export class ExecutionService {
 					providerJobId: submission.jobId,
 					status: "failed",
 				});
+				this.emitMetric(execution, "failed", {
+					durationMs: Date.now() - execution.createdAt.getTime(),
+					errorClass: "persist_failed",
+					status: "failed",
+				});
 				if (failed) {
 					await this.dispatchExecutionCallback(failed);
 				}
@@ -845,6 +894,11 @@ export class ExecutionService {
 					providerJobId: submission.jobId,
 					status: submission.status,
 				}
+			);
+			this.emitTerminalMetric(
+				execution,
+				{ errorSummary: job.errorSummary, status: submission.status },
+				{ durationMs: Date.now() - execution.createdAt.getTime() }
 			);
 			if (finalExecution) {
 				await this.dispatchExecutionCallback(finalExecution);
@@ -867,6 +921,10 @@ export class ExecutionService {
 		if (!updatedExecution) {
 			return;
 		}
+		this.emitMetric(execution, "submitted", {
+			queueWaitMs: 0,
+			status: submission.status,
+		});
 		await this.dispatchExecutionCallback(updatedExecution);
 
 		// Поднимаем live SSE-стрим — live-апдейты приходят моментально, без
@@ -973,6 +1031,11 @@ export class ExecutionService {
 				errorSummary: persisted.errorSummary,
 				status: "failed",
 			});
+			this.emitMetric(execution, "failed", {
+				durationMs: totalLifetimeMs,
+				errorClass: "persist_failed",
+				status: "failed",
+			});
 			if (failed) {
 				await this.dispatchExecutionCallback(failed);
 			}
@@ -1005,6 +1068,12 @@ export class ExecutionService {
 						status: "failed",
 					}
 				);
+				this.emitMetric(execution, "failed", {
+					durationMs: totalLifetimeMs,
+					errorClass: "stuck_queue",
+					queueWaitMs: queuedForMs,
+					status: "failed",
+				});
 				if (failedExecution) {
 					await this.dispatchExecutionCallback(failedExecution);
 				}
@@ -1036,6 +1105,10 @@ export class ExecutionService {
 					status: resubmission.status,
 				}
 			);
+			this.emitMetric(execution, "resubmitted", {
+				queueWaitMs: queuedForMs,
+				status: resubmission.status,
+			});
 			if (resubmittedExecution) {
 				await this.dispatchExecutionCallback(resubmittedExecution);
 			}
@@ -1064,6 +1137,12 @@ export class ExecutionService {
 		if (!updatedExecution) {
 			return;
 		}
+		// We return early above if the execution was already terminal, so a
+		// terminal status here is always the transition — emit exactly once.
+		this.emitTerminalMetric(execution, job, {
+			durationMs: totalLifetimeMs,
+			queueWaitMs: queuedForMs,
+		});
 		if (
 			shouldDispatchCallback ||
 			job.status === "succeeded" ||

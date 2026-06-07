@@ -11,6 +11,18 @@ const metaResponsePatterns = [
 	/hard intent rules/iu,
 	/actually,\s*let's re-read/iu,
 	/\bi will write the prompt\b/iu,
+	// Reasoning models (notably Grok) sometimes ignore reasoning.enabled=false
+	// and dump their chain-of-thought into the content: bold step headers
+	// ("**Prompt Construction:**", "**Drafting:**", "**Final Prompt:**"),
+	// meta-narration about the system instructions, and the real prompt often
+	// truncated by max_tokens at the very end. Detect the narration so it throws
+	// and falls back to a non-reasoning vision model instead of leaking.
+	/\*\*\s*(prompt construction|drafting|final polish|final prompt|refining(?:\s+for\s+constraints)?|subject|action|timeline|camera|lighting)\s*:?\s*\*\*/iu,
+	/\bper the system (instructions|rules)\b/iu,
+	/\bi (will|must|need to|am going to)\s+(construct|build|draft|now write|write the prompt|create the prompt)\b/iu,
+	/\bthe (prompt|brief) (provided|you provided|you gave)\b/iu,
+	/\bwait,?\s+the instructions?\b/iu,
+	/(^|\n)\s*\**\s*(final prompt|final polish|prompt construction|refining for constraints)\s*:?/iu,
 ] as const;
 
 function isMetaResponse(value: string): boolean {

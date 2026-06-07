@@ -33,6 +33,14 @@ describe("prompt enhance output cleanup", () => {
 		).toThrow("refused by the model");
 	});
 
+	it("rejects reasoning chain-of-thought dumps instead of leaking them", () => {
+		const reasoningDump =
+			"The prompt provided is in Russian and describes an action. Per the system instructions, I must preserve the action.\n\n**Prompt Construction:**\n* Subject: blonde woman\n* Action: jumps\n\n**Drafting:**\nA blonde woman in lingerie on a bed.\n\n**Final Prompt:**\nA blonde woman in purple floral lingerie lying on a messy bed.";
+		expect(() => cleanPromptOutput(reasoningDump)).toThrow(
+			"Prompt enhance returned analysis"
+		);
+	});
+
 	it("does not flag legitimate comma-separated prompts as refusals", () => {
 		const prompt =
 			"nude woman standing on a wooden deck, sepia tones, soft window light, 85mm lens, shallow depth of field, fine-art photography";

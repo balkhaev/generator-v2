@@ -1,3 +1,7 @@
+import type {
+	AdorelyImportMode,
+	AdorelyImportResponse,
+} from "@generator/contracts/integrations";
 import { Hono } from "hono";
 import { z } from "zod";
 
@@ -7,10 +11,14 @@ import {
 	importAdorelyCompanions,
 } from "@/importers/adorely";
 
+const ADORELY_IMPORT_MODES = [
+	"preview",
+	"import",
+	"import-and-start-training",
+] as const satisfies readonly AdorelyImportMode[];
+
 const adorelyImportSchema = z.object({
-	mode: z
-		.enum(["preview", "import", "import-and-start-training"])
-		.default("preview"),
+	mode: z.enum(ADORELY_IMPORT_MODES).default("preview"),
 	targetDatasetCount: z.number().int().min(1).max(100).optional(),
 });
 
@@ -65,16 +73,15 @@ export function createIntegrationRoutes(service: PersonsService) {
 				}
 			);
 
-			return c.json(
-				{
-					filter: {
-						riskLevel: 2,
-						status: "active",
-					},
-					summary,
+			const responseBody: AdorelyImportResponse = {
+				filter: {
+					riskLevel: 2,
+					status: "active",
 				},
-				dryRun ? 200 : 202
-			);
+				summary,
+			};
+
+			return c.json(responseBody, dryRun ? 200 : 202);
 		} catch (error) {
 			const responseStatus = error instanceof z.ZodError ? 400 : 500;
 			return c.json(

@@ -1,5 +1,14 @@
+import type {
+	ImportAdorelyCompanionResult,
+	ImportAdorelyCompanionsSummary,
+} from "@generator/contracts/integrations";
 import { DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT } from "@generator/contracts/persons";
 import type { PersonsService } from "@/domain/persons";
+
+export type {
+	ImportAdorelyCompanionResult,
+	ImportAdorelyCompanionsSummary,
+} from "@generator/contracts/integrations";
 
 const ADORELY_DEBUG_MCP_URL = "https://api.adorely.co/debug/mcp";
 const MCP_PROTOCOL_VERSION = "2025-03-26";
@@ -119,29 +128,6 @@ export interface ImportAdorelyCompanionsOptions {
 	startTraining?: boolean;
 	status?: AdorelyCompanionStatus;
 	targetDatasetCount?: number;
-}
-
-export interface ImportAdorelyCompanionResult {
-	companionId: string;
-	importedDatasetPhotoCount: number;
-	missingDatasetPhotoCount: number;
-	name: string;
-	personId: string | null;
-	skipped: boolean;
-	skipReason: string | null;
-	startedTraining: boolean;
-}
-
-export interface ImportAdorelyCompanionsSummary {
-	created: number;
-	dryRun: boolean;
-	failed: number;
-	imported: number;
-	results: ImportAdorelyCompanionResult[];
-	skipped: number;
-	startedTraining: number;
-	total: number;
-	updated: number;
 }
 
 export class AdorelyDebugMcpClient {

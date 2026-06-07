@@ -1,12 +1,18 @@
 {
   "name": "@generator/contracts",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
+  "publishConfig": {
+    "registry": "https://git.yzzy.ws/api/v4/projects/579/packages/npm/"
+  },
+  "files": [
+    "src"
+  ],
   "exports": {
     "./admin": "./src/admin.ts",
     "./base-models": "./src/base-models.ts",
     "./generator": "./src/generator.ts",
+    "./integrations": "./src/integrations.ts",
     "./studio": "./src/studio.ts",
     "./persons": "./src/persons.ts",
     "./loras": "./src/loras.ts",

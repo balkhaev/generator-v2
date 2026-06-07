@@ -731,6 +731,13 @@ export interface ImportGenerationInput {
 	workflowKey: string;
 }
 
+export interface GeneratePersonWithLoraInput {
+	enhance?: boolean;
+	extraLoraUrl?: string;
+	extraLoraWeight?: number;
+	prompt: string;
+}
+
 export interface IntegrationStatus {
 	configured: boolean;
 	error?: string;

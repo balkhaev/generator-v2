@@ -9,12 +9,21 @@ import {
 import { Hono } from "hono";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-const imageExtensionByMimeType: Record<string, string> = {
+const extensionByMimeType: Record<string, string> = {
 	"image/avif": ".avif",
 	"image/gif": ".gif",
 	"image/jpeg": ".jpg",
 	"image/png": ".png",
 	"image/webp": ".webp",
+	"audio/wav": ".wav",
+	"audio/x-wav": ".wav",
+	"audio/wave": ".wav",
+	"audio/mpeg": ".mp3",
+	"audio/mp3": ".mp3",
+	"audio/ogg": ".ogg",
+	"audio/mp4": ".m4a",
+	"audio/x-m4a": ".m4a",
+	"audio/flac": ".flac",
 };
 const INPUT_ASSET_PREFIX = "persons-inputs";
 const fileExtensionPattern = /\.[a-z0-9]+$/i;
@@ -42,7 +51,7 @@ function getStoredFileName(file: File) {
 	const fileStem = sanitizeFileStem(file.name) || "persons-input";
 	const extension =
 		extname(file.name).toLowerCase() ||
-		imageExtensionByMimeType[file.type] ||
+		extensionByMimeType[file.type] ||
 		".png";
 
 	return `${Date.now()}-${crypto.randomUUID()}-${fileStem}${extension}`;
@@ -79,19 +88,19 @@ async function persistUpload(
 
 function validateUploadedFile(file: File | null): asserts file is File {
 	if (!file) {
-		throw new Error("Image file is required.");
+		throw new Error("File is required.");
 	}
 
-	if (!file.type.startsWith("image/")) {
-		throw new Error("Only image uploads are supported.");
+	if (!(file.type.startsWith("image/") || file.type.startsWith("audio/"))) {
+		throw new Error("Only image and audio uploads are supported.");
 	}
 
 	if (file.size <= 0) {
-		throw new Error("Uploaded image is empty.");
+		throw new Error("Uploaded file is empty.");
 	}
 
 	if (file.size > MAX_UPLOAD_BYTES) {
-		throw new Error("Uploaded image exceeds the 20 MB limit.");
+		throw new Error("Uploaded file exceeds the 20 MB limit.");
 	}
 }
 

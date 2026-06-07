@@ -1,0 +1,11 @@
+# RunPod serverless TTS worker (Higgs Audio v3 4B) — EXPERIMENTAL.
+#
+# Higgs v3 сервится через SGLang-Omni (`sgl-omni serve`). Лицензия модели —
+# Research & Non-Commercial: коммерческий/хостинг use требует отдельной лицензии
+# Boson AI. Включаем только за `RUNPOD_HIGGS_TTS_ENDPOINT_ID`.
+#
+# Версии пиннятся для воспроизводимости. Бампать вручную после smoke
+# (scripts/smoke-tts-serverless.ts с RUNPOD_HIGGS_TTS_ENDPOINT_ID).
+runpod==1.7.7
+sglang-omni==0.1.0
+requests==2.32.3

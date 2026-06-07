@@ -17,6 +17,7 @@ import {
 	createFooocusSdxlWorkflow,
 	createLtx23VideoWorkflow,
 	createRunpodService,
+	createTtsServerlessWorkflow,
 	createWanVideoServerlessWorkflow,
 	type PodInputStore,
 	type RunpodService,
@@ -35,7 +36,6 @@ import {
 	ExecutionService,
 } from "@/domain/executions";
 import { createCivitaiClient } from "@/providers/civitai";
-import { createFalClient } from "@/providers/fal";
 import type { InferenceClient } from "@/providers/inference";
 import { createInferenceRouter } from "@/providers/inference-router";
 import { createReplicateClient } from "@/providers/replicate";
@@ -228,6 +228,31 @@ function pushWanFluxServerlessWorkflows(workflows: AnyWorkflowDefinition[]) {
 	}
 }
 
+function pushTtsServerlessWorkflows(workflows: AnyWorkflowDefinition[]) {
+	const voxcpmEndpointId = process.env.RUNPOD_VOXCPM_TTS_ENDPOINT_ID?.trim();
+	if (voxcpmEndpointId) {
+		workflows.push(
+			createTtsServerlessWorkflow({
+				endpointId: voxcpmEndpointId,
+				id: "tts-voxcpm",
+				webhookUrl: process.env.RUNPOD_TTS_WEBHOOK_URL?.trim() || undefined,
+			})
+		);
+	}
+	// Higgs v3 — experimental, non-commercial license. Включается только при
+	// явно заданном endpoint id.
+	const higgsEndpointId = process.env.RUNPOD_HIGGS_TTS_ENDPOINT_ID?.trim();
+	if (higgsEndpointId) {
+		workflows.push(
+			createTtsServerlessWorkflow({
+				endpointId: higgsEndpointId,
+				id: "tts-higgs",
+				webhookUrl: process.env.RUNPOD_TTS_WEBHOOK_URL?.trim() || undefined,
+			})
+		);
+	}
+}
+
 function pushLtxDisposablePodWorkflow(workflows: AnyWorkflowDefinition[]) {
 	const ltxTemplateId =
 		process.env.RUNPOD_LTX23_POD_TEMPLATE_ID?.trim() || "p4f6rm9tb4";
@@ -284,6 +309,8 @@ function buildEnvDefaultWorkflows(): AnyWorkflowDefinition[] {
 			})
 		);
 	}
+	// TTS serverless не зависит от static pod (отдельные voxcpm/higgs endpoint'ы).
+	pushTtsServerlessWorkflows(workflows);
 	// Static pod имеет приоритет над serverless/disposable-pod для LTX/WAN/Flux.
 	const staticPodWorkflows = tryBuildStaticPodEnvWorkflows();
 	if (staticPodWorkflows) {
@@ -374,7 +401,6 @@ export function createApp(options: AppOptions) {
 		process.env.CIVITAI_API_KEY?.trim() ||
 		process.env.CIVITAI_API_TOKEN?.trim();
 	const civitaiApiBaseUrl = process.env.CIVITAI_API_BASE_URL;
-	const falKey = process.env.FAL_KEY;
 	const replicateApiToken = process.env.REPLICATE_API_TOKEN;
 	const replicateApiBaseUrl = process.env.REPLICATE_API_BASE_URL;
 	const runpodApiKey = process.env.RUNPOD_API_KEY;
@@ -404,7 +430,6 @@ export function createApp(options: AppOptions) {
 				apiKey: civitaiApiKey,
 			})
 		: undefined;
-	const falClient = falKey ? createFalClient({ apiKey: falKey }) : undefined;
 	const replicateClient = replicateApiToken
 		? createReplicateClient({
 				apiBaseUrl: replicateApiBaseUrl,
@@ -424,10 +449,9 @@ export function createApp(options: AppOptions) {
 
 	const inferenceClient =
 		options.inferenceClient ??
-		(civitaiClient || falClient || replicateClient || runpodClient
+		(civitaiClient || replicateClient || runpodClient
 			? createInferenceRouter({
 					civitai: civitaiClient,
-					fal: falClient,
 					replicate: replicateClient,
 					runpod: runpodClient,
 				})

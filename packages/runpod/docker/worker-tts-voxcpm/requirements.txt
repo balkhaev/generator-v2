@@ -1,0 +1,8 @@
+# RunPod serverless TTS worker (VoxCPM2).
+#
+# Версии пиннятся, чтобы образ был воспроизводим. Бампать вручную после
+# проверки smoke (scripts/smoke-tts-serverless.ts).
+runpod==1.7.7
+voxcpm==2.0.3
+soundfile==0.12.1
+requests==2.32.3

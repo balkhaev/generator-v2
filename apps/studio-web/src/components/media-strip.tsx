@@ -7,7 +7,7 @@ import {
 	TooltipTrigger,
 } from "@generator/ui/components/tooltip";
 import { cn } from "@generator/ui/lib/utils";
-import { Film } from "lucide-react";
+import { AudioLines, Film } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 
@@ -55,6 +55,14 @@ function VideoThumbnail({ asset }: { asset: StudioMediaAsset }) {
 	);
 }
 
+function AudioThumbnail() {
+	return (
+		<div className="relative flex flex-1 items-center justify-center overflow-hidden bg-teal-500/10">
+			<AudioLines className="size-7 text-teal-500" strokeWidth={1.5} />
+		</div>
+	);
+}
+
 export default function MediaStrip({
 	assets,
 	getHref,
@@ -74,6 +82,7 @@ export default function MediaStrip({
 				{assets.map((asset) => {
 					const isActive = asset.id === selectedMediaId;
 					const isVideo = asset.mediaType === "video";
+					const isAudio = asset.mediaType === "audio";
 					const isPlaceholder = asset.placeholder === true;
 
 					return (
@@ -94,18 +103,24 @@ export default function MediaStrip({
 									/>
 								}
 							>
-								{isVideo ? (
-									<VideoThumbnail asset={asset} />
-								) : (
-									<div
-										aria-hidden="true"
-										className={cn(
-											"flex-1 bg-center bg-cover",
-											isPlaceholder && "opacity-70 saturate-50"
-										)}
-										style={{ backgroundImage: `url("${asset.url}")` }}
-									/>
-								)}
+								{(() => {
+									if (isVideo) {
+										return <VideoThumbnail asset={asset} />;
+									}
+									if (isAudio) {
+										return <AudioThumbnail />;
+									}
+									return (
+										<div
+											aria-hidden="true"
+											className={cn(
+												"flex-1 bg-center bg-cover",
+												isPlaceholder && "opacity-70 saturate-50"
+											)}
+											style={{ backgroundImage: `url("${asset.url}")` }}
+										/>
+									);
+								})()}
 								{isPlaceholder ? (
 									<div
 										aria-hidden="true"
@@ -137,6 +152,7 @@ export default function MediaStrip({
 										{isPlaceholder ? "gen" : "out"}
 									</span>
 									{isVideo ? <span>video</span> : null}
+									{isAudio ? <span>audio</span> : null}
 								</div>
 							</TooltipTrigger>
 							<TooltipContent className="grid max-w-[16rem] gap-1.5">

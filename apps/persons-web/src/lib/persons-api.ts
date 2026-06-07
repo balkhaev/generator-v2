@@ -401,3 +401,60 @@ export async function generateWithLora(
 	);
 	return payload.person;
 }
+
+export interface GenerateVoiceOptions {
+	emotion?: string;
+	engine?: "voxcpm" | "higgs";
+	language?: string;
+	referenceText?: string;
+	referenceVoiceUrl?: string;
+	style?: string;
+}
+
+export async function generatePersonVoice(
+	personId: string,
+	text: string,
+	options?: GenerateVoiceOptions
+) {
+	const payload = await requestJson<{ person: PersonRecord }>(
+		`${API_BASE_URL}/api/persons/${personId}/speak`,
+		{
+			method: "POST",
+			body: JSON.stringify({
+				text,
+				engine: options?.engine ?? "voxcpm",
+				...(options?.referenceVoiceUrl
+					? { referenceVoiceUrl: options.referenceVoiceUrl }
+					: {}),
+				...(options?.referenceText
+					? { referenceText: options.referenceText }
+					: {}),
+				...(options?.style ? { style: options.style } : {}),
+				...(options?.language ? { language: options.language } : {}),
+				...(options?.emotion ? { emotion: options.emotion } : {}),
+			}),
+			headers: { "content-type": "application/json" },
+		}
+	);
+	return payload.person;
+}
+
+export async function uploadPersonsAudio(
+	file: File
+): Promise<UploadedPersonsImage> {
+	const formData = new FormData();
+	formData.append("file", file);
+
+	const response = await fetch(`${API_BASE_URL}/api/input-assets`, {
+		body: formData,
+		credentials: "include",
+		method: "POST",
+	});
+
+	if (!response.ok) {
+		throw new Error(await getErrorMessage(response));
+	}
+
+	const payload = (await response.json()) as { upload: UploadedPersonsImage };
+	return payload.upload;
+}

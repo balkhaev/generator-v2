@@ -381,6 +381,20 @@ export const BASE_MODELS = [
 			"ace step xl",
 		],
 	},
+	{
+		id: "voxcpm-2",
+		label: "VoxCPM2 (TTS)",
+		family: "audio",
+		modality: "audio",
+		civitaiAliases: ["voxcpm", "voxcpm2", "voxcpm 2"],
+	},
+	{
+		id: "higgs-audio-v3",
+		label: "Higgs Audio v3 (TTS)",
+		family: "audio",
+		modality: "audio",
+		civitaiAliases: ["higgs audio", "higgs-audio", "higgs v3"],
+	},
 
 	// Catch-all
 	{

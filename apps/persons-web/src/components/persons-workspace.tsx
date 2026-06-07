@@ -76,6 +76,8 @@ import {
 	deletePerson,
 	enhancePersonsGenerationPrompt,
 	enhancePersonsPrompt,
+	type GenerateVoiceOptions,
+	generatePersonVoice,
 	generateWithLora,
 	getPersonsDashboard,
 	type PersonGenerationRecord,
@@ -84,6 +86,7 @@ import {
 	trainPersonLora,
 	type UpdatePersonInput,
 	updatePerson,
+	uploadPersonsAudio,
 	uploadPersonsImage,
 } from "@/lib/persons-api";
 
@@ -1162,6 +1165,142 @@ function LoraActions({
 	);
 }
 
+function VoiceActions({
+	person,
+	onGenerateVoice,
+}: {
+	person: PersonRecord;
+	onGenerateVoice: (text: string, options: GenerateVoiceOptions) => void;
+}) {
+	const [voiceText, setVoiceText] = useState("");
+	const [engine, setEngine] = useState<"voxcpm" | "higgs">("voxcpm");
+	const [style, setStyle] = useState("");
+	const [referenceVoiceUrl, setReferenceVoiceUrl] = useState(
+		person.voiceWavUrl ?? ""
+	);
+	const [isUploadingVoice, setIsUploadingVoice] = useState(false);
+	const voiceFileInputRef = useRef<HTMLInputElement>(null);
+
+	const handleVoiceUpload = useCallback(async (file: File) => {
+		setIsUploadingVoice(true);
+		try {
+			const uploaded = await uploadPersonsAudio(file);
+			setReferenceVoiceUrl(uploaded.url);
+			toast.success("Reference voice uploaded");
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "Failed to upload voice"
+			);
+		} finally {
+			setIsUploadingVoice(false);
+		}
+	}, []);
+
+	return (
+		<div className="grid gap-2 border-border/40 border-t pt-3">
+			<div className="flex items-center justify-between gap-2">
+				<SectionLabel>Voice / Speak</SectionLabel>
+				<div className="inline-flex overflow-hidden rounded-md border border-border/50 text-[11px]">
+					<button
+						className={`px-2 py-1 transition ${
+							engine === "voxcpm"
+								? "bg-foreground text-background"
+								: "text-muted-foreground hover:text-foreground"
+						}`}
+						onClick={() => setEngine("voxcpm")}
+						type="button"
+					>
+						VoxCPM2
+					</button>
+					<button
+						className={`px-2 py-1 transition ${
+							engine === "higgs"
+								? "bg-foreground text-background"
+								: "text-muted-foreground hover:text-foreground"
+						}`}
+						onClick={() => setEngine("higgs")}
+						title="Experimental — non-commercial license"
+						type="button"
+					>
+						Higgs v3
+					</button>
+				</div>
+			</div>
+			{engine === "higgs" ? (
+				<p className="rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 leading-relaxed dark:text-amber-300">
+					Higgs Audio v3 is experimental and licensed for research /
+					non-commercial use only.
+				</p>
+			) : null}
+			<textarea
+				className={textareaClassName}
+				id="voiceText"
+				onChange={(e) => setVoiceText(e.target.value)}
+				placeholder="Text to speak in the person's voice..."
+				value={voiceText}
+			/>
+			<input
+				className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
+				onChange={(e) => setStyle(e.target.value)}
+				placeholder="Voice style (optional), e.g. warm calm female"
+				value={style}
+			/>
+			<div className="flex items-center gap-2">
+				<input
+					className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
+					onChange={(e) => setReferenceVoiceUrl(e.target.value)}
+					placeholder="Reference voice URL (clone)"
+					value={referenceVoiceUrl}
+				/>
+				<input
+					accept="audio/*"
+					className="hidden"
+					onChange={async (e) => {
+						const file = e.target.files?.[0];
+						e.target.value = "";
+						if (file) {
+							await handleVoiceUpload(file);
+						}
+					}}
+					ref={voiceFileInputRef}
+					type="file"
+				/>
+				<Button
+					disabled={isUploadingVoice}
+					onClick={() => voiceFileInputRef.current?.click()}
+					size="sm"
+					type="button"
+					variant="outline"
+				>
+					{isUploadingVoice ? (
+						<Loader2 className="size-3.5 animate-spin" />
+					) : (
+						<Upload className="size-3.5" />
+					)}
+				</Button>
+			</div>
+			<Button
+				disabled={!voiceText.trim()}
+				onClick={() => {
+					const trimmedReference = referenceVoiceUrl.trim();
+					onGenerateVoice(voiceText.trim(), {
+						engine,
+						...(style.trim() ? { style: style.trim() } : {}),
+						...(trimmedReference
+							? { referenceVoiceUrl: trimmedReference }
+							: {}),
+					});
+					setVoiceText("");
+				}}
+				size="sm"
+			>
+				<AudioLines className="size-3.5" />
+				Generate voice
+			</Button>
+		</div>
+	);
+}
+
 interface DatasetImageItem {
 	/**
 	 * Dataset photos derived from the original reference photo (variantId
@@ -1335,6 +1474,7 @@ function PersonDetailView({
 	onDeleteGeneration,
 	onTrainLora,
 	onGenerateWithLora,
+	onGenerateVoice,
 }: {
 	cancellingGenerationId: string | null;
 	isCancellingTraining: boolean;
@@ -1346,6 +1486,7 @@ function PersonDetailView({
 	onDeleteGeneration: (generationId: string) => void;
 	onTrainLora: () => void;
 	onGenerateWithLora: (prompt: string) => void;
+	onGenerateVoice: (text: string, options: GenerateVoiceOptions) => void;
 }) {
 	const [activeTab, setActiveTab] = useState<DetailTab>("generations");
 	const [lightbox, setLightbox] = useState<LightboxState | null>(null);
@@ -1517,6 +1658,8 @@ function PersonDetailView({
 						onTrainLora={onTrainLora}
 						person={person}
 					/>
+
+					<VoiceActions onGenerateVoice={onGenerateVoice} person={person} />
 				</div>
 			</div>
 
@@ -2390,6 +2533,32 @@ export default function PersonsWorkspace({
 		}
 	}
 
+	async function handleGenerateVoice(
+		text: string,
+		options: GenerateVoiceOptions
+	) {
+		if (!selectedPerson) {
+			return;
+		}
+		try {
+			const updated = await generatePersonVoice(
+				selectedPerson.id,
+				text,
+				options
+			);
+			setPersons((current) =>
+				current.map((p) => (p.id === updated.id ? updated : p))
+			);
+			toast.success("Voice generation started");
+		} catch (error) {
+			toast.error(
+				error instanceof Error
+					? error.message
+					: "Failed to start voice generation"
+			);
+		}
+	}
+
 	async function handleCancelGeneration(generationId: string) {
 		if (!(selectedPerson && !cancellingGenerationId)) {
 			return;
@@ -2524,6 +2693,7 @@ export default function PersonsWorkspace({
 					onCancelGeneration={handleCancelGeneration}
 					onCancelTraining={handleCancelLoraTraining}
 					onDeleteGeneration={handleDeleteGeneration}
+					onGenerateVoice={handleGenerateVoice}
 					onGenerateWithLora={handleGenerateWithLora}
 					onTrainLora={handleTrainLora}
 					person={selectedPerson}

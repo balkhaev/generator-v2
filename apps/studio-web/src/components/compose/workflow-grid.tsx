@@ -8,6 +8,7 @@ import {
 import type { WorkflowDefinition } from "@generator/studio-client/shared";
 import { cn } from "@generator/ui/lib/utils";
 import {
+	AudioLines,
 	Image as ImageIcon,
 	ImagePlus,
 	Sparkles,
@@ -47,6 +48,11 @@ const modalityMeta: Record<
 		icon: <Video className="size-3.5" strokeWidth={1.6} />,
 		label: "Video",
 		sublabel: "Motion clip",
+	},
+	audio: {
+		icon: <AudioLines className="size-3.5" strokeWidth={1.6} />,
+		label: "Audio",
+		sublabel: "Voice / speech",
 	},
 };
 
@@ -250,21 +256,21 @@ export default function WorkflowGrid({
 						Output
 					</span>
 					<div className="grid grid-cols-2 gap-1.5">
-						{(["image", "video"] as const).map((value) => {
-							const meta = modalityMeta[value];
-							const isAvailable = availableModalities.includes(value);
-							return (
-								<Segment
-									active={modality === value}
-									disabled={!isAvailable}
-									icon={meta.icon}
-									key={value}
-									label={meta.label}
-									onClick={() => onModalityChange(value)}
-									sublabel={meta.sublabel}
-								/>
-							);
-						})}
+						{(["image", "video", "audio"] as const)
+							.filter((value) => availableModalities.includes(value))
+							.map((value) => {
+								const meta = modalityMeta[value];
+								return (
+									<Segment
+										active={modality === value}
+										icon={meta.icon}
+										key={value}
+										label={meta.label}
+										onClick={() => onModalityChange(value)}
+										sublabel={meta.sublabel}
+									/>
+								);
+							})}
 					</div>
 				</div>
 			</div>

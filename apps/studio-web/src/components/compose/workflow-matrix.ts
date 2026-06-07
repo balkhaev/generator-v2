@@ -1,6 +1,6 @@
 import type { WorkflowDefinition } from "@generator/studio-client/shared";
 
-export type Modality = "image" | "video";
+export type Modality = "image" | "video" | "audio";
 export type Approach = "text" | "image";
 
 export interface WorkflowClassification {
@@ -21,6 +21,7 @@ export interface WorkflowFilter {
 export function classifyWorkflow(
 	workflow: WorkflowDefinition
 ): WorkflowClassification {
+	const isAudio = workflow.key.includes("tts");
 	const isVideo = workflow.key.includes("video");
 	const loraParameters = workflow.parameters.filter(
 		(parameter) => parameter.kind === "lora-url"
@@ -29,11 +30,18 @@ export function classifyWorkflow(
 		(parameter) => !parameter.optional
 	);
 
+	let modality: Modality = "image";
+	if (isAudio) {
+		modality = "audio";
+	} else if (isVideo) {
+		modality = "video";
+	}
+
 	return {
 		approach: workflow.requiresInputImage ? "image" : "text",
 		hasLora: loraParameters.length > 0,
 		maxLoraSlots: loraParameters.length,
-		modality: isVideo ? "video" : "image",
+		modality,
 		requiresLora: requiredLoraParameters.length > 0,
 	};
 }

@@ -18,6 +18,7 @@ import {
 } from "@generator/ui/components/tooltip";
 import { cn } from "@generator/ui/lib/utils";
 import {
+	AudioLines,
 	Bookmark,
 	ChevronLeft,
 	ChevronRight,
@@ -44,12 +45,17 @@ const toolbarLinkClass =
 
 const videoExtensionPattern = /\.(mp4|mov|webm)(\?.*)?$/i;
 const videoDataUriPattern = /^data:video\//i;
+const audioExtensionPattern = /\.(wav|mp3|ogg|m4a|flac)(\?.*)?$/i;
+const audioDataUriPattern = /^data:audio\//i;
 /** Video artifacts can persist as `.bin` when content-type is not an image MIME. */
 const nonImageArtifactExtensionPattern = /\.bin(\?.*)?$/i;
 
-export function getMediaType(url: string): "image" | "video" {
+export function getMediaType(url: string): "image" | "video" | "audio" {
 	if (videoExtensionPattern.test(url) || videoDataUriPattern.test(url)) {
 		return "video";
+	}
+	if (audioExtensionPattern.test(url) || audioDataUriPattern.test(url)) {
+		return "audio";
 	}
 
 	return "image";
@@ -81,7 +87,7 @@ export interface StudioMediaAsset {
 	/** Последняя строка лога, отображается под прогрессом. */
 	lastLogLine?: string | null;
 	mediaKind: "input" | "output";
-	mediaType: "image" | "video";
+	mediaType: "image" | "video" | "audio";
 	meta: string;
 	/** Дискретная фаза для overlay-индикатора прогресса. */
 	phase?: import("@generator/contracts/generator").ExecutionPhase | null;
@@ -129,7 +135,12 @@ function deriveDownloadName(asset: StudioMediaAsset) {
 		.trim()
 		.replace(/\s+/g, "-")
 		.slice(0, 60);
-	const extension = asset.mediaType === "video" ? "mp4" : "png";
+	let extension = "png";
+	if (asset.mediaType === "video") {
+		extension = "mp4";
+	} else if (asset.mediaType === "audio") {
+		extension = "wav";
+	}
 
 	return `${safeLabel || asset.id}.${extension}`;
 }
@@ -174,6 +185,63 @@ function PreviewEmptyState() {
 	);
 }
 
+function PreviewMediaTypeIcon({
+	mediaType,
+}: {
+	mediaType: StudioMediaAsset["mediaType"];
+}) {
+	if (mediaType === "video") {
+		return <Film className="size-3" />;
+	}
+	if (mediaType === "audio") {
+		return <AudioLines className="size-3" />;
+	}
+	return <ImageIcon className="size-3" />;
+}
+
+function AudioPreview({ asset }: { asset: StudioMediaAsset }) {
+	return (
+		<div className="flex w-full max-w-xl flex-col items-center gap-4 px-6">
+			<div className="flex size-20 items-center justify-center rounded-full bg-teal-500/15 text-teal-500">
+				<AudioLines className="size-9" strokeWidth={1.5} />
+			</div>
+			<p className="truncate text-center font-medium text-sm">{asset.label}</p>
+			<audio className="w-full" controls key={asset.id} src={asset.url}>
+				<track kind="captions" />
+			</audio>
+		</div>
+	);
+}
+
+function renderPreviewMedia(
+	asset: StudioMediaAsset,
+	renderImage: () => ReactNode,
+	nav: { currentIndex: number; showNavigation: boolean; totalAssets: number }
+): ReactNode {
+	if (asset.mediaType === "video") {
+		return (
+			<VideoPlayer
+				bottomBarExtra={
+					nav.showNavigation ? (
+						<PreviewCounter
+							currentIndex={nav.currentIndex}
+							totalAssets={nav.totalAssets}
+						/>
+					) : null
+				}
+				key={asset.id}
+				label={asset.label}
+				meta={asset.meta}
+				src={asset.url}
+			/>
+		);
+	}
+	if (asset.mediaType === "audio") {
+		return <AudioPreview asset={asset} />;
+	}
+	return renderImage();
+}
+
 function PreviewBadges({ asset }: { asset: StudioMediaAsset }) {
 	const isPlaceholder = asset.placeholder === true;
 
@@ -199,11 +267,7 @@ function PreviewBadges({ asset }: { asset: StudioMediaAsset }) {
 				</span>
 			)}
 			<span className="inline-flex items-center gap-1 rounded-full bg-background/70 px-2 py-0.5 text-[11px] backdrop-blur-md">
-				{asset.mediaType === "video" ? (
-					<Film className="size-3" />
-				) : (
-					<ImageIcon className="size-3" />
-				)}
+				<PreviewMediaTypeIcon mediaType={asset.mediaType} />
 				{asset.mediaType}
 			</span>
 		</div>
@@ -713,24 +777,11 @@ export default function PreviewSurface({
 			) : (
 				<>
 					<div className="relative flex h-full items-center justify-center overflow-hidden">
-						{asset.mediaType === "video" ? (
-							<VideoPlayer
-								bottomBarExtra={
-									showNavigation ? (
-										<PreviewCounter
-											currentIndex={currentIndex}
-											totalAssets={totalAssets}
-										/>
-									) : null
-								}
-								key={asset.id}
-								label={asset.label}
-								meta={asset.meta}
-								src={asset.url}
-							/>
-						) : (
-							renderImagePreview(asset)
-						)}
+						{renderPreviewMedia(asset, () => renderImagePreview(asset), {
+							currentIndex,
+							showNavigation,
+							totalAssets,
+						})}
 					</div>
 
 					{showNavigation ? (
@@ -756,13 +807,13 @@ export default function PreviewSurface({
 
 					<PreviewProgressOverlay asset={asset} />
 
-					{asset.mediaType === "video" || asset.placeholder === true ? null : (
+					{asset.mediaType === "image" && asset.placeholder !== true ? (
 						<PreviewBottomInfo
 							asset={asset}
 							currentIndex={currentIndex}
 							totalAssets={totalAssets}
 						/>
-					)}
+					) : null}
 				</>
 			)}
 			<PreviewPromptDialog

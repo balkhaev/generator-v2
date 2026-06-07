@@ -288,5 +288,48 @@ export function createPersonRoutes(service: PersonsService) {
 		}
 	});
 
+	app.post("/:personId/speak", async (c) => {
+		try {
+			const body = await c.req.json<{
+				text?: string;
+				engine?: string;
+				referenceVoiceUrl?: string;
+				referenceText?: string;
+				style?: string;
+				language?: string;
+				emotion?: string;
+			}>();
+			const text = typeof body.text === "string" ? body.text.trim() : "";
+			if (!text) {
+				return c.json({ error: "text is required" }, 400);
+			}
+			const engine = body.engine === "higgs" ? "higgs" : "voxcpm";
+			const trimmedOrUndefined = (value: unknown) =>
+				typeof value === "string" && value.trim().length > 0
+					? value.trim()
+					: undefined;
+			const person = await service.generateVoice(
+				c.req.param("personId"),
+				text,
+				{
+					engine,
+					referenceVoiceUrl: trimmedOrUndefined(body.referenceVoiceUrl),
+					referenceText: trimmedOrUndefined(body.referenceText),
+					style: trimmedOrUndefined(body.style),
+					language: trimmedOrUndefined(body.language),
+					emotion: trimmedOrUndefined(body.emotion),
+				}
+			);
+			if (!person) {
+				return c.json({ error: "Person not found" }, 404);
+			}
+
+			return c.json({ person }, 202);
+		} catch (error) {
+			const response = toErrorResponse(error);
+			return c.json(response.body, response.status as 400);
+		}
+	});
+
 	return app;
 }

@@ -12,6 +12,7 @@ import {
 	createFooocusSdxlWorkflow,
 	createLtx23VideoServerlessWorkflow,
 	createLtx23VideoWorkflow,
+	createTtsServerlessWorkflow,
 	createWanVideoServerlessWorkflow,
 } from "@generator/runpod";
 
@@ -225,6 +226,9 @@ function buildWorkflowFromTemplate(
 	if (tpl.workflowKey === "flux-dev-image") {
 		return buildFluxDevImageServerlessWorkflow(tpl, logger);
 	}
+	if (tpl.workflowKey === "tts-voxcpm" || tpl.workflowKey === "tts-higgs") {
+		return buildTtsServerlessWorkflow(tpl, logger);
+	}
 	logger.warn?.("runpod.template-loader.unknown-workflow-key", {
 		templateId: tpl.id,
 		workflowKey: tpl.workflowKey,
@@ -384,6 +388,30 @@ function buildFluxDevImageServerlessWorkflow(
 		endpointId: tpl.runpodEndpointId,
 		id: "flux-dev-image",
 		webhookUrl: process.env.RUNPOD_FLUX_DEV_WEBHOOK_URL?.trim() || undefined,
+	});
+}
+
+function buildTtsServerlessWorkflow(
+	tpl: LoadedTemplate,
+	logger: Pick<Console, "info" | "warn">
+): AnyWorkflowDefinition | null {
+	if (tpl.mode !== "serverless") {
+		logger.warn?.("runpod.template-loader.tts-not-serverless", {
+			mode: tpl.mode,
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	if (!tpl.runpodEndpointId) {
+		logger.warn?.("runpod.template-loader.tts-serverless-missing-endpoint", {
+			templateId: tpl.id,
+		});
+		return null;
+	}
+	return createTtsServerlessWorkflow({
+		endpointId: tpl.runpodEndpointId,
+		id: tpl.workflowKey,
+		webhookUrl: process.env.RUNPOD_TTS_WEBHOOK_URL?.trim() || undefined,
 	});
 }
 

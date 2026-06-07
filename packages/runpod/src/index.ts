@@ -181,6 +181,13 @@ export {
 	type Ltx23ServerlessWorkflowConfig,
 } from "./workflows/ltx-2-3-video-serverless";
 export {
+	createTtsServerlessWorkflow,
+	type TtsInput,
+	type TtsOutput,
+	type TtsServerlessWorkflowConfig,
+	ttsInputSchema,
+} from "./workflows/tts-serverless";
+export {
 	createWanVideoServerlessWorkflow,
 	type WanVideoInput,
 	type WanVideoOutput,

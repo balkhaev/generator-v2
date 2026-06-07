@@ -175,7 +175,6 @@ const serverSchema = {
 	CIVITAI_API_BASE_URL: z
 		.url()
 		.default("https://orchestration-new.civitai.com"),
-	FAL_KEY: z.string().min(1).optional(),
 	HF_TOKEN: z.string().min(1).optional(),
 	HUGGINGFACE_TOKEN: z.string().min(1).optional(),
 	REPLICATE_API_TOKEN: z.string().min(1).optional(),
@@ -199,9 +198,8 @@ const serverSchema = {
 	OPENROUTER_APP_NAME: z.string().min(1).max(128).optional(),
 
 	// LoRA training provider selection.
-	// "fal" — текущий fal-ai/z-image-trainer пайплайн.
-	// "runpod" — экспериментальный ai-toolkit на RunPod serverless.
-	TRAINING_PROVIDER: z.enum(["fal", "runpod"]).default("fal"),
+	// "runpod" — ai-toolkit на RunPod (serverless или on-demand GPU pod).
+	TRAINING_PROVIDER: z.enum(["runpod"]).default("runpod"),
 
 	// RunPod (ai-toolkit) — экспериментально.
 	// Mode "serverless" использует custom RunPod Serverless endpoint (нужно
@@ -365,8 +363,14 @@ const serverSchema = {
 	PERSONS_DEFAULT_AVATAR_WORKFLOW: z
 		.string()
 		.min(1)
-		.default("fal-zimage-turbo"),
-	PERSONS_DEFAULT_LORA_WORKFLOW: z.string().min(1).default("fal-zimage-turbo"),
+		.default("runpod-flux-dev-image"),
+	PERSONS_DEFAULT_LORA_WORKFLOW: z
+		.string()
+		.min(1)
+		.default("runpod-flux-dev-image"),
+	// TTS (voice) workflow для Persons. VoxCPM2 — основной (Apache 2.0);
+	// runpod-higgs-tts — experimental (non-commercial).
+	PERSONS_DEFAULT_TTS_WORKFLOW: z.string().min(1).default("runpod-voxcpm-tts"),
 	PERSON_LORA_TRAINING_STEPS: z.coerce.number().int().positive().optional(),
 
 	// Reconcile workers

@@ -238,7 +238,7 @@ export const startPersonLoraTrainingInputSchema = z.object({
 	outputName: optionalStringSchema,
 	/**
 	 * Если `true` — заставляет admin runner заново нагенерить reference-датасет
-	 * (19 fal.ai/flux-2/edit вариаций + 6 копий оригинала). По умолчанию
+	 * (19 image-edit вариаций + 6 копий оригинала). По умолчанию
 	 * `false`: при retrain'е переиспользуем `person.datasetUrl` от предыдущей
 	 * успешной тренировки, экономим ~5 минут и ~$0.20 на каждом ретрейне.
 	 */
@@ -559,6 +559,28 @@ function inferMediaTypeFromUrl(url: string): PersonGenerationMediaType {
 	}
 
 	return "video";
+}
+
+function resolveGenerationReadyTitle(flags: {
+	isLoraGeneration: boolean;
+	isVoiceGeneration: boolean;
+}): string {
+	if (flags.isVoiceGeneration) {
+		return "Generated voice";
+	}
+	return flags.isLoraGeneration ? "LoRA generation" : "Generated avatar";
+}
+
+function resolveGenerationFailedTitle(flags: {
+	isLoraGeneration: boolean;
+	isVoiceGeneration: boolean;
+}): string {
+	if (flags.isVoiceGeneration) {
+		return "Voice generation failed";
+	}
+	return flags.isLoraGeneration
+		? "LoRA generation failed"
+		: "Avatar generation failed";
 }
 
 function createPendingReferenceDataUrl(name: string) {
@@ -1748,7 +1770,7 @@ export class PersonsService {
 				personSlug: input.person.slug,
 				referencePhotoUrl: input.person.referencePhotoUrl,
 				// `requestNonce` lets the admin worker dedupe replays of the
-				// same rejection without re-running fal.ai. We bind it to the
+				// same rejection without re-running the editor. We bind it to the
 				// (trainingRunId, variantId) pair plus a fresh UUID so distinct
 				// rejections of the same slot (operator rejects, worker
 				// regenerates, operator rejects again) each get their own key.
@@ -2048,7 +2070,7 @@ export class PersonsService {
 
 		// Reuse existing dataset zip from the previous successful training, unless
 		// the operator explicitly requested `regenerateDataset: true`. This skips
-		// the ~5min, ~$0.20 worth of fal.ai/flux-2/edit calls done by
+		// the ~5min worth of image-edit calls done by
 		// `buildReferenceDataset` on every retrain.
 		const reuseDatasetUrl =
 			!parsed.regenerateDataset && person.datasetUrl
@@ -2324,6 +2346,102 @@ export class PersonsService {
 		return this.repository.getPersonById(personId) ?? person;
 	}
 
+	async generateVoice(
+		personId: string,
+		text: string,
+		options?: {
+			engine?: "voxcpm" | "higgs";
+			referenceVoiceUrl?: string;
+			referenceText?: string;
+			style?: string;
+			language?: string;
+			emotion?: string;
+		}
+	) {
+		const person = await this.repository.getPersonById(personId);
+		if (!person) {
+			return null;
+		}
+		if (!this.operatorServerClient) {
+			throw new Error("Generator integration is not configured");
+		}
+		const prompt = text.trim();
+		if (prompt.length === 0) {
+			throw new Error("Voice generation requires non-empty text");
+		}
+
+		const workflowKey =
+			options?.engine === "higgs"
+				? "runpod-higgs-tts"
+				: env.PERSONS_DEFAULT_TTS_WORKFLOW;
+		const referenceAudioUrl =
+			options?.referenceVoiceUrl ?? person.voiceWavUrl ?? undefined;
+		const ttsParams: Record<string, unknown> = {};
+		if (referenceAudioUrl) {
+			ttsParams.referenceAudioUrl = referenceAudioUrl;
+		}
+		if (options?.referenceText) {
+			ttsParams.referenceText = options.referenceText;
+		}
+		if (options?.style) {
+			ttsParams.style = options.style;
+		}
+		if (options?.language) {
+			ttsParams.language = options.language;
+		}
+		if (options?.emotion) {
+			ttsParams.emotion = options.emotion;
+		}
+
+		const generationId = crypto.randomUUID();
+		await this.repository.createGeneration({
+			id: generationId,
+			personId,
+			title: "Generating voice",
+			prompt,
+			mediaType: "audio",
+			status: "queued",
+			previewUrl: null,
+			sourceUrl: createPendingGenerationDataUrl("Voice generation"),
+			operatorRunId: null,
+			operatorScenarioId: null,
+			errorSummary: null,
+			metadata: getGenerationProgressMetadata({
+				metadata: {
+					workflowKey,
+					generatedVoice: true,
+					ttsEngine: options?.engine ?? "voxcpm",
+					...(referenceAudioUrl ? { referenceAudioUrl } : {}),
+				},
+			}),
+		});
+
+		const execution = await this.operatorServerClient.createExecution({
+			callback: this.createExecutionCallback({ generationId, personId }),
+			workflowKey,
+			prompt,
+			params: ttsParams,
+		});
+
+		await this.repository.updateGeneration(generationId, {
+			metadata: getGenerationProgressMetadata({
+				execution,
+				metadata: {
+					workflowKey,
+					generatedVoice: true,
+					ttsEngine: options?.engine ?? "voxcpm",
+					...(referenceAudioUrl ? { referenceAudioUrl } : {}),
+					generatorExecutionId: execution.id,
+					generatorWorkflowKey: execution.workflowKey,
+				},
+			}),
+			operatorRunId: execution.providerJobId,
+			status: execution.status === "failed" ? "failed" : "queued",
+		});
+
+		return this.repository.getPersonById(personId) ?? person;
+	}
+
 	async getServerHealth() {
 		if (!this.operatorServerClient) {
 			return {
@@ -2487,7 +2605,7 @@ export class PersonsService {
 			"referenceImageCount"
 		);
 		// Polling events from the training provider don't include
-		// `referenceImageCount` (it doesn't change while fal is crunching),
+		// `referenceImageCount` (it doesn't change while the provider is crunching),
 		// so we must keep the previously-recorded value instead of falling
 		// back to `referenceImageUrls.length`. The URL list only contains
 		// unique entries, while the dataset zip duplicates the original
@@ -2946,8 +3064,11 @@ export class PersonsService {
 
 			const isLoraGeneration =
 				currentGeneration.metadata.generatedWithLora === true;
+			const isVoiceGeneration = currentGeneration.mediaType === "audio";
 
-			if (!isLoraGeneration) {
+			// Голосовые (audio) генерации не должны перезаписывать аватар/референс
+			// персонажа — только сам артефакт генерации.
+			if (!(isLoraGeneration || isVoiceGeneration)) {
 				await this.repository.updatePerson(personId, {
 					photoUrl: primaryArtifactUrl,
 					referencePhotoUrl: primaryArtifactUrl,
@@ -2961,10 +3082,13 @@ export class PersonsService {
 				previewUrl: primaryArtifactUrl,
 				sourceUrl: primaryArtifactUrl,
 				status: "ready",
-				title: isLoraGeneration ? "LoRA generation" : "Generated avatar",
+				title: resolveGenerationReadyTitle({
+					isLoraGeneration,
+					isVoiceGeneration,
+				}),
 			});
 
-			if (!isLoraGeneration) {
+			if (!(isLoraGeneration || isVoiceGeneration)) {
 				const shouldAutoTrain =
 					currentPerson.metadata.autoStartTraining === true;
 				if (shouldAutoTrain && this.adminTrainingClient) {
@@ -2981,18 +3105,17 @@ export class PersonsService {
 		} else if (input.execution.status === "failed") {
 			const isLoraGeneration =
 				currentGeneration.metadata.generatedWithLora === true;
+			const isVoiceGeneration = currentGeneration.mediaType === "audio";
+			const failedTitle = resolveGenerationFailedTitle({
+				isLoraGeneration,
+				isVoiceGeneration,
+			});
 			await this.repository.updateGeneration(generationId, {
-				errorSummary:
-					input.execution.errorSummary ??
-					(isLoraGeneration
-						? "LoRA generation failed"
-						: "Avatar generation failed"),
+				errorSummary: input.execution.errorSummary ?? failedTitle,
 				metadata: nextMetadata,
 				operatorRunId,
 				status: "failed",
-				title: isLoraGeneration
-					? "LoRA generation failed"
-					: "Avatar generation failed",
+				title: failedTitle,
 			});
 		}
 
@@ -3046,7 +3169,8 @@ export class PersonsService {
 					continue;
 				}
 				const isLoraGeneration = generation.metadata.generatedWithLora === true;
-				if (!isLoraGeneration) {
+				const isVoiceGeneration = generation.mediaType === "audio";
+				if (!(isLoraGeneration || isVoiceGeneration)) {
 					await this.repository.updatePerson(generation.personId, {
 						photoUrl: primaryArtifactUrl,
 						referencePhotoUrl: primaryArtifactUrl,
@@ -3059,25 +3183,31 @@ export class PersonsService {
 					previewUrl: primaryArtifactUrl,
 					sourceUrl: primaryArtifactUrl,
 					status: "ready",
-					title: isLoraGeneration ? "LoRA generation" : "Generated avatar",
+					title: resolveGenerationReadyTitle({
+						isLoraGeneration,
+						isVoiceGeneration,
+					}),
 				});
 				updatedCount += 1;
 				continue;
 			}
 			if (execution.status === "failed") {
 				const isLoraGeneration = generation.metadata.generatedWithLora === true;
+				const isVoiceGeneration = generation.mediaType === "audio";
 				await this.repository.updateGeneration(generation.id, {
 					errorSummary:
 						execution.errorSummary ??
-						(isLoraGeneration
-							? "LoRA generation failed"
-							: "Avatar generation failed"),
+						resolveGenerationFailedTitle({
+							isLoraGeneration,
+							isVoiceGeneration,
+						}),
 					metadata: nextMetadata,
 					operatorRunId,
 					status: "failed",
-					title: isLoraGeneration
-						? "LoRA generation failed"
-						: "Avatar generation failed",
+					title: resolveGenerationFailedTitle({
+						isLoraGeneration,
+						isVoiceGeneration,
+					}),
 				});
 				updatedCount += 1;
 			}

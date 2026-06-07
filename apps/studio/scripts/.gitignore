@@ -1,0 +1,4 @@
+# Real eval fixtures contain user/NSFW briefs and reference image URLs.
+# Keep them local; only the *.example.json template is committed.
+fixtures-enhance*.json
+!fixtures-enhance.example.json

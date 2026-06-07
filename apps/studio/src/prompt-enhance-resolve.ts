@@ -58,6 +58,7 @@ export async function resolveStudioPromptEnhanceClient(): Promise<
 				apiKey: orKey,
 				appName: env.OPENROUTER_APP_NAME ?? null,
 				httpReferer: env.OPENROUTER_HTTP_REFERER ?? null,
+				logger: console,
 				model: settings.openrouterModel ?? env.OPENROUTER_MODEL,
 			});
 		}
@@ -84,6 +85,7 @@ function resolveFromEnvFallback(): PromptEnhanceClient | undefined {
 				apiKey: orKey,
 				appName: env.OPENROUTER_APP_NAME ?? null,
 				httpReferer: env.OPENROUTER_HTTP_REFERER ?? null,
+				logger: console,
 				model: env.OPENROUTER_MODEL,
 			});
 		}

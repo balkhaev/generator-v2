@@ -378,6 +378,7 @@ export function createApp(options: AppOptions): {
 	app.route(
 		"/api/enhance-prompt",
 		createEnhanceRoutes({
+			logger: options.loggerImpl,
 			resolveClient:
 				options.resolvePromptEnhanceClient ?? resolveStudioPromptEnhanceClient,
 		})

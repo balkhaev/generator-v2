@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 
 import type { PromptEnhanceClient } from "@/clients/prompt-enhance-client";
+import { EnhanceOutputError } from "@/clients/prompt-enhance-output";
 
 const enhanceRequestSchema = z.object({
 	imageUrl: z.url("Image URL must be a valid URL").optional(),
@@ -9,6 +10,13 @@ const enhanceRequestSchema = z.object({
 });
 
 function shouldFallbackVisionToText(error: unknown): boolean {
+	// A validated-output rejection that survived the whole vision fallback chain
+	// (every model refused / dumped reasoning / returned junk) is still better
+	// served as a text-only enhance than a 502 — the user gets a usable prompt,
+	// just without image grounding.
+	if (error instanceof EnhanceOutputError) {
+		return true;
+	}
 	const msg = (
 		error instanceof Error ? error.message : String(error)
 	).toLowerCase();
@@ -65,9 +73,11 @@ async function runEnhancement(
 }
 
 export function createEnhanceRoutes(deps: {
+	logger?: Pick<Console, "info" | "warn">;
 	resolveClient: () => Promise<PromptEnhanceClient | undefined>;
 }) {
 	const app = new Hono();
+	const logger = deps.logger;
 
 	app.post("/", async (c) => {
 		const client = await deps.resolveClient();
@@ -93,14 +103,27 @@ export function createEnhanceRoutes(deps: {
 			);
 		}
 
+		const startedAt = Date.now();
+		const requestedVision = Boolean(parsed.data.imageUrl);
 		try {
 			const out = await runEnhancement(client, parsed.data);
+			logger?.info?.("studio.enhance.ok", {
+				durationMs: Date.now() - startedAt,
+				fellBackToText: requestedVision && out.mode === "text",
+				mode: out.mode,
+				requestedVision,
+			});
 			return c.json({
 				enhanced: out.enhanced,
 				mode: out.mode,
 				...(out.notice ? { notice: out.notice } : {}),
 			});
 		} catch (error) {
+			logger?.warn?.("studio.enhance.failed", {
+				durationMs: Date.now() - startedAt,
+				message: error instanceof Error ? error.message : String(error),
+				requestedVision,
+			});
 			return c.json(
 				{
 					error:

@@ -1,5 +1,8 @@
 import type { PromptEnhanceClient } from "@/clients/prompt-enhance-client";
-import { cleanPromptOutput } from "@/clients/prompt-enhance-output";
+import {
+	cleanPromptOutput,
+	EnhanceOutputError,
+} from "@/clients/prompt-enhance-output";
 import {
 	STUDIO_TEXT_ENHANCE_SYSTEM_PROMPT,
 	STUDIO_TEXT_ENHANCE_USER_TEMPLATE,
@@ -40,31 +43,72 @@ const DEFAULT_VISION_FALLBACK_MODELS = [
 ] as const;
 
 /**
- * A vision call failure worth retrying on the NEXT model rather than bubbling
- * up: content-policy refusals, empty-content cutoffs, and dead/!routable model
- * slugs. A genuine network/timeout error is not in here — it rethrows so the
- * route can surface it.
+ * Upstream (non-EnhanceOutputError) failures worth retrying on the NEXT vision
+ * model rather than bubbling up: provider-side moderation, empty-content
+ * cutoffs, and dead/non-routable model slugs. Deliberately narrow — a bare
+ * "policy" / "refus" / "404" substring is NOT here because those false-match
+ * unrelated errors (e.g. a 404 on the image URL). Model-output refusals and
+ * reasoning dumps are caught separately as EnhanceOutputError. Genuine
+ * network/timeout/auth errors are absent so they rethrow to the route.
  */
-const RETRIABLE_VISION_ERROR_MARKERS = [
-	"moderation",
-	"refus",
-	"empty content",
-	"returned analysis",
+const RETRIABLE_VISION_MESSAGE_MARKERS = [
 	"no endpoints",
-	"deprecated",
 	"is not a valid model",
-	"404",
-	"policy",
+	"deprecated",
+	"returned empty content",
 	"content violates",
+	"policy violation",
+	"flagged by",
+	"moderation",
 ] as const;
 
-function isRetriableVisionError(error: unknown): boolean {
+/**
+ * Decide whether a failed vision attempt should retry the next model in the
+ * chain ("retry") or abort the whole chain ("fatal", e.g. timeout / auth) so
+ * the route can fall back to text-only enhance.
+ */
+function classifyVisionFailure(error: unknown): "fatal" | "retry" {
+	// A validated-output rejection (refusal, reasoning dump, empty, too short)
+	// is always worth trying the next model — a different model often complies.
+	if (error instanceof EnhanceOutputError) {
+		return "retry";
+	}
 	const message = (
 		error instanceof Error ? error.message : String(error)
 	).toLowerCase();
-	return RETRIABLE_VISION_ERROR_MARKERS.some((marker) =>
+	// HTTP 404 specifically from the chat-completions call means an unroutable
+	// model slug — retry the next one. Anchored to our error prefix so an image
+	// fetch 404 (which throws earlier) can't reach here anyway.
+	if (message.includes("request failed: 404")) {
+		return "retry";
+	}
+	return RETRIABLE_VISION_MESSAGE_MARKERS.some((marker) =>
 		message.includes(marker)
-	);
+	)
+		? "retry"
+		: "fatal";
+}
+
+function failureReason(error: unknown): string {
+	if (error instanceof EnhanceOutputError) {
+		return error.reason;
+	}
+	const message = (
+		error instanceof Error ? error.message : String(error)
+	).toLowerCase();
+	if (
+		message.includes("request failed: 404") ||
+		message.includes("no endpoints")
+	) {
+		return "dead_slug";
+	}
+	if (message.includes("empty content")) {
+		return "empty_content";
+	}
+	if (message.includes("timed out")) {
+		return "timeout";
+	}
+	return "upstream_error";
 }
 
 function buildVisionModelChain(primary: string): string[] {
@@ -100,6 +144,12 @@ interface StudioOpenRouterClientOptions {
 	fetchImpl?: typeof fetch;
 	/** e.g. https://your-app.example — optional OpenRouter header. */
 	httpReferer?: string | null;
+	/**
+	 * Structured telemetry sink. Vision fallbacks, the model that ultimately
+	 * served the request, and reasoning-token burn are logged here so prod
+	 * behaviour is observable without re-running the request by hand.
+	 */
+	logger?: Pick<Console, "info" | "warn">;
 	model?: string;
 }
 
@@ -130,6 +180,28 @@ function buildEmptyContentMessage(
 	);
 }
 
+/**
+ * Surface providers that ignored reasoning.enabled=false and burned hidden
+ * chain-of-thought tokens — the leading indicator of empty-content cutoffs and
+ * reasoning-dump leaks. Telemetry only; never throws.
+ */
+function logReasoningBurn(
+	logger: Pick<Console, "info" | "warn"> | undefined,
+	model: string,
+	payload: ChatCompletionResponse
+): void {
+	const reasoningTokens =
+		payload.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+	if (reasoningTokens > 0) {
+		logger?.warn?.("studio.enhance.reasoning_burn", {
+			hint: "provider ignored reasoning.enabled=false",
+			model,
+			provider: payload.provider ?? "unknown",
+			reasoningTokens,
+		});
+	}
+}
+
 export function createStudioOpenRouterClient(
 	options: StudioOpenRouterClientOptions
 ): PromptEnhanceClient {
@@ -142,6 +214,7 @@ export function createStudioOpenRouterClient(
 	const model = options.model?.trim() || "openai/gpt-4o-mini";
 	const referer = options.httpReferer?.trim();
 	const appName = options.appName?.trim();
+	const logger = options.logger;
 
 	async function callChatCompletions(
 		messages: {
@@ -206,8 +279,8 @@ export function createStudioOpenRouterClient(
 		}
 
 		const payload = (await response.json()) as ChatCompletionResponse;
-		const choice = payload.choices?.[0];
-		const content = choice?.message?.content?.trim();
+		logReasoningBurn(logger, activeModel, payload);
+		const content = payload.choices?.[0]?.message?.content?.trim();
 		if (!content) {
 			throw new Error(buildEmptyContentMessage(activeModel, payload));
 		}
@@ -263,18 +336,31 @@ export function createStudioOpenRouterClient(
 
 			// Walk the vision model chain: the configured model first, then
 			// permissive fallbacks. A refusal / empty-content / dead-slug failure
-			// retries on the next model; the last error bubbles up so the route
-			// can fall back to text-only enhance.
+			// retries on the next model; a fatal error (timeout/auth) bubbles up
+			// so the route can fall back to text-only enhance.
 			const chain = buildVisionModelChain(model);
 			let lastError: unknown;
-			for (const candidate of chain) {
+			for (let attempt = 0; attempt < chain.length; attempt++) {
+				const candidate = chain[attempt];
 				try {
-					return await callChatCompletions(messages, candidate);
+					const result = await callChatCompletions(messages, candidate);
+					logger?.info?.("studio.enhance.vision_served", {
+						fallbackDepth: attempt,
+						model: candidate,
+						primary: model,
+					});
+					return result;
 				} catch (error) {
-					if (!isRetriableVisionError(error)) {
+					lastError = error;
+					if (classifyVisionFailure(error) === "fatal") {
 						throw error;
 					}
-					lastError = error;
+					logger?.warn?.("studio.enhance.vision_fallback", {
+						attempt,
+						model: candidate,
+						reason: failureReason(error),
+						remaining: chain.length - attempt - 1,
+					});
 				}
 			}
 			throw lastError instanceof Error

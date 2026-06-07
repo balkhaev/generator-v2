@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
-import { cleanPromptOutput } from "@/clients/prompt-enhance-output";
+import {
+	analyzeEnhancedOutput,
+	cleanPromptOutput,
+	EnhanceOutputError,
+} from "@/clients/prompt-enhance-output";
 import {
 	STUDIO_VISION_ENHANCE_SYSTEM_PROMPT,
 	STUDIO_VISION_ENHANCE_USER_TEMPLATE,
@@ -45,6 +49,56 @@ describe("prompt enhance output cleanup", () => {
 		const prompt =
 			"nude woman standing on a wooden deck, sepia tones, soft window light, 85mm lens, shallow depth of field, fine-art photography";
 		expect(cleanPromptOutput(prompt)).toBe(prompt);
+	});
+
+	it("recovers the prompt from a benign single-line preamble", () => {
+		expect(
+			cleanPromptOutput(
+				"Here is the enhanced prompt:\n\nblonde woman in lingerie on a bed, dim warm light, static shot"
+			)
+		).toBe("blonde woman in lingerie on a bed, dim warm light, static shot");
+		expect(
+			cleanPromptOutput('Enhanced prompt: "cinematic portrait, soft light"')
+		).toBe("cinematic portrait, soft light");
+	});
+
+	it("rejects bullet/numbered reasoning structures without bold headers", () => {
+		const bulletDump =
+			"Subject is a woman.\n- she is lying down\n- then she jumps\n- breasts shake";
+		expect(() => cleanPromptOutput(bulletDump)).toThrow(
+			"Prompt enhance returned analysis"
+		);
+	});
+
+	it("rejects degenerate too-short output", () => {
+		expect(() => cleanPromptOutput("ok.")).toThrow("too short");
+	});
+
+	it("exposes machine-readable reason codes via analyzeEnhancedOutput", () => {
+		expect(
+			analyzeEnhancedOutput("I'm sorry, I can't help with that.")
+		).toMatchObject({ ok: false, reason: "refusal" });
+		expect(
+			analyzeEnhancedOutput("**Final Prompt:** a woman on a bed")
+		).toMatchObject({ ok: false, reason: "reasoning_dump" });
+		expect(analyzeEnhancedOutput("   ")).toMatchObject({
+			ok: false,
+			reason: "empty",
+		});
+		const good = analyzeEnhancedOutput(
+			"a woman on a bed, soft window light, 85mm lens, shallow depth of field"
+		);
+		expect(good.ok).toBe(true);
+	});
+
+	it("throws a typed EnhanceOutputError carrying the reason", () => {
+		try {
+			cleanPromptOutput("As an AI, I cannot do that.");
+			throw new Error("expected to throw");
+		} catch (error) {
+			expect(error).toBeInstanceOf(EnhanceOutputError);
+			expect((error as EnhanceOutputError).reason).toBe("refusal");
+		}
 	});
 });
 

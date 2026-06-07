@@ -20,6 +20,24 @@ describe("prompt enhance output cleanup", () => {
 			)
 		).toThrow("Prompt enhance returned analysis");
 	});
+
+	it("rejects content-policy refusals instead of leaking them as the prompt", () => {
+		expect(() =>
+			cleanPromptOutput(
+				"I cannot generate prompts containing sexually explicit content or descriptions of sexual acts. I can, however, help you create a prompt that focuses on the fashion, lighting, and pose of the subject in the reference image without the explicit action."
+			)
+		).toThrow("refused by the model");
+
+		expect(() =>
+			cleanPromptOutput("I'm sorry, but I can't help with that request.")
+		).toThrow("refused by the model");
+	});
+
+	it("does not flag legitimate comma-separated prompts as refusals", () => {
+		const prompt =
+			"nude woman standing on a wooden deck, sepia tones, soft window light, 85mm lens, shallow depth of field, fine-art photography";
+		expect(cleanPromptOutput(prompt)).toBe(prompt);
+	});
 });
 
 describe("vision prompt enhance template", () => {

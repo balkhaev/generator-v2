@@ -24,6 +24,59 @@ const OPENROUTER_REQUEST_TIMEOUT_MS = 60_000;
  */
 const OPENROUTER_MAX_TOKENS = 600;
 
+/**
+ * When the primary vision model refuses a brief (xAI/Grok in particular
+ * moderates the *input image* and can refuse on one frame while happily
+ * rewriting the next), retry the same messages against these permissive
+ * vision-capable models before giving up to text-only enhance. Empirically
+ * (NSFW image-to-video briefs) Mistral and Qwen-VL comply where Grok refuses.
+ * Order matters: cheapest/most-reliable first. The primary model is always
+ * tried first and de-duplicated out of this list.
+ */
+const DEFAULT_VISION_FALLBACK_MODELS = [
+	"x-ai/grok-4.20",
+	"mistralai/mistral-medium-3.1",
+	"qwen/qwen3-vl-235b-a22b-instruct",
+] as const;
+
+/**
+ * A vision call failure worth retrying on the NEXT model rather than bubbling
+ * up: content-policy refusals, empty-content cutoffs, and dead/!routable model
+ * slugs. A genuine network/timeout error is not in here — it rethrows so the
+ * route can surface it.
+ */
+const RETRIABLE_VISION_ERROR_MARKERS = [
+	"moderation",
+	"refus",
+	"empty content",
+	"returned analysis",
+	"no endpoints",
+	"deprecated",
+	"is not a valid model",
+	"404",
+	"policy",
+	"content violates",
+] as const;
+
+function isRetriableVisionError(error: unknown): boolean {
+	const message = (
+		error instanceof Error ? error.message : String(error)
+	).toLowerCase();
+	return RETRIABLE_VISION_ERROR_MARKERS.some((marker) =>
+		message.includes(marker)
+	);
+}
+
+function buildVisionModelChain(primary: string): string[] {
+	const chain: string[] = [primary];
+	for (const fallback of DEFAULT_VISION_FALLBACK_MODELS) {
+		if (!chain.includes(fallback)) {
+			chain.push(fallback);
+		}
+	}
+	return chain;
+}
+
 interface ChatCompletionResponse {
 	choices?: Array<{
 		finish_reason?: string | null;
@@ -94,8 +147,10 @@ export function createStudioOpenRouterClient(
 		messages: {
 			content: string | Record<string, unknown>[];
 			role: "system" | "user";
-		}[]
+		}[],
+		modelOverride?: string
 	): Promise<string> {
+		const activeModel = modelOverride?.trim() || model;
 		const headers: Record<string, string> = {
 			authorization: `Bearer ${apiKey}`,
 			"content-type": "application/json",
@@ -118,7 +173,7 @@ export function createStudioOpenRouterClient(
 				body: JSON.stringify({
 					max_tokens: OPENROUTER_MAX_TOKENS,
 					messages,
-					model,
+					model: activeModel,
 					// Prompt-enhance is a short rewrite; we never want hidden
 					// chain-of-thought eating the entire OPENROUTER_MAX_TOKENS
 					// budget (Qwen3.5, GPT-5, o-series and friends will happily
@@ -154,7 +209,7 @@ export function createStudioOpenRouterClient(
 		const choice = payload.choices?.[0];
 		const content = choice?.message?.content?.trim();
 		if (!content) {
-			throw new Error(buildEmptyContentMessage(model, payload));
+			throw new Error(buildEmptyContentMessage(activeModel, payload));
 		}
 		return cleanPromptOutput(content);
 	}
@@ -186,10 +241,13 @@ export function createStudioOpenRouterClient(
 				trimmedUrl,
 				fetchImpl
 			);
-			return callChatCompletions([
-				{ role: "system", content: STUDIO_VISION_ENHANCE_SYSTEM_PROMPT },
+			const messages = [
 				{
-					role: "user",
+					role: "system" as const,
+					content: STUDIO_VISION_ENHANCE_SYSTEM_PROMPT,
+				},
+				{
+					role: "user" as const,
 					content: [
 						{
 							type: "image_url",
@@ -201,7 +259,27 @@ export function createStudioOpenRouterClient(
 						},
 					],
 				},
-			]);
+			];
+
+			// Walk the vision model chain: the configured model first, then
+			// permissive fallbacks. A refusal / empty-content / dead-slug failure
+			// retries on the next model; the last error bubbles up so the route
+			// can fall back to text-only enhance.
+			const chain = buildVisionModelChain(model);
+			let lastError: unknown;
+			for (const candidate of chain) {
+				try {
+					return await callChatCompletions(messages, candidate);
+				} catch (error) {
+					if (!isRetriableVisionError(error)) {
+						throw error;
+					}
+					lastError = error;
+				}
+			}
+			throw lastError instanceof Error
+				? lastError
+				: new Error("Vision prompt enhance failed across all fallback models");
 		},
 	};
 }

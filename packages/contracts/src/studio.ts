@@ -175,3 +175,29 @@ export interface StudioSnapshot {
 	warnings: string[];
 	workflows: StudioWorkflowSummary[];
 }
+
+/**
+ * Wire-форма run-записи, которую studio-сервис отдаёт по HTTP (snapshot) и SSE.
+ * Базовая запись плюс derived-поля, чтобы клиенту не нужно было знать о
+ * scenarios для рендера. Источник правды для внешних потребителей (ai-girl).
+ */
+export interface StudioRunWireRecord extends StudioRunRecord {
+	artifactUrls: string[];
+	inputLabel: string;
+	scenarioName: string;
+}
+
+/** Wire-форма shot-записи: базовая запись + имя сценария для рендера. */
+export interface StudioShotWireRecord extends StudioShotRecord {
+	scenarioName: string;
+}
+
+/** Wire-форма снапшота студии: runs/shots в derived-форме. */
+export interface StudioSnapshotWire {
+	runs: StudioRunWireRecord[];
+	scenarios: StudioScenarioRecord[];
+	shots: StudioShotWireRecord[];
+	source: "server";
+	warnings: string[];
+	workflows: StudioWorkflowSummary[];
+}

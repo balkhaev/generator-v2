@@ -11,6 +11,7 @@ import {
 	type StudioPromptSource,
 	type StudioRunDebugBundle,
 	type StudioRunRecord,
+	type StudioRunWireRecord,
 	type StudioScenarioRecord,
 	type StudioShotArtifactKind,
 	type StudioShotRecord,
@@ -443,16 +444,7 @@ function formatInputLabel(inputImageUrl: string): string {
 	}
 }
 
-/**
- * Расширенная wire-форма run-записи, отдаваемая SSE и снапшотом студии.
- * Включает derived-поля (`scenarioName`, `inputLabel`, `artifactUrls`),
- * чтобы фронту не приходилось знать о scenarios для рендера.
- */
-export interface StudioRunWireRecord extends StudioRunRecord {
-	artifactUrls: string[];
-	inputLabel: string;
-	scenarioName: string;
-}
+export type { StudioRunWireRecord } from "@generator/contracts/studio";
 
 export function runEntityToWireRecord(
 	entity: StudioRunEntity,

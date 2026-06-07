@@ -20,7 +20,7 @@ import { z } from "zod";
 export const promptEnhanceProviderSchema = z.enum(["grok", "openrouter"]);
 export type PromptEnhanceProvider = z.infer<typeof promptEnhanceProviderSchema>;
 
-export const trainingProviderSchema = z.enum(["fal", "runpod"]);
+export const trainingProviderSchema = z.enum(["runpod"]);
 export type TrainingProvider = z.infer<typeof trainingProviderSchema>;
 
 export const promptEnhanceSettingsSchema = z.object({
@@ -30,7 +30,7 @@ export const promptEnhanceSettingsSchema = z.object({
 export type PromptEnhanceSettings = z.infer<typeof promptEnhanceSettingsSchema>;
 
 export const trainingSettingsSchema = z.object({
-	provider: trainingProviderSchema.default("fal"),
+	provider: trainingProviderSchema.default("runpod"),
 });
 export type TrainingSettings = z.infer<typeof trainingSettingsSchema>;
 
@@ -87,7 +87,6 @@ export const trainingDomain: DomainSpec<TrainingSettings> = {
 	name: "training",
 	schema: trainingSettingsSchema,
 	providerCredentials: {
-		fal: [{ provider: "fal", keyName: "apiKey" }],
 		runpod: [{ provider: "runpod", keyName: "apiKey" }],
 	},
 };

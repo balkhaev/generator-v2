@@ -14,7 +14,7 @@ function createRunner(fetchImpl: typeof fetch) {
 		apiKey: "rpa_test_key",
 		baseModel: "z-image",
 		endpointId: "endpoint-xyz",
-		falApiKeyForDataset: "fal-test",
+		datasetApiKey: "replicate-test",
 		fetchImpl,
 		logger: { error: () => undefined, info: () => undefined },
 		personsApiBaseUrl: "https://persons-api.example.com",

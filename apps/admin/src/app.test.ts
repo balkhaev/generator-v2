@@ -271,7 +271,7 @@ describe("admin gateway", () => {
 						invalidated.push(domain);
 						return Promise.resolve();
 					},
-					store: createWorkflowRuntimeConfigStore(["fal-zimage-turbo"]),
+					store: createWorkflowRuntimeConfigStore(["runpod-flux-dev-image"]),
 				},
 			},
 			studioBaseUrl: "http://studio.internal",
@@ -283,13 +283,13 @@ describe("admin gateway", () => {
 		expect(listResponse.status).toBe(200);
 		const list = (await listResponse.json()) as AdminWorkflowListResponse;
 		const hiddenWorkflow = list.workflows.find(
-			(workflow) => workflow.key === "fal-zimage-turbo"
+			(workflow) => workflow.key === "runpod-flux-dev-image"
 		);
 		expect(hiddenWorkflow?.active).toBe(false);
-		expect(list.inactiveWorkflowKeys).toEqual(["fal-zimage-turbo"]);
+		expect(list.inactiveWorkflowKeys).toEqual(["runpod-flux-dev-image"]);
 
 		const patchResponse = await app.request(
-			"http://localhost/api/admin/workflows/fal-zimage-turbo",
+			"http://localhost/api/admin/workflows/runpod-flux-dev-image",
 			{
 				body: JSON.stringify({ active: true }),
 				headers: { "content-type": "application/json" },

@@ -16,13 +16,13 @@
  */
 import { z } from "zod";
 export const promptEnhanceProviderSchema = z.enum(["grok", "openrouter"]);
-export const trainingProviderSchema = z.enum(["fal", "runpod"]);
+export const trainingProviderSchema = z.enum(["runpod"]);
 export const promptEnhanceSettingsSchema = z.object({
 	provider: promptEnhanceProviderSchema.default("grok"),
 	openrouterModel: z.string().min(1).default("openai/gpt-4o-mini"),
 });
 export const trainingSettingsSchema = z.object({
-	provider: trainingProviderSchema.default("fal"),
+	provider: trainingProviderSchema.default("runpod"),
 });
 /**
  * Studio-side prompt enhancement (used by `/api/enhance-prompt` in studio-api).
@@ -56,7 +56,6 @@ export const trainingDomain = {
 	name: "training",
 	schema: trainingSettingsSchema,
 	providerCredentials: {
-		fal: [{ provider: "fal", keyName: "apiKey" }],
 		runpod: [{ provider: "runpod", keyName: "apiKey" }],
 	},
 };

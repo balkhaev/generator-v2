@@ -24,8 +24,7 @@ function createMockClient(label: string): InferenceClient {
 describe("inference router", () => {
 	it("routes Civitai-marked payloads and endpoint ids to Civitai", async () => {
 		const civitai = createMockClient("civitai");
-		const fal = createMockClient("fal");
-		const router = createInferenceRouter({ civitai, fal });
+		const router = createInferenceRouter({ civitai });
 
 		await expect(
 			router.submit({
@@ -36,7 +35,6 @@ describe("inference router", () => {
 			endpointId: "civitai-endpoint",
 		});
 		expect(civitai.submit).toHaveBeenCalledTimes(1);
-		expect(fal.submit).not.toHaveBeenCalled();
 
 		await router.getStatus(
 			"civitai-token-1",
@@ -65,9 +63,8 @@ describe("inference router", () => {
 	});
 
 	it("routes new __runpodWorkflow payloads to the RunPod adapter", async () => {
-		const fal = createMockClient("fal");
 		const runpod = createMockClient("runpod");
-		const router = createInferenceRouter({ fal, runpod });
+		const router = createInferenceRouter({ runpod });
 
 		await expect(
 			router.submit({
@@ -76,13 +73,11 @@ describe("inference router", () => {
 			})
 		).resolves.toMatchObject({ endpointId: "runpod-endpoint" });
 		expect(runpod.submit).toHaveBeenCalledTimes(1);
-		expect(fal.submit).not.toHaveBeenCalled();
 	});
 
 	it("routes legacy __runpodEndpoint and __runpodPod payloads to RunPod", async () => {
-		const fal = createMockClient("fal");
 		const runpod = createMockClient("runpod");
-		const router = createInferenceRouter({ fal, runpod });
+		const router = createInferenceRouter({ runpod });
 
 		await router.submit({
 			__runpodEndpoint: "fooocus-sdxl",
@@ -96,9 +91,8 @@ describe("inference router", () => {
 	});
 
 	it("routes runpod: and runpod-pod: endpoint ids to the same adapter", async () => {
-		const fal = createMockClient("fal");
 		const runpod = createMockClient("runpod");
-		const router = createInferenceRouter({ fal, runpod });
+		const router = createInferenceRouter({ runpod });
 
 		await router.getStatus("rp-job-1", "runpod:fooocus-sdxl");
 		await router.getStatus("pod-1:req-1", "runpod-pod:ltx-2-3-video");
@@ -108,26 +102,9 @@ describe("inference router", () => {
 		expect(runpod.cancel).toHaveBeenCalledTimes(2);
 	});
 
-	it("keeps fal routing for fal payloads and unprefixed endpoint ids", async () => {
-		const fal = createMockClient("fal");
-		const runpod = createMockClient("runpod");
-		const router = createInferenceRouter({ fal, runpod });
-
-		await router.submit({
-			__falModel: "fal-ai/fast-sdxl",
-			prompt: "test",
-		});
-		expect(fal.submit).toHaveBeenCalledTimes(1);
-		expect(runpod.submit).not.toHaveBeenCalled();
-
-		await router.getStatus("fal-job-1", "fal-ai/fast-sdxl");
-		expect(fal.getStatus).toHaveBeenCalledWith("fal-job-1", "fal-ai/fast-sdxl");
-	});
-
 	it("routes Replicate-marked payloads and endpoint ids to Replicate", async () => {
-		const fal = createMockClient("fal");
 		const replicate = createMockClient("replicate");
-		const router = createInferenceRouter({ fal, replicate });
+		const router = createInferenceRouter({ replicate });
 
 		await expect(
 			router.submit({
@@ -138,7 +115,6 @@ describe("inference router", () => {
 			endpointId: "replicate-endpoint",
 		});
 		expect(replicate.submit).toHaveBeenCalledTimes(1);
-		expect(fal.submit).not.toHaveBeenCalled();
 
 		await router.getStatus(
 			"replicate-job-1",
@@ -159,8 +135,30 @@ describe("inference router", () => {
 		);
 	});
 
+	it("throws on unknown payloads instead of silently falling back", () => {
+		const router = createInferenceRouter({
+			runpod: createMockClient("runpod"),
+		});
+
+		expect(() =>
+			router.submit({
+				prompt: "test",
+			})
+		).toThrow("No inference client configured for this payload");
+	});
+
+	it("throws on unknown endpoint ids", () => {
+		const router = createInferenceRouter({
+			runpod: createMockClient("runpod"),
+		});
+
+		expect(() => router.getStatus("job-1", "fal-ai/fast-sdxl")).toThrow(
+			"No inference client configured for this endpoint"
+		);
+	});
+
 	it("fails fast when a RunPod workflow is submitted without a RunPod client", () => {
-		const router = createInferenceRouter({ fal: createMockClient("fal") });
+		const router = createInferenceRouter({});
 
 		expect(() =>
 			router.submit({
@@ -177,7 +175,7 @@ describe("inference router", () => {
 	});
 
 	it("fails fast when a Civitai workflow is submitted without a Civitai client", () => {
-		const router = createInferenceRouter({ fal: createMockClient("fal") });
+		const router = createInferenceRouter({});
 
 		expect(() =>
 			router.submit({
@@ -194,7 +192,7 @@ describe("inference router", () => {
 	});
 
 	it("fails fast when a Replicate workflow is submitted without a Replicate client", () => {
-		const router = createInferenceRouter({ fal: createMockClient("fal") });
+		const router = createInferenceRouter({});
 
 		expect(() =>
 			router.submit({

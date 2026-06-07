@@ -7,13 +7,12 @@ import {
 import { type IdempotencyLock, withIdempotency } from "@generator/queue";
 
 import type { PersonsApiClient } from "@/clients/persons-api";
-import type { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
 import type { RunpodPodLoraTrainingRunner } from "@/providers/runpod-pod-lora-training";
 
 /**
  * Number of milliseconds without any training event after which we consider a
  * polling-phase training run abandoned and try to resume it. Tuned to be
- * comfortably larger than the fal polling interval (30s) plus one network
+ * comfortably larger than the runpod polling interval (30s) plus one network
  * round-trip's worth of jitter, but small enough that a deploy-induced gap is
  * caught on the very next worker boot.
  */
@@ -26,7 +25,6 @@ export interface TrainingRecoveryDeps {
 	logger?: Pick<Console, "error" | "info" | "warn">;
 	now?: () => number;
 	recoveryLock: IdempotencyLock;
-	runner: Pick<FalZibLoraTrainingRunner, "resumeFromProviderJob">;
 	runpodPodRunner?: Pick<
 		RunpodPodLoraTrainingRunner,
 		"prepareDataset" | "resumeFromProviderJob"
@@ -41,7 +39,7 @@ export interface TrainingRecoverySummary {
 	skipped: number;
 }
 
-type RecoveryProvider = "fal" | "runpod-pod";
+type RecoveryProvider = "runpod-pod";
 
 interface RecoveryCandidate {
 	datasetUrl: string | null;
@@ -131,9 +129,6 @@ function getSeedReferenceImages(person: PersonRecord) {
 function resumableProvider(
 	training: PersonLoraTrainingMeta
 ): RecoveryProvider | null {
-	if (training.provider === "fal") {
-		return "fal";
-	}
 	if (training.provider === "runpod-pod") {
 		return "runpod-pod";
 	}
@@ -395,9 +390,9 @@ async function tryResumePrep(
 }
 
 /**
- * Scan all persons via persons-api and resume any fal training that has been
+ * Scan all persons via persons-api and resume any runpod training that has been
  * silent for longer than `stalenessThresholdMs`. Designed to run at admin
- * worker startup so a crash/redeploy cannot strand a fal job that has already
+ * worker startup so a crash/redeploy cannot strand a runpod job that has already
  * finished server-side.
  *
  * Concurrency safety:
@@ -495,34 +490,15 @@ async function tryResumeProviderJob(
 					providerJobId: candidate.providerJobId,
 					trainingRunId: candidate.trainingRunId,
 				});
-				if (candidate.provider === "runpod-pod") {
-					const runner = deps.runpodPodRunner;
-					if (!runner) {
-						throw new Error(
-							"runpod-pod runner is not configured; recovery cannot proceed"
-						);
-					}
-					await runner.resumeFromProviderJob({
-						debugCorrelationId: candidate.debugCorrelationId,
-						loraS3Key: candidate.loraS3Key ?? undefined,
-						outputName: candidate.outputName,
-						personId: candidate.personId,
-						personSlug: candidate.personSlug,
-						providerJobId: candidate.providerJobId,
-						referenceImageCount: candidate.referenceImageCount,
-						referenceImageTargetCount: candidate.referenceImageTargetCount,
-						referenceImageUrls: candidate.referenceImageUrls,
-						trainingRunId: candidate.trainingRunId,
-						trainingStartedAt: candidate.trainingStartedAt,
-						trainingSteps: candidate.trainingSteps,
-						triggerWord: candidate.triggerWord,
-					});
-					return;
+				const runner = deps.runpodPodRunner;
+				if (!runner) {
+					throw new Error(
+						"runpod-pod runner is not configured; recovery cannot proceed"
+					);
 				}
-				await deps.runner.resumeFromProviderJob({
-					datasetUrl: candidate.datasetUrl,
+				await runner.resumeFromProviderJob({
 					debugCorrelationId: candidate.debugCorrelationId,
-					genderHint: candidate.genderHint,
+					loraS3Key: candidate.loraS3Key ?? undefined,
 					outputName: candidate.outputName,
 					personId: candidate.personId,
 					personSlug: candidate.personSlug,

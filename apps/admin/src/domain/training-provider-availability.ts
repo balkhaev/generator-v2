@@ -1,7 +1,6 @@
 import type { TrainingProviderAvailability } from "@generator/contracts/admin";
 
 interface TrainingProviderEnvSnapshot {
-	FAL_KEY?: string | null;
 	RUNPOD_AI_TOOLKIT_ENDPOINT_ID?: string | null;
 	RUNPOD_API_KEY?: string | null;
 	RUNPOD_POD_BOOTSTRAP_URL?: string | null;
@@ -20,11 +19,6 @@ interface TrainingProviderEnvSnapshot {
 export function resolveTrainingProviderAvailability(
 	env: TrainingProviderEnvSnapshot
 ): TrainingProviderAvailability[] {
-	const falMissing: string[] = [];
-	if (!env.FAL_KEY) {
-		falMissing.push("FAL_KEY");
-	}
-
 	const mode = env.RUNPOD_TRAINING_MODE ?? "pod";
 	const runpodMissing: string[] = [];
 	if (!env.RUNPOD_API_KEY) {
@@ -38,11 +32,6 @@ export function resolveTrainingProviderAvailability(
 	}
 
 	return [
-		{
-			configured: falMissing.length === 0,
-			missing: falMissing,
-			provider: "fal",
-		},
 		{
 			configured: runpodMissing.length === 0,
 			missing: runpodMissing,

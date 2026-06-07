@@ -23,7 +23,6 @@ function requireClient(
 
 export function createInferenceRouter(clients: {
 	civitai?: InferenceClient;
-	fal?: InferenceClient;
 	replicate?: InferenceClient;
 	runpod?: InferenceClient;
 }): InferenceClient {
@@ -46,12 +45,6 @@ export function createInferenceRouter(clients: {
 				"Replicate inference client is not configured"
 			);
 		}
-		if ("__falModel" in payload && clients.fal) {
-			return clients.fal;
-		}
-		if (clients.fal) {
-			return clients.fal;
-		}
 		throw new Error("No inference client configured for this payload");
 	}
 
@@ -73,9 +66,6 @@ export function createInferenceRouter(clients: {
 				clients.replicate,
 				"Replicate inference client is not configured"
 			);
-		}
-		if (clients.fal) {
-			return clients.fal;
 		}
 		throw new Error("No inference client configured for this endpoint");
 	}

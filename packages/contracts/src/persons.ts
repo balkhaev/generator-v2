@@ -28,8 +28,8 @@ export const DEFAULT_PERSON_LORA_REFERENCE_IMAGE_TARGET_COUNT = 25;
  * settings page without depending on persons-internal modules.
  */
 export const PERSONS_AVATAR_WORKFLOWS = {
-	preview: "fal-flux2-turbo",
-	refine: "fal-flux2-dev-edit",
+	preview: "runpod-flux-dev-image",
+	refine: "runpod-flux-dev-image",
 } as const;
 
 const PERSON_LORA_ACTIVE_TRAINING_STATUS_SET = new Set<string>(

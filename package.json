@@ -53,7 +53,7 @@
     "check": "ultracite check",
     "fix": "ultracite fix",
     "migrate:external-artifacts": "bun run tools/migrate-external-artifacts.ts",
-    "test": "DATABASE_URL=postgres://test:test@localhost:5432/test CORS_ORIGIN=http://localhost:3004 FAL_KEY=fal-test bun test --path-ignore-patterns '**/dist/**'"
+    "test": "DATABASE_URL=postgres://test:test@localhost:5432/test CORS_ORIGIN=http://localhost:3004 bun test --path-ignore-patterns '**/dist/**'"
   },
   "dependencies": {
     "@generator/db": "workspace:*",

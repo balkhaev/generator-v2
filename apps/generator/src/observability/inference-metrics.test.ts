@@ -9,7 +9,6 @@ import {
 
 describe("deriveProvider", () => {
 	it("maps known workflow key prefixes to providers", () => {
-		expect(deriveProvider("fal-flux-schnell")).toBe("fal");
 		expect(deriveProvider("runpod-fooocus-sdxl")).toBe("runpod");
 		expect(deriveProvider("replicate-flux-dev-lora")).toBe("replicate");
 		expect(deriveProvider("civitai-ltx-2-3-synth-t2v")).toBe("civitai");
@@ -73,17 +72,17 @@ describe("emitInferenceMetric", () => {
 			{
 				durationMs: 1234,
 				metric: "succeeded",
-				provider: "fal",
+				provider: "runpod",
 				status: "succeeded",
-				workflowKey: "fal-flux-schnell",
+				workflowKey: "runpod-fooocus-sdxl",
 			}
 		);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.[0]).toBe(INFERENCE_METRIC_EVENT);
 		expect(calls[0]?.[1]).toMatchObject({
 			metric: "succeeded",
-			provider: "fal",
-			workflowKey: "fal-flux-schnell",
+			provider: "runpod",
+			workflowKey: "runpod-fooocus-sdxl",
 		});
 	});
 

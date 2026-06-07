@@ -157,10 +157,9 @@ bucket. Tool берёт актуальные assets из read-only Adorely Debug
 «генерация без LoRA»: принимает `personId` или `personSlug`, опционально
 `generationId`/`executionId`, читает person/generation/generator execution
 записи из БД и возвращает проверки `params.loraUrl`, совпадения с `person.loraUrl`,
-trigger word в prompt и summary provider payload (`__falModel`, `loras`).
+trigger word в prompt и summary provider payload (`loras`).
 
 `studio_execution_debug` — read-only tool для разбора Studio launch/run
 инцидентов: принимает `scenarioId`, `runId`, `executionId` или `providerJobId`,
 читает Studio scenario/run и generator execution записи из БД, строит summary
-provider payload и мапит LoRA URL из params/`body.loras` на registry entries с
-проверкой лимита fal.ai `1GB`.
+provider payload и мапит LoRA URL из params/`body.loras` на registry entries.

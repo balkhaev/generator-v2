@@ -1,11 +1,11 @@
 /**
- * Экспериментальный runner для тренировки персон-LoRA через ai-toolkit на
- * RunPod serverless. Параллельная альтернатива {@link FalZibLoraTrainingRunner}.
+ * Runner для тренировки персон-LoRA через ai-toolkit на RunPod serverless.
+ * Параллельная альтернатива pod-mode runner-у.
  *
  * Архитектура:
- *   1. Готовим датасет тем же flux-2/edit пайплайном через
- *      `buildReferenceDataset` (общий с fal-runner).
- *   2. Заливаем zip в наш S3 (как и в fal flow).
+ *   1. Готовим датасет Replicate image-edit пайплайном через
+ *      `buildReferenceDataset` (общий с pod-runner-ом).
+ *   2. Заливаем zip в наш S3.
  *   3. POST /run в RunPod → handler внутри pod-а скачивает датасет, гоняет
  *      ai-toolkit, заливает результирующий .safetensors в наш же S3 и возвращает
  *      `output.lora_url`.
@@ -36,7 +36,7 @@ import {
 	uploadZipToS3,
 } from "@generator/storage";
 import { z } from "zod";
-
+import { DEFAULT_DATASET_EDITOR_MODEL_ID } from "@/providers/dataset-editor-models";
 import {
 	buildDefaultTriggerWord,
 	buildReferenceDataset,
@@ -258,7 +258,7 @@ export class RunpodAiToolkitLoraTrainingRunner {
 	private readonly s3Config?: S3StorageConfig;
 	private readonly trainingControlToken: string;
 	private readonly trainingTimeoutMs: number;
-	private readonly falApiKeyForDataset: string;
+	private readonly datasetApiKey: string;
 	/**
 	 * Резолвер активной dataset-editor-модели (см. dataset-builder-settings).
 	 * Вызывается перед каждым job-ом, чтобы смена модели в админке
@@ -270,9 +270,9 @@ export class RunpodAiToolkitLoraTrainingRunner {
 		apiBaseUrl?: string;
 		apiKey: string;
 		baseModel?: RunpodAiToolkitBaseModel;
+		datasetApiKey: string;
 		endpointId: string;
 		eventPublisher?: EventPublisher | null;
-		falApiKeyForDataset: string;
 		fetchImpl?: typeof fetch;
 		getDatasetEditorModelId?: () => Promise<string>;
 		logger?: Pick<Console, "info" | "error">;
@@ -289,11 +289,11 @@ export class RunpodAiToolkitLoraTrainingRunner {
 		this.baseModel = options.baseModel ?? "z-image";
 		this.endpointId = options.endpointId;
 		this.eventPublisher = options.eventPublisher ?? null;
-		this.falApiKeyForDataset = options.falApiKeyForDataset;
+		this.datasetApiKey = options.datasetApiKey;
 		this.fetchImpl = options.fetchImpl ?? fetch;
 		this.getDatasetEditorModelId =
 			options.getDatasetEditorModelId ??
-			(() => Promise.resolve("fal-ai/flux-2/edit"));
+			(() => Promise.resolve(DEFAULT_DATASET_EDITOR_MODEL_ID));
 		this.logger = options.logger ?? console;
 		this.personsApiBaseUrl = options.personsApiBaseUrl;
 		this.pollMs = options.pollMs ?? 30_000;
@@ -459,7 +459,7 @@ export class RunpodAiToolkitLoraTrainingRunner {
 
 			const editorModelId = await this.getDatasetEditorModelId();
 			const dataset = await buildReferenceDataset({
-				apiKey: this.falApiKeyForDataset,
+				apiKey: this.datasetApiKey,
 				editorModelId,
 				genderHint,
 				onVariantGenerated: async ({ generated }) => {

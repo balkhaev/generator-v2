@@ -75,10 +75,11 @@ function buildPerson(
 						? `${id}-output`
 						: overrides.outputName,
 				phase: overrides.phase ?? "polling-training",
-				provider: overrides.provider === undefined ? "fal" : overrides.provider,
+				provider:
+					overrides.provider === undefined ? "runpod-pod" : overrides.provider,
 				providerJobId:
 					overrides.providerJobId === undefined
-						? `fal-job-${id}`
+						? `pod-job-${id}`
 						: overrides.providerJobId,
 				referenceImageCount: 20,
 				referenceImageTargetCount: 25,
@@ -118,8 +119,25 @@ function buildClient(persons: PersonRecord[]): PersonsApiClient {
 	};
 }
 
+function passthroughRunpodRunner(
+	resumeFromProviderJob: (input: {
+		outputName: string;
+		personSlug: string;
+		providerJobId: string;
+		trainingRunId: string;
+	}) => Promise<void>
+) {
+	return {
+		prepareDataset: () =>
+			Promise.reject(
+				new Error("prepareDataset must not be called for resumable runs")
+			),
+		resumeFromProviderJob,
+	};
+}
+
 describe("recoverInterruptedTrainings", () => {
-	it("resumes a stale fal training run", async () => {
+	it("resumes a stale runpod-pod training run", async () => {
 		const lock = createIdempotencyLock({
 			keyPrefix: "test",
 			store: createInMemoryStore(),
@@ -132,15 +150,13 @@ describe("recoverInterruptedTrainings", () => {
 			logger: createSilentLogger(),
 			now: () => FIXED_NOW,
 			recoveryLock: lock,
-			runner: {
-				resumeFromProviderJob: (input) => {
-					calls.push({
-						providerJobId: input.providerJobId,
-						trainingRunId: input.trainingRunId,
-					});
-					return Promise.resolve();
-				},
-			},
+			runpodPodRunner: passthroughRunpodRunner((input) => {
+				calls.push({
+					providerJobId: input.providerJobId,
+					trainingRunId: input.trainingRunId,
+				});
+				return Promise.resolve();
+			}),
 		});
 
 		expect(summary).toEqual({
@@ -150,7 +166,7 @@ describe("recoverInterruptedTrainings", () => {
 			skipped: 0,
 		});
 		expect(calls).toEqual([
-			{ providerJobId: "fal-job-alpha", trainingRunId: "run-alpha" },
+			{ providerJobId: "pod-job-alpha", trainingRunId: "run-alpha" },
 		]);
 	});
 
@@ -169,12 +185,10 @@ describe("recoverInterruptedTrainings", () => {
 			logger: createSilentLogger(),
 			now: () => FIXED_NOW,
 			recoveryLock: lock,
-			runner: {
-				resumeFromProviderJob: () => {
-					resumeCalled = true;
-					return Promise.resolve();
-				},
-			},
+			runpodPodRunner: passthroughRunpodRunner(() => {
+				resumeCalled = true;
+				return Promise.resolve();
+			}),
 		});
 
 		expect(summary.attempted).toBe(0);
@@ -192,6 +206,7 @@ describe("recoverInterruptedTrainings", () => {
 		const summary = await recoverInterruptedTrainings({
 			client: buildClient([
 				buildPerson("non-supported", { provider: "replicate" }),
+				buildPerson("legacy-fal", { provider: "fal" }),
 				buildPerson("no-job", { providerJobId: null }),
 				buildPerson("cancelled", { phase: "cancelled" }),
 				buildPerson("queued", { status: "queued" }),
@@ -199,12 +214,10 @@ describe("recoverInterruptedTrainings", () => {
 			logger: createSilentLogger(),
 			now: () => FIXED_NOW,
 			recoveryLock: lock,
-			runner: {
-				resumeFromProviderJob: () => {
-					resumeCalled = true;
-					return Promise.resolve();
-				},
-			},
+			runpodPodRunner: passthroughRunpodRunner(() => {
+				resumeCalled = true;
+				return Promise.resolve();
+			}),
 		});
 
 		expect(summary.attempted).toBe(0);
@@ -224,15 +237,13 @@ describe("recoverInterruptedTrainings", () => {
 			logger: createSilentLogger(),
 			now: () => FIXED_NOW,
 			recoveryLock: lock,
-			runner: {
-				resumeFromProviderJob: (input) => {
-					calls.push(input.trainingRunId);
-					if (input.trainingRunId === "run-alpha") {
-						return Promise.reject(new Error("fal status fetch failed"));
-					}
-					return Promise.resolve();
-				},
-			},
+			runpodPodRunner: passthroughRunpodRunner((input) => {
+				calls.push(input.trainingRunId);
+				if (input.trainingRunId === "run-alpha") {
+					return Promise.reject(new Error("runpod status fetch failed"));
+				}
+				return Promise.resolve();
+			}),
 		});
 
 		expect(calls).toEqual(["run-alpha", "run-beta"]);
@@ -267,27 +278,15 @@ describe("recoverInterruptedTrainings", () => {
 			logger: createSilentLogger(),
 			now: () => FIXED_NOW,
 			recoveryLock: lock,
-			runner: {
-				resumeFromProviderJob: () =>
-					Promise.reject(
-						new Error("fal runner must not be invoked for runpod-pod runs")
-					),
-			},
-			runpodPodRunner: {
-				prepareDataset: () =>
-					Promise.reject(
-						new Error("prepareDataset must not be called for resumable runs")
-					),
-				resumeFromProviderJob: (input) => {
-					calls.push({
-						outputName: input.outputName,
-						personSlug: input.personSlug,
-						providerJobId: input.providerJobId,
-						trainingRunId: input.trainingRunId,
-					});
-					return Promise.resolve();
-				},
-			},
+			runpodPodRunner: passthroughRunpodRunner((input) => {
+				calls.push({
+					outputName: input.outputName,
+					personSlug: input.personSlug,
+					providerJobId: input.providerJobId,
+					trainingRunId: input.trainingRunId,
+				});
+				return Promise.resolve();
+			}),
 		});
 
 		expect(summary).toEqual({
@@ -323,12 +322,6 @@ describe("recoverInterruptedTrainings", () => {
 			logger: createSilentLogger(),
 			now: () => FIXED_NOW,
 			recoveryLock: lock,
-			runner: {
-				resumeFromProviderJob: () =>
-					Promise.reject(
-						new Error("fal runner must not be invoked for runpod-pod runs")
-					),
-			},
 		});
 
 		expect(summary).toEqual({
@@ -359,9 +352,7 @@ describe("recoverInterruptedTrainings", () => {
 			logger: createSilentLogger(),
 			now: () => FIXED_NOW,
 			recoveryLock: lockA,
-			runner: {
-				resumeFromProviderJob: () => Promise.resolve(),
-			},
+			runpodPodRunner: passthroughRunpodRunner(() => Promise.resolve()),
 		});
 		expect(firstSummary.recovered).toBe(1);
 
@@ -371,12 +362,10 @@ describe("recoverInterruptedTrainings", () => {
 			logger: createSilentLogger(),
 			now: () => FIXED_NOW,
 			recoveryLock: lockB,
-			runner: {
-				resumeFromProviderJob: () => {
-					secondInvoked = true;
-					return Promise.resolve();
-				},
-			},
+			runpodPodRunner: passthroughRunpodRunner(() => {
+				secondInvoked = true;
+				return Promise.resolve();
+			}),
 		});
 
 		expect(secondInvoked).toBe(false);

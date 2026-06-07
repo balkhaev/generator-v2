@@ -1,9 +1,9 @@
 /**
  * Общий dataset-builder для LoRA-тренировок: генерирует синтетические вариации
- * через выбранную fal.ai edit-модель (см. dataset-editor-models.ts), миксует
- * с дубликатами оригинального референса и пакует в zip с captions.
- * Используется и в fal-, и в runpod-runner-ах, чтобы провайдер тренировки
- * можно было менять, не перетряхивая dataset prep.
+ * через выбранную Replicate image-edit модель (см. dataset-editor-models.ts),
+ * миксует с дубликатами оригинального референса и пакует в zip с captions.
+ * Используется runpod-runner-ами, чтобы dataset prep не зависел от провайдера
+ * тренировки.
  */
 
 import { setTimeout as sleep } from "node:timers/promises";
@@ -16,9 +16,8 @@ import {
 	DEFAULT_DATASET_EDITOR_MODEL_ID,
 	getDatasetEditorModelAdapter,
 } from "@/providers/dataset-editor-models";
+import { runReplicateImageEdit } from "@/providers/replicate-image-edit";
 
-const FAL_QUEUE_BASE = "https://queue.fal.run";
-const REQUEST_TIMEOUT_MS = 120_000;
 /**
  * @deprecated используйте `DEFAULT_DATASET_EDITOR_MODEL_ID` из
  * `dataset-editor-models.ts`. Оставлено как алиас для обратной совместимости.
@@ -253,87 +252,6 @@ function buildOriginalPhotoCaption(input: {
 	return `a photo of ${subject}, ${input.slot.caption}`;
 }
 
-interface FalSubmitResult {
-	request_id: string;
-	response_url?: string;
-	status_url?: string;
-}
-
-async function falRequest<T>(
-	apiKey: string,
-	url: string,
-	init?: RequestInit
-): Promise<T & Record<string, unknown>> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-	try {
-		const response = await fetch(url, {
-			...init,
-			signal: controller.signal,
-			headers: {
-				authorization: `Key ${apiKey}`,
-				"content-type": "application/json",
-				...(init?.headers as Record<string, string> | undefined),
-			},
-		});
-		const body = (await response.json().catch(() => null)) as Record<
-			string,
-			unknown
-		> | null;
-		if (!response.ok || body === null) {
-			const detail = body && typeof body.detail === "string" ? body.detail : "";
-			throw new Error(
-				detail || `fal request failed with status ${response.status}`
-			);
-		}
-		return body as T & Record<string, unknown>;
-	} finally {
-		clearTimeout(timeout);
-	}
-}
-
-function falSubmit(
-	apiKey: string,
-	model: string,
-	input: Record<string, unknown>
-): Promise<FalSubmitResult> {
-	return falRequest<FalSubmitResult>(apiKey, `${FAL_QUEUE_BASE}/${model}`, {
-		method: "POST",
-		body: JSON.stringify(input),
-	});
-}
-
-async function falPollUntilDone(
-	apiKey: string,
-	submit: FalSubmitResult,
-	model: string,
-	timeoutMs: number,
-	pollMs: number
-): Promise<Record<string, unknown>> {
-	const statusUrl =
-		submit.status_url ??
-		`${FAL_QUEUE_BASE}/${model}/requests/${submit.request_id}/status`;
-	const responseUrl =
-		submit.response_url ??
-		`${FAL_QUEUE_BASE}/${model}/requests/${submit.request_id}`;
-
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const status = await falRequest<{ status: string; error?: string }>(
-			apiKey,
-			statusUrl
-		);
-		if (typeof status.error === "string" && status.error.length > 0) {
-			throw new Error(`fal job failed: ${status.error}`);
-		}
-		if (status.status === "COMPLETED") {
-			return falRequest<Record<string, unknown>>(apiKey, responseUrl);
-		}
-		await sleep(pollMs);
-	}
-	throw new Error(`fal job timed out after ${timeoutMs}ms`);
-}
-
 async function generateReferenceImageOnce(
 	apiKey: string,
 	imageUrl: string,
@@ -341,30 +259,26 @@ async function generateReferenceImageOnce(
 	editorModelId: string
 ): Promise<string | null> {
 	const adapter = getDatasetEditorModelAdapter(editorModelId);
-	const modelId = adapter.descriptor.id;
-	const submit = await falSubmit(
-		apiKey,
-		modelId,
-		adapter.buildRequestBody({
+	const output = await runReplicateImageEdit({
+		apiToken: apiKey,
+		input: adapter.buildRequestBody({
 			imageUrl,
 			negativePrompt: IDENTITY_NEGATIVE_PROMPT,
 			prompt,
-		})
-	);
-	const result = await falPollUntilDone(
-		apiKey,
-		submit,
-		modelId,
-		DEFAULT_DATASET_TIMEOUT_MS,
-		DEFAULT_DATASET_POLL_MS
-	);
-	return adapter.extractImageUrl(result);
+		}),
+		model: adapter.replicateModel,
+		pollMs: DEFAULT_DATASET_POLL_MS,
+		timeoutMs: DEFAULT_DATASET_TIMEOUT_MS,
+	});
+	return adapter.extractImageUrl(output);
 }
 
 /**
- * Generate a single reference variation through the configured fal.ai editor
+ * Generate a single reference variation through the configured Replicate editor
  * model with N retries. The exact request shape per model lives in
  * dataset-editor-models.ts; here we just glue retries + polling.
+ *
+ * `apiKey` is the Replicate API token.
  */
 export async function generateReferenceImage(
 	apiKey: string,
@@ -415,12 +329,13 @@ export interface ReferenceDatasetResult {
 }
 
 export interface BuildReferenceDatasetInput {
+	/** Replicate API token. */
 	apiKey: string;
 	/**
-	 * fal.ai editor model id, e.g. `fal-ai/flux-2/edit`. Если не передан —
-	 * используется DEFAULT_DATASET_EDITOR_MODEL_ID. Каждый runner резолвит
-	 * актуальный id из admin runtime-config непосредственно перед вызовом,
-	 * чтобы смена модели применялась к новым job-ам без рестарта.
+	 * Replicate image-edit model id, e.g. `qwen/qwen-image-edit`. Если не
+	 * передан — используется DEFAULT_DATASET_EDITOR_MODEL_ID. Каждый runner
+	 * резолвит актуальный id из admin runtime-config непосредственно перед
+	 * вызовом, чтобы смена модели применялась к новым job-ам без рестарта.
 	 */
 	editorModelId?: string;
 	genderHint: string | null;
@@ -437,7 +352,7 @@ export interface BuildReferenceDatasetInput {
 
 /**
  * Generate the full reference dataset:
- *   - 19 синтетических вариаций через fal-ai/flux-2/edit
+ *   - 19 синтетических вариаций через Replicate image-edit модель
  *   - 6 копий оригинала с разными captions (anchor для лица)
  * Возвращает массив zip-файлов (image bytes + .txt captions) и default caption,
  * который провайдер тренировки кладёт в свой config (z-image-trainer
@@ -578,8 +493,8 @@ const leadingDotPattern = /^\./u;
 
 /**
  * Best-effort mime guess from filename extension. We only ever see the half a
- * dozen image types fal returns, so a tiny lookup beats pulling in a full
- * mime DB for one upload call.
+ * dozen image types the editor returns, so a tiny lookup beats pulling in a
+ * full mime DB for one upload call.
  */
 function guessImageContentType(extension: string): string {
 	const normalized = extension.toLowerCase().replace(leadingDotPattern, "");
@@ -652,7 +567,7 @@ interface GenerateSingleVariantInput {
  * uploads it to S3. The result is the canonical descriptor the rest of the
  * pipeline (admin worker → persons-service → persons-web) keys off of.
  *
- * For synthetic slots this calls the configured fal.ai editor model with the
+ * For synthetic slots this calls the configured Replicate editor model with the
  * variant's preset prompt. For original slots it just re-uploads the source
  * reference photo with the slot-specific caption — that's how we anchor the
  * trainer on the real face without paying for another generation.

@@ -4,7 +4,7 @@
  * Three responsibilities:
  *   1. Build a `RuntimeConfigStore` bound to the admin Postgres + master key.
  *   2. Seed the store from env on first start, so existing prod credentials
- *      (XAI_API_KEY / OPENROUTER_API_KEY / FAL_KEY / RUNPOD_API_KEY) carry
+ *      (XAI_API_KEY / OPENROUTER_API_KEY / RUNPOD_API_KEY) carry
  *      over without an extra "go set the key in admin UI" step. Idempotent:
  *      seeding is skipped per-key once the key already exists in the store.
  *   3. Provide an invalidation publisher that pings Redis when a write

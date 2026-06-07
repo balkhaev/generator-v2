@@ -28,7 +28,7 @@ import {
  * One row per (provider, key_name) tuple. Example:
  *   provider="openrouter", keyName="apiKey",  valueCiphertext=<bytes>, iv=<12B>
  *   provider="xai",        keyName="apiKey",  ...
- *   provider="fal",        keyName="apiKey",  ...
+ *   provider="runpod",     keyName="apiKey",  ...
  *
  * `valueCiphertext` and `iv` are base64-encoded for storage portability.
  * The auth tag from AES-GCM is appended to `valueCiphertext` (last 16 bytes
@@ -61,7 +61,7 @@ export const integrationCredential = pgTable(
  *   domain="prompt-enhance-studio",  key="provider",        value="openrouter"
  *   domain="prompt-enhance-studio",  key="openrouterModel", value="qwen/qwen-3.5-235b"
  *   domain="prompt-enhance-persons", key="provider",        value="grok"
- *   domain="training",               key="provider",        value="fal"
+ *   domain="training",               key="provider",        value="runpod"
  *
  * Values are JSON to support both scalars and small structured payloads
  * without forcing a schema migration for every new setting.

@@ -237,7 +237,6 @@ if (runtimeConfigSetup) {
 	// shouldn't prevent the API from coming up.
 	seedCredentialsFromEnv(runtimeConfigSetup.store, {
 		credentials: {
-			fal: { apiKey: env.FAL_KEY },
 			openrouter: { apiKey: env.OPENROUTER_API_KEY },
 			runpod: { apiKey: env.RUNPOD_API_KEY },
 			xai: { apiKey: env.XAI_API_KEY },

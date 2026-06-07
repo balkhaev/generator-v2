@@ -1,7 +1,7 @@
 /**
  * Cross-process settings handover between admin-worker and admin-api gateway.
  *
- * Backstory: secrets like FAL_KEY and RUNPOD_AI_TOOLKIT_ENDPOINT_ID live only
+ * Backstory: secrets like RUNPOD_API_KEY and RUNPOD_AI_TOOLKIT_ENDPOINT_ID live only
  * on the worker (the only process that actually contacts the providers). The
  * gateway serves the /api/admin/settings UI but doesn't have those env vars,
  * so a naive `resolveTrainingProviderAvailability(process.env)` on the gateway

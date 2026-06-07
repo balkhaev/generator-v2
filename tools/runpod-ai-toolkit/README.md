@@ -116,9 +116,8 @@ S3-креды нужны handler-у, чтобы залить финальный 
 | `sdxl` | `stabilityai/stable-diffusion-xl-base-1.0` | `runpod-fooocus-sdxl` (custom RunPod Fooocus endpoint) |
 | `qwen-image` | `Qwen/Qwen-Image` | пока нет в registry |
 
-> Для совместимости с инференсом тренируй `base_model=z-image-turbo`. Workflow
-> `fal-zimage-turbo` всегда уходит в `/lora` endpoint, так что обученные веса
-> сразу подхватятся через опциональное поле `loraUrl` в сценарии.
+> Обученные веса подхватятся через опциональное поле `loraUrl` в сценарии —
+> укажи URL LoRA в studio-сценарии, и под прокинет его в инференс.
 
 ## Локальный smoke-тест handler-а (без RunPod)
 

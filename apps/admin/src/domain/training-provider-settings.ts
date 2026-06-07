@@ -17,10 +17,9 @@ import { createRedisConnection } from "@generator/queue";
 
 type RedisConnection = ReturnType<typeof createRedisConnection>;
 
-export type TrainingProviderName = "fal" | "runpod";
+export type TrainingProviderName = "runpod";
 
 export const TRAINING_PROVIDER_NAMES = [
-	"fal",
 	"runpod",
 ] as const satisfies readonly TrainingProviderName[];
 
@@ -40,7 +39,7 @@ export interface TrainingProviderSettingsOptions {
 function isTrainingProvider(
 	value: string | null
 ): value is TrainingProviderName {
-	return value === "fal" || value === "runpod";
+	return value === "runpod";
 }
 
 export function createRedisTrainingProviderSettings(

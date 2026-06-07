@@ -18,7 +18,7 @@ const baseExecution = {
 	providerEndpointId: null,
 	providerJobId: null,
 	status: "queued" as const,
-	workflowKey: "fal-flux-schnell",
+	workflowKey: "runpod-fooocus-sdxl",
 };
 
 describe("generatorExecutionUpdatedEventSchema", () => {

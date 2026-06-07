@@ -20,7 +20,6 @@ import {
 	createRedisWorkerSettingsPublisher,
 	startWorkerSettingsHeartbeat,
 } from "@/domain/worker-settings-store";
-import { FalZibLoraTrainingRunner } from "@/providers/fal-zib-lora-training";
 import { RunpodAiToolkitLoraTrainingRunner } from "@/providers/runpod-ai-toolkit-lora-training";
 import { RunpodPodClient } from "@/providers/runpod-pod-client";
 import { RunpodPodLoraTrainingRunner } from "@/providers/runpod-pod-lora-training";
@@ -35,7 +34,7 @@ const TRAILING_FILENAME_PATTERN = /[^/]*$/u;
 const TRAINING_LOCK_TTL_SECONDS = 24 * 60 * 60;
 const TRAINING_LOCK_PREFIX = "admin:person-lora-training";
 /**
- * Recovery locks must outlive the worst-case fal training poll (90 min) so a
+ * Recovery locks must outlive the worst-case training poll (90 min) so a
  * second replica that boots while another worker is still resuming the same
  * run does not fork the resume.
  */
@@ -49,10 +48,12 @@ const eventPublisher = kafkaConfig
 	? createKafkaEventPublisher(kafkaConfig, { source: "admin-worker" })
 	: null;
 
-const falKey = env.FAL_KEY;
+const replicateApiKey = env.REPLICATE_API_TOKEN;
 
-if (!falKey) {
-	throw new Error("FAL_KEY is required for the admin training worker");
+if (!replicateApiKey) {
+	throw new Error(
+		"REPLICATE_API_TOKEN is required for the admin training worker (dataset prep image-edit)"
+	);
 }
 
 const trainingControlToken = env.TRAINING_CONTROL_TOKEN;
@@ -75,18 +76,8 @@ const defaultTrainingProvider = env.TRAINING_PROVIDER;
 const datasetBuilderSettings = createRedisDatasetBuilderSettings({ redisUrl });
 const getDatasetEditorModelId = () => datasetBuilderSettings.getEditorModelId();
 
-const falRunner = new FalZibLoraTrainingRunner({
-	apiKey: falKey,
-	eventPublisher,
-	getEditorModelId: getDatasetEditorModelId,
-	logger: console,
-	personsApiBaseUrl: personsApiUrl,
-	s3Config,
-	trainingControlToken,
-});
-
 /**
- * Экспериментальные RunPod runner-ы. Создаём всегда, когда есть креды, чтобы
+ * RunPod runner-ы. Создаём всегда, когда есть креды, чтобы
  * UI-свитчер мог переключать провайдер в runtime без рестарта. Какой именно
  * runner используется (serverless vs pod) — определяется RUNPOD_TRAINING_MODE.
  *
@@ -106,7 +97,7 @@ const runpodServerlessRunner =
 				baseModel: env.RUNPOD_AI_TOOLKIT_BASE_MODEL,
 				endpointId: env.RUNPOD_AI_TOOLKIT_ENDPOINT_ID,
 				eventPublisher,
-				falApiKeyForDataset: falKey,
+				datasetApiKey: replicateApiKey,
 				getDatasetEditorModelId,
 				logger: console,
 				personsApiBaseUrl: personsApiUrl,
@@ -125,7 +116,7 @@ const runpodPodRunner =
 				cloudType: env.RUNPOD_POD_CLOUD_TYPE,
 				containerDiskInGb: env.RUNPOD_POD_CONTAINER_DISK_GB,
 				eventPublisher,
-				falApiKeyForDataset: falKey,
+				datasetApiKey: replicateApiKey,
 				getDatasetEditorModelId,
 				gpuTypeIds: env.RUNPOD_POD_GPU_TYPE_IDS.split(",")
 					.map((id) => id.trim())
@@ -176,7 +167,7 @@ const trainingProviderSettings = createRedisTrainingProviderSettings({
  * Heartbeat: publish the worker's settings snapshot to Redis so the gateway
  * (which lacks training secrets) can render an accurate /api/admin/settings.
  * Without this, UI shows "not configured" because gateway env doesn't have
- * FAL_KEY/RUNPOD_API_KEY/RUNPOD_AI_TOOLKIT_ENDPOINT_ID.
+ * RUNPOD_API_KEY/RUNPOD_AI_TOOLKIT_ENDPOINT_ID.
  */
 const workerSettingsPublisher = createRedisWorkerSettingsPublisher({
 	redisUrl,
@@ -203,36 +194,28 @@ const stopHeartbeat = startWorkerSettingsHeartbeat({
 	publisher: workerSettingsPublisher,
 });
 
-const selectActiveRunner = async () => {
-	const requested = await trainingProviderSettings.getProvider();
-	if (requested === "runpod") {
-		if (runpodRunner) {
-			return {
-				provider: "runpod" as TrainingProviderName,
-				runner: runpodRunner,
-			};
-		}
-		console.warn(
-			"admin.worker: TRAINING_PROVIDER=runpod requested but RunPod creds are missing, falling back to fal"
+const selectActiveRunner = () => {
+	if (!runpodRunner) {
+		throw new Error(
+			"admin.worker: no training runner available — RunPod creds are missing (set RUNPOD_API_KEY + endpoint/pod config)"
 		);
 	}
-	return { provider: "fal" as TrainingProviderName, runner: falRunner };
+	return {
+		provider: "runpod" as TrainingProviderName,
+		runner: runpodRunner,
+	};
 };
 
-const selectActiveConfirmationRunner = async () => {
-	const requested = await trainingProviderSettings.getProvider();
-	if (requested === "runpod") {
-		if (runpodPodRunner) {
-			return {
-				provider: "runpod" as TrainingProviderName,
-				runner: runpodPodRunner,
-			};
-		}
-		console.warn(
-			"admin.worker: TRAINING_PROVIDER=runpod requested for confirmation but runpod-pod runner is missing, falling back to fal"
+const selectActiveConfirmationRunner = () => {
+	if (!runpodPodRunner) {
+		throw new Error(
+			"admin.worker: no confirmation runner available — runpod-pod runner is missing (set RUNPOD_API_KEY + RUNPOD_POD_BOOTSTRAP_URL + S3)"
 		);
 	}
-	return { provider: "fal" as TrainingProviderName, runner: falRunner };
+	return {
+		provider: "runpod" as TrainingProviderName,
+		runner: runpodPodRunner,
+	};
 };
 
 const trainingLock = createRedisIdempotencyLock({
@@ -250,7 +233,7 @@ const recoveryLock = createRedisIdempotencyLock({
 /**
  * Idempotency lock prefix for refill jobs. Each refill request carries a
  * unique `requestNonce` (from persons-service) so duplicate Kafka deliveries
- * for the same rejected slot don't double-spend fal.ai credits.
+ * for the same rejected slot don't double-spend provider credits.
  */
 const REFILL_LOCK_PREFIX = "admin:person-dataset-refill";
 const REFILL_LOCK_TTL_SECONDS = 30 * 60;
@@ -299,7 +282,7 @@ const runTrainingOnce = async (
 		buildRequestLockKey(data.trainingRunId),
 		async () => {
 			activeTrainingRunIds.add(data.trainingRunId);
-			const selected = await selectActiveRunner();
+			const selected = selectActiveRunner();
 			console.info("admin.worker: starting training", {
 				personId: data.personId,
 				provider: selected.provider,
@@ -332,7 +315,7 @@ const confirmTrainingOnce = async (
 		buildConfirmLockKey(data.trainingRunId),
 		async () => {
 			activeTrainingRunIds.add(data.trainingRunId);
-			const selected = await selectActiveConfirmationRunner();
+			const selected = selectActiveConfirmationRunner();
 			console.info("admin.worker: starting training confirmation", {
 				personId: data.personId,
 				provider: selected.provider,
@@ -462,7 +445,6 @@ if (personsApiUrl) {
 		client: personsApiClient,
 		logger: console,
 		recoveryLock,
-		runner: falRunner,
 		runpodPodRunner,
 	}).catch((error: unknown) => {
 		console.error("admin.recovery.boot-sweep-failed", {

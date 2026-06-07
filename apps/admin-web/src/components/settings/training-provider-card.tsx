@@ -12,17 +12,15 @@ import { SettingsCard, SettingsRow } from "@/components/settings/settings-card";
 import { useUpdateTrainingProvider } from "@/hooks/use-training-provider";
 
 const PROVIDER_LABELS: Record<TrainingProviderName, string> = {
-	fal: "fal.ai (z-image-trainer)",
 	runpod: "RunPod (ai-toolkit)",
 };
 
 const PROVIDER_DESCRIPTIONS: Record<TrainingProviderName, string> = {
-	fal: "Production-grade fal-ai/z-image-trainer pipeline. Fastest and most stable.",
 	runpod:
-		"Experimental ai-toolkit pipeline on RunPod. Mode (pod/serverless) is controlled by RUNPOD_TRAINING_MODE env.",
+		"ai-toolkit pipeline on RunPod. Mode (pod/serverless) is controlled by RUNPOD_TRAINING_MODE env.",
 };
 
-const PROVIDERS: TrainingProviderName[] = ["fal", "runpod"];
+const PROVIDERS: TrainingProviderName[] = ["runpod"];
 
 interface TrainingProviderCardProps {
 	runpod: RunpodTrainingSettings;

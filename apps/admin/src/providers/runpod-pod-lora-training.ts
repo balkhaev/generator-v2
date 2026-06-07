@@ -2,8 +2,8 @@
  * Pod-mode runner для тренировки персон-LoRA через ai-toolkit на RunPod GPU Pods.
  *
  * Архитектура (см. tools/runpod-ai-toolkit/pod-bootstrap.sh + pod_runner.py):
- *   1. Готовим датасет тем же flux-2/edit пайплайном через
- *      `buildReferenceDataset` (общий с fal/serverless runner).
+ *   1. Готовим датасет тем же Replicate image-edit пайплайном через
+ *      `buildReferenceDataset` (общий с serverless runner).
  *   2. Заливаем zip в наш S3.
  *   3. Генерим pre-signed PUT URL для финальных весов
  *      `loras/runpod-pod/<output>.safetensors` (≈6 часов жизни).
@@ -45,7 +45,7 @@ import {
 	uploadZipToS3,
 } from "@generator/storage";
 import { z } from "zod";
-
+import { DEFAULT_DATASET_EDITOR_MODEL_ID } from "@/providers/dataset-editor-models";
 import {
 	assembleDatasetZipFromItems,
 	buildDefaultTriggerWord,
@@ -121,7 +121,7 @@ export const startRunpodPodTrainingSchema = z.object({
 	/**
 	 * URL уже готового reference-zip от предыдущей тренировки. Если задан —
 	 * runner полностью пропускает фазы `generating-references` /
-	 * `uploading-dataset` (никаких fal.ai-вызовов, никакой пересборки zip)
+	 * `uploading-dataset` (никаких image-edit-вызовов, никакой пересборки zip)
 	 * и подаёт этот URL pod'у напрямую через DATASET_URL.
 	 */
 	reuseDatasetUrl: z.url().optional(),
@@ -325,8 +325,8 @@ interface RunpodPodLoraTrainingRunnerOptions {
 	bootstrapUrl: string;
 	cloudType?: "SECURE" | "COMMUNITY";
 	containerDiskInGb?: number;
+	datasetApiKey: string;
 	eventPublisher?: EventPublisher | null;
-	falApiKeyForDataset: string;
 	fetchImpl?: typeof fetch;
 	/**
 	 * Резолвер активной dataset-editor-модели (см. dataset-builder-settings).
@@ -361,7 +361,7 @@ export class RunpodPodLoraTrainingRunner {
 	private readonly cloudType: "SECURE" | "COMMUNITY";
 	private readonly containerDiskInGb: number;
 	private readonly eventPublisher: EventPublisher | null;
-	private readonly falApiKeyForDataset: string;
+	private readonly datasetApiKey: string;
 	private readonly fetchImpl: typeof fetch;
 	private readonly getDatasetEditorModelId: () => Promise<string>;
 	private readonly gpuTypeIds: string[];
@@ -386,11 +386,11 @@ export class RunpodPodLoraTrainingRunner {
 		this.cloudType = options.cloudType ?? "SECURE";
 		this.containerDiskInGb = options.containerDiskInGb ?? 60;
 		this.eventPublisher = options.eventPublisher ?? null;
-		this.falApiKeyForDataset = options.falApiKeyForDataset;
+		this.datasetApiKey = options.datasetApiKey;
 		this.fetchImpl = options.fetchImpl ?? fetch;
 		this.getDatasetEditorModelId =
 			options.getDatasetEditorModelId ??
-			(() => Promise.resolve("fal-ai/flux-2/edit"));
+			(() => Promise.resolve(DEFAULT_DATASET_EDITOR_MODEL_ID));
 		this.gpuTypeIds = options.gpuTypeIds;
 		this.hfToken = options.hfToken;
 		this.imageName = options.imageName;
@@ -668,14 +668,14 @@ export class RunpodPodLoraTrainingRunner {
 	 * Готовит reference-датасет двумя путями:
 	 *
 	 *   - **reuse**: если в `parsed.reuseDatasetUrl` есть готовый zip от
-	 *     предыдущей тренировки — пропускаем 19 fal.ai/flux-2/edit вызовов
+	 *     предыдущей тренировки — пропускаем 19 image-edit вызовов
 	 *     и просто отдаём этот URL pod'у. Captions уже встроены в zip
 	 *     как `.txt` рядом с каждым кадром (см. `lora-dataset-builder.ts`),
 	 *     `default_caption` в ai-toolkit config используется только для
 	 *     слотов без `.txt`, поэтому в reuse-режиме ставим минимальный
 	 *     fallback (`triggerWord`).
 	 *
-	 *   - **build**: классический путь — генерим 19 вариаций через fal,
+	 *   - **build**: классический путь — генерим 19 вариаций через Replicate,
 	 *     дублируем оригинал 6 раз, собираем zip, заливаем в S3. Используется
 	 *     при первой тренировке персоны и при явном `regenerateDataset=true`.
 	 */
@@ -744,7 +744,7 @@ export class RunpodPodLoraTrainingRunner {
 
 		const editorModelId = await this.getDatasetEditorModelId();
 		const dataset = await buildReferenceDataset({
-			apiKey: this.falApiKeyForDataset,
+			apiKey: this.datasetApiKey,
 			editorModelId,
 			genderHint,
 			onVariantGenerated: async ({ generated }) => {
@@ -902,7 +902,7 @@ export class RunpodPodLoraTrainingRunner {
 			});
 
 			await prepareDatasetPhotos({
-				apiKey: this.falApiKeyForDataset,
+				apiKey: this.datasetApiKey,
 				editorModelId,
 				genderHint,
 				onPhotoReady: async (photo) => {
@@ -1003,7 +1003,7 @@ export class RunpodPodLoraTrainingRunner {
 		try {
 			const editorModelId = await this.getDatasetEditorModelId();
 			const photo = await generateSingleVariant({
-				apiKey: this.falApiKeyForDataset,
+				apiKey: this.datasetApiKey,
 				editorModelId,
 				genderHint: inferGenderHint(input.description),
 				personId: input.personId,

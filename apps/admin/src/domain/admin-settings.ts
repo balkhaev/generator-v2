@@ -183,9 +183,9 @@ export function buildAdminSettingsSnapshot(
 			avatarPreviewWorkflow: PERSONS_AVATAR_WORKFLOWS.preview,
 			avatarRefineWorkflow: PERSONS_AVATAR_WORKFLOWS.refine,
 			avatarWorkflow:
-				input.env.PERSONS_DEFAULT_AVATAR_WORKFLOW ?? "fal-zimage-turbo",
+				input.env.PERSONS_DEFAULT_AVATAR_WORKFLOW ?? "runpod-flux-dev-image",
 			loraWorkflow:
-				input.env.PERSONS_DEFAULT_LORA_WORKFLOW ?? "fal-zimage-turbo",
+				input.env.PERSONS_DEFAULT_LORA_WORKFLOW ?? "runpod-flux-dev-image",
 		},
 		promptEnhance,
 		runpodTraining: {

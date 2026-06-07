@@ -119,7 +119,7 @@ export const PROMPT_ENHANCE_PROVIDER_NAMES = ["grok", "openrouter"] as const;
 export type PromptEnhanceProviderName =
 	(typeof PROMPT_ENHANCE_PROVIDER_NAMES)[number];
 
-export type TrainingProviderName = "fal" | "runpod";
+export type TrainingProviderName = "runpod";
 
 export interface TrainingProviderAvailability {
 	configured: boolean;

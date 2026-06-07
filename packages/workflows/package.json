@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./fal-image-edit-models": "./src/fal-image-edit-models.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "check-types": "tsc --noEmit"

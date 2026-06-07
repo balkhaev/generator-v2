@@ -7,7 +7,7 @@ describe("studio shared scenario inputs", () => {
 		const workflow: WorkflowDefinition = {
 			active: true,
 			baseModel: "ltx-2-3",
-			key: "fal-ltx-2-3-image-to-video",
+			key: "runpod-ltx-2-3-image-to-video",
 			name: "LTX 2.3 I2V",
 			parameters: [
 				{
@@ -47,8 +47,8 @@ describe("studio shared scenario inputs", () => {
 	it("keeps prompt source only while it matches the enhanced prompt", () => {
 		const workflow: WorkflowDefinition = {
 			active: true,
-			key: "fal-zimage-turbo",
-			name: "Z-Image Turbo",
+			key: "runpod-flux-dev-image",
+			name: "Flux Dev Image",
 			parameters: [],
 			promptHint: "Describe image",
 			requiresInputImage: false,

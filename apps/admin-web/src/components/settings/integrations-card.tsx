@@ -15,7 +15,6 @@ import {
 } from "@/hooks/use-integrations";
 
 const PROVIDER_LABEL: Record<string, string> = {
-	fal: "Fal AI",
 	openrouter: "OpenRouter",
 	runpod: "RunPod",
 	xai: "xAI (Grok)",

@@ -60,7 +60,6 @@ const DEFAULT_LORA_DEBUG_GENERATION_LIMIT = 5;
 const MAX_LORA_DEBUG_GENERATION_LIMIT = 20;
 const DEFAULT_STUDIO_EXECUTION_DEBUG_LIMIT = 10;
 const MAX_STUDIO_EXECUTION_DEBUG_LIMIT = 25;
-const FAL_LORA_SIZE_LIMIT_BYTES = 1_000_000_000;
 
 const toolDefinitions = [
 	{
@@ -259,7 +258,7 @@ const toolDefinitions = [
 	},
 	{
 		description:
-			"Re-trigger LoRA training for an existing person. The person must already have a completed dataset (referencePhotoUrl). Use this for smoke-testing the training pipeline against the currently selected provider (fal/runpod).",
+			"Re-trigger LoRA training for an existing person. The person must already have a completed dataset (referencePhotoUrl). Use this for smoke-testing the training pipeline against the currently selected provider (runpod).",
 		inputSchema: {
 			properties: {
 				outputName: {
@@ -359,8 +358,8 @@ const toolDefinitions = [
 		inputSchema: {
 			properties: {
 				provider: {
-					description: "'fal' or 'runpod'",
-					enum: ["fal", "runpod"],
+					description: "'runpod'",
+					enum: ["runpod"],
 					type: "string",
 				},
 			},
@@ -528,7 +527,7 @@ const toolDefinitions = [
 					type: "number",
 				},
 				providerJobId: {
-					description: "Provider job id returned by fal/replicate/etc.",
+					description: "Provider job id returned by runpod/replicate/etc.",
 					type: "string",
 				},
 				runId: {
@@ -1471,14 +1470,12 @@ function summarizeLoraRegistryRow(row: LoraRow) {
 	return {
 		baseModel: row.baseModel,
 		defaultWeight: row.defaultWeight,
-		exceedsFalOneGbLimit: row.sizeBytes >= FAL_LORA_SIZE_LIMIT_BYTES,
 		id: row.id,
 		name: row.name,
 		pairGroupId: row.pairGroupId,
 		s3Key: row.s3Key,
 		s3Url: row.s3Url,
 		sizeBytes: row.sizeBytes,
-		sizeLimitBytes: FAL_LORA_SIZE_LIMIT_BYTES,
 		slug: row.slug,
 		sourceUrl: row.sourceUrl,
 		status: row.status,
@@ -1519,7 +1516,6 @@ function getPersonTrainingMetadata(row: PersonRow) {
 }
 
 const providerPayloadSummaryKeys = [
-	"__falModel",
 	"image_size",
 	"image_url",
 	"num_images",
@@ -2030,8 +2026,8 @@ async function handleTrainingProviderToolCall(
 
 	if (name === "training_provider_set") {
 		const provider = parseOptionalString(argumentsPayload.provider);
-		if (provider !== "fal" && provider !== "runpod") {
-			return createErrorResponse(id, "provider must be 'fal' or 'runpod'");
+		if (provider !== "runpod") {
+			return createErrorResponse(id, "provider must be 'runpod'");
 		}
 		return createOkResponse(
 			id,
@@ -2559,16 +2555,13 @@ function buildStudioLoraDebug(input: {
 
 	const loraByUrl = new Map(input.loraRows.map((row) => [row.s3Url, row]));
 	const registryMatches = input.loraRows.map(summarizeLoraRegistryRow);
-	const overLimit = registryMatches.filter((row) => row.exceedsFalOneGbLimit);
 	const missingRegistryUrls = [...new Set(urlEntries.map((entry) => entry.url))]
 		.filter((url) => !loraByUrl.has(url))
 		.sort();
 
 	return {
-		falLoraSizeLimitBytes: FAL_LORA_SIZE_LIMIT_BYTES,
 		findings: {
 			missingRegistryUrls,
-			overLimit,
 		},
 		registryMatches,
 		urlEntries,

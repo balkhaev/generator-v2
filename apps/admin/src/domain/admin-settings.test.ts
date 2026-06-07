@@ -4,21 +4,20 @@ import { buildAdminSettingsSnapshot } from "@/domain/admin-settings";
 import type { WorkerSettingsSnapshot } from "@/domain/worker-settings-store";
 
 describe("buildAdminSettingsSnapshot", () => {
-	test("includes both training providers in availability and current selection", () => {
+	test("includes the runpod training provider in availability and current selection", () => {
 		const snapshot = buildAdminSettingsSnapshot({
 			availability: [
-				{ configured: true, missing: [], provider: "fal" },
 				{
 					configured: false,
 					missing: ["RUNPOD_API_KEY"],
 					provider: "runpod",
 				},
 			],
-			currentTrainingProvider: "fal",
+			currentTrainingProvider: "runpod",
 			env: {},
 		});
 
-		expect(snapshot.trainingProvider.provider).toBe("fal");
+		expect(snapshot.trainingProvider.provider).toBe("runpod");
 		expect(snapshot.promptEnhance.studio.provider).toBe("grok");
 		expect(snapshot.promptEnhance.studio.openRouterModel).toBe(
 			"openai/gpt-4o-mini"
@@ -29,7 +28,7 @@ describe("buildAdminSettingsSnapshot", () => {
 		expect(snapshot.promptEnhance.persons.provider).toBe("grok");
 		expect(snapshot.promptEnhance.persons.target).toBe("persons");
 		expect(snapshot.promptEnhance.studio.target).toBe("studio");
-		expect(snapshot.trainingProvider.availability).toHaveLength(2);
+		expect(snapshot.trainingProvider.availability).toHaveLength(1);
 		expect(snapshot.runpodTraining.endpointConfigured).toBe(false);
 		expect(snapshot.runpodTraining.baseModel).toBe("z-image");
 		expect(snapshot.workerHealth.source).toBe("gateway-fallback");
@@ -38,10 +37,7 @@ describe("buildAdminSettingsSnapshot", () => {
 
 	test("prefers worker snapshot for availability and runpod when fresh", () => {
 		const workerSnapshot: WorkerSettingsSnapshot = {
-			availability: [
-				{ configured: true, missing: [], provider: "fal" },
-				{ configured: true, missing: [], provider: "runpod" },
-			],
+			availability: [{ configured: true, missing: [], provider: "runpod" }],
 			publishedAt: new Date().toISOString(),
 			runpod: {
 				baseModel: "z-image",
@@ -59,11 +55,6 @@ describe("buildAdminSettingsSnapshot", () => {
 
 		const snapshot = buildAdminSettingsSnapshot({
 			availability: [
-				{
-					configured: false,
-					missing: ["FAL_KEY"],
-					provider: "fal",
-				},
 				{
 					configured: false,
 					missing: ["RUNPOD_API_KEY"],
@@ -86,7 +77,7 @@ describe("buildAdminSettingsSnapshot", () => {
 
 	test("treats stale worker snapshot as fallback and prefers gateway env", () => {
 		const staleSnapshot: WorkerSettingsSnapshot = {
-			availability: [{ configured: true, missing: [], provider: "fal" }],
+			availability: [{ configured: true, missing: [], provider: "runpod" }],
 			publishedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
 			runpod: {
 				baseModel: "flux-dev",
@@ -106,11 +97,11 @@ describe("buildAdminSettingsSnapshot", () => {
 			availability: [
 				{
 					configured: false,
-					missing: ["FAL_KEY"],
-					provider: "fal",
+					missing: ["RUNPOD_API_KEY"],
+					provider: "runpod",
 				},
 			],
-			currentTrainingProvider: "fal",
+			currentTrainingProvider: "runpod",
 			env: { RUNPOD_AI_TOOLKIT_BASE_MODEL: "z-image" },
 			workerSnapshot: staleSnapshot,
 		});
@@ -125,7 +116,7 @@ describe("buildAdminSettingsSnapshot", () => {
 	test("treats placeholder endpoint id as not configured", () => {
 		const snapshot = buildAdminSettingsSnapshot({
 			availability: [],
-			currentTrainingProvider: "fal",
+			currentTrainingProvider: "runpod",
 			env: { RUNPOD_AI_TOOLKIT_ENDPOINT_ID: "REPLACE_AFTER_DEPLOY" },
 		});
 		expect(snapshot.runpodTraining.endpointConfigured).toBe(false);
@@ -134,38 +125,40 @@ describe("buildAdminSettingsSnapshot", () => {
 
 	test("surfaces persons defaults from env with safe fallbacks", () => {
 		const snapshot = buildAdminSettingsSnapshot({
-			availability: [{ configured: true, missing: [], provider: "fal" }],
-			currentTrainingProvider: "fal",
+			availability: [{ configured: true, missing: [], provider: "runpod" }],
+			currentTrainingProvider: "runpod",
 			env: {
-				PERSONS_DEFAULT_AVATAR_WORKFLOW: "fal-flux2-turbo",
-				PERSONS_DEFAULT_LORA_WORKFLOW: "fal-zimage-turbo",
+				PERSONS_DEFAULT_AVATAR_WORKFLOW: "runpod-flux-dev-image",
+				PERSONS_DEFAULT_LORA_WORKFLOW: "runpod-flux-dev-image",
 				RECONCILE_INTERVAL_MS: 7000,
 				RECONCILE_WATCH: false,
 			},
 		});
 
-		expect(snapshot.personsDefaults.avatarWorkflow).toBe("fal-flux2-turbo");
-		expect(snapshot.personsDefaults.loraWorkflow).toBe("fal-zimage-turbo");
+		expect(snapshot.personsDefaults.avatarWorkflow).toBe(
+			"runpod-flux-dev-image"
+		);
+		expect(snapshot.personsDefaults.loraWorkflow).toBe("runpod-flux-dev-image");
 		expect(snapshot.personsDefaults.avatarPreviewWorkflow).toBe(
-			"fal-flux2-turbo"
+			"runpod-flux-dev-image"
 		);
 		expect(snapshot.personsDefaults.avatarRefineWorkflow).toBe(
-			"fal-flux2-dev-edit"
+			"runpod-flux-dev-image"
 		);
 		expect(snapshot.generatorRuntime.reconcileIntervalMs).toBe(7000);
 		expect(snapshot.generatorRuntime.reconcileWatch).toBe(false);
 	});
 
-	test("dataset builder section defaults to flux-2/edit and lists alternatives", () => {
+	test("dataset builder section defaults to qwen-image-edit and lists alternatives", () => {
 		const snapshot = buildAdminSettingsSnapshot({
 			availability: [],
-			currentTrainingProvider: "fal",
+			currentTrainingProvider: "runpod",
 			env: {},
 		});
 
-		expect(snapshot.datasetBuilder.model).toBe("fal-ai/flux-2/edit");
+		expect(snapshot.datasetBuilder.model).toBe("qwen/qwen-image-edit");
 		expect(snapshot.datasetBuilder.availableModels.map((m) => m.id)).toContain(
-			"fal-ai/nano-banana/edit"
+			"black-forest-labs/flux-kontext-pro"
 		);
 		expect(
 			snapshot.datasetBuilder.availableModels.length
@@ -175,11 +168,13 @@ describe("buildAdminSettingsSnapshot", () => {
 	test("dataset builder honors the configured editor model id", () => {
 		const snapshot = buildAdminSettingsSnapshot({
 			availability: [],
-			currentTrainingProvider: "fal",
-			datasetEditorModelId: "fal-ai/nano-banana/edit",
+			currentTrainingProvider: "runpod",
+			datasetEditorModelId: "black-forest-labs/flux-kontext-pro",
 			env: {},
 		});
 
-		expect(snapshot.datasetBuilder.model).toBe("fal-ai/nano-banana/edit");
+		expect(snapshot.datasetBuilder.model).toBe(
+			"black-forest-labs/flux-kontext-pro"
+		);
 	});
 });

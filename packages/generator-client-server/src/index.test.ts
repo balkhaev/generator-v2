@@ -24,7 +24,7 @@ describe("generator execution client", () => {
 		await expect(
 			client.createExecution({
 				prompt: "Generate a clip",
-				workflowKey: "fal-wan-2-2-image-to-video",
+				workflowKey: "runpod-wan-2-2-image-to-video",
 			})
 		).rejects.toThrow("500 Internal Server Error: Input image URL is invalid");
 	});

@@ -3,8 +3,8 @@
 This is the runtime counterpart for the `runpod-fooocus-sdxl` workflow.
 The app talks to a queue-based RunPod Serverless endpoint through
 `apps/generator/src/providers/runpod.ts`; the endpoint implementation is
-intentionally custom because fal.ai `fast-fooocus-sdxl` exposes embeddings, not
-native SDXL LoRA loading.
+intentionally custom because the legacy `fast-fooocus-sdxl` surface exposed
+embeddings, not native SDXL LoRA loading.
 
 ## Generator environment
 

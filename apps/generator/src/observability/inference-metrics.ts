@@ -42,12 +42,7 @@ export type InferenceErrorClass =
 	| "timeout"
 	| "unknown";
 
-export type InferenceProvider =
-	| "civitai"
-	| "fal"
-	| "replicate"
-	| "runpod"
-	| "unknown";
+export type InferenceProvider = "civitai" | "replicate" | "runpod" | "unknown";
 
 export interface InferenceMetricEvent {
 	/** Wall-clock since execution was created (terminal events). */
@@ -65,7 +60,6 @@ export interface InferenceMetricEvent {
 }
 
 const PROVIDER_PREFIXES: readonly [string, InferenceProvider][] = [
-	["fal-", "fal"],
 	["runpod-", "runpod"],
 	["replicate-", "replicate"],
 	["civitai-", "civitai"],

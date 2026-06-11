@@ -372,6 +372,12 @@ const serverSchema = {
 	// runpod-higgs-tts — experimental (non-commercial).
 	PERSONS_DEFAULT_TTS_WORKFLOW: z.string().min(1).default("runpod-voxcpm-tts"),
 	PERSON_LORA_TRAINING_STEPS: z.coerce.number().int().positive().optional(),
+	// Сколько LoRA-тренировок admin-worker ведёт параллельно (отдельные поды).
+	PERSON_LORA_TRAINING_CONCURRENCY: z.coerce
+		.number()
+		.int()
+		.positive()
+		.default(1),
 
 	// Reconcile workers
 	RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(5000),

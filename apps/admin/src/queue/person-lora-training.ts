@@ -129,6 +129,7 @@ export function createPersonLoraTrainingQueueClient(
 }
 
 export function createPersonLoraTrainingWorker(options: {
+	concurrency?: number;
 	handler: (job: PersonLoraTrainingWorkerJob) => Promise<void>;
 	logger?: Pick<Console, "error" | "info">;
 	redisUrl: string;
@@ -140,6 +141,7 @@ export function createPersonLoraTrainingWorker(options: {
 		| PersonLoraTrainingConfirmationJobData
 		| PersonLoraTrainingJobData
 	>(queueNames.adminPersonLoraTraining, {
+		concurrency: options.concurrency,
 		onCompleted: (job) => {
 			logger.info("admin.person-lora-training.completed", {
 				jobId: job.id,

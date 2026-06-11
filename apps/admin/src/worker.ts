@@ -374,6 +374,7 @@ console.info(
 
 const trainingQueue = createPersonLoraTrainingQueueClient(redisUrl);
 const queueWorker = createPersonLoraTrainingWorker({
+	concurrency: env.PERSON_LORA_TRAINING_CONCURRENCY,
 	handler: async (job) => {
 		switch (job.name) {
 			case "confirm":

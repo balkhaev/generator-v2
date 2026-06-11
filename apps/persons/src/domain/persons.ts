@@ -2004,7 +2004,7 @@ export class PersonsService {
 		const trainingRunId = crypto.randomUUID();
 		const outputName =
 			parsed.outputName ??
-			`${person.slug}-sdxl-lora-${new Date().toISOString().slice(0, 10)}`;
+			`${person.slug}-lora-${new Date().toISOString().slice(0, 10)}`;
 		const requestedAt = new Date().toISOString();
 		const seedReferenceImages = this.getSeedReferenceImagesForTraining(
 			person,
@@ -2273,15 +2273,22 @@ export class PersonsService {
 
 		const workflowKey = env.PERSONS_DEFAULT_LORA_WORKFLOW;
 		const isImageToImageWorkflow = workflowKey.includes("image-to-image");
+		// Дублируем ключи под разные схемы воркфлоу (Zod отбрасывает лишние):
+		// replicate-flux-dev-lora ждёт loraScale/disableSafetyChecker,
+		// legacy fal-style воркфлоу — loraWeight/enableSafetyChecker.
 		const loraParams = {
+			disableSafetyChecker: true,
 			enableSafetyChecker: false,
+			extraLoraScale: options?.extraLoraWeight ?? 0.05,
 			extraLoraUrl: resolvedExtraLoraUrl,
 			extraLoraWeight: options?.extraLoraWeight ?? 0.05,
+			guidanceScale: 3.5,
 			imageSize: "portrait_4_3",
+			loraScale: 1.0,
 			loraUrl: person.loraUrl,
 			loraWeight: 1.0,
 			numImages: 1,
-			numInferenceSteps: isImageToImageWorkflow ? 8 : 12,
+			numInferenceSteps: isImageToImageWorkflow ? 8 : 28,
 			outputFormat: "png",
 			...(isImageToImageWorkflow ? { strength: 0.95 } : {}),
 		};

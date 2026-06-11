@@ -42,6 +42,7 @@ export interface TrainingRecoverySummary {
 type RecoveryProvider = "runpod-pod";
 
 interface RecoveryCandidate {
+	baseModel: string | null;
 	datasetUrl: string | null;
 	debugCorrelationId?: string;
 	genderHint: string | null;
@@ -293,6 +294,7 @@ function pickRecoveryCandidate(
 			: undefined;
 
 	return {
+		baseModel: readDebugString(debug, "baseModel"),
 		datasetUrl: training.datasetUrl ?? null,
 		debugCorrelationId:
 			typeof training.debugCorrelationId === "string"
@@ -497,6 +499,7 @@ async function tryResumeProviderJob(
 					);
 				}
 				await runner.resumeFromProviderJob({
+					baseModel: candidate.baseModel ?? undefined,
 					debugCorrelationId: candidate.debugCorrelationId,
 					loraS3Key: candidate.loraS3Key ?? undefined,
 					outputName: candidate.outputName,

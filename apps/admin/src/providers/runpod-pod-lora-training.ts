@@ -132,6 +132,9 @@ export const startRunpodPodTrainingSchema = z.object({
 type StartInput = z.infer<typeof startRunpodPodTrainingSchema>;
 
 export const resumeRunpodPodTrainingSchema = z.object({
+	// Исходная база тренировки из persisted debug. Без неё recovery штамповал
+	// бы текущий env baseModel на старый run, тренированный на другой базе.
+	baseModel: z.string().trim().min(1).optional(),
 	debugCorrelationId: z.string().trim().min(1).optional(),
 	loraS3Key: z.string().trim().min(1).optional(),
 	outputName: z.string().trim().min(1),
@@ -1652,7 +1655,7 @@ export class RunpodPodLoraTrainingRunner {
 					event: {
 						completedAt: new Date().toISOString(),
 						debug: {
-							baseModel: this.baseModel,
+							baseModel: parsed.baseModel ?? this.baseModel,
 							loraS3Key,
 							podId: parsed.providerJobId,
 							recovered: true,
@@ -1720,7 +1723,7 @@ export class RunpodPodLoraTrainingRunner {
 				event: {
 					completedAt: new Date().toISOString(),
 					debug: {
-						baseModel: this.baseModel,
+						baseModel: parsed.baseModel ?? this.baseModel,
 						loraS3Key,
 						podId: parsed.providerJobId,
 						recovered: true,

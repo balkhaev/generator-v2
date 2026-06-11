@@ -2274,22 +2274,27 @@ export class PersonsService {
 		const workflowKey = env.PERSONS_DEFAULT_LORA_WORKFLOW;
 		const isImageToImageWorkflow = workflowKey.includes("image-to-image");
 		// Дублируем ключи под разные схемы воркфлоу (Zod отбрасывает лишние):
-		// replicate-flux-dev-lora ждёт loraScale/disableSafetyChecker,
-		// legacy fal-style воркфлоу — loraWeight/enableSafetyChecker.
+		// - replicate-flux-dev-lora: loraUrl/loraScale/disableSafetyChecker;
+		// - runpod-flux-dev-image (self-hosted): loraFilename/loraScale/steps/
+		//   guidance, LoRA pre-provisioned на volume как `<slug>-flux.safetensors`;
+		// - legacy fal-style: loraWeight/enableSafetyChecker.
 		const loraParams = {
 			disableSafetyChecker: true,
 			enableSafetyChecker: false,
 			extraLoraScale: options?.extraLoraWeight ?? 0.05,
 			extraLoraUrl: resolvedExtraLoraUrl,
 			extraLoraWeight: options?.extraLoraWeight ?? 0.05,
+			guidance: 3.5,
 			guidanceScale: 3.5,
 			imageSize: "portrait_4_3",
+			loraFilename: `${person.slug}-flux.safetensors`,
 			loraScale: 1.0,
 			loraUrl: person.loraUrl,
 			loraWeight: 1.0,
 			numImages: 1,
 			numInferenceSteps: isImageToImageWorkflow ? 8 : 28,
 			outputFormat: "png",
+			steps: 28,
 			...(isImageToImageWorkflow ? { strength: 0.95 } : {}),
 		};
 

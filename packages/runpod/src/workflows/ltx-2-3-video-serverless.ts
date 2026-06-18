@@ -336,7 +336,7 @@ async function buildPayloadInternal(
 	//   - SaveImage даст N png-frames на случай, если webp encoder упадёт.
 	ensureFallbackSaveImage(graph);
 	ensureFallbackSaveAnimatedWebp(graph, parsed.fps);
-	repairVhsMp4(graph, parsed.fps);
+	repairVhsMp4(graph, parsed.fps, parsed.pingpong);
 	return {
 		images: [
 			{
@@ -512,7 +512,8 @@ function ensureFallbackSaveAnimatedWebp(
 
 function repairVhsMp4(
 	graph: Record<string, ComfyUINodeApiInput>,
-	fps: number
+	fps: number,
+	pingpong: boolean
 ): void {
 	const node = graph[NODE_VHS_MP4];
 	if (!node || node.class_type !== "VHS_VideoCombine") {
@@ -529,7 +530,7 @@ function repairVhsMp4(
 		frame_rate: fps,
 		images: [NODE_VAE_DECODE_IMAGES, 0],
 		loop_count: 0,
-		pingpong: false,
+		pingpong,
 		pix_fmt: "yuv420p",
 		save_metadata: false,
 		save_output: true,

@@ -162,6 +162,9 @@ const runpodLtx23ParamsSchema = z.object({
 	// Concept-LoRA поверх distill-LoRA на 1.0 «плавит» лица; 0.7 — безопасный
 	// дефолт, сохраняющий концепт без деградации лица.
 	loraScale: z.number().min(0).max(2).default(0.7),
+	// Бесшовная петля: рендер forward+reverse (VHS pingpong) — последний кадр
+	// совпадает с первым, без crossfade и склейки. Для зацикленных live-клипов.
+	pingpong: z.coerce.boolean().default(false),
 });
 
 // Wan 2.2 latent patchify требует кратность 16 по обеим осям; длина — 4n+1.
@@ -794,6 +797,7 @@ function buildRunpodLtx23Input({
 		fps: parsed.fps,
 		steps: parsed.steps,
 		cfgScale: parsed.cfgScale,
+		pingpong: parsed.pingpong,
 		...lora,
 		...(inputImageUrl === undefined ? {} : { inputImageUrl }),
 		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),

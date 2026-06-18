@@ -92,6 +92,10 @@ export const ltx23InputSchema = z.object({
 	loraCivitaiModelId: finiteInt.optional(),
 	loraCivitaiVersionId: finiteInt.optional(),
 	loraScale: finiteNumber.default(DEFAULT_LORA_SCALE),
+	// Seamless boomerang loop: VHS_VideoCombine рендерит forward+reverse, что
+	// даёт математически бесшовную петлю (последний кадр == первый) без
+	// crossfade и без видимой склейки. Идеально для зацикленных live-аватаров.
+	pingpong: z.coerce.boolean().default(false),
 });
 
 export type Ltx23Input = z.input<typeof ltx23InputSchema>;

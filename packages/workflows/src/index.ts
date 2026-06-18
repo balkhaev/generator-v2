@@ -394,6 +394,29 @@ const civitaiLtx23SynthImageToVideoParamsSchema =
 		endImageUrl: optionalUrlParamSchema,
 	});
 
+// Dedicated first/last-frame LTX 2.3 workflow WITHOUT any LoRA. Built for clean,
+// SFW looping clips (e.g. reactive avatars): we pass the same image as both the
+// first and last frame so the model animates a motion that starts and ends on
+// the identical pose — a true seamless loop with no crossfade. Portrait aspect
+// ratio by default since avatars are portrait. No `loras` are sent, so this runs
+// on the base Civitai LTX 2.3 engine.
+const civitaiLtx23FlfAspectRatioSchema = z
+	.enum(["16:9", "3:2", "1:1", "2:3", "9:16"])
+	.default("9:16");
+
+const civitaiLtx23FlfParamsSchema = z.object({
+	resolution: civitaiLtx23ResolutionSchema,
+	aspectRatio: civitaiLtx23FlfAspectRatioSchema,
+	duration: civitaiLtx23DurationSchema,
+	steps: z.number().int().min(10).max(50).default(30),
+	guidanceScale: z.number().min(1).max(10).default(3),
+	generateAudio: booleanParamSchema(false),
+	seed: z.number().int().nonnegative().optional(),
+	endImageUrl: optionalUrlParamSchema,
+});
+
+type CivitaiLtx23FlfParams = z.infer<typeof civitaiLtx23FlfParamsSchema>;
+
 const CIVITAI_LTX23_DIMENSIONS = {
 	"720p": {
 		"16:9": { width: 1280, height: 720 },
@@ -456,6 +479,42 @@ function buildCivitaiLtx23SynthInput({
 			loras: {
 				[parsed.loraAir]: parsed.loraStrength,
 			},
+			...(firstFrame ? { firstFrame } : {}),
+			...(lastFrame ? { lastFrame } : {}),
+			...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+		},
+	};
+}
+
+function buildCivitaiLtx23FlfInput({
+	firstFrame,
+	lastFrame,
+	parsed,
+	prompt,
+}: {
+	firstFrame?: string;
+	lastFrame?: string;
+	parsed: CivitaiLtx23FlfParams;
+	prompt: string;
+}): Record<string, unknown> {
+	const dimensions = getCivitaiLtx23Dimensions(
+		parsed.resolution,
+		parsed.aspectRatio
+	);
+	return {
+		__civitaiEndpoint: "ltx2.3:flf:firstLastFrameToVideo",
+		$type: "videoGen",
+		input: {
+			engine: "ltx2.3",
+			operation: "firstLastFrameToVideo",
+			prompt,
+			width: dimensions.width,
+			height: dimensions.height,
+			model: "22b-dev",
+			guidanceScale: parsed.guidanceScale,
+			steps: parsed.steps,
+			duration: parsed.duration,
+			generateAudio: parsed.generateAudio,
 			...(firstFrame ? { firstFrame } : {}),
 			...(lastFrame ? { lastFrame } : {}),
 			...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
@@ -1002,6 +1061,7 @@ const WORKFLOW_EXPECTED_DURATION_MS: Record<string, number> = {
 	"civitai-lustify-olt-sdxl": 2 * MINUTE,
 	"civitai-ltx-2-3-synth-text-to-video": 2 * MINUTE,
 	"civitai-ltx-2-3-synth-image-to-video": 2 * MINUTE,
+	"civitai-ltx-2-3-flf-image-to-video": 2 * MINUTE,
 	"runpod-fooocus-sdxl": 90 * SECOND,
 	// Flux img2img detailer: ~10s queue + ~30-40s render (20 steps, upscale 1.5×).
 	"runpod-flux-detailer": 45 * SECOND,
@@ -2114,6 +2174,91 @@ export const workflowRegistry = {
 				firstFrame: inputImageUrl,
 				lastFrame: parsed.endImageUrl,
 				operation: "firstLastFrameToVideo",
+				parsed,
+				prompt,
+			});
+		},
+		extractArtifactUrls: collectArtifactUrls,
+	},
+	"civitai-ltx-2-3-flf-image-to-video": {
+		baseModel: "ltx-2-3",
+		key: "civitai-ltx-2-3-flf-image-to-video",
+		name: "LTX 2.3 First/Last Frame I2V (Civitai)",
+		description:
+			"LTX 2.3 first/last-frame image-to-video on Civitai's base engine (no LoRA). When no end frame is supplied the start frame is reused as the end frame, producing a seamless loop with no crossfade. Designed for clean SFW looping clips like reactive avatars.",
+		requiresInputImage: true,
+		parameterSchema: civitaiLtx23FlfParamsSchema,
+		parameterFields: [
+			{
+				description:
+					"Optional ending frame URL. Leave empty to reuse the start frame and produce a seamless loop.",
+				key: "endImageUrl",
+				kind: "image-url",
+				label: "End image URL",
+				optional: true,
+				type: "text",
+			},
+			{
+				description: "Output resolution bucket used by Civitai LTX 2.3.",
+				enumValues: ["720p", "1080p"],
+				key: "resolution",
+				label: "Resolution",
+				type: "text",
+			},
+			{
+				description: "Output aspect ratio (portrait by default for avatars).",
+				enumValues: ["16:9", "3:2", "1:1", "2:3", "9:16"],
+				key: "aspectRatio",
+				label: "Aspect ratio",
+				type: "text",
+			},
+			{
+				description: "Civitai LTX 2.3 duration bucket in seconds.",
+				enumValues: CIVITAI_LTX23_DURATION_OPTIONS,
+				key: "duration",
+				label: "Duration",
+				unit: "s",
+				type: "text",
+			},
+			{
+				description: "Number of denoising steps for the LTX 2.3 dev model.",
+				key: "steps",
+				label: "Steps",
+				max: 50,
+				min: 10,
+				step: 1,
+				unit: "steps",
+				type: "number",
+			},
+			{
+				description: "Classifier-free guidance scale.",
+				key: "guidanceScale",
+				label: "CFG scale",
+				max: 10,
+				min: 1,
+				step: 0.5,
+				type: "number",
+			},
+			{
+				description: "Generate synchronized audio with the video.",
+				enumValues: ["true", "false"],
+				key: "generateAudio",
+				label: "Audio",
+				type: "text",
+			},
+			{
+				description: "Optional deterministic seed.",
+				key: "seed",
+				label: "Seed",
+				optional: true,
+				type: "number",
+			},
+		],
+		buildProviderInput: ({ inputImageUrl, params, prompt }) => {
+			const parsed = civitaiLtx23FlfParamsSchema.parse(params);
+			return buildCivitaiLtx23FlfInput({
+				firstFrame: inputImageUrl,
+				lastFrame: parsed.endImageUrl ?? inputImageUrl,
 				parsed,
 				prompt,
 			});

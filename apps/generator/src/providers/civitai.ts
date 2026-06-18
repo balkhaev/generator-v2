@@ -772,7 +772,9 @@ export function createCivitaiClient(options: {
 				const body = await request<CivitaiWorkflow>(
 					buildUrl(apiBaseUrl, `/v2/consumer/workflows/${jobId}`, {
 						hideMatureContent: "false",
-						wait: "false",
+						// Civitai v2 expects `wait` to be a number of seconds (0 = don't
+						// block); the string "false" is rejected with a validation error.
+						wait: "0",
 					}),
 					undefined,
 					"Civitai workflows.get"

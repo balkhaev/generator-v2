@@ -90,7 +90,11 @@ const NODE_SECOND_PASS_GUIDER = "103";
 const NODE_LOOP_GUIDE_FIRST = "9101";
 const NODE_LOOP_GUIDE_SECOND = "9102";
 const LOOP_GUIDE_LAST_FRAME_IDX = -1;
-const LOOP_GUIDE_STRENGTH = 1;
+// Сила привязки ПОСЛЕДНЕГО кадра к якорю. На 1.0 модель жёстко «дорывается»
+// до якоря за последние кадры → морф/варп-артефакты в самом хвосте клипа.
+// 0.95 даёт сэмплеру плавно сойтись к якорю: хвост чистый, а петля остаётся
+// практически бесшовной (последний кадр всё ещё ≈ якорь == первый кадр).
+const LOOP_GUIDE_STRENGTH = 0.95;
 
 export const ltx23InputSchema = z.object({
 	prompt: z.string().min(1),

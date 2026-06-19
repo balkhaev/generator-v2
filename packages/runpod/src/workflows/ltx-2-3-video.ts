@@ -75,6 +75,22 @@ const NODE_SIGMAS_FIRST = "359"; // ManualSigmas (первый pass — реал
 const NODE_SIGMAS_REFINE = "360"; // ManualSigmas (refine pass)
 const NODE_LOAD_IMAGE = "167"; // LoadImage
 const NODE_LORA_LOADER = "366"; // Lora Loader (LoraManager)
+// FLF loop nodes (см. addLtx23LoopGuides). LTXVConditioning (107) → [0]=pos,
+// [1]=neg. VAELoader video VAE (184). ResizeImagesByLongerEdge (246) = якорь,
+// уже используемый как первый кадр обоими Inplace-узлами.
+const NODE_LTXV_CONDITIONING = "107";
+const NODE_VIDEO_VAE = "184";
+const NODE_RESIZED_ANCHOR = "246";
+const NODE_FIRST_PASS_INPLACE = "161";
+const NODE_FIRST_PASS_CONCAT = "109";
+const NODE_FIRST_PASS_GUIDER = "129";
+const NODE_SECOND_PASS_INPLACE = "160";
+const NODE_SECOND_PASS_CONCAT = "117";
+const NODE_SECOND_PASS_GUIDER = "103";
+const NODE_LOOP_GUIDE_FIRST = "9101";
+const NODE_LOOP_GUIDE_SECOND = "9102";
+const LOOP_GUIDE_LAST_FRAME_IDX = -1;
+const LOOP_GUIDE_STRENGTH = 1;
 
 export const ltx23InputSchema = z.object({
 	prompt: z.string().min(1),
@@ -221,6 +237,13 @@ export function createLtx23VideoWorkflow(
 					loraFilename,
 					parsed.loraScale
 				);
+			}
+			// Настоящий first-last-frame loop: привязываем последний кадр к тому
+			// же якорю, что и первый (LTXVAddGuide frame_idx=-1). Видео генерится
+			// forward-only с естественной анимацией, но зацикливается без шва и
+			// без реверсного pingpong.
+			if (parsed.loopGuide) {
+				addLtx23LoopGuides(graph);
 			}
 			return { prompt: graph };
 		},
@@ -666,6 +689,81 @@ function replaceLoraManagerWithStandardLoader(
 			model: modelInput,
 			strength_model: strength,
 		},
+	};
+}
+
+interface LoopGuidePassIds {
+	concatNodeId: string;
+	guideNodeId: string;
+	guiderNodeId: string;
+	inplaceNodeId: string;
+}
+
+/**
+ * Привязывает последний кадр видео к якорному изображению (тому же, что и
+ * первый кадр), вставляя LTXVAddGuide(frame_idx=-1) между Inplace-узлом и его
+ * потребителями (LTXVConcatAVLatent + CFGGuider) в каждом активном pass'е.
+ * Результат — forward-only анимация, у которой первый и последний кадр
+ * совпадают с якорем → бесшовная петля без реверса (pingpong).
+ *
+ * Идемпотентна и безопасна: пропускает pass, если его узлы отсутствуют
+ * (например, refine-pass вырезан в serverless при выключенном spatial upscale).
+ * Требует, чтобы воркер-образ ComfyUI имел ноду `LTXVAddGuide`
+ * (ComfyUI-LTXVideo от Lightricks) — она присутствует в LTX 2.3 worker image.
+ */
+export function addLtx23LoopGuides(
+	graph: Record<string, ComfyUINodeApiInput>
+): void {
+	addLoopGuideForPass(graph, {
+		concatNodeId: NODE_FIRST_PASS_CONCAT,
+		guideNodeId: NODE_LOOP_GUIDE_FIRST,
+		guiderNodeId: NODE_FIRST_PASS_GUIDER,
+		inplaceNodeId: NODE_FIRST_PASS_INPLACE,
+	});
+	addLoopGuideForPass(graph, {
+		concatNodeId: NODE_SECOND_PASS_CONCAT,
+		guideNodeId: NODE_LOOP_GUIDE_SECOND,
+		guiderNodeId: NODE_SECOND_PASS_GUIDER,
+		inplaceNodeId: NODE_SECOND_PASS_INPLACE,
+	});
+}
+
+function addLoopGuideForPass(
+	graph: Record<string, ComfyUINodeApiInput>,
+	ids: LoopGuidePassIds
+): void {
+	const inplace = graph[ids.inplaceNodeId];
+	const concat = graph[ids.concatNodeId];
+	const guider = graph[ids.guiderNodeId];
+	if (!(inplace && concat && guider)) {
+		return;
+	}
+	// LTXVAddGuide: добавляет якорь как последний кадр (latent + conditioning).
+	// outputs: [0]=positive, [1]=negative, [2]=latent.
+	graph[ids.guideNodeId] = {
+		_meta: { title: "LTXV Loop Guide (last frame = anchor)" },
+		class_type: "LTXVAddGuide",
+		inputs: {
+			frame_idx: LOOP_GUIDE_LAST_FRAME_IDX,
+			image: [NODE_RESIZED_ANCHOR, 0],
+			latent: [ids.inplaceNodeId, 0],
+			negative: [NODE_LTXV_CONDITIONING, 1],
+			positive: [NODE_LTXV_CONDITIONING, 0],
+			strength: LOOP_GUIDE_STRENGTH,
+			vae: [NODE_VIDEO_VAE, 0],
+		},
+	};
+	// Перенаправляем latent-потребителя (ConcatAVLatent.video_latent) с
+	// Inplace на guide.latent (output 2).
+	concat.inputs = {
+		...concat.inputs,
+		video_latent: [ids.guideNodeId, 2],
+	};
+	// Перенаправляем conditioning гайдера на guided positive/negative.
+	guider.inputs = {
+		...guider.inputs,
+		negative: [ids.guideNodeId, 1],
+		positive: [ids.guideNodeId, 0],
 	};
 }
 

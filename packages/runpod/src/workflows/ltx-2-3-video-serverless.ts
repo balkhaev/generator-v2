@@ -9,6 +9,7 @@ import type {
 	ServerlessWorkflow,
 } from "../workflow/definition";
 import {
+	addLtx23LoopGuides,
 	buildSigmaSchedule,
 	deriveOutputDimensionsFromImage,
 	LTX_23_SIGMA_REFS,
@@ -111,26 +112,6 @@ const NODE_VHS_MP4 = "140";
 // Поэтому в serverless mode мы bypass'аем 349 и заставляем 121 брать text
 // напрямую из raw user prompt (352).
 const NODE_POSITIVE_CLIP_ENCODE = "121";
-// FLF loop nodes. LTXVConditioning (107) → [0]=positive, [1]=negative.
-// VAELoader video VAE (184). ResizeImagesByLongerEdge (246) = якорь, который
-// уже используется как первый кадр обоими Inplace-узлами. Добавляем
-// LTXVAddGuide(frame_idx=-1) с тем же якорем для последнего кадра.
-const NODE_LTXV_CONDITIONING = "107";
-const NODE_VIDEO_VAE = "184";
-const NODE_RESIZED_ANCHOR = "246";
-const NODE_FIRST_PASS_INPLACE = "161";
-const NODE_FIRST_PASS_CONCAT = "109";
-const NODE_FIRST_PASS_GUIDER = "129";
-const NODE_SECOND_PASS_INPLACE = "160";
-const NODE_SECOND_PASS_CONCAT_AV_LATENT = "117";
-const NODE_SECOND_PASS_GUIDER = "103";
-// Свободные id для injected LTXVAddGuide узлов (> 9000, как и fallback-узлы).
-const NODE_LOOP_GUIDE_FIRST = "9101";
-const NODE_LOOP_GUIDE_SECOND = "9102";
-// frame_idx=-1 = последний кадр (стандартный приём LTXV для бесшовной петли:
-// один AddGuide на 0 и один на -1 с тем же изображением).
-const LOOP_GUIDE_LAST_FRAME_IDX = -1;
-const LOOP_GUIDE_STRENGTH = 1;
 const NODE_TEXT_GENERATE_LTX2 = "349";
 const NODE_PROMPT_INSTRUCT_PRIMITIVE = "350";
 const NODE_PROMPT_CONCATENATE = "347";
@@ -359,9 +340,10 @@ async function buildPayloadInternal(
 	// Настоящий first-last-frame loop: привязываем последний кадр к тому же
 	// якорю, что и первый (LTXVAddGuide frame_idx=-1). Видео генерится
 	// forward-only с естественной анимацией, но математически зацикливается
-	// (первый ≈ последний кадр) — без реверсного pingpong.
+	// (первый ≈ последний кадр) — без реверсного pingpong. Идемпотентно
+	// пропускает refine-pass, если spatial upscale выключен (узлы вырезаны).
 	if (parsed.loopGuide) {
-		addLoopGuides(graph, args.enableSpatialUpscale);
+		addLtx23LoopGuides(graph);
 	}
 	repairVhsMp4(graph, parsed.fps, parsed.pingpong);
 	return {
@@ -534,81 +516,6 @@ function ensureFallbackSaveAnimatedWebp(
 			method: "default",
 			quality: 90,
 		},
-	};
-}
-
-interface LoopGuidePassIds {
-	concatNodeId: string;
-	guideNodeId: string;
-	guiderNodeId: string;
-	inplaceNodeId: string;
-}
-
-/**
- * Привязывает последний кадр видео к якорному изображению (тому же, что и
- * первый кадр), вставляя LTXVAddGuide(frame_idx=-1) между Inplace-узлом и его
- * потребителями (ConcatAVLatent + CFGGuider) в каждом активном pass'е графа.
- * Результат — forward-only анимация, у которой первый и последний кадр
- * совпадают с якорем → бесшовная петля без реверса (pingpong).
- */
-function addLoopGuides(
-	graph: Record<string, ComfyUINodeApiInput>,
-	enableSpatialUpscale: boolean
-): void {
-	addLoopGuideForPass(graph, {
-		concatNodeId: NODE_FIRST_PASS_CONCAT,
-		guideNodeId: NODE_LOOP_GUIDE_FIRST,
-		guiderNodeId: NODE_FIRST_PASS_GUIDER,
-		inplaceNodeId: NODE_FIRST_PASS_INPLACE,
-	});
-	// Второй (refine) pass существует только при включённом spatial upscale —
-	// иначе bypassSpatialUpscale уже удалил узлы 160/117/103-цепочку.
-	if (enableSpatialUpscale) {
-		addLoopGuideForPass(graph, {
-			concatNodeId: NODE_SECOND_PASS_CONCAT_AV_LATENT,
-			guideNodeId: NODE_LOOP_GUIDE_SECOND,
-			guiderNodeId: NODE_SECOND_PASS_GUIDER,
-			inplaceNodeId: NODE_SECOND_PASS_INPLACE,
-		});
-	}
-}
-
-function addLoopGuideForPass(
-	graph: Record<string, ComfyUINodeApiInput>,
-	ids: LoopGuidePassIds
-): void {
-	const inplace = graph[ids.inplaceNodeId];
-	const concat = graph[ids.concatNodeId];
-	const guider = graph[ids.guiderNodeId];
-	if (!(inplace && concat && guider)) {
-		return;
-	}
-	// LTXVAddGuide: добавляет якорь как последний кадр (latent + conditioning).
-	// outputs: [0]=positive, [1]=negative, [2]=latent.
-	graph[ids.guideNodeId] = {
-		_meta: { title: "LTXV Loop Guide (last frame = anchor)" },
-		class_type: "LTXVAddGuide",
-		inputs: {
-			frame_idx: LOOP_GUIDE_LAST_FRAME_IDX,
-			image: [NODE_RESIZED_ANCHOR, 0],
-			latent: [ids.inplaceNodeId, 0],
-			negative: [NODE_LTXV_CONDITIONING, 1],
-			positive: [NODE_LTXV_CONDITIONING, 0],
-			strength: LOOP_GUIDE_STRENGTH,
-			vae: [NODE_VIDEO_VAE, 0],
-		},
-	};
-	// Перенаправляем latent потребителя (ConcatAVLatent.video_latent) с
-	// Inplace на guide.latent (output 2).
-	concat.inputs = {
-		...concat.inputs,
-		video_latent: [ids.guideNodeId, 2],
-	};
-	// Перенаправляем conditioning гайдера на guided positive/negative.
-	guider.inputs = {
-		...guider.inputs,
-		negative: [ids.guideNodeId, 1],
-		positive: [ids.guideNodeId, 0],
 	};
 }
 

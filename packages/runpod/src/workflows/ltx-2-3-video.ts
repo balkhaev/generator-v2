@@ -96,6 +96,12 @@ export const ltx23InputSchema = z.object({
 	// даёт математически бесшовную петлю (последний кадр == первый) без
 	// crossfade и без видимой склейки. Идеально для зацикленных live-аватаров.
 	pingpong: z.coerce.boolean().default(false),
+	// Настоящий first-last-frame loop: добавляем LTXVAddGuide(frame_idx=-1)
+	// с тем же якорным изображением, что и первый кадр. Видео генерится
+	// FORWARD-only, но и первый, и последний кадр привязаны к якорю →
+	// бесшовная петля с естественной (не реверсной, как pingpong) анимацией.
+	// Только serverless-граф; pod-путь флаг игнорирует.
+	loopGuide: z.coerce.boolean().default(false),
 });
 
 export type Ltx23Input = z.input<typeof ltx23InputSchema>;

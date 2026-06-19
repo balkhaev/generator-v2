@@ -165,6 +165,10 @@ const runpodLtx23ParamsSchema = z.object({
 	// Бесшовная петля: рендер forward+reverse (VHS pingpong) — последний кадр
 	// совпадает с первым, без crossfade и склейки. Для зацикленных live-клипов.
 	pingpong: z.coerce.boolean().default(false),
+	// Настоящий first-last-frame loop через LTXVAddGuide(frame_idx=-1): видео
+	// генерится forward-only, но и первый, и последний кадр привязаны к якорю →
+	// естественная (не реверсная) бесшовная петля. Только serverless-граф.
+	loopGuide: z.coerce.boolean().default(false),
 });
 
 // Wan 2.2 latent patchify требует кратность 16 по обеим осям; длина — 4n+1.
@@ -798,6 +802,7 @@ function buildRunpodLtx23Input({
 		steps: parsed.steps,
 		cfgScale: parsed.cfgScale,
 		pingpong: parsed.pingpong,
+		loopGuide: parsed.loopGuide,
 		...lora,
 		...(inputImageUrl === undefined ? {} : { inputImageUrl }),
 		...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
